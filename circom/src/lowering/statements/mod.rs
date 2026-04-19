@@ -182,7 +182,9 @@ fn lower_stmt<'a>(
         }
 
         // ── Variable declarations ───────────────────────────────────
-        Stmt::VarDecl { names, init, span } => {
+        Stmt::VarDecl {
+            names, init, span, ..
+        } => {
             lower_var_decl(names, init.as_ref(), span, env, nodes, ctx)?;
         }
 

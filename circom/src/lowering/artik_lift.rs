@@ -40,7 +40,7 @@
 use std::collections::HashMap;
 
 use diagnostics::Span;
-use witness::{FieldFamily, ProgramBuilder, Reg};
+use witness::{ElemT, FieldFamily, IntW, ProgramBuilder, Reg};
 
 use crate::ast::{BinOp, Expr, PostfixOp, Stmt, UnaryOp};
 use crate::lowering::context::LoweringContext;
@@ -117,6 +117,10 @@ struct LiftState {
     /// plus any purely constant vars we recognize. Takes precedence
     /// over `locals` when an identifier is looked up.
     const_locals: HashMap<String, ConstInt>,
+    /// Array locals — each entry maps `name → (handle_reg, length)`.
+    /// Writes via `arr[i] = expr` emit `StoreArr`; reads via
+    /// `Expr::Index { object: Ident(arr), index }` emit `LoadArr`.
+    arrays: HashMap<String, (Reg, u32)>,
     /// Witness slot that the caller's `return` writes to.
     out_slot: u32,
     /// Set to `true` once a `return` has been lowered. The outer loop
@@ -138,6 +142,7 @@ impl LiftState {
             builder,
             locals,
             const_locals: HashMap::new(),
+            arrays: HashMap::new(),
             out_slot,
             halted: false,
         }
@@ -150,18 +155,40 @@ impl LiftState {
             return Some(());
         }
         match stmt {
-            Stmt::VarDecl { names, init, .. } => {
+            Stmt::VarDecl {
+                names,
+                dimensions,
+                init,
+                ..
+            } => {
                 // Tuple destructuring (`var (a, b) = ...`) is out of
                 // scope — would need to unpack multiple return values.
                 if names.len() != 1 {
                     return None;
                 }
                 let name = &names[0];
+
+                // Array declaration: `var arr[N];` — allocate backing
+                // storage once, at the declaration site. Multi-dim
+                // arrays (`[N][M]`) are out of scope for this release.
+                if !dimensions.is_empty() {
+                    if init.is_some() || dimensions.len() != 1 {
+                        return None;
+                    }
+                    let size = eval_const_expr(&dimensions[0], &self.const_locals)?;
+                    if !(0..=i64::from(u32::MAX)).contains(&size) {
+                        return None;
+                    }
+                    let len = size as u32;
+                    let handle = self.builder.alloc_array(len, ElemT::Field);
+                    self.arrays.insert(name.clone(), (handle, len));
+                    return Some(());
+                }
+
                 let Some(expr) = init else {
-                    // Uninitialized `var x;` declares the name without
-                    // a backing register — the body must assign to it
-                    // via a Substitution before any use. Nothing to do
-                    // here; we simply do not insert into any map.
+                    // Uninitialized scalar `var x;` declares the name
+                    // without a backing register — the body must
+                    // assign to it via a Substitution before any use.
                     return Some(());
                 };
                 let r = self.lift_expr(expr)?;
@@ -174,6 +201,23 @@ impl LiftState {
                 Some(())
             }
             Stmt::Substitution { target, value, .. } => {
+                // Indexed assignment: `arr[i] = expr`. Supported when
+                // `arr` is a declared array and `i` folds to a
+                // compile-time index in bounds.
+                if let Expr::Index { object, index, .. } = target {
+                    let Expr::Ident { name, .. } = object.as_ref() else {
+                        return None;
+                    };
+                    let (arr_reg, len) = self.arrays.get(name).copied()?;
+                    let idx = eval_const_expr(index, &self.const_locals)?;
+                    if !(0..i64::from(len)).contains(&idx) {
+                        return None;
+                    }
+                    let idx_reg = self.push_int_const(idx as u64)?;
+                    let val_reg = self.lift_expr(value)?;
+                    self.builder.store_arr(arr_reg, idx_reg, val_reg);
+                    return Some(());
+                }
                 let Expr::Ident { name, .. } = target else {
                     return None;
                 };
@@ -453,6 +497,21 @@ impl LiftState {
                 let r = self.lift_expr(operand)?;
                 Some(self.builder.fsub(zero, r))
             }
+            Expr::Index { object, index, .. } => {
+                // `arr[i]` where `arr` is a declared array and `i`
+                // folds to a compile-time index. Emit PushConst →
+                // IntFromField for the index register, then LoadArr.
+                let Expr::Ident { name, .. } = object.as_ref() else {
+                    return None;
+                };
+                let (arr_reg, len) = self.arrays.get(name).copied()?;
+                let idx = eval_const_expr(index, &self.const_locals)?;
+                if !(0..i64::from(len)).contains(&idx) {
+                    return None;
+                }
+                let idx_reg = self.push_int_const(idx as u64)?;
+                Some(self.builder.load_arr(arr_reg, idx_reg))
+            }
             _ => None,
         }
     }
@@ -509,6 +568,15 @@ impl LiftState {
     fn push_const_hex(&mut self, text: &str) -> Option<Reg> {
         let v = u128::from_str_radix(text, 16).ok()?;
         self.push_const_unsigned(v)
+    }
+
+    /// Materialize a compile-time integer as a u32 int register for
+    /// use as an array index. Emits two instructions (PushConst into
+    /// a field register, then IntFromField U32 into the int register
+    /// the executor's LoadArr / StoreArr expect).
+    fn push_int_const(&mut self, v: u64) -> Option<Reg> {
+        let field_reg = self.push_const_unsigned(v as u128)?;
+        Some(self.builder.int_from_field(IntW::U32, field_reg))
     }
 }
 

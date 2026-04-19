@@ -194,19 +194,21 @@ impl Parser {
             self.expect(&TokenKind::Semicolon)?;
             return Ok(Stmt::VarDecl {
                 names,
+                dimensions: Vec::new(),
                 init: Some(init),
                 span: self.span_to_prev(&sp),
             });
         }
 
         let name = self.expect_ident()?;
-        // Array dimensions for var
+        // Array dimensions for var. Preserved so the Artik witness
+        // lift can allocate the backing buffer; the existing
+        // scalar-var lowering paths ignore them safely.
+        let mut dimensions = Vec::new();
         while self.at(&TokenKind::LBracket) {
             self.advance();
-            let _size = self.parse_expr()?;
+            dimensions.push(self.parse_expr()?);
             self.expect(&TokenKind::RBracket)?;
-            // Note: var array dimensions don't affect name list,
-            // they're just initialization
         }
 
         let init = if self.eat(&TokenKind::Assign) {
@@ -219,6 +221,7 @@ impl Parser {
 
         Ok(Stmt::VarDecl {
             names: vec![name],
+            dimensions,
             init,
             span: self.span_to_prev(&sp),
         })
@@ -356,6 +359,7 @@ impl Parser {
             self.expect(&TokenKind::Semicolon)?;
             Ok(Stmt::VarDecl {
                 names: vec![name],
+                dimensions: Vec::new(),
                 init,
                 span: self.span_to_prev(&sp),
             })

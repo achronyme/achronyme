@@ -121,9 +121,15 @@ pub enum Stmt {
         init: Option<(AssignOp, Expr)>,
         span: Span,
     },
-    /// `var name [= expr];` or `var (a, b) = expr;`
+    /// `var name [= expr];`, `var (a, b) = expr;`, or
+    /// `var arr[N][M] [= expr];`. The `dimensions` vector is empty
+    /// for scalar vars and for tuple-destructuring forms; array
+    /// forms preserve the size expressions so downstream passes
+    /// (notably the Artik witness-call lift) can allocate the
+    /// backing storage.
     VarDecl {
         names: Vec<String>,
+        dimensions: Vec<Expr>,
         init: Option<Expr>,
         span: Span,
     },

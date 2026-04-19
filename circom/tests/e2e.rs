@@ -1384,6 +1384,52 @@ fn fn_witness_lift_folds_if_else_in_loop() {
     }
 }
 
+/// Fase 2.1 lift extension: internal arrays declared via
+/// `var arr[N];` are backed by Artik `AllocArray` of `ElemT::Field`;
+/// `arr[i] = expr` emits `StoreArr` and `arr[i]` emits `LoadArr`
+/// once `i` folds at lift time. Verified end-to-end by round-
+/// tripping the payload through the witness decoder and confirming
+/// the body contains matching allocate / store / load opcodes.
+#[test]
+fn fn_witness_lift_handles_internal_array() {
+    use ir::prove_ir::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_array_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("array lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = witness::bytecode::decode(&bytes, Some(witness::FieldFamily::BnLike256))
+        .expect("array payload must decode and validate");
+
+    let mut seen_alloc = false;
+    let mut seen_store = false;
+    let mut seen_load = false;
+    for instr in &prog.body {
+        match instr {
+            witness::Instr::AllocArray { .. } => seen_alloc = true,
+            witness::Instr::StoreArr { .. } => seen_store = true,
+            witness::Instr::LoadArr { .. } => seen_load = true,
+            _ => {}
+        }
+    }
+    assert!(seen_alloc, "expected an AllocArray in the lifted program");
+    assert!(seen_store, "expected at least one StoreArr (write path)");
+    assert!(seen_load, "expected at least one LoadArr (read path)");
+}
+
 /// BinSum(4,2): compile-only test.
 ///
 /// TODO: BinSum uses `var lin += signal * e2` with `<-- (lin >> k) & 1`,
