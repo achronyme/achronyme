@@ -26,6 +26,7 @@ pub mod bta;
 pub mod diff;
 pub mod extract;
 pub mod symbolic;
+pub mod walker;
 
 pub use bta::{classify, classify_loop_unroll, BindingTime, ClassificationDetails};
 pub use diff::{structural_diff, Diff};
@@ -34,3 +35,4 @@ pub use extract::{
     ExtractError, TemplateRegistry, TemplateSpec,
 };
 pub use symbolic::{symbolic_emit, OpTag, SlotId, SymbolicNode, SymbolicTree};
+pub use walker::{WalkError, Walker};
