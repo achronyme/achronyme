@@ -22,8 +22,10 @@
 //!
 //! [`ExtendedInstruction<F>`]: crate::prove_ir::ExtendedInstruction
 
+pub mod bta;
 pub mod diff;
 pub mod symbolic;
 
+pub use bta::{classify, classify_loop_unroll, BindingTime, ClassificationDetails};
 pub use diff::{structural_diff, Diff};
 pub use symbolic::{symbolic_emit, OpTag, SlotId, SymbolicNode, SymbolicTree};
