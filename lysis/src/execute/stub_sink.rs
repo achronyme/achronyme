@@ -125,4 +125,76 @@ mod tests {
             assert_eq!(id.index(), i);
         }
     }
+
+    #[test]
+    fn intern_pure_default_path_does_not_dedup() {
+        // StubSink uses the default `intern_pure` impl: fresh_id +
+        // emit. No hash-consing, so two identical Adds produce two
+        // distinct ids and two distinct entries.
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let a = sink.fresh_id();
+        let b = sink.fresh_id();
+        let id1 = sink.intern_pure(InstructionKind::Add {
+            result: NodeId::from_zero_based(0),
+            lhs: a,
+            rhs: b,
+        });
+        let id2 = sink.intern_pure(InstructionKind::Add {
+            result: NodeId::from_zero_based(0),
+            lhs: a,
+            rhs: b,
+        });
+        assert_ne!(id1, id2);
+        assert_eq!(sink.count(), 2);
+    }
+
+    #[test]
+    fn emit_effect_default_path_retains_duplicates() {
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let a = sink.fresh_id();
+        let b = sink.fresh_id();
+        let r1 = sink.fresh_id();
+        let r2 = sink.fresh_id();
+        sink.emit_effect(InstructionKind::AssertEq {
+            result: r1,
+            lhs: a,
+            rhs: b,
+            message: None,
+        });
+        sink.emit_effect(InstructionKind::AssertEq {
+            result: r2,
+            lhs: a,
+            rhs: b,
+            message: None,
+        });
+        assert_eq!(sink.count(), 2);
+    }
+
+    #[test]
+    #[should_panic(expected = "intern_pure called on side-effect variant")]
+    fn intern_pure_rejects_side_effect_in_debug() {
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let a = sink.fresh_id();
+        // Debug-assert — in release this falls through to `emit` and
+        // silently produces non-sensical output. Test only runs in debug.
+        let _ = sink.intern_pure(InstructionKind::AssertEq {
+            result: NodeId::from_zero_based(0),
+            lhs: a,
+            rhs: a,
+            message: None,
+        });
+    }
+
+    #[test]
+    #[should_panic(expected = "emit_effect called on pure variant")]
+    fn emit_effect_rejects_pure_in_debug() {
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let a = sink.fresh_id();
+        let b = sink.fresh_id();
+        sink.emit_effect(InstructionKind::Add {
+            result: NodeId::from_zero_based(0),
+            lhs: a,
+            rhs: b,
+        });
+    }
 }

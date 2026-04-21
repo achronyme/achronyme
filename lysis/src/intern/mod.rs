@@ -1,15 +1,27 @@
 //! Hash-consing infrastructure: `NodeInterner` + `NodeId` + two-tier
 //! interning policy (per-instruction, per-template-body).
 //!
-//! Phase 1 provides `NodeId`, `NodeIdGen`, and `InstructionKind<F>`
-//! so the rest of the crate can speak in terms of emitted-node
-//! identifiers and IR instruction shapes. The hash-consing interner
-//! itself lands in Phase 2; see RFC §5.
+//! Phase 2 lands the real interner: `NodeKey<F>` structural keys
+//! (`key` module), the `SideEffect<F>` / `EffectId` side-channel
+//! (`effect`), the span-list policy (`span`), and the `NodeInterner`
+//! itself (`interner`) with the per-instruction tier wired up.
+//! Materialization to a flat `Vec<InstructionKind>` lives in
+//! `materialize`. Phase 3 adds the per-template-body tier on top.
+//! See RFC §§5.1–5.6 for the contract.
 
+pub mod effect;
 pub mod hash;
+pub mod interner;
+pub mod key;
 pub mod kind;
+pub mod materialize;
 pub mod node;
 pub mod span;
 
+pub use effect::{EffectId, SideEffect};
+pub use hash::{deterministic_hash, DeterministicBuildHasher};
+pub use interner::{NodeInterner, NodeMeta};
+pub use key::NodeKey;
 pub use kind::{InstructionKind, Visibility};
 pub use node::{NodeId, NodeIdGen};
+pub use span::{SpanList, SpanRange, SPAN_LIST_CAP};

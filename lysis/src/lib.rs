@@ -33,11 +33,14 @@ pub use builder::ProgramBuilder;
 pub use bytecode::{decode, encode, ConstPool, ConstPoolEntry, Opcode};
 pub use config::LysisConfig;
 pub use error::LysisError;
-pub use execute::{execute, expected_family, Frame, IrSink, StubSink};
+pub use execute::{execute, expected_family, Frame, InterningSink, IrSink, StubSink};
 pub use header::{
     LysisHeader, FLAGS_DEFINED_MASK, FLAG_HAS_WITNESS_CALLS, HEADER_SIZE, MAGIC, VERSION,
 };
-pub use intern::{InstructionKind, NodeId, NodeIdGen, Visibility};
+pub use intern::{
+    EffectId, InstructionKind, NodeId, NodeIdGen, NodeInterner, NodeKey, SideEffect, SpanList,
+    SpanRange, Visibility,
+};
 pub use program::{Instr, Program, Template};
 
 // Re-export FieldFamily from artik — the canonical owner of the field

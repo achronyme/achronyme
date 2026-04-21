@@ -15,11 +15,23 @@ use std::num::NonZeroU32;
 pub struct NodeId(NonZeroU32);
 
 impl NodeId {
+    /// The minimum real `NodeId` — `1` one-based, index `0`. Useful
+    /// as a placeholder when the real id is assigned elsewhere (e.g.,
+    /// the `result` slot of a pure instruction handed to
+    /// `IrSink::intern_pure`, which the sink overwrites).
+    pub const PLACEHOLDER: Self = NodeId(match NonZeroU32::new(1) {
+        Some(n) => n,
+        None => unreachable!(),
+    });
+
     /// Construct from a 1-based index. `NodeId::from_one_based(1)` is
     /// the first real node.
     #[inline]
-    pub fn from_one_based(idx: u32) -> Option<Self> {
-        NonZeroU32::new(idx).map(NodeId)
+    pub const fn from_one_based(idx: u32) -> Option<Self> {
+        match NonZeroU32::new(idx) {
+            Some(n) => Some(NodeId(n)),
+            None => None,
+        }
     }
 
     /// Construct from a 0-based index into a `Vec<InstructionKind>`.
