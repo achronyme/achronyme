@@ -1,0 +1,16 @@
+[package]
+name = "lysis"
+description = "Lysis — template-instantiation VM for Achronyme. Third VM alongside Akron (execution) and Artik (witness), responsible for replacing the eager `ir::prove_ir::instantiate` with a register-based bytecode pipeline that uses hash-consing + binding-time analysis to avoid multiplicative memory amplification."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+artik = { path = "../artik" }
+
+[dev-dependencies]
