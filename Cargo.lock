@@ -1017,6 +1017,7 @@ dependencies = [
  "bincode",
  "constraints",
  "diagnostics",
+ "lysis",
  "memory",
  "resolve",
  "serde",

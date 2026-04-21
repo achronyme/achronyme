@@ -17,5 +17,6 @@ diagnostics = { path = "../diagnostics" }
 achronyme-parser = { path = "../achronyme-parser" }
 resolve = { path = "../resolve" }
 artik = { path = "../artik" }
+lysis = { path = "../lysis" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"

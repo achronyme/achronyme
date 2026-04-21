@@ -37,6 +37,22 @@ pub struct NodeMeta {
     pub hash: u64,
 }
 
+/// Emission-order token for [`NodeInterner::timeline`]. Materialize
+/// walks the timeline in order to produce a `Vec<InstructionKind<F>>`
+/// whose operand dependencies never reference forward — essential
+/// for side-effects like [`SideEffect::Decompose`] and
+/// [`SideEffect::Input`] that define wires consumed by later pure
+/// nodes.
+#[derive(Debug, Clone, Copy)]
+pub enum Emission {
+    /// A new pure node was interned. Points at its insertion index
+    /// in `nodes` (the IndexMap preserves it).
+    Pure(usize),
+    /// A side-effect was recorded. Points at its position in
+    /// `effects`.
+    Effect(usize),
+}
+
 /// Hash-consing table for pure nodes + ordered log of side-effects.
 ///
 /// Fields are `pub(crate)` so the `materialize` submodule can
@@ -48,6 +64,10 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     pub(crate) effects: Vec<SideEffect>,
     pub(crate) node_spans: Vec<SpanList>,
     pub(crate) effect_spans: Vec<SpanList>,
+    /// Global emission order: one entry per *new* pure insertion + one
+    /// per side-effect. Dedup hits do not add to the timeline since
+    /// the pure slot already appears.
+    pub(crate) timeline: Vec<Emission>,
     /// Monotonic across both pure and opaque ids. Never rewound.
     pub(crate) next_node_id: u32,
 }
@@ -66,6 +86,7 @@ impl<F: FieldBackend> NodeInterner<F> {
             effects: Vec::new(),
             node_spans: Vec::new(),
             effect_spans: Vec::new(),
+            timeline: Vec::new(),
             next_node_id: 0,
         }
     }
@@ -84,6 +105,8 @@ impl<F: FieldBackend> NodeInterner<F> {
             if let Some(list) = self.node_spans.get_mut(insertion_idx) {
                 list.push_capped(span);
             }
+            // Dedup hit: the pure node already appears on the timeline
+            // from its first insertion. Don't push again.
             return id;
         }
         let id = self.fresh_node_id();
@@ -92,15 +115,22 @@ impl<F: FieldBackend> NodeInterner<F> {
         self.nodes.insert(key, NodeMeta { id, hash });
         debug_assert_eq!(self.node_spans.len(), insertion_idx);
         self.node_spans.push(SpanList::with_span(span));
+        self.timeline.push(Emission::Pure(insertion_idx));
         id
     }
 
     /// Append a side-effect in emission order. `EffectId`s are
-    /// assigned in insertion order starting from zero.
+    /// assigned in insertion order starting from zero. Side-effects
+    /// that define wires downstream pure nodes consume (e.g.
+    /// [`SideEffect::Decompose`], [`SideEffect::Input`]) rely on the
+    /// emission order being preserved through materialize — that's
+    /// what the `timeline` log guarantees.
     pub fn emit_effect(&mut self, effect: SideEffect, span: SpanRange) -> EffectId {
-        let eff_id = EffectId::from_zero_based(self.effects.len());
+        let eff_idx = self.effects.len();
+        let eff_id = EffectId::from_zero_based(eff_idx);
         self.effects.push(effect);
         self.effect_spans.push(SpanList::with_span(span));
+        self.timeline.push(Emission::Effect(eff_idx));
         eff_id
     }
 
