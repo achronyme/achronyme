@@ -16,12 +16,14 @@ pub mod circom_interop;
 pub mod compiler;
 pub mod error;
 pub mod extended;
+pub mod extended_program;
 pub mod instantiate;
 pub mod lysis_bridge;
 pub mod lysis_materialize;
 pub mod types;
 
 pub use extended::{ExtendedInstruction, TemplateId};
+pub use extended_program::ExtendedIrProgram;
 pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
 pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
 
