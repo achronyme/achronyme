@@ -83,10 +83,7 @@ pub trait IrSink<F: FieldBackend> {
     /// separate method exists so hash-consing sinks can tell the two
     /// apart statically.
     fn emit_effect(&mut self, kind: InstructionKind<F>) {
-        debug_assert!(
-            kind.is_side_effect(),
-            "emit_effect called on pure variant"
-        );
+        debug_assert!(kind.is_side_effect(), "emit_effect called on pure variant");
         self.emit(kind);
     }
 

@@ -21,9 +21,7 @@
 use memory::field::{Bn254Fr, FieldBackend};
 
 use crate::execute::IrSink;
-use crate::intern::{
-    InstructionKind, NodeId, NodeInterner, NodeKey, SideEffect, SpanRange,
-};
+use crate::intern::{InstructionKind, NodeId, NodeInterner, NodeKey, SideEffect, SpanRange};
 
 /// `IrSink` that performs real per-instruction hash-consing.
 #[derive(Debug, Clone)]
@@ -89,8 +87,8 @@ impl<F: FieldBackend> IrSink<F> for InterningSink<F> {
             // `emit` arrives with a fresh id already embedded — we
             // throw that away and let the interner assign a canonical
             // one (which may dedup to an earlier id).
-            let key = NodeKey::from_instruction(&kind)
-                .expect("is_side_effect classified it as pure");
+            let key =
+                NodeKey::from_instruction(&kind).expect("is_side_effect classified it as pure");
             self.interner.intern_pure(key, SpanRange::UNKNOWN);
         }
     }
@@ -100,18 +98,14 @@ impl<F: FieldBackend> IrSink<F> for InterningSink<F> {
             !kind.is_side_effect(),
             "intern_pure called on side-effect variant"
         );
-        let key = NodeKey::from_instruction(&kind)
-            .expect("checked pure via is_side_effect");
+        let key = NodeKey::from_instruction(&kind).expect("checked pure via is_side_effect");
         self.interner.intern_pure(key, SpanRange::UNKNOWN)
     }
 
     fn emit_effect(&mut self, kind: InstructionKind<F>) {
-        debug_assert!(
-            kind.is_side_effect(),
-            "emit_effect called on pure variant"
-        );
-        let eff = SideEffect::from_instruction(kind)
-            .expect("checked side-effect via is_side_effect");
+        debug_assert!(kind.is_side_effect(), "emit_effect called on pure variant");
+        let eff =
+            SideEffect::from_instruction(kind).expect("checked side-effect via is_side_effect");
         self.interner.emit_effect(eff, SpanRange::UNKNOWN);
     }
 

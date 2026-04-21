@@ -195,8 +195,7 @@ mod tests {
 
         let out = ix.materialize();
 
-        let mut seen_ids: std::collections::HashSet<_> =
-            std::collections::HashSet::new();
+        let mut seen_ids: std::collections::HashSet<_> = std::collections::HashSet::new();
         for instr in &out {
             let result = instr.result();
             for operand in [
@@ -246,10 +245,7 @@ mod tests {
     /// Tiny helper that pulls out the `n`-th operand of an instruction
     /// for the topological-order check above. Covers the variants used
     /// in the test only.
-    fn operand_of(
-        instr: &InstructionKind<Bn254Fr>,
-        n: usize,
-    ) -> Option<crate::intern::NodeId> {
+    fn operand_of(instr: &InstructionKind<Bn254Fr>, n: usize) -> Option<crate::intern::NodeId> {
         use InstructionKind as K;
         match (instr, n) {
             (K::Add { lhs, .. } | K::Mul { lhs, .. }, 0) => Some(*lhs),

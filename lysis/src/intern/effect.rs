@@ -278,14 +278,8 @@ mod tests {
     fn effect_id_round_trip() {
         let id = EffectId::from_zero_based(0);
         assert_eq!(id.index(), 0);
-        assert_eq!(
-            EffectId::from_zero_based(42),
-            EffectId::from_zero_based(42)
-        );
-        assert_ne!(
-            EffectId::from_zero_based(0),
-            EffectId::from_zero_based(1)
-        );
+        assert_eq!(EffectId::from_zero_based(42), EffectId::from_zero_based(42));
+        assert_ne!(EffectId::from_zero_based(0), EffectId::from_zero_based(1));
     }
 
     #[test]

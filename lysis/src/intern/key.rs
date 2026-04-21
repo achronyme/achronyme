@@ -243,41 +243,25 @@ impl<F: FieldBackend> NodeKey<F> {
                 lhs: *lhs,
                 rhs: *rhs,
             },
-            NodeKey::IsLtBounded {
-                lhs,
-                rhs,
-                bitwidth,
-            } => K::IsLtBounded {
+            NodeKey::IsLtBounded { lhs, rhs, bitwidth } => K::IsLtBounded {
                 result,
                 lhs: *lhs,
                 rhs: *rhs,
                 bitwidth: *bitwidth,
             },
-            NodeKey::IsLeBounded {
-                lhs,
-                rhs,
-                bitwidth,
-            } => K::IsLeBounded {
+            NodeKey::IsLeBounded { lhs, rhs, bitwidth } => K::IsLeBounded {
                 result,
                 lhs: *lhs,
                 rhs: *rhs,
                 bitwidth: *bitwidth,
             },
-            NodeKey::IntDiv {
-                lhs,
-                rhs,
-                max_bits,
-            } => K::IntDiv {
+            NodeKey::IntDiv { lhs, rhs, max_bits } => K::IntDiv {
                 result,
                 lhs: *lhs,
                 rhs: *rhs,
                 max_bits: *max_bits,
             },
-            NodeKey::IntMod {
-                lhs,
-                rhs,
-                max_bits,
-            } => K::IntMod {
+            NodeKey::IntMod { lhs, rhs, max_bits } => K::IntMod {
                 result,
                 lhs: *lhs,
                 rhs: *rhs,
