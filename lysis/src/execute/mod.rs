@@ -27,10 +27,12 @@
 //! so the program crashes loud rather than silently.
 
 pub mod frame;
+pub mod interning_sink;
 pub mod ir_sink;
 pub mod stub_sink;
 
 pub use frame::Frame;
+pub use interning_sink::InterningSink;
 pub use ir_sink::IrSink;
 pub use stub_sink::StubSink;
 
