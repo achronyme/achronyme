@@ -21,3 +21,4 @@ pub use hash::{deterministic_hash, DeterministicBuildHasher};
 pub use key::NodeKey;
 pub use kind::{InstructionKind, Visibility};
 pub use node::{NodeId, NodeIdGen};
+pub use span::{SpanList, SpanRange, SPAN_LIST_CAP};
