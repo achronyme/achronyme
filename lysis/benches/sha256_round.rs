@@ -16,8 +16,8 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use lysis::{
-    bytecode::validate, decode, encode, execute, FieldFamily, InstructionKind, LysisConfig, NodeId,
-    ProgramBuilder, StubSink, Visibility,
+    bytecode::validate, decode, encode, execute, FieldFamily, InstructionKind, InterningSink,
+    LysisConfig, NodeId, ProgramBuilder, StubSink, Visibility,
 };
 use memory::field::{Bn254Fr, FieldElement};
 
@@ -135,6 +135,21 @@ fn bench(c: &mut Criterion) {
             let mut sink = StubSink::<Bn254Fr>::new();
             execute(&p, &[], &cfg, &mut sink).unwrap();
             black_box(sink.into_instructions());
+        });
+    });
+
+    // Same hot path, but with the Phase 2 hash-consing sink. On a
+    // single SHA-256 round there's no structural duplication to
+    // collapse, so the curve measures pure interning overhead — useful
+    // to track how much the IndexMap lookup costs on a worst-case
+    // (all-unique) workload.
+    c.bench_function("lysis_execute_only_interning_sink", |b| {
+        let p = decode::<Bn254Fr>(&bytes).unwrap();
+        validate(&p, &cfg).unwrap();
+        b.iter(|| {
+            let mut sink = InterningSink::<Bn254Fr>::new();
+            execute(&p, &[], &cfg, &mut sink).unwrap();
+            black_box(sink.materialize());
         });
     });
 
