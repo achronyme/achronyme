@@ -6,3 +6,5 @@
 pub mod bta;
 pub mod env;
 pub mod extract;
+
+pub use env::{RegId, ScopedMap, ScopedMapError};
