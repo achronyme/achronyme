@@ -19,6 +19,7 @@ pub mod extended;
 pub mod extended_program;
 pub mod instantiate;
 pub mod lysis_bridge;
+pub mod lysis_lower;
 pub mod lysis_materialize;
 pub mod types;
 
