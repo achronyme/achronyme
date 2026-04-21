@@ -296,6 +296,134 @@ impl<F: FieldBackend> InstructionKind<F> {
                 | Self::WitnessCall { .. }
         )
     }
+
+    /// Return a copy of `self` with the primary `result` field
+    /// replaced by `new_result`. Defined for pure variants only —
+    /// panics on side-effects because their id layout is richer (the
+    /// caller already pre-fills outputs/bits through
+    /// `IrSink::fresh_id` before constructing the kind).
+    pub fn with_result(self, new_result: NodeId) -> Self {
+        match self {
+            Self::Const { value, .. } => Self::Const {
+                result: new_result,
+                value,
+            },
+            Self::Add { lhs, rhs, .. } => Self::Add {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::Sub { lhs, rhs, .. } => Self::Sub {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::Mul { lhs, rhs, .. } => Self::Mul {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::Div { lhs, rhs, .. } => Self::Div {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::Neg { operand, .. } => Self::Neg {
+                result: new_result,
+                operand,
+            },
+            Self::Mux {
+                cond,
+                if_true,
+                if_false,
+                ..
+            } => Self::Mux {
+                result: new_result,
+                cond,
+                if_true,
+                if_false,
+            },
+            Self::PoseidonHash { left, right, .. } => Self::PoseidonHash {
+                result: new_result,
+                left,
+                right,
+            },
+            Self::Not { operand, .. } => Self::Not {
+                result: new_result,
+                operand,
+            },
+            Self::And { lhs, rhs, .. } => Self::And {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::Or { lhs, rhs, .. } => Self::Or {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::IsEq { lhs, rhs, .. } => Self::IsEq {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::IsNeq { lhs, rhs, .. } => Self::IsNeq {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::IsLt { lhs, rhs, .. } => Self::IsLt {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::IsLe { lhs, rhs, .. } => Self::IsLe {
+                result: new_result,
+                lhs,
+                rhs,
+            },
+            Self::IsLtBounded {
+                lhs, rhs, bitwidth, ..
+            } => Self::IsLtBounded {
+                result: new_result,
+                lhs,
+                rhs,
+                bitwidth,
+            },
+            Self::IsLeBounded {
+                lhs, rhs, bitwidth, ..
+            } => Self::IsLeBounded {
+                result: new_result,
+                lhs,
+                rhs,
+                bitwidth,
+            },
+            Self::IntDiv {
+                lhs, rhs, max_bits, ..
+            } => Self::IntDiv {
+                result: new_result,
+                lhs,
+                rhs,
+                max_bits,
+            },
+            Self::IntMod {
+                lhs, rhs, max_bits, ..
+            } => Self::IntMod {
+                result: new_result,
+                lhs,
+                rhs,
+                max_bits,
+            },
+            Self::Input { .. }
+            | Self::AssertEq { .. }
+            | Self::Assert { .. }
+            | Self::RangeCheck { .. }
+            | Self::Decompose { .. }
+            | Self::WitnessCall { .. } => {
+                panic!("with_result called on side-effect variant; use emit_effect")
+            }
+        }
+    }
 }
 
 #[cfg(test)]
