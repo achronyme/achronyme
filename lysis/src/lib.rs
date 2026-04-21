@@ -14,24 +14,31 @@
 //!
 //! ## Status
 //!
-//! Phase 0 (scaffolding): crate skeleton, [`LysisHeader`] with the
-//! canonical 16-byte layout, and hand-written bytecode fixtures for
-//! Phase 1 decoder/validator tests. No lowering, no interning, no
-//! execution yet — those land in Phases 2-5 per the RFC in
-//! `.claude/plans/lysis-vm.md`.
-//!
-//! [`LysisHeader`]: header::LysisHeader
+//! Phase 1 (bytecode + executor skeleton) is in progress. The RFC in
+//! `.claude/plans/lysis-vm.md` is the authoritative design; crate layout
+//! follows RFC §3.2 and the opcode/const-pool/validator details follow
+//! RFC §4.
 
 pub mod builder;
 pub mod bytecode;
+pub mod config;
 pub mod error;
 pub mod execute;
 pub mod header;
 pub mod intern;
 pub mod lower;
+pub mod program;
 
+pub use builder::ProgramBuilder;
+pub use bytecode::{decode, encode, ConstPool, ConstPoolEntry, Opcode};
+pub use config::LysisConfig;
 pub use error::LysisError;
-pub use header::{LysisHeader, HEADER_SIZE, MAGIC, VERSION};
+pub use execute::{execute, expected_family, Frame, IrSink, StubSink};
+pub use header::{
+    LysisHeader, FLAGS_DEFINED_MASK, FLAG_HAS_WITNESS_CALLS, HEADER_SIZE, MAGIC, VERSION,
+};
+pub use intern::{InstructionKind, NodeId, NodeIdGen, Visibility};
+pub use program::{Instr, Program, Template};
 
 // Re-export FieldFamily from artik — the canonical owner of the field
 // family enum. See RFC §4.2 + §4.4 (Option Y): a Lysis-only consumer

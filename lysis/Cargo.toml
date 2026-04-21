@@ -12,5 +12,6 @@ categories.workspace = true
 
 [dependencies]
 artik = { path = "../artik" }
+memory = { path = "../memory" }
 
 [dev-dependencies]
