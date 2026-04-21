@@ -69,9 +69,7 @@ fn build_num2bits_4_skeleton() -> lysis::Program<Bn254Fr> {
     b.finish()
 }
 
-fn run_through_lysis(
-    program: &lysis::Program<Bn254Fr>,
-) -> Vec<Instruction<Bn254Fr>> {
+fn run_through_lysis(program: &lysis::Program<Bn254Fr>) -> Vec<Instruction<Bn254Fr>> {
     let bytes = encode(program);
     let decoded = decode::<Bn254Fr>(&bytes).expect("decode");
     validate(&decoded, &LysisConfig::default()).expect("validate");

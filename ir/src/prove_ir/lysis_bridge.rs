@@ -344,7 +344,10 @@ mod tests {
                 assert_eq!(result, SsaVar(0));
                 assert_eq!(operand, SsaVar(0));
                 assert_eq!(num_bits, 4);
-                assert_eq!(bit_results, vec![SsaVar(1), SsaVar(2), SsaVar(3), SsaVar(4)]);
+                assert_eq!(
+                    bit_results,
+                    vec![SsaVar(1), SsaVar(2), SsaVar(3), SsaVar(4)]
+                );
             }
             _ => panic!("expected Decompose"),
         }

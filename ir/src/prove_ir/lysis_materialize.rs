@@ -71,13 +71,7 @@ mod tests {
         let decoded = lysis::decode::<Bn254Fr>(&bytes).expect("decode");
         lysis::bytecode::validate(&decoded, &lysis::LysisConfig::default()).expect("validate");
         let mut sink = lysis::InterningSink::<Bn254Fr>::new();
-        lysis::execute(
-            &decoded,
-            &[],
-            &lysis::LysisConfig::default(),
-            &mut sink,
-        )
-        .expect("execute");
+        lysis::execute(&decoded, &[], &lysis::LysisConfig::default(), &mut sink).expect("execute");
         sink
     }
 
@@ -86,10 +80,7 @@ mod tests {
         let sink = run_builder(|b| {
             b.intern_field(fe(1));
             b.intern_field(fe(2));
-            b.load_const(0, 0)
-                .load_const(1, 1)
-                .emit_add(2, 0, 1)
-                .halt();
+            b.load_const(0, 0).load_const(1, 1).emit_add(2, 0, 1).halt();
         });
         let instrs = materialize_interning_sink(sink);
         assert_eq!(instrs.len(), 3);
@@ -168,18 +159,9 @@ mod tests {
     fn materialize_interner_direct_path() {
         // The lower-level API — operates on NodeInterner, not InterningSink.
         let mut interner = lysis::NodeInterner::<Bn254Fr>::new();
-        let a = interner.intern_pure(
-            lysis::NodeKey::Const(fe(1)),
-            lysis::SpanRange::UNKNOWN,
-        );
-        let b = interner.intern_pure(
-            lysis::NodeKey::Const(fe(2)),
-            lysis::SpanRange::UNKNOWN,
-        );
-        let _s = interner.intern_pure(
-            lysis::NodeKey::Add(a, b),
-            lysis::SpanRange::UNKNOWN,
-        );
+        let a = interner.intern_pure(lysis::NodeKey::Const(fe(1)), lysis::SpanRange::UNKNOWN);
+        let b = interner.intern_pure(lysis::NodeKey::Const(fe(2)), lysis::SpanRange::UNKNOWN);
+        let _s = interner.intern_pure(lysis::NodeKey::Add(a, b), lysis::SpanRange::UNKNOWN);
         let instrs = materialize_interner(interner);
         assert_eq!(instrs.len(), 3);
     }

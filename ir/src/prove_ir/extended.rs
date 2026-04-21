@@ -223,13 +223,12 @@ mod tests {
 
     #[test]
     fn loop_unroll_nests_body() {
-        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::Plain(
-            Instruction::Input {
+        let body: Vec<ExtendedInstruction<Bn254Fr>> =
+            vec![ExtendedInstruction::Plain(Instruction::Input {
                 result: ssa(0),
                 name: "x".into(),
                 visibility: Visibility::Witness,
-            },
-        )];
+            })];
         let loop_node = ExtendedInstruction::<Bn254Fr>::LoopUnroll {
             iter_var: ssa(0),
             start: 0,
