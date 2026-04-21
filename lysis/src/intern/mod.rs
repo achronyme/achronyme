@@ -10,10 +10,12 @@
 //! See RFC §§5.1–5.6 for the contract.
 
 pub mod hash;
+pub mod key;
 pub mod kind;
 pub mod node;
 pub mod span;
 
 pub use hash::{deterministic_hash, DeterministicBuildHasher};
+pub use key::NodeKey;
 pub use kind::{InstructionKind, Visibility};
 pub use node::{NodeId, NodeIdGen};
