@@ -13,6 +13,9 @@ categories.workspace = true
 [dependencies]
 artik = { path = "../artik" }
 memory = { path = "../memory" }
+indexmap = "2"
+siphasher = "1"
+smallvec = "1"
 
 [dev-dependencies]
 criterion = "0.5"
