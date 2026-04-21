@@ -48,6 +48,12 @@ use crate::error::LysisError;
 use crate::intern::{InstructionKind, NodeId};
 use crate::program::Program;
 
+/// Shorthand for the `result` placeholder used in pure kinds passed
+/// to [`IrSink::intern_pure`]. The sink chooses the canonical id;
+/// the value here is arbitrary and deliberately the same across
+/// call sites so the intent reads cleanly.
+const PLACEHOLDER_ID: NodeId = NodeId::PLACEHOLDER;
+
 /// The canonical family for a given `FieldBackend`. Mirrors Artik's
 /// `check_family_compat` mapping.
 pub fn expected_family<F: FieldBackend>() -> FieldFamily {
@@ -222,9 +228,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 });
             }
             let fe = captures[*idx as usize];
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Const {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Const {
+                result: PLACEHOLDER_ID,
                 value: fe,
             });
             frames[frame_idx].write(*dst, id);
@@ -251,9 +256,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     });
                 }
             };
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Const {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Const {
+                result: PLACEHOLDER_ID,
                 value: fe,
             });
             frames[frame_idx].write(*dst, id);
@@ -279,7 +283,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 }
             };
             let id = sink.fresh_id();
-            sink.emit(InstructionKind::Input {
+            sink.emit_effect(InstructionKind::Input {
                 result: id,
                 name,
                 visibility: *vis,
@@ -441,9 +445,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
         EmitAdd { dst, lhs, rhs } => {
             let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Add {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Add {
+                result: PLACEHOLDER_ID,
                 lhs: l,
                 rhs: r,
             });
@@ -453,9 +456,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
         EmitSub { dst, lhs, rhs } => {
             let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Sub {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Sub {
+                result: PLACEHOLDER_ID,
                 lhs: l,
                 rhs: r,
             });
@@ -465,9 +467,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
         EmitMul { dst, lhs, rhs } => {
             let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Mul {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Mul {
+                result: PLACEHOLDER_ID,
                 lhs: l,
                 rhs: r,
             });
@@ -477,9 +478,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
         EmitNeg { dst, operand } => {
             let op = read_reg(&frames[frame_idx], *operand, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Neg {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Neg {
+                result: PLACEHOLDER_ID,
                 operand: op,
             });
             frames[frame_idx].write(*dst, id);
@@ -496,9 +496,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             let c = read_reg(frame, *cond, offset)?;
             let t = read_reg(frame, *then_v, offset)?;
             let e = read_reg(frame, *else_v, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::Mux {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::Mux {
+                result: PLACEHOLDER_ID,
                 cond: c,
                 if_true: t,
                 if_false: e,
@@ -515,7 +514,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             let operand = read_reg(&frames[frame_idx], *src, offset)?;
             let bit_results: Vec<NodeId> = (0..*n_bits).map(|_| sink.fresh_id()).collect();
             let result_id = operand; // mirror of ir::Instruction::Decompose
-            sink.emit(InstructionKind::Decompose {
+            sink.emit_effect(InstructionKind::Decompose {
                 result: result_id,
                 bit_results: bit_results.clone(),
                 operand,
@@ -535,7 +534,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         EmitAssertEq { lhs, rhs } => {
             let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
             let id = sink.fresh_id();
-            sink.emit(InstructionKind::AssertEq {
+            sink.emit_effect(InstructionKind::AssertEq {
                 result: id,
                 lhs: l,
                 rhs: r,
@@ -547,7 +546,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         EmitRangeCheck { var, max_bits } => {
             let operand = read_reg(&frames[frame_idx], *var, offset)?;
             let id = sink.fresh_id();
-            sink.emit(InstructionKind::RangeCheck {
+            sink.emit_effect(InstructionKind::RangeCheck {
                 result: id,
                 operand,
                 bits: *max_bits as u32,
@@ -582,7 +581,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 .map(|r| read_reg(&frames[frame_idx], *r, offset))
                 .collect::<Result<_, _>>()?;
             let outputs: Vec<NodeId> = (0..out_regs.len()).map(|_| sink.fresh_id()).collect();
-            sink.emit(InstructionKind::WitnessCall {
+            sink.emit_effect(InstructionKind::WitnessCall {
                 outputs: outputs.clone(),
                 inputs,
                 program_bytes: blob,
@@ -611,9 +610,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     detail: "Phase 1 PoseidonHash supports arity 2 only",
                 });
             }
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::PoseidonHash {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::PoseidonHash {
+                result: PLACEHOLDER_ID,
                 left: inputs[0],
                 right: inputs[1],
             });
@@ -623,9 +621,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
         EmitIsEq { dst, lhs, rhs } => {
             let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::IsEq {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::IsEq {
+                result: PLACEHOLDER_ID,
                 lhs: l,
                 rhs: r,
             });
@@ -635,9 +632,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
         EmitIsLt { dst, lhs, rhs } => {
             let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
-            let id = sink.fresh_id();
-            sink.emit(InstructionKind::IsLt {
-                result: id,
+            let id = sink.intern_pure(InstructionKind::IsLt {
+                result: PLACEHOLDER_ID,
                 lhs: l,
                 rhs: r,
             });
