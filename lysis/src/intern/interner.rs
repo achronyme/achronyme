@@ -38,14 +38,18 @@ pub struct NodeMeta {
 }
 
 /// Hash-consing table for pure nodes + ordered log of side-effects.
+///
+/// Fields are `pub(crate)` so the `materialize` submodule can
+/// destructure by move during `materialize()`. External callers go
+/// through the impl's methods; no field is exposed in the public API.
 #[derive(Debug, Clone)]
 pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
-    nodes: IndexMap<NodeKey<F>, NodeMeta, DeterministicBuildHasher>,
-    effects: Vec<SideEffect>,
-    node_spans: Vec<SpanList>,
-    effect_spans: Vec<SpanList>,
+    pub(crate) nodes: IndexMap<NodeKey<F>, NodeMeta, DeterministicBuildHasher>,
+    pub(crate) effects: Vec<SideEffect>,
+    pub(crate) node_spans: Vec<SpanList>,
+    pub(crate) effect_spans: Vec<SpanList>,
     /// Monotonic across both pure and opaque ids. Never rewound.
-    next_node_id: u32,
+    pub(crate) next_node_id: u32,
 }
 
 impl<F: FieldBackend> Default for NodeInterner<F> {

@@ -14,6 +14,7 @@ pub mod hash;
 pub mod interner;
 pub mod key;
 pub mod kind;
+pub mod materialize;
 pub mod node;
 pub mod span;
 
