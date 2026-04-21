@@ -159,6 +159,12 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
                 frames[frame_idx].pc = idx;
             }
             Step::PushFrame(new_frame) => {
+                // Advance the caller past the `InstantiateTemplate`
+                // opcode before handing control to the callee. When
+                // the callee `Return`s, `pop_frame` lands the caller
+                // on the following instruction rather than re-running
+                // the template call.
+                frames[frame_idx].pc += 1;
                 frames.push(new_frame);
             }
             Step::PopFrame => {
@@ -1236,6 +1242,166 @@ mod tests {
             .collect();
         assert_eq!(consts.len(), 1);
         assert_eq!(muls.len(), 1);
+    }
+
+    // -----------------------------------------------------------------
+    // InstantiateTemplate + TemplateOutput (Phase 3.B.9)
+    // -----------------------------------------------------------------
+
+    /// Build a program that declares one 1-capture template, calls it
+    /// once, and halts. Returns (program, out_reg_index_in_root) so
+    /// the test can inspect the caller's register afterward.
+    fn program_with_one_template_call() -> Program<Bn254Fr> {
+        use crate::bytecode::encoding::encode_opcode;
+        use crate::header::LysisHeader;
+        use crate::program::{Instr, Template};
+        use crate::ConstPool;
+
+        // Template body: EmitMul r1, r0, r0; TemplateOutput 0 from r1; Return.
+        // Captures: r0 = value to square.
+        // Frame size: 2.
+        let mut buf = Vec::new();
+        let mut body = Vec::new();
+
+        // Append an opcode to both `buf` (for byte offsets) and
+        // `body` (for the decoded-Instr representation the executor
+        // walks).
+        let emit = |op: Opcode, buf: &mut Vec<u8>, body: &mut Vec<Instr>| {
+            let before = buf.len() as u32;
+            encode_opcode(&op, buf);
+            body.push(Instr {
+                opcode: op,
+                offset: before,
+            });
+        };
+
+        // Root body:
+        //   LoadConst r0, 0       ; r0 = 7 (the value to square)
+        //   DefineTemplate 1, frame_size=2, n_params=1, body_offset=?, body_len=?
+        //   InstantiateTemplate 1, captures=[r0], outputs=[r1]
+        //   Halt
+        //
+        // Template body (placed after Halt):
+        //   EmitMul r1, r0, r0
+        //   TemplateOutput 0, r1
+        //   Return
+
+        emit(Opcode::LoadConst { dst: 0, idx: 0 }, &mut buf, &mut body);
+        let define_template_offset = buf.len() as u32;
+        emit(
+            Opcode::DefineTemplate {
+                template_id: 1,
+                frame_size: 2,
+                n_params: 1,
+                body_offset: 0,
+                body_len: 0,
+            },
+            &mut buf,
+            &mut body,
+        );
+        emit(
+            Opcode::InstantiateTemplate {
+                template_id: 1,
+                capture_regs: vec![0],
+                output_regs: vec![1],
+            },
+            &mut buf,
+            &mut body,
+        );
+        emit(Opcode::Halt, &mut buf, &mut body);
+        let template_body_offset = buf.len() as u32;
+        emit(
+            Opcode::EmitMul {
+                dst: 1,
+                lhs: 0,
+                rhs: 0,
+            },
+            &mut buf,
+            &mut body,
+        );
+        emit(
+            Opcode::TemplateOutput {
+                output_idx: 0,
+                src_reg: 1,
+            },
+            &mut buf,
+            &mut body,
+        );
+        emit(Opcode::Return, &mut buf, &mut body);
+        let template_body_end = buf.len() as u32;
+        let template_body_len = template_body_end - template_body_offset;
+
+        // Patch the DefineTemplate opcode in the body Vec with real
+        // offsets so the executor's Program carries them.
+        for instr in body.iter_mut() {
+            if instr.offset == define_template_offset {
+                if let Opcode::DefineTemplate {
+                    template_id,
+                    frame_size,
+                    n_params,
+                    ..
+                } = instr.opcode
+                {
+                    instr.opcode = Opcode::DefineTemplate {
+                        template_id,
+                        frame_size,
+                        n_params,
+                        body_offset: template_body_offset,
+                        body_len: template_body_len,
+                    };
+                }
+            }
+        }
+
+        // Const pool: one field entry (7).
+        let mut const_pool = ConstPool::<Bn254Fr>::new(FieldFamily::BnLike256);
+        const_pool.push(crate::bytecode::ConstPoolEntry::Field(seven()));
+
+        Program {
+            header: LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0),
+            const_pool,
+            templates: vec![Template {
+                id: 1,
+                frame_size: 2,
+                n_params: 1,
+                body_offset: template_body_offset,
+                body_len: template_body_len,
+            }],
+            body,
+        }
+    }
+
+    #[test]
+    fn template_call_returns_to_caller_at_next_opcode() {
+        let program = program_with_one_template_call();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        execute(&program, &[], &LysisConfig::default(), &mut sink).unwrap();
+        // Expect: 1 Const(7) in root + 1 Mul(r0, r0) in template body.
+        assert_eq!(sink.count(), 2);
+        assert!(matches!(
+            sink.instructions()[0],
+            InstructionKind::Const { .. }
+        ));
+        assert!(matches!(
+            sink.instructions()[1],
+            InstructionKind::Mul { .. }
+        ));
+    }
+
+    #[test]
+    fn template_call_does_not_infinite_loop() {
+        // Regression test for the Phase 3.B.9 pop_frame PC fix: before
+        // the fix, returning from InstantiateTemplate left caller.pc
+        // on the template-call opcode, re-invoking it forever until
+        // BudgetExhausted fired. A correct implementation halts
+        // before the default budget.
+        let program = program_with_one_template_call();
+        let cfg = LysisConfig {
+            instruction_budget: 1024,
+            ..Default::default()
+        };
+        let mut sink = StubSink::<Bn254Fr>::new();
+        execute(&program, &[], &cfg, &mut sink).expect("no infinite loop");
     }
 
     #[test]
