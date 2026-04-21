@@ -53,8 +53,8 @@ mod tests {
 
     #[test]
     fn same_input_same_hash_across_builders() {
-        let a = DeterministicBuildHasher.hash_one(&42u64);
-        let b = DeterministicBuildHasher.hash_one(&42u64);
+        let a = DeterministicBuildHasher.hash_one(42u64);
+        let b = DeterministicBuildHasher.hash_one(42u64);
         assert_eq!(a, b);
     }
 

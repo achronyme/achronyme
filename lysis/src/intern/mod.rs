@@ -11,6 +11,7 @@
 
 pub mod effect;
 pub mod hash;
+pub mod interner;
 pub mod key;
 pub mod kind;
 pub mod node;
@@ -18,6 +19,7 @@ pub mod span;
 
 pub use effect::{EffectId, SideEffect};
 pub use hash::{deterministic_hash, DeterministicBuildHasher};
+pub use interner::{NodeInterner, NodeMeta};
 pub use key::NodeKey;
 pub use kind::{InstructionKind, Visibility};
 pub use node::{NodeId, NodeIdGen};
