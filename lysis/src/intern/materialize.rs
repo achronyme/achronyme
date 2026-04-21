@@ -20,20 +20,19 @@
 use memory::field::FieldBackend;
 
 use crate::intern::effect::SideEffect;
-use crate::intern::interner::NodeInterner;
+use crate::intern::interner::{Emission, NodeInterner};
 use crate::intern::kind::InstructionKind;
 
 impl<F: FieldBackend> NodeInterner<F> {
     /// Consume the interner, producing a flat `Vec<InstructionKind<F>>`.
     ///
-    /// Layout:
-    ///  1. Pure nodes in insertion (topological) order.
-    ///  2. Side-effects in emission order, appended after the pure prefix.
-    ///
-    /// The split mirrors what the R1CS backend expects today — pure
-    /// data-flow first, then assertions / inputs / witness calls
-    /// layered on top. Future work may interleave them to improve
-    /// locality, but that's not required for the v1 gate.
+    /// Walks the `timeline` log so pure nodes and side-effects appear
+    /// in their original emission order. This matters whenever a
+    /// side-effect defines wires that later pure nodes consume —
+    /// `Decompose`, `Input`, and `WitnessCall` all produce `NodeId`s
+    /// that downstream `Add`/`Mul`/etc. reference. An earlier version
+    /// split the stream into "pure prefix + effect suffix" and
+    /// produced a forward-referencing Vec in exactly that case.
     pub fn materialize(self) -> Vec<InstructionKind<F>> {
         // De-structure so each field drops on its own schedule. Pulling
         // fields out by pattern avoids the partial-move pitfalls of
@@ -43,22 +42,39 @@ impl<F: FieldBackend> NodeInterner<F> {
             effects,
             node_spans: _,
             effect_spans: _,
+            timeline,
             next_node_id: _,
         } = self;
 
-        let estimated = nodes.len() + effects.len();
+        let estimated = timeline.len();
         let mut out: Vec<InstructionKind<F>> = Vec::with_capacity(estimated);
 
-        // Pure prefix. `into_iter` drops each (key, meta) immediately
-        // after yielding so the IndexMap footprint shrinks as we go.
-        for (key, meta) in nodes.into_iter() {
-            out.push(key.into_instruction(meta.id));
-        }
+        // Project into vectors we can index by insertion position.
+        // `into_iter` drops each element as we consume it, so peak
+        // overlap stays bounded.
+        let pure_nodes: Vec<InstructionKind<F>> = nodes
+            .into_iter()
+            .map(|(key, meta)| key.into_instruction(meta.id))
+            .collect();
+        let mut effect_nodes: Vec<Option<SideEffect>> = effects.into_iter().map(Some).collect();
 
-        // Effect suffix. Effects are moved into `out`; the underlying
-        // `Vec<SideEffect>` is freed when `effects` goes out of scope.
-        for eff in effects.into_iter() {
-            out.push(SideEffect::into_instruction::<F>(eff));
+        for event in timeline {
+            match event {
+                Emission::Pure(idx) => {
+                    let inst = pure_nodes
+                        .get(idx)
+                        .cloned()
+                        .expect("timeline Pure index always in-bounds");
+                    out.push(inst);
+                }
+                Emission::Effect(idx) => {
+                    let eff = effect_nodes
+                        .get_mut(idx)
+                        .and_then(Option::take)
+                        .expect("timeline Effect index visited exactly once");
+                    out.push(SideEffect::into_instruction::<F>(eff));
+                }
+            }
         }
 
         out
