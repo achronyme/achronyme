@@ -7,6 +7,26 @@
 
 use crate::intern::NodeId;
 
+/// Runtime state for one active `LoopUnroll` instance. Frames may
+/// stack these for nested loops.
+#[derive(Debug, Clone, Copy)]
+pub struct LoopState {
+    /// Register holding the iteration-counter `Const` node id.
+    pub iter_reg: u8,
+    /// Loop lower bound (inclusive).
+    pub start: u32,
+    /// Loop upper bound (exclusive).
+    pub end: u32,
+    /// Value of the iteration counter for the currently-running
+    /// iteration. `start` on entry; increments on each iteration.
+    pub current: u32,
+    /// First instruction index inside the body.
+    pub body_start_idx: usize,
+    /// One-past-last instruction index inside the body (same
+    /// semantics as `Frame::body_end_idx`).
+    pub body_end_idx: usize,
+}
+
 /// One activation of a template body (or the top-level body).
 #[derive(Debug, Clone)]
 pub struct Frame {
@@ -29,6 +49,9 @@ pub struct Frame {
     /// Caller frame's index in the stack, used by the pop path to
     /// write outputs back. `None` for the top-level frame.
     pub caller_frame_idx: Option<usize>,
+    /// Active `LoopUnroll` instances in this frame. Innermost loop
+    /// is at the back; empty when no loop is running.
+    pub loop_stack: Vec<LoopState>,
 }
 
 impl Frame {
@@ -44,6 +67,7 @@ impl Frame {
             output_slots: Vec::new(),
             caller_output_regs: Vec::new(),
             caller_frame_idx: None,
+            loop_stack: Vec::new(),
         }
     }
 
@@ -66,6 +90,7 @@ impl Frame {
             output_slots: vec![None; output_count],
             caller_output_regs,
             caller_frame_idx: Some(caller_frame_idx),
+            loop_stack: Vec::new(),
         }
     }
 
