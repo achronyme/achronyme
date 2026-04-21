@@ -24,8 +24,13 @@
 
 pub mod bta;
 pub mod diff;
+pub mod extract;
 pub mod symbolic;
 
 pub use bta::{classify, classify_loop_unroll, BindingTime, ClassificationDetails};
 pub use diff::{structural_diff, Diff};
+pub use extract::{
+    build_capture_layout, compute_frame_size, extract_template, CaptureKind, CaptureLayout,
+    ExtractError, TemplateRegistry, TemplateSpec,
+};
 pub use symbolic::{symbolic_emit, OpTag, SlotId, SymbolicNode, SymbolicTree};
