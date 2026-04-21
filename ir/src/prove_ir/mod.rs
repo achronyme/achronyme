@@ -18,10 +18,12 @@ pub mod error;
 pub mod extended;
 pub mod instantiate;
 pub mod lysis_bridge;
+pub mod lysis_materialize;
 pub mod types;
 
 pub use extended::{ExtendedInstruction, TemplateId};
 pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
+pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
 
 pub use circom_interop::{
     CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
