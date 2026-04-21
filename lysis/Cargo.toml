@@ -15,3 +15,8 @@ artik = { path = "../artik" }
 memory = { path = "../memory" }
 
 [dev-dependencies]
+criterion = "0.5"
+
+[[bench]]
+name = "sha256_round"
+harness = false
