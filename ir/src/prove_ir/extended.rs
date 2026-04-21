@@ -120,12 +120,33 @@ impl<F: FieldBackend> ExtendedInstruction<F> {
         matches!(self, ExtendedInstruction::Plain(_))
     }
 
-    /// If `Plain`, return the wrapped instruction. Otherwise `None`.
+    /// If `Plain`, return the wrapped instruction by reference.
+    /// Otherwise `None`.
     pub fn as_plain(&self) -> Option<&Instruction<F>> {
         match self {
             ExtendedInstruction::Plain(inst) => Some(inst),
             _ => None,
         }
+    }
+
+    /// If `Plain`, move out the wrapped instruction. Otherwise
+    /// return the unchanged `ExtendedInstruction` as `Err` so the
+    /// caller can branch without losing data.
+    pub fn into_plain(self) -> Result<Instruction<F>, Self> {
+        match self {
+            ExtendedInstruction::Plain(inst) => Ok(inst),
+            other => Err(other),
+        }
+    }
+}
+
+/// The migration primitive for ProveIR authors: every existing
+/// `Instruction<F>` push site can be rewritten as
+/// `push(inst.into())` to emit the `ExtendedInstruction<F>` form
+/// one call at a time.
+impl<F: FieldBackend> From<Instruction<F>> for ExtendedInstruction<F> {
+    fn from(inst: Instruction<F>) -> Self {
+        ExtendedInstruction::Plain(inst)
     }
 }
 
@@ -221,5 +242,65 @@ mod tests {
     #[test]
     fn template_id_displays_with_t_prefix() {
         assert_eq!(format!("{}", TemplateId(42)), "T42");
+    }
+
+    #[test]
+    fn from_instruction_wraps_as_plain() {
+        let inst = Instruction::<Bn254Fr>::Const {
+            result: ssa(0),
+            value: fe(5),
+        };
+        let ext: ExtendedInstruction<Bn254Fr> = inst.into();
+        assert!(ext.is_plain());
+    }
+
+    #[test]
+    fn vec_map_into_works() {
+        // The migration pattern: push `inst.into()` or run
+        // `instrs.into_iter().map(Into::into)` on an existing Vec.
+        let input: Vec<Instruction<Bn254Fr>> = vec![
+            Instruction::Const {
+                result: ssa(0),
+                value: fe(1),
+            },
+            Instruction::Add {
+                result: ssa(1),
+                lhs: ssa(0),
+                rhs: ssa(0),
+            },
+        ];
+        let output: Vec<ExtendedInstruction<Bn254Fr>> = input.into_iter().map(Into::into).collect();
+        assert_eq!(output.len(), 2);
+        assert!(output.iter().all(|e| e.is_plain()));
+    }
+
+    #[test]
+    fn into_plain_round_trips_when_plain() {
+        let inst = Instruction::<Bn254Fr>::Mul {
+            result: ssa(3),
+            lhs: ssa(1),
+            rhs: ssa(2),
+        };
+        let ext: ExtendedInstruction<Bn254Fr> = inst.clone().into();
+        let back = ext.into_plain().expect("plain variant");
+        match back {
+            Instruction::Mul { result, lhs, rhs } => {
+                assert_eq!(result, ssa(3));
+                assert_eq!(lhs, ssa(1));
+                assert_eq!(rhs, ssa(2));
+            }
+            _ => panic!("expected Mul"),
+        }
+    }
+
+    #[test]
+    fn into_plain_returns_err_for_non_plain() {
+        let call = ExtendedInstruction::<Bn254Fr>::TemplateCall {
+            template_id: TemplateId(0),
+            captures: vec![],
+            outputs: vec![],
+        };
+        let err = call.into_plain().expect_err("non-plain variant");
+        assert!(matches!(err, ExtendedInstruction::TemplateCall { .. }));
     }
 }
