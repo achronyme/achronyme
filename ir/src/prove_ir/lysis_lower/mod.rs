@@ -22,6 +22,8 @@
 //!
 //! [`ExtendedInstruction<F>`]: crate::prove_ir::ExtendedInstruction
 
+pub mod diff;
 pub mod symbolic;
 
+pub use diff::{structural_diff, Diff};
 pub use symbolic::{symbolic_emit, OpTag, SlotId, SymbolicNode, SymbolicTree};

@@ -40,7 +40,7 @@ use crate::types::{Instruction, SsaVar, Visibility};
 /// guaranteed to share the same [`SlotId`] sequence — that's what
 /// makes `structural_diff` able to locate matching slots across
 /// probes.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct SlotId(pub u16);
 
 impl std::fmt::Display for SlotId {
