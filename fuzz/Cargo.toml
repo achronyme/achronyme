@@ -15,6 +15,7 @@ compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 memory = { path = "../memory" }
 artik = { path = "../artik" }
+lysis = { path = "../lysis" }
 
 [workspace]
 members = ["."]
@@ -42,4 +43,14 @@ doc = false
 [[bin]]
 name = "fuzz_artik_exec"
 path = "fuzz_targets/fuzz_artik_exec.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_lysis_decode"
+path = "fuzz_targets/fuzz_lysis_decode.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_lysis_validate"
+path = "fuzz_targets/fuzz_lysis_validate.rs"
 doc = false
