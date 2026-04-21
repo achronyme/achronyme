@@ -15,8 +15,11 @@ pub mod capture;
 pub mod circom_interop;
 pub mod compiler;
 pub mod error;
+pub mod extended;
 pub mod instantiate;
 pub mod types;
+
+pub use extended::{ExtendedInstruction, TemplateId};
 
 pub use circom_interop::{
     CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
