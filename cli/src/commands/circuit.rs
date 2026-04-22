@@ -510,7 +510,6 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
 
     // Count public/witness inputs from IR
     let n_public = program
-        .instructions
         .iter()
         .filter(|i| {
             matches!(
@@ -523,7 +522,6 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         })
         .count();
     let n_witness = program
-        .instructions
         .iter()
         .filter(|i| {
             matches!(
@@ -568,7 +566,7 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
             let mut msg = format!("witness verification failed: {e}");
             if let constraints::r1cs::ConstraintError::ConstraintUnsatisfied(idx) = &e {
                 if let Some(origin) = compiler.constraint_origins.get(*idx) {
-                    let inst = &program.instructions[origin.ir_index];
+                    let inst = &program.instructions()[origin.ir_index];
                     msg = format!("constraint {idx} unsatisfied in: {inst}");
                     if let Some(name) = program.get_name(origin.result_var) {
                         msg.push_str(&format!("  (variable: {name})"));
@@ -614,7 +612,6 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
             eprintln!("    Constraints:    {}", style.bold(&format_number(nc)));
             // Show Poseidon efficiency note if circuit uses Poseidon
             let has_poseidon = program
-                .instructions
                 .iter()
                 .any(|i| matches!(i, ir::Instruction::PoseidonHash { .. }));
             if has_poseidon {

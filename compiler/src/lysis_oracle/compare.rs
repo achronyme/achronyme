@@ -174,7 +174,6 @@ where
 /// would disagree just like any other I/O difference.
 fn extract_public_inputs<F: FieldBackend>(program: &IrProgram<F>) -> Vec<String> {
     program
-        .instructions
         .iter()
         .filter_map(|inst| match inst {
             Instruction::Input {

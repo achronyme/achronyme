@@ -4,14 +4,12 @@ use memory::FieldElement;
 
 /// Helper: build a program manually.
 fn prog(instructions: Vec<Instruction>, next_var: u32) -> IrProgram {
-    IrProgram {
-        instructions,
-        next_var,
-        var_names: std::collections::HashMap::new(),
-        var_types: std::collections::HashMap::new(),
-        input_spans: std::collections::HashMap::new(),
-        var_spans: std::collections::HashMap::new(),
+    let mut p = IrProgram::new();
+    for inst in instructions {
+        p.push(inst);
     }
+    p.set_next_var(next_var);
+    p
 }
 
 #[test]

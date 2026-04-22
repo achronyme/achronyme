@@ -495,7 +495,7 @@ impl std::fmt::Display for IrType {
 /// let mut prog: IrProgram = IrProgram::new();
 /// let v = prog.fresh_var();
 /// prog.push(Instruction::Const { result: v, value: FieldElement::from_u64(42) });
-/// assert_eq!(prog.instructions.len(), 1);
+/// assert_eq!(prog.len(), 1);
 /// assert_eq!(v, SsaVar(0));
 ///
 /// // Type metadata starts empty
@@ -503,20 +503,18 @@ impl std::fmt::Display for IrType {
 /// prog.set_type(v, IrType::Field);
 /// assert_eq!(prog.get_type(v), Some(IrType::Field));
 /// ```
+///
+/// All fields are `pub(crate)` — external callers go through the
+/// accessor methods (`push`, `iter`, `len`, `set_name`, etc.) so the
+/// internal storage shape can evolve without breaking downstream code.
 #[derive(Debug)]
 pub struct IrProgram<F: FieldBackend = Bn254Fr> {
-    pub instructions: Vec<Instruction<F>>,
-    pub next_var: u32,
-    /// Maps SSA variables to their source-level names (for error messages).
-    pub var_names: HashMap<SsaVar, String>,
-    /// Maps SSA variables to their IR types (set by type annotations and inference).
-    pub var_types: HashMap<SsaVar, IrType>,
-    /// Maps input variable names to their source declaration spans.
-    pub input_spans: HashMap<String, SpanRange>,
-    /// Maps SSA variables to their originating source spans.
-    /// Keyed by SsaVar (not instruction index) so it survives optimization passes
-    /// that reorder or remove instructions (const_fold, DCE, bound_inference).
-    pub var_spans: HashMap<SsaVar, SpanRange>,
+    pub(crate) instructions: Vec<Instruction<F>>,
+    pub(crate) next_var: u32,
+    pub(crate) var_names: HashMap<SsaVar, String>,
+    pub(crate) var_types: HashMap<SsaVar, IrType>,
+    pub(crate) input_spans: HashMap<String, SpanRange>,
+    pub(crate) var_spans: HashMap<SsaVar, SpanRange>,
 }
 
 impl<F: FieldBackend> Default for IrProgram<F> {
@@ -634,6 +632,13 @@ impl<F: FieldBackend> IrProgram<F> {
     /// Replace the instruction stream wholesale.
     pub fn set_instructions(&mut self, insts: Vec<Instruction<F>>) {
         self.instructions = insts;
+    }
+
+    /// Consume the program and return the owned instruction stream.
+    /// Useful for tests that just want to assert on the generated IR
+    /// shape without keeping the surrounding metadata around.
+    pub fn into_instructions(self) -> Vec<Instruction<F>> {
+        self.instructions
     }
 
     /// Current `next_var` watermark (the id the next `fresh_var()` will return).

@@ -117,7 +117,7 @@ impl<F: FieldBackend> PlonkishCompiler<F> {
         // Track proven bit-width bounds from RangeCheck for IsLt/IsLe optimization
         let mut range_bounds: HashMap<SsaVar, u32> = HashMap::new();
 
-        for inst in &program.instructions {
+        for inst in program.iter() {
             match inst {
                 IrInstruction::Const { result, value } => {
                     self.val_map.insert(*result, PlonkVal::Constant(*value));

@@ -513,7 +513,6 @@ fn test_range_check_const_fold() {
     // After optimization, the RangeCheck should still be present
     // (it has side effects), but the constant should propagate
     let has_range_check = program
-        .instructions
         .iter()
         .any(|inst| matches!(inst, ir::Instruction::RangeCheck { .. }));
     assert!(
