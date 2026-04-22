@@ -1019,6 +1019,7 @@ dependencies = [
  "constraints",
  "diagnostics",
  "lysis",
+ "lysis-types",
  "memory",
  "resolve",
  "serde",
