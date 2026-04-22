@@ -11,7 +11,7 @@
 //! The full pipeline is four steps (RFC §9.1):
 //!
 //! 1. **Canonicalize**. Rename SsaVars to their visitation index in
-//!    both programs (`ir::prove_ir::canonicalize_ssa`). Defensive —
+//!    both programs (`ir::passes::canonicalize_ssa`). Defensive —
 //!    protects downstream comparison against non-deterministic
 //!    fresh-var counters in independent emitters.
 //!
@@ -39,7 +39,7 @@ use std::collections::HashMap;
 
 use constraints::poseidon::PoseidonParamsProvider;
 use constraints::r1cs::{Constraint, LinearCombination};
-use ir::prove_ir::canonicalize_ssa;
+use ir::passes::canonicalize_ssa;
 use ir::types::{Instruction, IrProgram, Visibility};
 use memory::{FieldBackend, FieldElement};
 

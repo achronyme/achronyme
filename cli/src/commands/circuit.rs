@@ -339,11 +339,7 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         .map_err(render_prove_ir_error)?;
 
     if verbose {
-        eprintln!(
-            "    {}: {} instructions",
-            style.cyan("IR"),
-            program.len()
-        );
+        eprintln!("    {}: {} instructions", style.cyan("IR"), program.len());
     }
 
     // 2. Optimize (unless --no-optimize)

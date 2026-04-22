@@ -1,10 +1,13 @@
 pub mod bit_pattern;
 pub mod bool_prop;
 pub mod bound_inference;
+pub mod canonicalize;
 pub mod const_fold;
 pub mod cse;
 pub mod dce;
 pub mod taint;
+
+pub use canonicalize::canonicalize_ssa;
 
 use memory::FieldBackend;
 
