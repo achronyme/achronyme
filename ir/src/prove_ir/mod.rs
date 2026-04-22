@@ -36,7 +36,11 @@ pub use circom_interop::{
 };
 pub use compiler::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
 pub use error::ProveIrError;
-pub use types::*;
+pub use types::{
+    ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, CircuitBinOp, CircuitBoolOp,
+    CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp, FieldConst, ForRange, ProveIR,
+    ProveInputDecl,
+};
 
 #[cfg(test)]
 pub(crate) mod test_utils;

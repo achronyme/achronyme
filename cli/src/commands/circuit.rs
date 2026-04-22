@@ -441,8 +441,8 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         let span = w
             .span()
             .cloned()
-            .unwrap_or_else(|| compiler::diagnostic::SpanRange::point(0, 0, 0));
-        let diag = compiler::Diagnostic::warning(w.to_string(), span);
+            .unwrap_or_else(|| diagnostics::SpanRange::point(0, 0, 0));
+        let diag = diagnostics::Diagnostic::warning(w.to_string(), span);
         super::emit_diagnostic(&diag, &source, error_format);
     }
 

@@ -5,7 +5,8 @@ pub mod disassemble;
 pub mod inspect;
 pub mod run;
 
-use compiler::{ColorMode, Compiler, CompilerError, Diagnostic, DiagnosticRenderer};
+use compiler::{Compiler, CompilerError};
+use diagnostics::{ColorMode, Diagnostic, DiagnosticRenderer};
 
 /// Create a compiler with std natives pre-registered.
 pub fn new_compiler() -> Compiler {
@@ -102,7 +103,7 @@ fn diagnostic_to_json(diag: &Diagnostic) -> String {
         .unwrap_or_else(|_| serde_json::json!({"message": diag.message}).to_string())
 }
 
-fn span_to_json(span: &compiler::diagnostic::SpanRange, label: Option<&str>) -> serde_json::Value {
+fn span_to_json(span: &diagnostics::SpanRange, label: Option<&str>) -> serde_json::Value {
     serde_json::json!({
         "file_name": span.file.as_ref().map(|p| p.display().to_string()),
         "byte_start": span.byte_start,

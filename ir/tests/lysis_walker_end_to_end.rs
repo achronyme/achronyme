@@ -20,7 +20,8 @@ use ir::prove_ir::lysis_lower::{
     BindingTime, CaptureKind, SlotId, TemplateRegistry, Walker,
 };
 use ir::types::{Instruction, SsaVar, Visibility};
-use lysis::{execute, FieldFamily, InstructionKind, InterningSink, LysisConfig};
+use artik::FieldFamily;
+use lysis::{execute, InstructionKind, InterningSink, LysisConfig};
 use memory::{Bn254Fr, FieldElement};
 
 fn fe(n: u64) -> FieldElement<Bn254Fr> {

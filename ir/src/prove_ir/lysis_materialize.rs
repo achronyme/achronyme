@@ -64,7 +64,7 @@ mod tests {
     fn run_builder(
         build: impl FnOnce(&mut lysis::ProgramBuilder<Bn254Fr>),
     ) -> lysis::InterningSink<Bn254Fr> {
-        let mut b = lysis::ProgramBuilder::<Bn254Fr>::new(lysis::FieldFamily::BnLike256);
+        let mut b = lysis::ProgramBuilder::<Bn254Fr>::new(artik::FieldFamily::BnLike256);
         build(&mut b);
         let program = b.finish();
         let bytes = lysis::encode(&program);

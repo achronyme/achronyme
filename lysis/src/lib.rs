@@ -43,11 +43,6 @@ pub use intern::{
 };
 pub use program::{Instr, Program, Template};
 
-// Re-export FieldFamily from artik — the canonical owner of the field
-// family enum. See RFC §4.2 + §4.4 (Option Y): a Lysis-only consumer
-// does not need to know the tag comes from artik.
-pub use artik::FieldFamily;
-
 /// Forward-compat aliases. `Program` and `ProgramBuilder` collide
 /// with `artik::Program` / `artik::ProgramBuilder`; `Visibility`
 /// collides with `ir::Visibility` (signals) and the parser's AST
