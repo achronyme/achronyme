@@ -27,6 +27,7 @@ changes.txt
 # cargo-fuzz (local state: corpus grows per session, artifacts are crash repros)
 fuzz/corpus/
 fuzz/artifacts/
+fuzz/target/
 
 # WASM playground
 wasm/target/
