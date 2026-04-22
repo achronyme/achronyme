@@ -16,6 +16,15 @@ ir = { path = "../ir" }
 memory = { path = "../memory" }
 artik = { path = "../artik" }
 
+[features]
+# Emit `ExtendedInstruction<F>` instead of `Instruction<F>` where the
+# Lysis lifter needs to consume the stream. Off by default — the legacy
+# `ir::prove_ir::instantiate` path is still the supported production
+# pipeline until Phase 5 deletes it. Set via `cargo ... --features
+# circom/lysis-frontend` or from the `[circom]` section of
+# `achronyme.toml`.
+lysis-frontend = []
+
 [dev-dependencies]
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
