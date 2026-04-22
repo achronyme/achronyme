@@ -1,6 +1,7 @@
 //! Artik bytecode header — the 16 bytes that precede every program.
 
 use crate::error::ArtikError;
+pub use memory::FieldFamily;
 
 /// The 4-byte magic identifier for Artik bytecode: ASCII `ARTK`.
 pub const MAGIC: [u8; 4] = *b"ARTK";
@@ -10,40 +11,6 @@ pub const VERSION: u16 = 1;
 
 /// Total header size in bytes.
 pub const HEADER_SIZE: usize = 16;
-
-/// Field family — primes that share the same canonical-byte width, and
-/// therefore can share the same `.artik` bytecode.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-#[repr(u8)]
-pub enum FieldFamily {
-    /// 254/255-bit primes: BN254, BLS12-381 Fr. Constants up to 32 bytes.
-    BnLike256 = 0,
-    /// Goldilocks (2^64 - 2^32 + 1). Constants up to 8 bytes.
-    Goldilocks64 = 1,
-    /// Mersenne31 (2^31 - 1). Constants up to 4 bytes. Reserved for v2.
-    M31_32 = 2,
-}
-
-impl FieldFamily {
-    pub fn from_u8(v: u8) -> Option<Self> {
-        match v {
-            0 => Some(Self::BnLike256),
-            1 => Some(Self::Goldilocks64),
-            2 => Some(Self::M31_32),
-            _ => None,
-        }
-    }
-
-    /// Maximum serialized length of a single field constant in this
-    /// family. Validator rejects any const pool entry larger than this.
-    pub fn max_const_bytes(self) -> usize {
-        match self {
-            Self::BnLike256 => 32,
-            Self::Goldilocks64 => 8,
-            Self::M31_32 => 4,
-        }
-    }
-}
 
 /// Decoded bytecode header.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
