@@ -7,9 +7,9 @@
 //! in `bytecode_fixtures.rs` with a semantic-level check of the
 //! pipeline.
 
+use artik::FieldFamily;
 use lysis::{
-    decode, encode, execute, FieldFamily, InstructionKind, LysisConfig, ProgramBuilder, StubSink,
-    Visibility,
+    decode, encode, execute, InstructionKind, LysisConfig, ProgramBuilder, StubSink, Visibility,
 };
 use memory::field::{Bn254Fr, FieldElement};
 

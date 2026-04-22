@@ -84,7 +84,7 @@ impl<F: FieldBackend> Program<F> {
 mod tests {
     use super::*;
     use crate::header::LysisHeader;
-    use crate::FieldFamily;
+    use artik::FieldFamily;
 
     fn empty_program() -> Program<Bn254Fr> {
         Program {

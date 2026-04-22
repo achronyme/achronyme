@@ -12,9 +12,10 @@
 //!    is what the fixed-key SipHash-2-4 buys us; it is the
 //!    invariant the Phase 2 oracle harness depends on.
 
+use artik::FieldFamily;
 use lysis::{
-    decode, encode, execute, FieldFamily, InstructionKind, InterningSink, IrSink, LysisConfig,
-    NodeId, ProgramBuilder, StubSink,
+    decode, encode, execute, InstructionKind, InterningSink, IrSink, LysisConfig, NodeId,
+    ProgramBuilder, StubSink,
 };
 use memory::field::{Bn254Fr, FieldElement};
 

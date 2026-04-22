@@ -15,9 +15,10 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
+use artik::FieldFamily;
 use lysis::{
-    bytecode::validate, decode, encode, execute, FieldFamily, InstructionKind, InterningSink,
-    LysisConfig, NodeId, ProgramBuilder, StubSink, Visibility,
+    bytecode::validate, decode, encode, execute, InstructionKind, InterningSink, LysisConfig,
+    NodeId, ProgramBuilder, StubSink, Visibility,
 };
 use memory::field::{Bn254Fr, FieldElement};
 
