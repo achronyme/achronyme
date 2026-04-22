@@ -21,7 +21,7 @@ use memory::field::FieldBackend;
 
 use crate::intern::effect::SideEffect;
 use crate::intern::interner::{Emission, NodeInterner};
-use crate::intern::kind::InstructionKind;
+use crate::intern::InstructionKind;
 
 impl<F: FieldBackend> NodeInterner<F> {
     /// Consume the interner, producing a flat `Vec<InstructionKind<F>>`.
@@ -88,7 +88,7 @@ mod tests {
     use crate::intern::effect::SideEffect;
     use crate::intern::interner::NodeInterner;
     use crate::intern::key::NodeKey;
-    use crate::intern::kind::{InstructionKind, Visibility};
+    use crate::intern::{InstructionKind, Visibility};
     use crate::intern::span::SpanRange;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {

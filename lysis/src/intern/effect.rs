@@ -18,8 +18,7 @@ use std::num::NonZeroU32;
 
 use memory::field::FieldBackend;
 
-use crate::intern::kind::{InstructionKind, Visibility};
-use crate::intern::node::NodeId;
+use crate::intern::{InstructionKind, NodeId, Visibility};
 
 /// Opaque handle for a side-effect slot. `NonZeroU32` so
 /// `Option<EffectId>` stays pointer-sized.

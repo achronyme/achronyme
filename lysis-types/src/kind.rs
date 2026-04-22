@@ -1,15 +1,14 @@
 //! `InstructionKind<F>` — Lysis-facing mirror of `ir::Instruction<F>`.
 //!
-//! Phase 1 cannot depend on the `ir` crate yet because that pulls a
-//! deep tree of dependencies (parser, diagnostics, resolve, ...) that
-//! we do not want inside Lysis while the VM is still coming online.
-//! Keeping a parallel enum here is the minimum wedge that lets the
-//! executor produce something concrete now while keeping the schema
-//! 1:1 with what the rest of the toolchain speaks.
+//! This type cannot depend on the `ir` crate (that would pull a deep
+//! tree of dependencies — parser, diagnostics, resolve, ... — into
+//! anyone who wants to emit Lysis nodes). Keeping a parallel enum here
+//! in a tiny leaf crate is the minimum wedge that lets both `lysis`
+//! and its consumers speak the same schema without a cycle.
 //!
-//! Phase 3 will add the bridge `From<InstructionKind<F>> for
-//! ir::Instruction<F>` inside a separate glue module in `ir/` —
-//! direction is Lysis → ir because Lysis is the emitter.
+//! The bridge `From<InstructionKind<F>> for ir::Instruction<F>` lives
+//! in `ir/src/prove_ir/lysis_bridge.rs` — direction is Lysis → ir
+//! because Lysis is the emitter.
 //!
 //! # The mirror contract
 //!
@@ -54,7 +53,7 @@
 
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
 
-use crate::intern::NodeId;
+use crate::node::NodeId;
 
 /// Whether a signal is public (verifier-visible) or witness
 /// (prover-private). Mirrors `ir::Visibility`.

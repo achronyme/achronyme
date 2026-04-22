@@ -25,7 +25,7 @@ use memory::field::{Bn254Fr, FieldBackend};
 use crate::intern::effect::{EffectId, SideEffect};
 use crate::intern::hash::{deterministic_hash, DeterministicBuildHasher};
 use crate::intern::key::NodeKey;
-use crate::intern::node::NodeId;
+use crate::intern::NodeId;
 use crate::intern::span::{SpanList, SpanRange};
 
 /// Metadata stored alongside each interned key. The cached hash lets
@@ -228,7 +228,7 @@ mod tests {
     use super::*;
     use memory::field::FieldElement;
 
-    use crate::intern::kind::Visibility;
+    use crate::intern::Visibility;
     use crate::intern::span::SPAN_LIST_CAP;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
