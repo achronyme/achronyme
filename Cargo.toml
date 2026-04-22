@@ -15,6 +15,7 @@ members = [
     "resolve",
     "artik",
     "lysis",
+    "lysis-types",
 ]
 exclude = ["wasm"]
 resolver = "2"
