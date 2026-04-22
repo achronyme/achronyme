@@ -6,16 +6,28 @@
 //!
 //! ## Scope
 //!
-//! Phase 3.B.7 handles:
+//! Phase 3.B.7 (augmented by the 3.C-era deuda clearing) handles:
 //!
-//! - `Plain(Instruction<F>)` — every arithmetic, logic, hash, and
-//!   side-effect variant except `WitnessCall` (Artik bytecode blob
-//!   interning defers to a later iteration).
+//! - `Plain(Instruction<F>)` — every arithmetic, boolean, comparison,
+//!   hash, constraint, and side-effect variant. Several lower via
+//!   desugarings rather than dedicated opcodes:
+//!     - `Not(x)`         → `Sub(one, x)`
+//!     - `And(x,y)`       → `Mul(x, y)`
+//!     - `Or(x,y)`        → `Add(x,y) - Mul(x,y)`
+//!     - `Assert(x)`      → `AssertEq(x, one)`
+//!     - `IsNeq(x,y)`     → `Sub(one, IsEq(x, y))`
+//!     - `IsLe(x,y)`      → `Sub(one, IsLt(y, x))`
+//!     - `IsLtBounded`    → `IsLt` (bitwidth hint dropped)
+//!     - `IsLeBounded`    → `Sub(one, IsLt(y, x))`
+//!     - `WitnessCall`    → `EmitWitnessCall` with Artik blob interning
+//!
+//!   The `one` register is lazily allocated at the top of `lower` only
+//!   when the body contains at least one desugaring that needs it.
 //! - `LoopUnroll` — emits the Lysis `LoopUnroll` opcode with an
 //!   inline body. The executor's Phase 3.B.8 loop machinery takes
 //!   care of iteration binding and hash-cons dedup within the body.
 //!
-//! Not handled:
+//! Not handled (Phase 4):
 //!
 //! - `TemplateBody` / `TemplateCall` — template extraction is wired
 //!   through `extract.rs`, but the bytecode emission of
@@ -25,9 +37,16 @@
 //!   `WalkError::TemplateNotSupported`; the walker driver
 //!   (future work) falls back to inline unrolling when that error
 //!   appears.
-//! - `WitnessCall` — requires Artik bytecode blob interning. Defer.
+//! - `Div` — field division `x / y = x * y^{-1}`. Requires emitting
+//!   an inline Artik blob for the inverse + a range constraint. No
+//!   precedent in this walker; deferred until a use case surfaces.
+//! - `IntDiv` / `IntMod` — bounded integer arithmetic; the Lysis
+//!   bytecode has no opcode for these today. Circom never emits them
+//!   (signal arith is field-native).
 //! - Negative loop bounds — `LoopUnroll` uses `u32` in the bytecode,
 //!   so negative `i64` bounds are rejected up-front.
+//! - `RangeCheck` / `Decompose` with bit counts > 255 — the Lysis
+//!   opcodes carry the count as `u8`.
 //!
 //! ## Register allocation
 //!
@@ -57,9 +76,18 @@ pub enum WalkError {
     /// The body contains a `TemplateCall` or `TemplateBody`; Phase
     /// 3.B.7 only emits inline + `LoopUnroll`.
     TemplateNotSupported,
-    /// `WitnessCall` is not yet emitted by the walker (needs Artik
-    /// bytecode interning).
-    WitnessCallNotSupported,
+    /// An instruction variant is not emittable by the walker. Phase 3
+    /// punts field-division and integer-arithmetic variants that
+    /// require Phase-4 opcode extensions; other variants use this for
+    /// genuine "not implemented yet" surface.
+    UnsupportedInstruction { kind: &'static str },
+    /// A `RangeCheck` / `Decompose` bit count exceeded what the
+    /// Lysis opcode can carry (u8 — max 255 bits).
+    OperandOutOfRange {
+        kind: &'static str,
+        limit: u32,
+        got: u32,
+    },
     /// An operand referenced an SsaVar that was never produced by an
     /// earlier instruction in the walk. Either the program is
     /// malformed or the walker is missing a variant.
@@ -82,8 +110,14 @@ impl std::fmt::Display for WalkError {
             Self::TemplateNotSupported => f.write_str(
                 "walker: TemplateCall/TemplateBody not emitted yet (Phase 3 MVP uses LoopUnroll only)",
             ),
-            Self::WitnessCallNotSupported => {
-                f.write_str("walker: WitnessCall emission pending")
+            Self::UnsupportedInstruction { kind } => {
+                write!(f, "walker: instruction variant `{kind}` not supported (Phase 4)")
+            }
+            Self::OperandOutOfRange { kind, limit, got } => {
+                write!(
+                    f,
+                    "walker: `{kind}` operand {got} exceeds Lysis opcode limit of {limit}"
+                )
             }
             Self::UndefinedSsaVar(v) => write!(f, "walker: undefined SsaVar {v}"),
             Self::NegativeLoopBound { start, end } => {
@@ -205,11 +239,21 @@ impl<F: FieldBackend> Walker<F> {
                 self.builder.emit_mul(dst, l, r);
                 self.bind(*result, dst);
             }
-            // Lysis has no dedicated EmitDiv opcode yet — fall through
-            // to Mul-by-inverse or refuse. For Phase 3 MVP we refuse;
-            // ProveIR programs rarely emit Div at this layer.
+            // Field division Div(x,y) = x * y^{-1} is witness-computed
+            // (inverse via WitnessCall) + one range-check constraint
+            // (y*inv == 1). Plumbing it here would require synthesizing
+            // an inline Artik blob that computes inv = y^{-1}, which
+            // has no current precedent in this walker.
+            //
+            // Circom lowering does NOT emit Div (signals multiply
+            // only), and ProveIR's prove {} blocks rarely use field
+            // division. If 3.C.8 surfaces a real use case, the fix is:
+            //   1. Emit a WitnessCall with an Artik blob computing inv.
+            //   2. Emit AssertEq(Mul(y, inv), one) to constrain inv.
+            //   3. Emit Mul(x, inv) as the result.
+            // For now, surface the rejection with a clear error.
             Instruction::Div { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+                return Err(WalkError::UnsupportedInstruction { kind: "Div" });
             }
 
             // ---------- unary ----------
@@ -359,7 +403,11 @@ impl<F: FieldBackend> Walker<F> {
                 bits,
             } => {
                 if *bits > u32::from(u8::MAX) {
-                    return Err(WalkError::WitnessCallNotSupported);
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "RangeCheck.bits",
+                        limit: u32::from(u8::MAX),
+                        got: *bits,
+                    });
                 }
                 let op = self.resolve(*operand)?;
                 self.builder.emit_range_check(op, *bits as u8);
@@ -371,7 +419,11 @@ impl<F: FieldBackend> Walker<F> {
                 num_bits,
             } => {
                 if *num_bits > u32::from(u8::MAX) {
-                    return Err(WalkError::WitnessCallNotSupported);
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "Decompose.num_bits",
+                        limit: u32::from(u8::MAX),
+                        got: *num_bits,
+                    });
                 }
                 let op = self.resolve(*operand)?;
                 let base = self.allocator.alloc()?;
@@ -387,8 +439,15 @@ impl<F: FieldBackend> Walker<F> {
             }
 
             // ---------- integer div/mod ----------
-            Instruction::IntDiv { .. } | Instruction::IntMod { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+            // IntDiv / IntMod require a bounded-arithmetic opcode that
+            // the Lysis bytecode surface does not yet carry. Circom
+            // never emits these (signal arith is field-native), so
+            // Phase 3 punts them to Phase 4's opcode extension.
+            Instruction::IntDiv { .. } => {
+                return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" });
+            }
+            Instruction::IntMod { .. } => {
+                return Err(WalkError::UnsupportedInstruction { kind: "IntMod" });
             }
 
             // ---------- witness call ----------
@@ -643,7 +702,17 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             out_regs: vec![0u8; outputs.len()],
         }),
 
-        _ => return Err(WalkError::WitnessCallNotSupported),
+        // Div / IntDiv / IntMod are the only variants left — they all
+        // produce opcodes that the walker refuses above, so the size
+        // is never queried. Surface them with the same kind label the
+        // emit path uses so fuzz-style probes stay readable.
+        Instruction::Div { .. } => return Err(WalkError::UnsupportedInstruction { kind: "Div" }),
+        Instruction::IntDiv { .. } => {
+            return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" })
+        }
+        Instruction::IntMod { .. } => {
+            return Err(WalkError::UnsupportedInstruction { kind: "IntMod" })
+        }
     })
 }
 
@@ -1157,6 +1226,84 @@ mod tests {
             })
             .collect();
         assert_eq!(calls, vec![3]);
+    }
+
+    #[test]
+    fn refuses_div_with_clear_kind() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Div {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert_eq!(err, WalkError::UnsupportedInstruction { kind: "Div" });
+    }
+
+    #[test]
+    fn refuses_int_div_and_int_mod() {
+        let bodies = [
+            plain(Instruction::IntDiv {
+                result: ssa(0),
+                lhs: ssa(0),
+                rhs: ssa(0),
+                max_bits: 8,
+            }),
+            plain(Instruction::IntMod {
+                result: ssa(0),
+                lhs: ssa(0),
+                rhs: ssa(0),
+                max_bits: 8,
+            }),
+        ];
+        for body in bodies {
+            let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+            let err = walker.lower(&[body.clone()]).expect_err("should refuse");
+            match err {
+                WalkError::UnsupportedInstruction { kind } => {
+                    assert!(kind == "IntDiv" || kind == "IntMod", "kind: {kind}");
+                }
+                other => panic!("unexpected error variant: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_range_check_bits_overflow() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::RangeCheck {
+                result: ssa(1),
+                operand: ssa(0),
+                bits: 300,
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert_eq!(
+            err,
+            WalkError::OperandOutOfRange {
+                kind: "RangeCheck.bits",
+                limit: 255,
+                got: 300,
+            }
+        );
     }
 
     #[test]
