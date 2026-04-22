@@ -1,7 +1,8 @@
 //! Artik bytecode header — the 16 bytes that precede every program.
 
+use memory::FieldFamily;
+
 use crate::error::ArtikError;
-pub use memory::FieldFamily;
 
 /// The 4-byte magic identifier for Artik bytecode: ASCII `ARTK`.
 pub const MAGIC: [u8; 4] = *b"ARTK";

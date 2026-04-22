@@ -13,7 +13,7 @@
 //! - u8 / u32 / u64 / i64 bit-exact integer arithmetic with wrapping
 //!   semantics. u128 / i256 are out of scope.
 //! - Multi-prime bytecode within a field family
-//!   ([`FieldFamily::BnLike256`] covers BN254 + BLS12-381).
+//!   ([`memory::FieldFamily::BnLike256`] covers BN254 + BLS12-381).
 //! - No oracles / foreign calls. No JIT. No heap / GC.
 //! - Mandatory bytecode validator runs on every [`decode`].
 //!
@@ -32,7 +32,6 @@
 //! [`IntBinOp`]: ir::IntBinOp
 //! [`RegType`]: ir::RegType
 //! [`ArtikHeader`]: header::ArtikHeader
-//! [`FieldFamily`]: memory::FieldFamily
 //! [`Program`]: program::Program
 //! [`FieldConstEntry`]: program::FieldConstEntry
 //! [`encode`]: bytecode::encode
@@ -54,8 +53,6 @@ pub use builder::{BuilderError, Label, ProgramBuilder};
 pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::ArtikHeader;
-#[doc(inline)]
-pub use memory::FieldFamily;
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
 pub use program::{FieldConstEntry, Program};
 
