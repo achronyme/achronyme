@@ -136,6 +136,21 @@ impl<F: FieldBackend> LinearCombination<F> {
         self.terms.push((var, coeff));
     }
 
+    /// Read-only view of the term list. Prefer this over the public
+    /// `terms` field when you only need to iterate — it decouples
+    /// callers from the storage representation and will keep working
+    /// after the field becomes `pub(crate)` in the post-cleanup
+    /// encapsulation pass (structural-cleanup.md §3.4).
+    pub fn terms(&self) -> &[(Variable, FieldElement<F>)] {
+        &self.terms
+    }
+
+    /// Consume the LC and return its term list. Useful for callers
+    /// that want to take ownership (serialization, format conversion).
+    pub fn into_terms(self) -> Vec<(Variable, FieldElement<F>)> {
+        self.terms
+    }
+
     /// Merge duplicate variable terms and remove zero coefficients.
     ///
     /// E.g. `x - x` simplifies to the empty LC (constant zero),
@@ -276,6 +291,17 @@ pub struct Constraint<F: FieldBackend = Bn254Fr> {
     pub a: LinearCombination<F>,
     pub b: LinearCombination<F>,
     pub c: LinearCombination<F>,
+}
+
+impl<F: FieldBackend> Constraint<F> {
+    /// Build a constraint `A · B = C`. `a`, `b`, `c` are linear
+    /// combinations evaluated against the witness vector. The three
+    /// LCs carry no ordering invariant between them; equality of two
+    /// `Constraint`s is not structural — canonicalize via
+    /// `LinearCombination::simplify()` before comparing if needed.
+    pub fn new(a: LinearCombination<F>, b: LinearCombination<F>, c: LinearCombination<F>) -> Self {
+        Self { a, b, c }
+    }
 }
 
 // ============================================================================
