@@ -405,16 +405,10 @@ impl<F: FieldBackend> Instantiator<F> {
             CircuitExpr::Var(name) | CircuitExpr::Input(name) => {
                 // Look up the variable in the env — if it's a scalar SSA var
                 // that was defined as a Const (e.g., loop variable after unroll),
-                // extract its value.
+                // extract its value via the const_values cache.
                 if let Some(InstEnvValue::Scalar(ssa)) = self.env.get(name) {
-                    let ssa = *ssa;
-                    for inst in self.program.instructions.iter().rev() {
-                        if inst.result_var() == ssa {
-                            if let Instruction::Const { value, .. } = inst {
-                                return Ok(*value);
-                            }
-                            break;
-                        }
+                    if let Some(value) = self.const_value_of(*ssa) {
+                        return Ok(value);
                     }
                 }
                 Err(ProveIrError::UnsupportedOperation {
@@ -532,13 +526,8 @@ impl<F: FieldBackend> Instantiator<F> {
                                 span: None,
                             }
                         })?;
-                        for inst in self.program.instructions.iter().rev() {
-                            if inst.result_var() == ssa {
-                                if let Instruction::Const { value, .. } = inst {
-                                    return Ok(*value);
-                                }
-                                break;
-                            }
+                        if let Some(value) = self.const_value_of(ssa) {
+                            return Ok(value);
                         }
                         Err(ProveIrError::UnsupportedOperation {
                             description: format!("`{array}[{idx}]` is not a compile-time constant"),

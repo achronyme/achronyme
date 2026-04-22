@@ -221,22 +221,16 @@ impl<F: FieldBackend> Instantiator<F> {
         self.emit_recompose(&shifted_bits)
     }
 
-    /// Try to extract a constant usize from the last emitted instruction
-    /// (the one that defined `var`).
+    /// Try to extract a constant usize from the SSA variable, using the
+    /// O(1) const_values cache (populated by emit_const).
     pub(super) fn extract_const_index(&self, var: SsaVar) -> Option<usize> {
-        // Walk backwards to find the instruction that defines this variable
-        for inst in self.program.instructions.iter().rev() {
-            if inst.result_var() == var {
-                if let Instruction::Const { value, .. } = inst {
-                    let limbs = value.to_canonical();
-                    if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
-                        return usize::try_from(limbs[0]).ok();
-                    }
-                }
-                return None;
-            }
+        let value = self.const_value_of(var)?;
+        let limbs = value.to_canonical();
+        if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+            usize::try_from(limbs[0]).ok()
+        } else {
+            None
         }
-        None
     }
 
     /// Ensure an array exists in the env and has at least `idx + 1` slots.
