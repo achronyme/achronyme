@@ -29,11 +29,12 @@
 //!    downstream in R1CS. We check the shape up to the asserts.)
 //! ```
 
+use artik::FieldFamily;
 use ir::prove_ir::lysis_materialize::materialize_interning_sink;
 use ir::{Instruction, SsaVar};
 use lysis::{
-    bytecode::validate, decode, encode, execute, FieldFamily, InterningSink, LysisConfig,
-    ProgramBuilder, Visibility,
+    bytecode::validate, decode, encode, execute, InterningSink, LysisConfig, ProgramBuilder,
+    Visibility,
 };
 use memory::{Bn254Fr, FieldElement};
 
