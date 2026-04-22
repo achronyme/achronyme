@@ -1268,9 +1268,11 @@ mod tests {
                 max_bits: 8,
             }),
         ];
-        for body in bodies {
+        for body in &bodies {
             let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-            let err = walker.lower(&[body.clone()]).expect_err("should refuse");
+            let err = walker
+                .lower(std::slice::from_ref(body))
+                .expect_err("should refuse");
             match err {
                 WalkError::UnsupportedInstruction { kind } => {
                     assert!(kind == "IntDiv" || kind == "IntMod", "kind: {kind}");
