@@ -1304,7 +1304,7 @@ fn fn_witness_lift_produces_artik_call() {
             _ => None,
         })
         .unwrap();
-    artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("Artik payload must decode and validate");
 }
 
@@ -1348,7 +1348,7 @@ fn fn_witness_lift_unrolls_for_loop() {
         bytes.len()
     );
 
-    artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("unrolled Artik payload must decode and validate");
 }
 
@@ -1376,7 +1376,7 @@ fn fn_witness_lift_folds_if_else_in_loop() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("payload must decode and validate");
 
     // Spot-check: no JumpIf / Jump should have been emitted — the
@@ -1419,7 +1419,7 @@ fn fn_witness_lift_handles_internal_array() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("array payload must decode and validate");
 
     let mut seen_alloc = false;
@@ -1466,7 +1466,7 @@ fn fn_witness_lift_inlines_nested_call() {
         witness_call_count, 1,
         "nested calls must be inlined into a single WitnessCall"
     );
-    let prog = artik::bytecode::decode(&payload.unwrap(), Some(artik::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&payload.unwrap(), Some(memory::FieldFamily::BnLike256))
         .expect("nested-lift payload must decode and validate");
 
     let return_count = prog
@@ -1508,7 +1508,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("mux payload must decode and validate");
 
     // No control flow emitted — the mux is pure arithmetic.
@@ -2021,7 +2021,7 @@ fn fn_witness_lift_mux_admits_nested_calls() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("mux+calls payload must decode and validate");
 
     use memory::field::{Bn254Fr, FieldElement};
@@ -2073,7 +2073,7 @@ fn fn_witness_lift_handles_bit_ops() {
         })
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
 
-    let prog = artik::bytecode::decode(&bytes, Some(artik::FieldFamily::BnLike256))
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("bit-op payload must decode and validate");
 
     // Structural evidence the lift emitted the int-promotion

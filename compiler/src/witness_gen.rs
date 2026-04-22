@@ -213,13 +213,13 @@ impl std::error::Error for WitnessError {}
 // Artik dispatch
 // ============================================================================
 
-/// Pick the Artik field family that matches the compile-time backend
+/// Pick the `FieldFamily` that matches the compile-time backend
 /// `F`. BN254-family primes share `BnLike256` — Goldilocks would need
 /// a separate family and no circom lift targets it today.
-fn artik_family<F: FieldBackend>() -> Option<artik::FieldFamily> {
+fn artik_family<F: FieldBackend>() -> Option<memory::FieldFamily> {
     use memory::PrimeId;
     match F::PRIME_ID {
-        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(artik::FieldFamily::BnLike256),
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(memory::FieldFamily::BnLike256),
         _ => None,
     }
 }

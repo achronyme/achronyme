@@ -57,13 +57,12 @@
 
 use std::collections::HashMap;
 
-use artik::FieldFamily;
 use lysis::bytecode::encoding::encode_opcode;
 use lysis::bytecode::Opcode;
 use lysis::lower::{AllocError, RegAllocator, RegId};
 use lysis::program::Program;
 use lysis::ProgramBuilder;
-use memory::{FieldBackend, FieldElement};
+use memory::{FieldBackend, FieldElement, FieldFamily};
 
 use crate::prove_ir::extended::ExtendedInstruction;
 use crate::types::{Instruction, SsaVar, Visibility};

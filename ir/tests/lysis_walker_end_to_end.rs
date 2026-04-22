@@ -14,8 +14,8 @@
 
 use std::collections::BTreeSet;
 
-use artik::FieldFamily;
 use ir::prove_ir::extended::ExtendedInstruction;
+use memory::FieldFamily;
 use ir::prove_ir::lysis_lower::{
     build_capture_layout, classify, compute_frame_size, extract_template, symbolic_emit,
     BindingTime, CaptureKind, SlotId, TemplateRegistry, Walker,
