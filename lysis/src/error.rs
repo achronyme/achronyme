@@ -6,7 +6,7 @@
 //! phase for readability, but the public surface is one flat enum so
 //! the caller matches the error wherever it surfaces.
 
-use artik::FieldFamily;
+use memory::FieldFamily;
 
 /// All error paths produced by Lysis.
 #[derive(Debug, Clone, PartialEq, Eq)]

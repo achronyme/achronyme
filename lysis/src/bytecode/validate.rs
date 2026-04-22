@@ -569,8 +569,8 @@ fn dfs_longest(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use artik::FieldFamily;
     use memory::field::Bn254Fr;
+    use memory::FieldFamily;
 
     use crate::builder::ProgramBuilder;
     use crate::intern::Visibility;

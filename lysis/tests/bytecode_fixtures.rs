@@ -17,8 +17,8 @@
 //!
 //! Full opcode-by-opcode validation is Phase 2 work.
 
-use artik::FieldFamily;
 use lysis::{LysisHeader, HEADER_SIZE};
+use memory::FieldFamily;
 
 // ---------------------------------------------------------------------
 // Opcode + tag constants (mirrors of RFC §4.3 + §4.4).

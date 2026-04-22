@@ -32,12 +32,12 @@
 //! Reduction ratio ~= `(K + R·P) / (K + P)`, which for `R = 64`,
 //! `P = 20`, `K = 2` is ~58×. The gate asserts ≥10×.
 
-use artik::FieldFamily;
 use lysis::{
     bytecode::validate, decode, encode, execute, InterningSink, LysisConfig, Program,
     ProgramBuilder, StubSink,
 };
 use memory::field::{Bn254Fr, FieldElement};
+use memory::FieldFamily;
 
 fn fe(x: u64) -> FieldElement<Bn254Fr> {
     FieldElement::<Bn254Fr>::from_canonical([x, 0, 0, 0])

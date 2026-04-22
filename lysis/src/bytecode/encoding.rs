@@ -520,8 +520,8 @@ fn decode_opcode_at(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use artik::FieldFamily;
     use memory::field::{Bn254Fr, FieldElement};
+    use memory::FieldFamily;
 
     use crate::bytecode::const_pool::{ConstPool, ConstPoolEntry};
     use crate::header::LysisHeader;

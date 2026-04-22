@@ -15,12 +15,12 @@
 
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
-use artik::FieldFamily;
 use lysis::{
     bytecode::validate, decode, encode, execute, InstructionKind, InterningSink, LysisConfig,
     NodeId, ProgramBuilder, StubSink, Visibility,
 };
 use memory::field::{Bn254Fr, FieldElement};
+use memory::FieldFamily;
 
 fn fe(x: u64) -> FieldElement<Bn254Fr> {
     FieldElement::<Bn254Fr>::from_canonical([x, 0, 0, 0])
