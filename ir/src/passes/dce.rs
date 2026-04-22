@@ -17,23 +17,23 @@ pub fn dead_code_elimination<F: FieldBackend>(program: &mut IrProgram<F>) {
     // Pre-pass: eliminate tautological AssertEq(x, x).
     // These arise during Circom component inlining when an output signal
     // is wired to an input that already refers to the same SSA variable.
-    program
-        .instructions
-        .retain(|inst| !matches!(inst, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs));
+    program.retain_instructions(
+        |inst| !matches!(inst, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs),
+    );
 
     loop {
-        let before = program.instructions.len();
+        let before = program.len();
 
         // 1. Collect all used variables from current instructions
         let mut used: HashSet<SsaVar> = HashSet::new();
-        for inst in &program.instructions {
+        for inst in program.iter() {
             for op in inst.operands() {
                 used.insert(op);
             }
         }
 
         // 2. Remove instructions whose result is unused and are safe to eliminate
-        program.instructions.retain(|inst| {
+        program.retain_instructions(|inst| {
             // Never eliminate side-effect instructions
             if inst.has_side_effects() {
                 return true;
@@ -44,7 +44,7 @@ pub fn dead_code_elimination<F: FieldBackend>(program: &mut IrProgram<F>) {
         });
 
         // Fixpoint reached — no more instructions removed
-        if program.instructions.len() == before {
+        if program.len() == before {
             break;
         }
     }

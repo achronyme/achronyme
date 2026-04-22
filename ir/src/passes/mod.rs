@@ -46,17 +46,16 @@ pub struct OptimizeStats {
 ///     &["x"],
 ///     &[],
 /// ).unwrap();
-/// let before = prog.instructions.len();
+/// let before = prog.len();
 /// let stats = optimize(&mut prog);
-/// assert!(prog.instructions.len() <= before);
-/// assert_eq!(stats.total_after, prog.instructions.len());
+/// assert!(prog.len() <= before);
+/// assert_eq!(stats.total_after, prog.len());
 /// ```
 pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
-    let total_before = program.instructions.len();
+    let total_before = program.len();
 
     // Count Const instructions before folding
     let consts_before = program
-        .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Const { .. }))
         .count();
@@ -68,7 +67,6 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
 
     // Count Const instructions after folding — difference = folded
     let consts_after = program
-        .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Const { .. }))
         .count();
@@ -78,18 +76,17 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
 
     // Count tautological AssertEq(x, x) before DCE removes them
     let tautological_before = program
-        .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::AssertEq { lhs, rhs, .. } if lhs == rhs))
         .count();
 
-    let before_dce = program.instructions.len();
+    let before_dce = program.len();
     dce::dead_code_elimination(program);
     let dce_eliminated = before_dce
-        .saturating_sub(program.instructions.len())
+        .saturating_sub(program.len())
         .saturating_sub(tautological_before);
 
-    let total_after = program.instructions.len();
+    let total_after = program.len();
 
     OptimizeStats {
         total_before,

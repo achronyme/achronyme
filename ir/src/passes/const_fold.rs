@@ -442,7 +442,7 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
     // Expand constant Decompose: insert Const instructions for each bit.
     if !decompose_expansions.is_empty() {
         let mut new_instructions = Vec::with_capacity(
-            program.instructions.len()
+            program.len()
                 + decompose_expansions
                     .iter()
                     .map(|(_, _, b, _)| b.len())
@@ -451,7 +451,7 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
         let folded_results: std::collections::HashSet<SsaVar> =
             decompose_expansions.iter().map(|(r, _, _, _)| *r).collect();
 
-        for inst in program.instructions.drain(..) {
+        for inst in program.drain_instructions() {
             let result = inst.result_var();
             if folded_results.contains(&result) {
                 // This is the Const that replaced the Decompose.

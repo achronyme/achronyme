@@ -47,7 +47,7 @@ pub(super) struct FnDef {
 ///
 /// let prog: ir::types::IrProgram =
 ///     IrLowering::lower_circuit("assert_eq(x, y)", &["x"], &["y"]).unwrap();
-/// assert!(!prog.instructions.is_empty());
+/// assert!(!prog.is_empty());
 /// ```
 pub(super) fn annotation_to_ir_type(
     ann: &TypeAnnotation,
@@ -246,7 +246,7 @@ impl<F: FieldBackend> IrLowering<F> {
     ///     &["z"],
     ///     &["x", "y"],
     /// ).unwrap();
-    /// assert!(!prog.instructions.is_empty());
+    /// assert!(!prog.is_empty());
     /// ```
     /// Convenience: declare inputs, set base_path, and lower in one call.
     pub fn lower_circuit_with_base(

@@ -339,11 +339,11 @@ fn dce_removes_unused_const() {
     });
     // `a` is never used by anything
 
-    let before = p.instructions.len();
+    let before = p.len();
     dce::dead_code_elimination(&mut p);
 
     assert!(
-        p.instructions.len() < before,
+        p.len() < before,
         "DCE should remove unused Const"
     );
 }
@@ -374,7 +374,7 @@ fn dce_removes_unused_add() {
     dce::dead_code_elimination(&mut p);
 
     // Add should be removed, inputs kept (side effects)
-    assert_eq!(p.instructions.len(), 2);
+    assert_eq!(p.len(), 2);
 }
 
 #[test]
@@ -399,11 +399,11 @@ fn dce_keeps_used_const() {
         message: None,
     });
 
-    let before = p.instructions.len();
+    let before = p.len();
     dce::dead_code_elimination(&mut p);
 
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         before,
         "DCE should not remove used Const or AssertEq"
     );
@@ -434,7 +434,7 @@ fn dce_keeps_assert_eq() {
 
     dce::dead_code_elimination(&mut p);
 
-    assert_eq!(p.instructions.len(), 3);
+    assert_eq!(p.len(), 3);
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn dce_eliminates_tautological_assert_eq() {
 
     dce::dead_code_elimination(&mut p);
 
-    assert_eq!(p.instructions.len(), 1);
+    assert_eq!(p.len(), 1);
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn dce_eliminates_unused_mul() {
     dce::dead_code_elimination(&mut p);
 
     // Mul is eliminated (unused result), only Input survives
-    assert_eq!(p.instructions.len(), 1);
+    assert_eq!(p.len(), 1);
 }
 
 // ============================================================================
@@ -510,16 +510,16 @@ fn optimize_full_pipeline() {
         rhs: b,
     });
 
-    let before = p.instructions.len();
+    let before = p.len();
     optimize(&mut p);
 
     // After fold: 3 Consts. After DCE: all removed (none used).
     assert!(
-        p.instructions.len() < before,
+        p.len() < before,
         "optimize should reduce instruction count"
     );
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         0,
         "all unused consts should be removed"
     );
@@ -551,7 +551,7 @@ fn dce_chain_fixpoint() {
     dce::dead_code_elimination(&mut p);
 
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         0,
         "fixpoint DCE should remove entire dead chain"
     );
@@ -590,7 +590,7 @@ fn dce_chain_partial_live() {
     dce::dead_code_elimination(&mut p);
 
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         4,
         "nothing should be removed when chain feeds into AssertEq"
     );
@@ -874,7 +874,7 @@ fn dce_keeps_assert() {
     dce::dead_code_elimination(&mut p);
 
     // Assert has side effects — never removed
-    assert_eq!(p.instructions.len(), 2);
+    assert_eq!(p.len(), 2);
 }
 
 // ============================================================================

@@ -534,7 +534,7 @@ pub fn evaluate_lenient<F: FieldBackend + PoseidonParamsProvider>(
                var: &SsaVar|
      -> Option<FieldElement<F>> { values.get(var).copied() };
 
-    for (idx, inst) in program.instructions.iter().enumerate() {
+    for (idx, inst) in program.iter().enumerate() {
         match inst {
             Instruction::Const { result, value } => {
                 values.insert(*result, *value);

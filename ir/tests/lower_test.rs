@@ -340,7 +340,7 @@ fn lower_circuit_convenience() {
     let program =
         IrLowering::<memory::Bn254Fr>::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"])
             .unwrap();
-    assert!(program.instructions.len() >= 4); // 3 inputs + mul + assert_eq
+    assert!(program.len() >= 4); // 3 inputs + mul + assert_eq
     assert_eq!(
         count(&program.instructions, |i| matches!(
             i,
@@ -630,7 +630,7 @@ fn dce_preserves_range_check_unused_result() {
     // range_check(x, 8) — result not used in assert_eq, but must not be eliminated
     let source = "range_check(x, 8)";
     let mut program = IrLowering::<memory::Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
-    let before = program.instructions.len();
+    let before = program.len();
     let has_rc_before = program
         .instructions
         .iter()
@@ -649,7 +649,7 @@ fn dce_preserves_range_check_unused_result() {
     );
     // Const instructions for the bits literal may be folded, but RangeCheck itself must remain
     assert!(
-        program.instructions.len() <= before,
+        program.len() <= before,
         "optimization should not add instructions"
     );
 }
@@ -775,7 +775,7 @@ fn typed_let_field_compiles() {
         "witness a: Field\nwitness b: Field\nlet h: Field = poseidon(a, b)\nassert_eq(h, h)",
     )
     .expect("typed let should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -785,7 +785,7 @@ fn typed_let_bool_compiles() {
         "public x: Field\nwitness y: Field\nlet ok: Bool = x == y\nassert(ok)",
     )
     .expect("typed let Bool should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -819,7 +819,7 @@ assert_eq(h, h)
 "#;
     let (_, _, prog) = IrLowering::<memory::Bn254Fr>::lower_self_contained(source)
         .expect("typed fn should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -855,7 +855,7 @@ assert_eq(x, x)
 "#;
     let (_, _, prog) = IrLowering::<memory::Bn254Fr>::lower_self_contained(source)
         .expect("Bool used as Field should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -866,7 +866,7 @@ fn untyped_code_unchanged() {
         .expect("untyped should compile");
     assert_eq!(pub_names, vec!["x"]);
     assert_eq!(wit_names, vec!["y"]);
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]

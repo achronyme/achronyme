@@ -260,7 +260,7 @@ pub fn taint_analysis<F: FieldBackend>(
     // SSA is acyclic, so we iterate backward until no changes.
     loop {
         let mut changed = false;
-        for inst in program.instructions.iter().rev() {
+        for inst in program.iter().rev() {
             let result = inst.result_var();
             if constrained_vars.contains(&result) {
                 for op in inst.operands() {
