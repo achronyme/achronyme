@@ -172,7 +172,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// (e.g. MDS matrix multiplication in Poseidon partial rounds).
     /// Adds at most 1 constraint per materialization.
     fn auto_materialize(&mut self, lc: LinearCombination<F>) -> LinearCombination<F> {
-        if lc.terms.len() > LC_AUTO_MATERIALIZE_THRESHOLD {
+        if lc.terms().len() > LC_AUTO_MATERIALIZE_THRESHOLD {
             let var = self.materialize_lc(&lc);
             LinearCombination::from_variable(var)
         } else {

@@ -109,9 +109,9 @@ impl<F: FieldBackend> WitnessOp<F> {
     /// substituted wires.
     pub fn apply_substitutions(&mut self, subs: &SubstitutionMap<F>) {
         fn apply_sub<F2: FieldBackend>(lc: &mut LinearCombination<F2>, subs: &SubstitutionMap<F2>) {
-            if lc.terms.iter().any(|(v, _)| subs.contains_key(&v.index())) {
+            if lc.terms().iter().any(|(v, _)| subs.contains_key(&v.index())) {
                 let mut result = LinearCombination::<F2>::zero();
-                for (var, coeff) in &lc.terms {
+                for (var, coeff) in lc.terms() {
                     if let Some(replacement) = subs.get(&var.index()) {
                         result = result + replacement.clone() * *coeff;
                     } else {

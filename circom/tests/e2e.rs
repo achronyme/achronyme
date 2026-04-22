@@ -2450,11 +2450,11 @@ fn num2bits_optimization_diagnostic() {
 
         let fmt_lc = |lc: &constraints::LinearCombination| -> String {
             let simplified = lc.simplify();
-            if simplified.terms.is_empty() {
+            if simplified.terms().is_empty() {
                 return "0".to_string();
             }
             simplified
-                .terms
+                .terms()
                 .iter()
                 .map(|(v, coeff)| {
                     let coeff_u64 = coeff.to_canonical()[0];
@@ -2514,11 +2514,11 @@ fn num2bits_optimization_diagnostic() {
         for (var_idx, lc) in subs {
             let fmt_lc = |lc: &constraints::LinearCombination| -> String {
                 let simplified = lc.simplify();
-                if simplified.terms.is_empty() {
+                if simplified.terms().is_empty() {
                     return "0".to_string();
                 }
                 simplified
-                    .terms
+                    .terms()
                     .iter()
                     .map(|(v, coeff)| {
                         let coeff_u64 = coeff.to_canonical()[0];
@@ -2549,11 +2549,11 @@ fn num2bits_optimization_diagnostic() {
 
         let fmt_lc = |lc: &constraints::LinearCombination| -> String {
             let simplified = lc.simplify();
-            if simplified.terms.is_empty() {
+            if simplified.terms().is_empty() {
                 return "0".to_string();
             }
             simplified
-                .terms
+                .terms()
                 .iter()
                 .map(|(v, coeff)| {
                     let coeff_u64 = coeff.to_canonical()[0];

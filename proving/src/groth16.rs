@@ -163,7 +163,7 @@ fn convert_lc<B: FieldBackend, AF: PrimeField>(
     var_map: &[ArkVariable],
 ) -> ark_relations::r1cs::LinearCombination<AF> {
     let mut ark_lc = ark_relations::r1cs::LinearCombination::zero();
-    for (var, coeff) in &lc.terms {
+    for (var, coeff) in lc.terms() {
         ark_lc += (fe_to_ark::<B, AF>(coeff), var_map[var.index()]);
     }
     ark_lc
@@ -290,7 +290,7 @@ pub fn cache_key<B: FieldBackend>(cs: &ConstraintSystem<B>, curve_tag: &str) -> 
 }
 
 fn hash_lc<B: FieldBackend>(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination<B>) {
-    let mut terms: Vec<_> = lc.terms.iter().collect();
+    let mut terms: Vec<_> = lc.terms().iter().collect();
     terms.sort_by_key(|(var, _)| var.index());
     hasher.update((terms.len() as u64).to_le_bytes());
     for (var, coeff) in &terms {

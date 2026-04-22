@@ -217,7 +217,7 @@ fn canonicalize_constraint<F: FieldBackend>(c: &Constraint<F>) -> CanonicalConst
 /// `(wire_index, canonical_limbs)` representation.
 fn lc_to_terms<F: FieldBackend>(lc: &LinearCombination<F>) -> Vec<(usize, [u64; 4])> {
     lc.simplify()
-        .terms
+        .terms()
         .iter()
         .map(|(v, coeff)| (v.index(), coeff.to_canonical()))
         .collect()

@@ -92,7 +92,7 @@ impl Variable {
 /// use memory::FieldElement;
 ///
 /// let lc_var: LinearCombination = LinearCombination::from_variable(Variable(1));
-/// assert_eq!(lc_var.terms.len(), 1);
+/// assert_eq!(lc_var.terms().len(), 1);
 ///
 /// let lc_const: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(42));
 /// assert!(lc_const.is_constant());
