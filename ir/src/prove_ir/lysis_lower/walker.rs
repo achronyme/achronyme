@@ -386,12 +386,34 @@ impl<F: FieldBackend> Walker<F> {
                 }
             }
 
-            // ---------- integer div/mod + witness call ----------
+            // ---------- integer div/mod ----------
             Instruction::IntDiv { .. } | Instruction::IntMod { .. } => {
                 return Err(WalkError::WitnessCallNotSupported);
             }
-            Instruction::WitnessCall { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+
+            // ---------- witness call ----------
+            // Intern the Artik bytecode blob, resolve input regs,
+            // allocate fresh output regs, and emit. The reg-allocator
+            // scheme is bump-forward: each output takes the next slot
+            // so they stay contiguous, which is what EmitWitnessCall's
+            // encoding expects (see `lysis::program::execute`).
+            Instruction::WitnessCall {
+                outputs,
+                inputs,
+                program_bytes,
+            } => {
+                let blob_idx = self.builder.intern_artik_bytecode(program_bytes.clone()) as u16;
+                let in_regs: Vec<RegId> = inputs
+                    .iter()
+                    .map(|v| self.resolve(*v))
+                    .collect::<Result<_, _>>()?;
+                let mut out_regs: Vec<RegId> = Vec::with_capacity(outputs.len());
+                for o in outputs {
+                    let reg = self.allocator.alloc()?;
+                    out_regs.push(reg);
+                    self.bind(*o, reg);
+                }
+                self.builder.emit_witness_call(blob_idx, in_regs, out_regs);
             }
         }
         Ok(())
@@ -611,6 +633,14 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             dst: 0,
             lhs: 0,
             rhs: 0,
+        }),
+
+        Instruction::WitnessCall {
+            outputs, inputs, ..
+        } => bin(Opcode::EmitWitnessCall {
+            bytecode_const_idx: 0,
+            in_regs: vec![0u8; inputs.len()],
+            out_regs: vec![0u8; outputs.len()],
         }),
 
         _ => return Err(WalkError::WitnessCallNotSupported),
@@ -1098,14 +1128,50 @@ mod tests {
     }
 
     #[test]
-    fn refuses_witness_call() {
+    fn lowers_witness_call_with_blob_and_multiple_outputs() {
+        // Blob content is not validated at this layer — the walker just
+        // interns the bytes and lets the executor decode.
+        let blob = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::WitnessCall {
+                outputs: vec![ssa(1), ssa(2), ssa(3)],
+                inputs: vec![ssa(0)],
+                program_bytes: blob,
+            }),
+        ];
+        // `run` goes through a full execute via InterningSink. WitnessCall
+        // is a side-effect that produces OPAQUE output slots — the
+        // InterningSink does NOT dedupe it. We expect one WitnessCall in
+        // the materialized output with 3 output slots.
+        let out = run(&body);
+        let calls: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::WitnessCall { outputs, .. } => Some(outputs.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls, vec![3]);
+    }
+
+    #[test]
+    fn lowers_witness_call_empty_inputs() {
+        // Zero inputs, single output.
         let body = vec![plain(Instruction::WitnessCall {
             outputs: vec![ssa(0)],
             inputs: vec![],
-            program_bytes: vec![],
+            program_bytes: vec![0xFF],
         })];
-        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
-        assert_eq!(err, WalkError::WitnessCallNotSupported);
+        let out = run(&body);
+        let call_count = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall { .. }))
+            .count();
+        assert_eq!(call_count, 1);
     }
 }
