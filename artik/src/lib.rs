@@ -56,3 +56,10 @@ pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::{ArtikHeader, FieldFamily};
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
 pub use program::{FieldConstEntry, Program};
+
+/// Forward-compat aliases. `Program` and `ProgramBuilder` collide
+/// with `lysis::Program` / `lysis::ProgramBuilder`; the post-cleanup
+/// rename (see `.claude/plans/structural-cleanup.md` §10 D5)
+/// disambiguates both crates. Use these names in new code.
+pub type ArtikProgram = Program;
+pub type ArtikProgramBuilder = ProgramBuilder;

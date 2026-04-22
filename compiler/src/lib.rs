@@ -23,6 +23,14 @@ pub use codegen::Compiler;
 pub use error::CompilerError;
 pub use interner::{FieldInterner, StringInterner};
 
+/// Forward-compat alias for [`Compiler`]. The bytecode compiler will
+/// rename to `BytecodeCompiler` in the post-cleanup crate split (see
+/// `.claude/plans/structural-cleanup.md` §10 D2) to disambiguate from
+/// `ProveIrCompiler` (AST → ProveIR) and the post-cleanup `zkc`
+/// backend compilers. Use this alias in new code to avoid a second
+/// rename later.
+pub type BytecodeCompiler = Compiler;
+
 // Re-export diagnostic types for consumers (CLI, LSP)
 pub use achronyme_parser::diagnostic;
 pub use achronyme_parser::{ColorMode, Diagnostic, DiagnosticRenderer, Severity};

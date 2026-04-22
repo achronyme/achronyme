@@ -47,3 +47,13 @@ pub use program::{Instr, Program, Template};
 // family enum. See RFC §4.2 + §4.4 (Option Y): a Lysis-only consumer
 // does not need to know the tag comes from artik.
 pub use artik::FieldFamily;
+
+/// Forward-compat aliases. `Program` and `ProgramBuilder` collide
+/// with `artik::Program` / `artik::ProgramBuilder`; `Visibility`
+/// collides with `ir::Visibility` (signals) and the parser's AST
+/// visibility. The post-cleanup rename (see
+/// `.claude/plans/structural-cleanup.md` §10 D5) disambiguates. Use
+/// these names in new code.
+pub type LysisProgram<F> = Program<F>;
+pub type LysisProgramBuilder<F> = ProgramBuilder<F>;
+pub type BindingVisibility = Visibility;
