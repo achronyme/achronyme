@@ -31,14 +31,5 @@ pub use interner::{FieldInterner, StringInterner};
 /// rename later.
 pub type BytecodeCompiler = Compiler;
 
-// Re-export diagnostic types for consumers (CLI, LSP)
-pub use achronyme_parser::diagnostic;
-pub use achronyme_parser::{ColorMode, Diagnostic, DiagnosticRenderer, Severity};
-
-// Re-exports for convenience if needed, but Compiler has most traits implemented.
-// Expose traits so they can be imported if necessary?
-pub use declarations::DeclarationCompiler;
-pub use expressions::ExpressionCompiler;
-pub use statements::StatementCompiler;
 // declarations is inside statements.
 use statements::declarations;
