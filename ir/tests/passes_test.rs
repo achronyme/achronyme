@@ -29,10 +29,10 @@ fn const_fold_add() {
     const_fold::constant_fold(&mut p);
 
     // Add should be replaced by Const(10)
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::from_u64(10));
     } else {
-        panic!("expected Const after folding, got {:?}", p.instructions[2]);
+        panic!("expected Const after folding, got {:?}", p.instructions()[2]);
     }
 }
 
@@ -58,7 +58,7 @@ fn const_fold_sub() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::from_u64(7));
     } else {
         panic!("expected Const after folding");
@@ -87,7 +87,7 @@ fn const_fold_mul() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::from_u64(42));
     } else {
         panic!("expected Const after folding");
@@ -119,7 +119,7 @@ fn const_fold_mul_by_zero() {
     const_fold::constant_fold(&mut p);
 
     // x * 0 should fold to Const(0)
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert!(value.is_zero());
     } else {
         panic!("expected Const(0) for x * 0");
@@ -142,7 +142,7 @@ fn const_fold_neg() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[1] {
+    if let Instruction::Const { value, .. } = &p.instructions()[1] {
         assert_eq!(*value, FieldElement::from_u64(5).neg());
     } else {
         panic!("expected Const after folding Neg");
@@ -184,12 +184,12 @@ fn const_fold_chain() {
     const_fold::constant_fold(&mut p);
 
     // c should be Const(5), e should be Const(20)
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::from_u64(5));
     } else {
         panic!("expected Const(5)");
     }
-    if let Instruction::Const { value, .. } = &p.instructions[4] {
+    if let Instruction::Const { value, .. } = &p.instructions()[4] {
         assert_eq!(*value, FieldElement::from_u64(20));
     } else {
         panic!("expected Const(20)");
@@ -221,7 +221,7 @@ fn const_fold_no_fold_on_variable() {
     const_fold::constant_fold(&mut p);
 
     // Should still be an Add
-    assert!(matches!(p.instructions[2], Instruction::Add { .. }));
+    assert!(matches!(p.instructions()[2], Instruction::Add { .. }));
 }
 
 #[test]
@@ -248,7 +248,7 @@ fn const_fold_div_zero_numerator() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert!(value.is_zero(), "0/x should fold to 0");
     } else {
         panic!("expected Const(0) for 0/x");
@@ -283,7 +283,7 @@ fn const_fold_mux_true() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[3] {
+    if let Instruction::Const { value, .. } = &p.instructions()[3] {
         assert_eq!(*value, FieldElement::from_u64(42));
     } else {
         panic!("expected Const(42) for mux(1, 42, 99)");
@@ -318,7 +318,7 @@ fn const_fold_mux_false() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[3] {
+    if let Instruction::Const { value, .. } = &p.instructions()[3] {
         assert_eq!(*value, FieldElement::from_u64(99));
     } else {
         panic!("expected Const(99) for mux(0, 42, 99)");
@@ -339,11 +339,11 @@ fn dce_removes_unused_const() {
     });
     // `a` is never used by anything
 
-    let before = p.instructions.len();
+    let before = p.len();
     dce::dead_code_elimination(&mut p);
 
     assert!(
-        p.instructions.len() < before,
+        p.len() < before,
         "DCE should remove unused Const"
     );
 }
@@ -374,7 +374,7 @@ fn dce_removes_unused_add() {
     dce::dead_code_elimination(&mut p);
 
     // Add should be removed, inputs kept (side effects)
-    assert_eq!(p.instructions.len(), 2);
+    assert_eq!(p.len(), 2);
 }
 
 #[test]
@@ -399,11 +399,11 @@ fn dce_keeps_used_const() {
         message: None,
     });
 
-    let before = p.instructions.len();
+    let before = p.len();
     dce::dead_code_elimination(&mut p);
 
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         before,
         "DCE should not remove used Const or AssertEq"
     );
@@ -434,7 +434,7 @@ fn dce_keeps_assert_eq() {
 
     dce::dead_code_elimination(&mut p);
 
-    assert_eq!(p.instructions.len(), 3);
+    assert_eq!(p.len(), 3);
 }
 
 #[test]
@@ -457,7 +457,7 @@ fn dce_eliminates_tautological_assert_eq() {
 
     dce::dead_code_elimination(&mut p);
 
-    assert_eq!(p.instructions.len(), 1);
+    assert_eq!(p.len(), 1);
 }
 
 #[test]
@@ -480,7 +480,7 @@ fn dce_eliminates_unused_mul() {
     dce::dead_code_elimination(&mut p);
 
     // Mul is eliminated (unused result), only Input survives
-    assert_eq!(p.instructions.len(), 1);
+    assert_eq!(p.len(), 1);
 }
 
 // ============================================================================
@@ -510,16 +510,16 @@ fn optimize_full_pipeline() {
         rhs: b,
     });
 
-    let before = p.instructions.len();
+    let before = p.len();
     optimize(&mut p);
 
     // After fold: 3 Consts. After DCE: all removed (none used).
     assert!(
-        p.instructions.len() < before,
+        p.len() < before,
         "optimize should reduce instruction count"
     );
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         0,
         "all unused consts should be removed"
     );
@@ -551,7 +551,7 @@ fn dce_chain_fixpoint() {
     dce::dead_code_elimination(&mut p);
 
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         0,
         "fixpoint DCE should remove entire dead chain"
     );
@@ -590,7 +590,7 @@ fn dce_chain_partial_live() {
     dce::dead_code_elimination(&mut p);
 
     assert_eq!(
-        p.instructions.len(),
+        p.len(),
         4,
         "nothing should be removed when chain feeds into AssertEq"
     );
@@ -616,7 +616,7 @@ fn const_fold_not_zero() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[1] {
+    if let Instruction::Const { value, .. } = &p.instructions()[1] {
         assert_eq!(*value, FieldElement::ONE, "!0 should be 1");
     } else {
         panic!("expected Const after folding Not(0)");
@@ -639,7 +639,7 @@ fn const_fold_not_one() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[1] {
+    if let Instruction::Const { value, .. } = &p.instructions()[1] {
         assert!(value.is_zero(), "!1 should be 0");
     } else {
         panic!("expected Const after folding Not(1)");
@@ -669,7 +669,7 @@ fn const_fold_and_short_circuit_zero() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert!(value.is_zero(), "0 && x should fold to 0");
     } else {
         panic!("expected Const(0) for 0 && x");
@@ -699,7 +699,7 @@ fn const_fold_or_short_circuit_one() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::ONE, "1 || x should fold to 1");
     } else {
         panic!("expected Const(1) for 1 || x");
@@ -728,7 +728,7 @@ fn const_fold_is_eq_same() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::ONE, "42 == 42 should be 1");
     } else {
         panic!("expected Const(1) for 42 == 42");
@@ -757,7 +757,7 @@ fn const_fold_is_eq_different() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert!(value.is_zero(), "42 == 99 should be 0");
     } else {
         panic!("expected Const(0) for 42 == 99");
@@ -786,7 +786,7 @@ fn const_fold_is_neq() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::ONE, "5 != 10 should be 1");
     } else {
         panic!("expected Const(1) for 5 != 10");
@@ -815,7 +815,7 @@ fn const_fold_and_both_true() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::ONE, "1 && 1 should be 1");
     } else {
         panic!("expected Const(1) for 1 && 1");
@@ -844,7 +844,7 @@ fn const_fold_or_both_false() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[2] {
+    if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert!(value.is_zero(), "0 || 0 should be 0");
     } else {
         panic!("expected Const(0) for 0 || 0");
@@ -874,7 +874,7 @@ fn dce_keeps_assert() {
     dce::dead_code_elimination(&mut p);
 
     // Assert has side effects — never removed
-    assert_eq!(p.instructions.len(), 2);
+    assert_eq!(p.len(), 2);
 }
 
 // ============================================================================
@@ -900,12 +900,12 @@ fn const_fold_sub_self_is_zero() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[1] {
+    if let Instruction::Const { value, .. } = &p.instructions()[1] {
         assert_eq!(*value, FieldElement::ZERO);
     } else {
         panic!(
             "expected Const(0) after folding Sub(w,w), got {:?}",
-            p.instructions[1]
+            p.instructions()[1]
         );
     }
 }
@@ -928,12 +928,12 @@ fn const_fold_div_self_constant_is_one() {
 
     const_fold::constant_fold(&mut p);
 
-    if let Instruction::Const { value, .. } = &p.instructions[1] {
+    if let Instruction::Const { value, .. } = &p.instructions()[1] {
         assert_eq!(*value, FieldElement::ONE);
     } else {
         panic!(
             "expected Const(1) after folding Div(c,c), got {:?}",
-            p.instructions[1]
+            p.instructions()[1]
         );
     }
 }
@@ -958,8 +958,8 @@ fn const_fold_div_self_witness_not_folded() {
     const_fold::constant_fold(&mut p);
 
     assert!(
-        matches!(&p.instructions[1], Instruction::Div { .. }),
+        matches!(&p.instructions()[1], Instruction::Div { .. }),
         "Div(w,w) for witness should NOT be folded, got {:?}",
-        p.instructions[1]
+        p.instructions()[1]
     );
 }

@@ -318,7 +318,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         eprintln!(
             "    {}: {} instructions",
             style.cyan("IR"),
-            program.instructions.len()
+            program.len()
         );
     }
 
@@ -396,14 +396,12 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     if dump_ir {
         println!("== Circuit IR for {} ==\n", path);
         print!("{program}");
-        let n = program.instructions.len();
+        let n = program.len();
         let n_inputs = program
-            .instructions
             .iter()
             .filter(|i| matches!(i, ir::Instruction::Input { .. }))
             .count();
         let n_constraints = program
-            .instructions
             .iter()
             .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
             .count();
@@ -495,7 +493,6 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
 
     // Count public/witness inputs from IR
     let n_public = program
-        .instructions
         .iter()
         .filter(|i| {
             matches!(
@@ -508,7 +505,6 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
         })
         .count();
     let n_witness = program
-        .instructions
         .iter()
         .filter(|i| {
             matches!(
@@ -552,7 +548,7 @@ fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
             let mut msg = format!("witness verification failed: {e}");
             if let constraints::r1cs::ConstraintError::ConstraintUnsatisfied(idx) = &e {
                 if let Some(origin) = compiler.constraint_origins.get(*idx) {
-                    let inst = &program.instructions[origin.ir_index];
+                    let inst = &program.instructions()[origin.ir_index];
                     msg = format!("constraint {idx} unsatisfied in: {inst}");
                     if let Some(name) = program.get_name(origin.result_var) {
                         msg.push_str(&format!("  (variable: {name})"));

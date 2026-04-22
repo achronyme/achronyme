@@ -47,28 +47,28 @@ fn square_assert(start: u32) -> IrProgram<F> {
     let x = SsaVar(start + 1);
     let sq = SsaVar(start + 2);
     let ae = SsaVar(start + 3);
-    p.instructions.push(Instruction::Input {
+    p.push(Instruction::Input {
         result: z,
         name: "z".into(),
         visibility: Visibility::Public,
     });
-    p.instructions.push(Instruction::Input {
+    p.push(Instruction::Input {
         result: x,
         name: "x".into(),
         visibility: Visibility::Witness,
     });
-    p.instructions.push(Instruction::Mul {
+    p.push(Instruction::Mul {
         result: sq,
         lhs: x,
         rhs: x,
     });
-    p.instructions.push(Instruction::AssertEq {
+    p.push(Instruction::AssertEq {
         result: ae,
         lhs: sq,
         rhs: z,
         message: None,
     });
-    p.next_var = start + 4;
+    p.set_next_var(start + 4);
     p
 }
 
@@ -111,67 +111,67 @@ fn oracle_constraint_emission_reorder_is_equivalent() {
     // unaffected because x/y/z are already inputs.
     let a = {
         let mut p: IrProgram<F> = IrProgram::new();
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(0),
             name: "x".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(1),
             name: "y".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(2),
             name: "z".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::AssertEq {
+        p.push(Instruction::AssertEq {
             result: SsaVar(3),
             lhs: SsaVar(0),
             rhs: SsaVar(1),
             message: None,
         });
-        p.instructions.push(Instruction::AssertEq {
+        p.push(Instruction::AssertEq {
             result: SsaVar(4),
             lhs: SsaVar(1),
             rhs: SsaVar(2),
             message: None,
         });
-        p.next_var = 5;
+        p.set_next_var(5);
         p
     };
     let b = {
         let mut p: IrProgram<F> = IrProgram::new();
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(0),
             name: "x".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(1),
             name: "y".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(2),
             name: "z".into(),
             visibility: Visibility::Public,
         });
         // Swap emission order.
-        p.instructions.push(Instruction::AssertEq {
+        p.push(Instruction::AssertEq {
             result: SsaVar(3),
             lhs: SsaVar(1),
             rhs: SsaVar(2),
             message: None,
         });
-        p.instructions.push(Instruction::AssertEq {
+        p.push(Instruction::AssertEq {
             result: SsaVar(4),
             lhs: SsaVar(0),
             rhs: SsaVar(1),
             message: None,
         });
-        p.next_var = 5;
+        p.set_next_var(5);
         p
     };
     assert_eq!(semantic_equivalence(&a, &b, &[]), OracleResult::Equivalent);
@@ -182,7 +182,7 @@ fn oracle_public_partition_differs() {
     let a = square_assert(0);
     let mut b = square_assert(0);
     // Flip x's visibility on b.
-    if let Instruction::Input { visibility, .. } = &mut b.instructions[1] {
+    if let Instruction::Input { visibility, .. } = &mut b.instructions_mut()[1] {
         *visibility = Visibility::Public;
     }
     match semantic_equivalence(&a, &b, &[]) {
@@ -199,14 +199,13 @@ fn oracle_extra_constraint_differs() {
     let a = square_assert(0);
     let mut b = square_assert(0);
     // Append a trivially-true AssertEq.
-    let ae = b.next_var;
-    b.instructions.push(Instruction::AssertEq {
-        result: SsaVar(ae),
+    let ae = b.fresh_var();
+    b.push(Instruction::AssertEq {
+        result: ae,
         lhs: SsaVar(1), // x
         rhs: SsaVar(1), // x
         message: None,
     });
-    b.next_var += 1;
 
     match semantic_equivalence(&a, &b, &[]) {
         OracleResult::ConstraintsDiffer {
@@ -228,32 +227,32 @@ fn oracle_coefficient_diff_is_constraint_diff() {
     // multiset must detect the difference.
     fn build(c: u64) -> IrProgram<F> {
         let mut p: IrProgram<F> = IrProgram::new();
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(0),
             name: "z".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: SsaVar(1),
             name: "x".into(),
             visibility: Visibility::Witness,
         });
-        p.instructions.push(Instruction::Const {
+        p.push(Instruction::Const {
             result: SsaVar(2),
             value: fe(c),
         });
-        p.instructions.push(Instruction::Mul {
+        p.push(Instruction::Mul {
             result: SsaVar(3),
             lhs: SsaVar(1),
             rhs: SsaVar(2),
         });
-        p.instructions.push(Instruction::AssertEq {
+        p.push(Instruction::AssertEq {
             result: SsaVar(4),
             lhs: SsaVar(3),
             rhs: SsaVar(0),
             message: None,
         });
-        p.next_var = 5;
+        p.set_next_var(5);
         p
     }
 

@@ -226,7 +226,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             })
         };
 
-        for (ir_idx, inst) in program.instructions.iter().enumerate() {
+        for (ir_idx, inst) in program.iter().enumerate() {
             let constraints_before = self.cs.num_constraints();
 
             match inst {

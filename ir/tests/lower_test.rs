@@ -5,7 +5,7 @@ use memory::FieldElement;
 fn lower(source: &str, public: &[&str], witness: &[&str]) -> Vec<Instruction> {
     IrLowering::<memory::Bn254Fr>::lower_circuit(source, public, witness)
         .expect("lowering failed")
-        .instructions
+        .into_instructions()
 }
 
 /// Count instructions of a specific type.
@@ -340,9 +340,9 @@ fn lower_circuit_convenience() {
     let program =
         IrLowering::<memory::Bn254Fr>::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"])
             .unwrap();
-    assert!(program.instructions.len() >= 4); // 3 inputs + mul + assert_eq
+    assert!(program.len() >= 4); // 3 inputs + mul + assert_eq
     assert_eq!(
-        count(&program.instructions, |i| matches!(
+        count(program.instructions(), |i| matches!(
             i,
             Instruction::AssertEq { .. }
         )),
@@ -630,9 +630,8 @@ fn dce_preserves_range_check_unused_result() {
     // range_check(x, 8) — result not used in assert_eq, but must not be eliminated
     let source = "range_check(x, 8)";
     let mut program = IrLowering::<memory::Bn254Fr>::lower_circuit(source, &[], &["x"]).unwrap();
-    let before = program.instructions.len();
+    let before = program.len();
     let has_rc_before = program
-        .instructions
         .iter()
         .any(|i| matches!(i, Instruction::RangeCheck { .. }));
     assert!(has_rc_before, "should have RangeCheck before optimization");
@@ -640,7 +639,6 @@ fn dce_preserves_range_check_unused_result() {
     ir::passes::optimize(&mut program);
 
     let has_rc_after = program
-        .instructions
         .iter()
         .any(|i| matches!(i, Instruction::RangeCheck { .. }));
     assert!(
@@ -649,7 +647,7 @@ fn dce_preserves_range_check_unused_result() {
     );
     // Const instructions for the bits literal may be folded, but RangeCheck itself must remain
     assert!(
-        program.instructions.len() <= before,
+        program.len() <= before,
         "optimization should not add instructions"
     );
 }
@@ -661,7 +659,6 @@ fn dce_eliminates_poseidon_unused_result() {
     let mut program =
         IrLowering::<memory::Bn254Fr>::lower_circuit(source, &[], &["a", "b"]).unwrap();
     let has_poseidon_before = program
-        .instructions
         .iter()
         .any(|i| matches!(i, Instruction::PoseidonHash { .. }));
     assert!(
@@ -672,7 +669,6 @@ fn dce_eliminates_poseidon_unused_result() {
     ir::passes::optimize(&mut program);
 
     let has_poseidon_after = program
-        .instructions
         .iter()
         .any(|i| matches!(i, Instruction::PoseidonHash { .. }));
     assert!(
@@ -690,11 +686,9 @@ fn dce_preserves_assert_eq_and_deps() {
     ir::passes::optimize(&mut program);
 
     let has_mul = program
-        .instructions
         .iter()
         .any(|i| matches!(i, Instruction::Mul { .. }));
     let has_assert = program
-        .instructions
         .iter()
         .any(|i| matches!(i, Instruction::AssertEq { .. }));
     assert!(has_mul, "Mul feeding AssertEq must survive DCE");
@@ -708,7 +702,6 @@ fn dce_eliminates_unused_add() {
     let mut program =
         IrLowering::<memory::Bn254Fr>::lower_circuit(source, &["out"], &["x"]).unwrap();
     let adds_before = program
-        .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Add { .. }))
         .count();
@@ -716,7 +709,6 @@ fn dce_eliminates_unused_add() {
     ir::passes::optimize(&mut program);
 
     let adds_after = program
-        .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Add { .. }))
         .count();
@@ -736,7 +728,7 @@ fn typed_public_sets_ir_type() {
         IrLowering::<memory::Bn254Fr>::lower_self_contained("public x: Field\nassert_eq(x, x)")
             .expect("should lower");
     // The Input instruction for x should have type Field
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::Input { result, name, .. } = inst {
             if name == "x" {
                 assert_eq!(
@@ -755,7 +747,7 @@ fn typed_witness_bool_sets_ir_type() {
         "public x: Field\nwitness b: Bool\nassert_eq(x, b)",
     )
     .expect("should lower");
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::Input { result, name, .. } = inst {
             if name == "b" {
                 assert_eq!(
@@ -775,7 +767,7 @@ fn typed_let_field_compiles() {
         "witness a: Field\nwitness b: Field\nlet h: Field = poseidon(a, b)\nassert_eq(h, h)",
     )
     .expect("typed let should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -785,7 +777,7 @@ fn typed_let_bool_compiles() {
         "public x: Field\nwitness y: Field\nlet ok: Bool = x == y\nassert(ok)",
     )
     .expect("typed let Bool should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -819,7 +811,7 @@ assert_eq(h, h)
 "#;
     let (_, _, prog) = IrLowering::<memory::Bn254Fr>::lower_self_contained(source)
         .expect("typed fn should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -855,7 +847,7 @@ assert_eq(x, x)
 "#;
     let (_, _, prog) = IrLowering::<memory::Bn254Fr>::lower_self_contained(source)
         .expect("Bool used as Field should compile");
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -866,7 +858,7 @@ fn untyped_code_unchanged() {
         .expect("untyped should compile");
     assert_eq!(pub_names, vec!["x"]);
     assert_eq!(wit_names, vec!["y"]);
-    assert!(!prog.instructions.is_empty());
+    assert!(!prog.is_empty());
 }
 
 #[test]
@@ -876,7 +868,7 @@ fn comparison_result_is_bool() {
     )
     .expect("should lower");
     // Find IsEq instruction, check its result has Bool type
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::IsEq { result, .. } = inst {
             assert_eq!(prog.get_type(*result), Some(ir::IrType::Bool));
         }
@@ -909,7 +901,7 @@ fn mixed_typed_and_untyped_inputs() {
     // x should have type, y should not
     let mut x_typed = false;
     let mut y_untyped = true;
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::Input { result, name, .. } = inst {
             if name == "x" {
                 x_typed = prog.get_type(*result).is_some();
@@ -935,7 +927,7 @@ assert(r)
     let (_, _, prog) = IrLowering::<memory::Bn254Fr>::lower_self_contained(source)
         .expect("if with matching branch types");
     // The Mux result should have Bool type since both branches are Bool
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::Mux { result, .. } = inst {
             assert_eq!(prog.get_type(*result), Some(ir::IrType::Bool));
         }
@@ -952,7 +944,7 @@ fn let_bool_on_untyped_emits_range_check() {
     let source = "witness x\nlet b: Bool = x\nassert(b)";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -967,7 +959,7 @@ fn let_bool_on_typed_bool_no_extra_range_check() {
     let source = "witness a\nwitness c\nlet b: Bool = a == c\nassert(b)";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert_eq!(
@@ -982,7 +974,7 @@ fn let_field_on_untyped_no_enforcement() {
     let source = "witness x\nlet f: Field = x\nassert_eq(f, f)";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { .. })
     });
     assert_eq!(
@@ -1010,7 +1002,7 @@ fn array_bool_on_untyped_elements_enforces() {
     let source = "witness x\nwitness y\nlet a: Bool[2] = [x, y]\nassert(a[0])";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -1030,7 +1022,7 @@ assert(r)
 "#;
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -1049,7 +1041,7 @@ f(w)
 "#;
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -1064,7 +1056,7 @@ fn neg_result_has_field_type() {
     let source = "witness x\nlet n = -x\nassert_eq(n, n)";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::Neg { result, .. } = inst {
             assert_eq!(
                 prog.get_type(*result),
@@ -1084,7 +1076,7 @@ fn witness_bool_decl_emits_range_check() {
     let source = "witness flag: Bool\nassert(flag)";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -1098,7 +1090,7 @@ fn witness_bool_array_decl_emits_range_checks() {
     let source = "witness flags[3]: Bool\nassert(flags[0])";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -1112,7 +1104,7 @@ fn public_bool_decl_emits_range_check() {
     let source = "public flag: Bool\nassert(flag)";
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
-    let rc_count = count(&prog.instructions, |i| {
+    let rc_count = count(prog.instructions(), |i| {
         matches!(i, Instruction::RangeCheck { bits: 1, .. })
     });
     assert!(
@@ -1212,7 +1204,6 @@ fn pow_result_has_field_type() {
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
     // The last Mul in the pow chain should have Field type
     let mul_results: Vec<_> = prog
-        .instructions
         .iter()
         .filter_map(|i| {
             if let Instruction::Mul { result, .. } = i {
@@ -1239,7 +1230,6 @@ fn pow_zero_result_has_field_type() {
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
     // x^0 = Const(1), should be typed Field
     let const_ones: Vec<_> = prog
-        .instructions
         .iter()
         .filter_map(|i| {
             if let Instruction::Const { result, value } = i {
@@ -1276,7 +1266,7 @@ let arr: Field[1] = [eq]
     let (_, _, prog) =
         IrLowering::<memory::Bn254Fr>::lower_self_contained(source).expect("should lower");
     // Find the IsEq result variable
-    for inst in &prog.instructions {
+    for inst in prog.iter() {
         if let Instruction::IsEq { result, .. } = inst {
             assert_eq!(
                 prog.get_type(*result),

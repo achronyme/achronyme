@@ -201,8 +201,8 @@ fn round_trip_instantiate_produces_same_result() {
 
     // Both should produce identical instruction counts and types
     assert_eq!(
-        program1.instructions.len(),
-        program2.instructions.len(),
+        program1.len(),
+        program2.len(),
         "instruction count mismatch after round-trip"
     );
 }

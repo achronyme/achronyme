@@ -91,7 +91,7 @@ fn inspect_circuit(
     let mut constraint_counts: HashMap<usize, usize> = HashMap::new();
 
     for idx in &eval_failures {
-        let msg = extract_assert_message(&program.instructions[*idx]);
+        let msg = extract_assert_message(&program.instructions()[*idx]);
         failed_nodes.insert(*idx, msg);
     }
 
@@ -105,7 +105,7 @@ fn inspect_circuit(
                     compiler.cs.verify(&witness_vec)
                 {
                     if let Some(origin) = compiler.constraint_origins.get(idx) {
-                        let msg = extract_assert_message(&program.instructions[origin.ir_index]);
+                        let msg = extract_assert_message(&program.instructions()[origin.ir_index]);
                         failed_nodes.insert(origin.ir_index, msg);
                     }
                 }
@@ -379,7 +379,7 @@ impl RCSCompilerWrapper {
         let mut constraint_counts: HashMap<usize, usize> = HashMap::new();
 
         for idx in eval_failures {
-            let msg = extract_assert_message(&program.instructions[*idx]);
+            let msg = extract_assert_message(&program.instructions()[*idx]);
             failed_nodes.insert(*idx, msg);
         }
 
@@ -392,7 +392,7 @@ impl RCSCompilerWrapper {
                     self.compiler.cs.verify(&witness_vec)
                 {
                     if let Some(origin) = self.compiler.constraint_origins.get(idx) {
-                        let msg = extract_assert_message(&program.instructions[origin.ir_index]);
+                        let msg = extract_assert_message(&program.instructions()[origin.ir_index]);
                         failed_nodes.insert(origin.ir_index, msg);
                     }
                 }
