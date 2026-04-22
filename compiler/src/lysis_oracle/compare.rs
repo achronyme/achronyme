@@ -238,40 +238,40 @@ mod tests {
     /// at `start` so we can test renaming.
     fn mul_eq_program(start: u32) -> IrProgram<Bn254Fr> {
         let mut p: IrProgram<Bn254Fr> = IrProgram::new();
-        p.next_var = start + 4;
+        p.set_next_var(start + 4);
 
         let z = SsaVar(start);
         let x = SsaVar(start + 1);
         let y = SsaVar(start + 2);
         let prod = SsaVar(start + 3);
 
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: z,
             name: "z".into(),
             visibility: Visibility::Public,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: x,
             name: "x".into(),
             visibility: Visibility::Witness,
         });
-        p.instructions.push(Instruction::Input {
+        p.push(Instruction::Input {
             result: y,
             name: "y".into(),
             visibility: Visibility::Witness,
         });
-        p.instructions.push(Instruction::Mul {
+        p.push(Instruction::Mul {
             result: prod,
             lhs: x,
             rhs: y,
         });
-        p.instructions.push(Instruction::AssertEq {
+        p.push(Instruction::AssertEq {
             result: SsaVar(start + 4),
             lhs: prod,
             rhs: z,
             message: None,
         });
-        p.next_var = start + 5;
+        p.set_next_var(start + 5);
         p
     }
 
@@ -310,17 +310,16 @@ mod tests {
         let mut a = mul_eq_program(0);
         // Flip z's visibility on side b.
         let mut b = mul_eq_program(0);
-        if let Instruction::Input { visibility, .. } = &mut b.instructions[0] {
+        if let Instruction::Input { visibility, .. } = &mut b.instructions_mut()[0] {
             *visibility = Visibility::Witness;
         }
         // Add a new public input to keep the visibility ratio sensible.
-        let new_var = b.next_var;
-        b.instructions.push(Instruction::Input {
-            result: SsaVar(new_var),
+        let new_var = b.fresh_var();
+        b.push(Instruction::Input {
+            result: new_var,
             name: "q".into(),
             visibility: Visibility::Public,
         });
-        b.next_var += 1;
 
         match semantic_equivalence(&a, &b, &[]) {
             OracleResult::PartitionDiffers { a_public, b_public } => {
@@ -340,14 +339,13 @@ mod tests {
         // Build b with one extra constraint: AssertEq(x, x) — trivially
         // true but adds a wire + constraint.
         let mut b = mul_eq_program(0);
-        let extra_result = b.next_var;
-        b.instructions.push(Instruction::AssertEq {
-            result: SsaVar(extra_result),
+        let extra_result = b.fresh_var();
+        b.push(Instruction::AssertEq {
+            result: extra_result,
             lhs: SsaVar(1), // x
             rhs: SsaVar(1), // x
             message: None,
         });
-        b.next_var += 1;
 
         match semantic_equivalence(&a, &b, &[]) {
             OracleResult::ConstraintsDiffer {

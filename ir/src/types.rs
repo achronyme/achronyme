@@ -596,6 +596,13 @@ impl<F: FieldBackend> IrProgram<F> {
         self.instructions.iter_mut()
     }
 
+    /// Borrow the instruction stream as a mutable slice (for in-place
+    /// indexed mutation). Slice — not `&mut Vec` — so callers cannot
+    /// resize the program through this handle.
+    pub fn instructions_mut(&mut self) -> &mut [Instruction<F>] {
+        &mut self.instructions
+    }
+
     /// Number of instructions.
     pub fn len(&self) -> usize {
         self.instructions.len()
