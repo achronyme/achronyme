@@ -5,6 +5,7 @@ pub mod expressions;
 pub mod function_compiler;
 pub mod functions;
 pub mod interner;
+pub mod lysis_oracle;
 pub mod module_loader;
 pub mod optimizer;
 pub mod plonkish_backend;

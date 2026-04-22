@@ -6,16 +6,28 @@
 //!
 //! ## Scope
 //!
-//! Phase 3.B.7 handles:
+//! Phase 3.B.7 (augmented by the 3.C-era deuda clearing) handles:
 //!
-//! - `Plain(Instruction<F>)` — every arithmetic, logic, hash, and
-//!   side-effect variant except `WitnessCall` (Artik bytecode blob
-//!   interning defers to a later iteration).
+//! - `Plain(Instruction<F>)` — every arithmetic, boolean, comparison,
+//!   hash, constraint, and side-effect variant. Several lower via
+//!   desugarings rather than dedicated opcodes:
+//!     - `Not(x)`         → `Sub(one, x)`
+//!     - `And(x,y)`       → `Mul(x, y)`
+//!     - `Or(x,y)`        → `Add(x,y) - Mul(x,y)`
+//!     - `Assert(x)`      → `AssertEq(x, one)`
+//!     - `IsNeq(x,y)`     → `Sub(one, IsEq(x, y))`
+//!     - `IsLe(x,y)`      → `Sub(one, IsLt(y, x))`
+//!     - `IsLtBounded`    → `IsLt` (bitwidth hint dropped)
+//!     - `IsLeBounded`    → `Sub(one, IsLt(y, x))`
+//!     - `WitnessCall`    → `EmitWitnessCall` with Artik blob interning
+//!
+//!   The `one` register is lazily allocated at the top of `lower` only
+//!   when the body contains at least one desugaring that needs it.
 //! - `LoopUnroll` — emits the Lysis `LoopUnroll` opcode with an
 //!   inline body. The executor's Phase 3.B.8 loop machinery takes
 //!   care of iteration binding and hash-cons dedup within the body.
 //!
-//! Not handled:
+//! Not handled (Phase 4):
 //!
 //! - `TemplateBody` / `TemplateCall` — template extraction is wired
 //!   through `extract.rs`, but the bytecode emission of
@@ -25,9 +37,16 @@
 //!   `WalkError::TemplateNotSupported`; the walker driver
 //!   (future work) falls back to inline unrolling when that error
 //!   appears.
-//! - `WitnessCall` — requires Artik bytecode blob interning. Defer.
+//! - `Div` — field division `x / y = x * y^{-1}`. Requires emitting
+//!   an inline Artik blob for the inverse + a range constraint. No
+//!   precedent in this walker; deferred until a use case surfaces.
+//! - `IntDiv` / `IntMod` — bounded integer arithmetic; the Lysis
+//!   bytecode has no opcode for these today. Circom never emits them
+//!   (signal arith is field-native).
 //! - Negative loop bounds — `LoopUnroll` uses `u32` in the bytecode,
 //!   so negative `i64` bounds are rejected up-front.
+//! - `RangeCheck` / `Decompose` with bit counts > 255 — the Lysis
+//!   opcodes carry the count as `u8`.
 //!
 //! ## Register allocation
 //!
@@ -44,7 +63,7 @@ use lysis::bytecode::Opcode;
 use lysis::lower::{AllocError, RegAllocator, RegId};
 use lysis::program::Program;
 use lysis::ProgramBuilder;
-use memory::FieldBackend;
+use memory::{FieldBackend, FieldElement};
 
 use crate::prove_ir::extended::ExtendedInstruction;
 use crate::types::{Instruction, SsaVar, Visibility};
@@ -57,9 +76,18 @@ pub enum WalkError {
     /// The body contains a `TemplateCall` or `TemplateBody`; Phase
     /// 3.B.7 only emits inline + `LoopUnroll`.
     TemplateNotSupported,
-    /// `WitnessCall` is not yet emitted by the walker (needs Artik
-    /// bytecode interning).
-    WitnessCallNotSupported,
+    /// An instruction variant is not emittable by the walker. Phase 3
+    /// punts field-division and integer-arithmetic variants that
+    /// require Phase-4 opcode extensions; other variants use this for
+    /// genuine "not implemented yet" surface.
+    UnsupportedInstruction { kind: &'static str },
+    /// A `RangeCheck` / `Decompose` bit count exceeded what the
+    /// Lysis opcode can carry (u8 — max 255 bits).
+    OperandOutOfRange {
+        kind: &'static str,
+        limit: u32,
+        got: u32,
+    },
     /// An operand referenced an SsaVar that was never produced by an
     /// earlier instruction in the walk. Either the program is
     /// malformed or the walker is missing a variant.
@@ -69,6 +97,10 @@ pub enum WalkError {
     NegativeLoopBound { start: i64, end: i64 },
     /// A `LoopUnroll` body exceeded the `u16` byte-length field.
     LoopBodyTooLong { bytes: u32 },
+    /// Internal invariant: a desugaring reached for the `one` constant
+    /// register before the pre-scan allocated it. This is a walker
+    /// bug — surface it rather than silently emitting a Trap.
+    OneConstNotInitialized,
 }
 
 impl std::fmt::Display for WalkError {
@@ -78,8 +110,14 @@ impl std::fmt::Display for WalkError {
             Self::TemplateNotSupported => f.write_str(
                 "walker: TemplateCall/TemplateBody not emitted yet (Phase 3 MVP uses LoopUnroll only)",
             ),
-            Self::WitnessCallNotSupported => {
-                f.write_str("walker: WitnessCall emission pending")
+            Self::UnsupportedInstruction { kind } => {
+                write!(f, "walker: instruction variant `{kind}` not supported (Phase 4)")
+            }
+            Self::OperandOutOfRange { kind, limit, got } => {
+                write!(
+                    f,
+                    "walker: `{kind}` operand {got} exceeds Lysis opcode limit of {limit}"
+                )
             }
             Self::UndefinedSsaVar(v) => write!(f, "walker: undefined SsaVar {v}"),
             Self::NegativeLoopBound { start, end } => {
@@ -88,6 +126,9 @@ impl std::fmt::Display for WalkError {
             Self::LoopBodyTooLong { bytes } => {
                 write!(f, "walker: LoopUnroll body length {bytes} exceeds u16 max")
             }
+            Self::OneConstNotInitialized => f.write_str(
+                "walker: desugaring referenced `one` register but pre-scan did not allocate it (walker bug)",
+            ),
         }
     }
 }
@@ -105,6 +146,12 @@ pub struct Walker<F: FieldBackend> {
     builder: ProgramBuilder<F>,
     allocator: RegAllocator,
     ssa_to_reg: HashMap<SsaVar, RegId>,
+    /// Register holding the field element 1. Lazily allocated at the
+    /// start of [`Self::lower`] iff the body contains a desugaring that
+    /// references it (Not, Assert, IsNeq, IsLe, IsLeBounded). Emitting
+    /// at the top — outside every `LoopUnroll` — keeps the body's
+    /// pre-computed byte size correct.
+    one_reg: Option<RegId>,
 }
 
 impl<F: FieldBackend> Walker<F> {
@@ -113,17 +160,30 @@ impl<F: FieldBackend> Walker<F> {
             builder: ProgramBuilder::new(family),
             allocator: RegAllocator::new(),
             ssa_to_reg: HashMap::new(),
+            one_reg: None,
         }
     }
 
     /// Lower an entire body into a finished [`Program`]. Appends a
     /// terminating `Halt` after the last emitted opcode.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
+        if body_needs_one_const(body) {
+            let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
+            let reg = self.allocator.alloc()?;
+            self.builder.load_const(reg, idx);
+            self.one_reg = Some(reg);
+        }
         for inst in body {
             self.emit(inst)?;
         }
         self.builder.halt();
         Ok(self.builder.finish())
+    }
+
+    /// Return the pre-allocated register holding `1`, or error if the
+    /// pre-scan missed it (walker-internal invariant violation).
+    fn one(&self) -> Result<RegId, WalkError> {
+        self.one_reg.ok_or(WalkError::OneConstNotInitialized)
     }
 
     fn emit(&mut self, inst: &ExtendedInstruction<F>) -> Result<(), WalkError> {
@@ -179,11 +239,21 @@ impl<F: FieldBackend> Walker<F> {
                 self.builder.emit_mul(dst, l, r);
                 self.bind(*result, dst);
             }
-            // Lysis has no dedicated EmitDiv opcode yet — fall through
-            // to Mul-by-inverse or refuse. For Phase 3 MVP we refuse;
-            // ProveIR programs rarely emit Div at this layer.
+            // Field division Div(x,y) = x * y^{-1} is witness-computed
+            // (inverse via WitnessCall) + one range-check constraint
+            // (y*inv == 1). Plumbing it here would require synthesizing
+            // an inline Artik blob that computes inv = y^{-1}, which
+            // has no current precedent in this walker.
+            //
+            // Circom lowering does NOT emit Div (signals multiply
+            // only), and ProveIR's prove {} blocks rarely use field
+            // division. If 3.C.8 surfaces a real use case, the fix is:
+            //   1. Emit a WitnessCall with an Artik blob computing inv.
+            //   2. Emit AssertEq(Mul(y, inv), one) to constrain inv.
+            //   3. Emit Mul(x, inv) as the result.
+            // For now, surface the rejection with a clear error.
             Instruction::Div { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+                return Err(WalkError::UnsupportedInstruction { kind: "Div" });
             }
 
             // ---------- unary ----------
@@ -194,11 +264,32 @@ impl<F: FieldBackend> Walker<F> {
                 self.bind(*result, dst);
             }
 
-            // ---------- boolean / logic — mapped to arithmetic primitives
-            //            the executor understands. And/Or/Not don't have
-            //            dedicated opcodes yet, so Phase 3 rejects them.
-            Instruction::Not { .. } | Instruction::And { .. } | Instruction::Or { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+            // ---------- boolean / logic — desugared to arithmetic.
+            //            The operands are assumed boolean (0 or 1) by
+            //            the upstream circuit; Lysis doesn't re-check.
+            Instruction::Not { result, operand } => {
+                let one = self.one()?;
+                let x = self.resolve(*operand)?;
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, x);
+                self.bind(*result, dst);
+            }
+            Instruction::And { result, lhs, rhs } => {
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_mul(dst, l, r);
+                self.bind(*result, dst);
+            }
+            Instruction::Or { result, lhs, rhs } => {
+                // x OR y = x + y - x*y (for booleans).
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let sum = self.allocator.alloc()?;
+                self.builder.emit_add(sum, l, r);
+                let prod = self.allocator.alloc()?;
+                self.builder.emit_mul(prod, l, r);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, sum, prod);
+                self.bind(*result, dst);
             }
 
             // ---------- mux ----------
@@ -229,13 +320,50 @@ impl<F: FieldBackend> Walker<F> {
                 self.builder.emit_is_lt(dst, l, r);
                 self.bind(*result, dst);
             }
-            Instruction::IsNeq { .. }
-            | Instruction::IsLe { .. }
-            | Instruction::IsLtBounded { .. }
-            | Instruction::IsLeBounded { .. } => {
-                // Lysis opcodes for these are not yet defined in the
-                // bytecode surface. Phase 4 extends; for now refuse.
-                return Err(WalkError::WitnessCallNotSupported);
+            // Desugar: IsNeq(x,y) = 1 - IsEq(x,y).
+            Instruction::IsNeq { result, lhs, rhs } => {
+                let one = self.one()?;
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let eq = self.allocator.alloc()?;
+                self.builder.emit_is_eq(eq, l, r);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, eq);
+                self.bind(*result, dst);
+            }
+            // Desugar: IsLe(x,y) = 1 - IsLt(y,x).
+            Instruction::IsLe { result, lhs, rhs } => {
+                let one = self.one()?;
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let lt = self.allocator.alloc()?;
+                self.builder.emit_is_lt(lt, r, l);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, lt);
+                self.bind(*result, dst);
+            }
+            // Desugar: IsLtBounded(x,y,bits) ignores `bits` in Phase 3;
+            // the bound is a soundness-preserving optimization hint
+            // (upstream already range-checked operands to fit in
+            // `bits`). Emit plain IsLt; Phase 4 adds a bounded opcode.
+            Instruction::IsLtBounded {
+                result, lhs, rhs, ..
+            } => {
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_is_lt(dst, l, r);
+                self.bind(*result, dst);
+            }
+            // Desugar: IsLeBounded(x,y,bits) = 1 - IsLt(y,x); same
+            // rationale as IsLtBounded.
+            Instruction::IsLeBounded {
+                result, lhs, rhs, ..
+            } => {
+                let one = self.one()?;
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let lt = self.allocator.alloc()?;
+                self.builder.emit_is_lt(lt, r, l);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, lt);
+                self.bind(*result, dst);
             }
 
             // ---------- hash ----------
@@ -261,9 +389,13 @@ impl<F: FieldBackend> Walker<F> {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 self.builder.emit_assert_eq(l, r);
             }
-            Instruction::Assert { .. } => {
-                // EmitAssert(operand) has no dedicated opcode; defer.
-                return Err(WalkError::WitnessCallNotSupported);
+            Instruction::Assert {
+                result: _, operand, ..
+            } => {
+                // Desugar: assert operand == 1.
+                let one = self.one()?;
+                let op = self.resolve(*operand)?;
+                self.builder.emit_assert_eq(op, one);
             }
             Instruction::RangeCheck {
                 result: _,
@@ -271,7 +403,11 @@ impl<F: FieldBackend> Walker<F> {
                 bits,
             } => {
                 if *bits > u32::from(u8::MAX) {
-                    return Err(WalkError::WitnessCallNotSupported);
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "RangeCheck.bits",
+                        limit: u32::from(u8::MAX),
+                        got: *bits,
+                    });
                 }
                 let op = self.resolve(*operand)?;
                 self.builder.emit_range_check(op, *bits as u8);
@@ -283,7 +419,11 @@ impl<F: FieldBackend> Walker<F> {
                 num_bits,
             } => {
                 if *num_bits > u32::from(u8::MAX) {
-                    return Err(WalkError::WitnessCallNotSupported);
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "Decompose.num_bits",
+                        limit: u32::from(u8::MAX),
+                        got: *num_bits,
+                    });
                 }
                 let op = self.resolve(*operand)?;
                 let base = self.allocator.alloc()?;
@@ -298,12 +438,41 @@ impl<F: FieldBackend> Walker<F> {
                 }
             }
 
-            // ---------- integer div/mod + witness call ----------
-            Instruction::IntDiv { .. } | Instruction::IntMod { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+            // ---------- integer div/mod ----------
+            // IntDiv / IntMod require a bounded-arithmetic opcode that
+            // the Lysis bytecode surface does not yet carry. Circom
+            // never emits these (signal arith is field-native), so
+            // Phase 3 punts them to Phase 4's opcode extension.
+            Instruction::IntDiv { .. } => {
+                return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" });
             }
-            Instruction::WitnessCall { .. } => {
-                return Err(WalkError::WitnessCallNotSupported);
+            Instruction::IntMod { .. } => {
+                return Err(WalkError::UnsupportedInstruction { kind: "IntMod" });
+            }
+
+            // ---------- witness call ----------
+            // Intern the Artik bytecode blob, resolve input regs,
+            // allocate fresh output regs, and emit. The reg-allocator
+            // scheme is bump-forward: each output takes the next slot
+            // so they stay contiguous, which is what EmitWitnessCall's
+            // encoding expects (see `lysis::program::execute`).
+            Instruction::WitnessCall {
+                outputs,
+                inputs,
+                program_bytes,
+            } => {
+                let blob_idx = self.builder.intern_artik_bytecode(program_bytes.clone()) as u16;
+                let in_regs: Vec<RegId> = inputs
+                    .iter()
+                    .map(|v| self.resolve(*v))
+                    .collect::<Result<_, _>>()?;
+                let mut out_regs: Vec<RegId> = Vec::with_capacity(outputs.len());
+                for o in outputs {
+                    let reg = self.allocator.alloc()?;
+                    out_regs.push(reg);
+                    self.bind(*o, reg);
+                }
+                self.builder.emit_witness_call(blob_idx, in_regs, out_regs);
             }
         }
         Ok(())
@@ -397,71 +566,179 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
 }
 
 fn instruction_byte_size<F: FieldBackend>(inst: &Instruction<F>) -> Result<u32, WalkError> {
-    let placeholder = placeholder_opcode(inst)?;
-    let mut buf = Vec::new();
-    encode_opcode(&placeholder, &mut buf);
-    Ok(buf.len() as u32)
+    let ops = placeholder_opcodes(inst)?;
+    let mut total: u32 = 0;
+    for op in ops {
+        let mut buf = Vec::new();
+        encode_opcode(&op, &mut buf);
+        total = total.saturating_add(buf.len() as u32);
+    }
+    Ok(total)
 }
 
-/// A dummy `Opcode` whose encoded size matches what the walker
-/// would emit for `inst`. Used purely for size computation — real
-/// emission flows through the `ProgramBuilder`.
-fn placeholder_opcode<F: FieldBackend>(inst: &Instruction<F>) -> Result<Opcode, WalkError> {
+/// Dummy `Opcode`s whose cumulative encoded size matches what the
+/// walker would emit for `inst` — including multi-opcode desugarings
+/// (Not → Sub; Or → Add+Mul+Sub; Assert → AssertEq; etc). Used purely
+/// for size computation — real emission flows through `ProgramBuilder`.
+fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opcode>, WalkError> {
+    let bin = |op: Opcode| vec![op];
     Ok(match inst {
-        Instruction::Const { .. } => Opcode::LoadConst { dst: 0, idx: 0 },
-        Instruction::Input { .. } => Opcode::LoadInput {
+        Instruction::Const { .. } => bin(Opcode::LoadConst { dst: 0, idx: 0 }),
+        Instruction::Input { .. } => bin(Opcode::LoadInput {
             dst: 0,
             name_idx: 0,
             vis: lysis::Visibility::Public,
-        },
-        Instruction::Add { .. } => Opcode::EmitAdd {
+        }),
+        Instruction::Add { .. } => bin(Opcode::EmitAdd {
             dst: 0,
             lhs: 0,
             rhs: 0,
-        },
-        Instruction::Sub { .. } => Opcode::EmitSub {
+        }),
+        Instruction::Sub { .. } => bin(Opcode::EmitSub {
             dst: 0,
             lhs: 0,
             rhs: 0,
-        },
-        Instruction::Mul { .. } => Opcode::EmitMul {
+        }),
+        Instruction::Mul { .. } => bin(Opcode::EmitMul {
             dst: 0,
             lhs: 0,
             rhs: 0,
-        },
-        Instruction::Neg { .. } => Opcode::EmitNeg { dst: 0, operand: 0 },
-        Instruction::Mux { .. } => Opcode::EmitMux {
+        }),
+        Instruction::Neg { .. } => bin(Opcode::EmitNeg { dst: 0, operand: 0 }),
+        Instruction::Mux { .. } => bin(Opcode::EmitMux {
             dst: 0,
             cond: 0,
             then_v: 0,
             else_v: 0,
-        },
-        Instruction::IsEq { .. } => Opcode::EmitIsEq {
+        }),
+        Instruction::IsEq { .. } => bin(Opcode::EmitIsEq {
             dst: 0,
             lhs: 0,
             rhs: 0,
-        },
-        Instruction::IsLt { .. } => Opcode::EmitIsLt {
+        }),
+        Instruction::IsLt { .. } => bin(Opcode::EmitIsLt {
             dst: 0,
             lhs: 0,
             rhs: 0,
-        },
-        Instruction::PoseidonHash { .. } => Opcode::EmitPoseidonHash {
+        }),
+        Instruction::PoseidonHash { .. } => bin(Opcode::EmitPoseidonHash {
             dst: 0,
             in_regs: vec![0, 0],
-        },
-        Instruction::AssertEq { .. } => Opcode::EmitAssertEq { lhs: 0, rhs: 0 },
-        Instruction::RangeCheck { bits, .. } => Opcode::EmitRangeCheck {
+        }),
+        Instruction::AssertEq { .. } => bin(Opcode::EmitAssertEq { lhs: 0, rhs: 0 }),
+        Instruction::RangeCheck { bits, .. } => bin(Opcode::EmitRangeCheck {
             var: 0,
             max_bits: *bits as u8,
-        },
-        Instruction::Decompose { num_bits, .. } => Opcode::EmitDecompose {
+        }),
+        Instruction::Decompose { num_bits, .. } => bin(Opcode::EmitDecompose {
             dst_arr: 0,
             src: 0,
             n_bits: *num_bits as u8,
-        },
-        _ => return Err(WalkError::WitnessCallNotSupported),
+        }),
+
+        // ---------- desugarings ----------
+        Instruction::Not { .. } => bin(Opcode::EmitSub {
+            dst: 0,
+            lhs: 0,
+            rhs: 0,
+        }),
+        Instruction::And { .. } => bin(Opcode::EmitMul {
+            dst: 0,
+            lhs: 0,
+            rhs: 0,
+        }),
+        Instruction::Or { .. } => vec![
+            Opcode::EmitAdd {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+            },
+            Opcode::EmitMul {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+            },
+            Opcode::EmitSub {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+            },
+        ],
+        Instruction::Assert { .. } => bin(Opcode::EmitAssertEq { lhs: 0, rhs: 0 }),
+
+        Instruction::IsNeq { .. } | Instruction::IsLe { .. } | Instruction::IsLeBounded { .. } => {
+            let cmp = match inst {
+                Instruction::IsNeq { .. } => Opcode::EmitIsEq {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                },
+                _ => Opcode::EmitIsLt {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                },
+            };
+            vec![
+                cmp,
+                Opcode::EmitSub {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                },
+            ]
+        }
+        Instruction::IsLtBounded { .. } => bin(Opcode::EmitIsLt {
+            dst: 0,
+            lhs: 0,
+            rhs: 0,
+        }),
+
+        Instruction::WitnessCall {
+            outputs, inputs, ..
+        } => bin(Opcode::EmitWitnessCall {
+            bytecode_const_idx: 0,
+            in_regs: vec![0u8; inputs.len()],
+            out_regs: vec![0u8; outputs.len()],
+        }),
+
+        // Div / IntDiv / IntMod are the only variants left — they all
+        // produce opcodes that the walker refuses above, so the size
+        // is never queried. Surface them with the same kind label the
+        // emit path uses so fuzz-style probes stay readable.
+        Instruction::Div { .. } => return Err(WalkError::UnsupportedInstruction { kind: "Div" }),
+        Instruction::IntDiv { .. } => {
+            return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" })
+        }
+        Instruction::IntMod { .. } => {
+            return Err(WalkError::UnsupportedInstruction { kind: "IntMod" })
+        }
     })
+}
+
+/// Returns `true` iff the body (recursively) contains at least one
+/// instruction whose desugaring references the `one` constant register.
+/// Used by [`Walker::lower`] to decide whether to eagerly emit a
+/// top-level `LoadConst(1)`.
+fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
+    body.iter().any(|inst| match inst {
+        ExtendedInstruction::Plain(i) => instruction_needs_one(i),
+        ExtendedInstruction::LoopUnroll { body, .. } => body_needs_one_const(body),
+        ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
+            false
+        }
+    })
+}
+
+fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
+    matches!(
+        inst,
+        Instruction::Not { .. }
+            | Instruction::Assert { .. }
+            | Instruction::IsNeq { .. }
+            | Instruction::IsLe { .. }
+            | Instruction::IsLeBounded { .. }
+    )
 }
 
 #[cfg(test)]
@@ -635,14 +912,415 @@ mod tests {
     }
 
     #[test]
-    fn refuses_witness_call() {
+    fn desugars_not_to_sub_with_one() {
+        // Not(x) = 1 - x. Expect: LoadConst(1), Input(x), Sub(one, x).
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Not {
+                result: ssa(1),
+                operand: ssa(0),
+            }),
+        ];
+        let out = run(&body);
+        let consts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Const { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(consts, 1, "one pre-allocated Const for `one`");
+        assert_eq!(subs, 1, "Not desugars to one Sub");
+    }
+
+    #[test]
+    fn desugars_and_to_mul() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::And {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let out = run(&body);
+        // And does NOT need `one` — no extra Const emitted.
+        let consts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Const { .. }))
+            .count();
+        let muls = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Mul { .. }))
+            .count();
+        assert_eq!(consts, 0, "no one-const needed when only And is used");
+        assert_eq!(muls, 1, "And desugars to one Mul");
+    }
+
+    #[test]
+    fn desugars_or_to_add_mul_sub() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Or {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let out = run(&body);
+        let adds = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Add { .. }))
+            .count();
+        let muls = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Mul { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(adds, 1);
+        assert_eq!(muls, 1);
+        assert_eq!(subs, 1);
+    }
+
+    #[test]
+    fn desugars_assert_to_assert_eq_with_one() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Assert {
+                result: ssa(1),
+                operand: ssa(0),
+                message: None,
+            }),
+        ];
+        let out = run(&body);
+        let consts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Const { .. }))
+            .count();
+        let asserts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::AssertEq { .. }))
+            .count();
+        assert_eq!(consts, 1, "one pre-allocated Const for `one`");
+        assert_eq!(asserts, 1, "Assert(x) desugars to AssertEq(x, one)");
+    }
+
+    #[test]
+    fn desugars_not_inside_loop_body() {
+        // The `one` Const is emitted ABOVE the loop so body_byte_size
+        // stays correct. Use iter bounds that avoid collision with 1
+        // (which would get hash-cons deduped against `one`): 3..6.
+        let body = vec![ExtendedInstruction::LoopUnroll {
+            iter_var: ssa(0),
+            start: 3,
+            end: 6,
+            body: vec![plain(Instruction::Not {
+                result: ssa(1),
+                operand: ssa(0),
+            })],
+        }];
+        let out = run(&body);
+        // Expect: 1 one-const + 3 distinct iter consts (3, 4, 5) + 3 Subs.
+        let consts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Const { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(consts, 4, "one + 3 distinct iter vars");
+        assert_eq!(subs, 3, "Not per iteration");
+    }
+
+    #[test]
+    fn desugars_is_neq_to_is_eq_plus_sub() {
+        // IsNeq(x,y) = 1 - IsEq(x,y).
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsNeq {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let out = run(&body);
+        let eqs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsEq { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(eqs, 1);
+        assert_eq!(subs, 1);
+    }
+
+    #[test]
+    fn desugars_is_le_to_is_lt_reversed_plus_sub() {
+        // IsLe(x,y) = 1 - IsLt(y, x).
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsLe {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let out = run(&body);
+        let lts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(lts, 1);
+        assert_eq!(subs, 1);
+    }
+
+    #[test]
+    fn desugars_is_lt_bounded_ignores_bitwidth_hint() {
+        // In Phase 3 IsLtBounded lowers to plain IsLt; no extra Const/Sub.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsLtBounded {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+                bitwidth: 16,
+            }),
+        ];
+        let out = run(&body);
+        let lts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(lts, 1);
+        assert_eq!(subs, 0);
+    }
+
+    #[test]
+    fn desugars_is_le_bounded_like_is_le() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsLeBounded {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+                bitwidth: 8,
+            }),
+        ];
+        let out = run(&body);
+        let lts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(lts, 1);
+        assert_eq!(subs, 1);
+    }
+
+    #[test]
+    fn lowers_witness_call_with_blob_and_multiple_outputs() {
+        // Blob content is not validated at this layer — the walker just
+        // interns the bytes and lets the executor decode.
+        let blob = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::WitnessCall {
+                outputs: vec![ssa(1), ssa(2), ssa(3)],
+                inputs: vec![ssa(0)],
+                program_bytes: blob,
+            }),
+        ];
+        // `run` goes through a full execute via InterningSink. WitnessCall
+        // is a side-effect that produces OPAQUE output slots — the
+        // InterningSink does NOT dedupe it. We expect one WitnessCall in
+        // the materialized output with 3 output slots.
+        let out = run(&body);
+        let calls: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::WitnessCall { outputs, .. } => Some(outputs.len()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(calls, vec![3]);
+    }
+
+    #[test]
+    fn refuses_div_with_clear_kind() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Div {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert_eq!(err, WalkError::UnsupportedInstruction { kind: "Div" });
+    }
+
+    #[test]
+    fn refuses_int_div_and_int_mod() {
+        let bodies = [
+            plain(Instruction::IntDiv {
+                result: ssa(0),
+                lhs: ssa(0),
+                rhs: ssa(0),
+                max_bits: 8,
+            }),
+            plain(Instruction::IntMod {
+                result: ssa(0),
+                lhs: ssa(0),
+                rhs: ssa(0),
+                max_bits: 8,
+            }),
+        ];
+        for body in &bodies {
+            let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+            let err = walker
+                .lower(std::slice::from_ref(body))
+                .expect_err("should refuse");
+            match err {
+                WalkError::UnsupportedInstruction { kind } => {
+                    assert!(kind == "IntDiv" || kind == "IntMod", "kind: {kind}");
+                }
+                other => panic!("unexpected error variant: {other:?}"),
+            }
+        }
+    }
+
+    #[test]
+    fn refuses_range_check_bits_overflow() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::RangeCheck {
+                result: ssa(1),
+                operand: ssa(0),
+                bits: 300,
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert_eq!(
+            err,
+            WalkError::OperandOutOfRange {
+                kind: "RangeCheck.bits",
+                limit: 255,
+                got: 300,
+            }
+        );
+    }
+
+    #[test]
+    fn lowers_witness_call_empty_inputs() {
+        // Zero inputs, single output.
         let body = vec![plain(Instruction::WitnessCall {
             outputs: vec![ssa(0)],
             inputs: vec![],
-            program_bytes: vec![],
+            program_bytes: vec![0xFF],
         })];
-        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
-        assert_eq!(err, WalkError::WitnessCallNotSupported);
+        let out = run(&body);
+        let call_count = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall { .. }))
+            .count();
+        assert_eq!(call_count, 1);
     }
 }
