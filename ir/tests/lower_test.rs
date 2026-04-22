@@ -685,9 +685,7 @@ fn dce_preserves_assert_eq_and_deps() {
         IrLowering::<memory::Bn254Fr>::lower_circuit(source, &["out"], &["x", "y"]).unwrap();
     ir::passes::optimize(&mut program);
 
-    let has_mul = program
-        .iter()
-        .any(|i| matches!(i, Instruction::Mul { .. }));
+    let has_mul = program.iter().any(|i| matches!(i, Instruction::Mul { .. }));
     let has_assert = program
         .iter()
         .any(|i| matches!(i, Instruction::AssertEq { .. }));

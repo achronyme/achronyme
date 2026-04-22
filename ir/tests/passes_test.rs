@@ -32,7 +32,10 @@ fn const_fold_add() {
     if let Instruction::Const { value, .. } = &p.instructions()[2] {
         assert_eq!(*value, FieldElement::from_u64(10));
     } else {
-        panic!("expected Const after folding, got {:?}", p.instructions()[2]);
+        panic!(
+            "expected Const after folding, got {:?}",
+            p.instructions()[2]
+        );
     }
 }
 
@@ -342,10 +345,7 @@ fn dce_removes_unused_const() {
     let before = p.len();
     dce::dead_code_elimination(&mut p);
 
-    assert!(
-        p.len() < before,
-        "DCE should remove unused Const"
-    );
+    assert!(p.len() < before, "DCE should remove unused Const");
 }
 
 #[test]
@@ -514,15 +514,8 @@ fn optimize_full_pipeline() {
     optimize(&mut p);
 
     // After fold: 3 Consts. After DCE: all removed (none used).
-    assert!(
-        p.len() < before,
-        "optimize should reduce instruction count"
-    );
-    assert_eq!(
-        p.len(),
-        0,
-        "all unused consts should be removed"
-    );
+    assert!(p.len() < before, "optimize should reduce instruction count");
+    assert_eq!(p.len(), 0, "all unused consts should be removed");
 }
 
 #[test]
@@ -550,11 +543,7 @@ fn dce_chain_fixpoint() {
 
     dce::dead_code_elimination(&mut p);
 
-    assert_eq!(
-        p.len(),
-        0,
-        "fixpoint DCE should remove entire dead chain"
-    );
+    assert_eq!(p.len(), 0, "fixpoint DCE should remove entire dead chain");
 }
 
 #[test]
