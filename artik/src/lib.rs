@@ -20,7 +20,7 @@
 //! ## Structure
 //!
 //! - [`ir`] — [`Instr`], [`IntW`], [`IntBinOp`], [`RegType`].
-//! - [`header`] — [`ArtikHeader`] + [`FieldFamily`].
+//! - [`header`] — [`ArtikHeader`]. The [`FieldFamily`] tag lives in `memory`.
 //! - [`program`] — [`Program`] + [`FieldConstEntry`].
 //! - [`bytecode`] — [`encode`] / [`decode`].
 //! - [`validate`] — structural invariants (runs inside [`decode`]).
@@ -32,7 +32,7 @@
 //! [`IntBinOp`]: ir::IntBinOp
 //! [`RegType`]: ir::RegType
 //! [`ArtikHeader`]: header::ArtikHeader
-//! [`FieldFamily`]: header::FieldFamily
+//! [`FieldFamily`]: memory::FieldFamily
 //! [`Program`]: program::Program
 //! [`FieldConstEntry`]: program::FieldConstEntry
 //! [`encode`]: bytecode::encode
@@ -53,7 +53,9 @@ pub mod validate;
 pub use builder::{BuilderError, Label, ProgramBuilder};
 pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
-pub use header::{ArtikHeader, FieldFamily};
+pub use header::ArtikHeader;
+#[doc(inline)]
+pub use memory::FieldFamily;
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
 pub use program::{FieldConstEntry, Program};
 

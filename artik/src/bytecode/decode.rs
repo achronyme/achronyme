@@ -1,7 +1,9 @@
 //! Decode wire bytes to a validated `Program`.
 
+use memory::FieldFamily;
+
 use crate::error::ArtikError;
-use crate::header::{ArtikHeader, FieldFamily, HEADER_SIZE};
+use crate::header::{ArtikHeader, HEADER_SIZE};
 use crate::ir::{ElemT, Instr, IntBinOp, IntW, OpTag};
 use crate::program::{FieldConstEntry, Program};
 use crate::validate::validate;

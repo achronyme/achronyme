@@ -1,10 +1,10 @@
 //! Round-trip tests: build a program, encode, decode, assert equality.
 
 use artik::bytecode::{decode, encode};
-use artik::header::FieldFamily;
 use artik::ir::{ElemT, Instr, IntBinOp, IntW};
 use artik::program::{FieldConstEntry, Program};
 use artik::ArtikError;
+use memory::FieldFamily;
 
 fn sample_family() -> FieldFamily {
     FieldFamily::BnLike256

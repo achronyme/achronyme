@@ -31,9 +31,9 @@
 use std::collections::HashMap;
 
 use memory::field::{FieldBackend, FieldElement, PrimeId};
+use memory::FieldFamily;
 
 use crate::error::ArtikError;
-use crate::header::FieldFamily;
 use crate::ir::{ElemT, Instr, IntBinOp, IntW};
 use crate::program::Program;
 

@@ -17,7 +17,7 @@
 //!
 //! ```ignore
 //! use artik::builder::ProgramBuilder;
-//! use artik::FieldFamily;
+//! use memory::FieldFamily;
 //!
 //! let mut b = ProgramBuilder::new(FieldFamily::BnLike256);
 //! let x_sig = b.alloc_signal();           // caller binds x to signal 0
@@ -33,7 +33,8 @@
 //! [`bytecode::encode`](crate::bytecode::encode) +
 //! [`bytecode::decode`](crate::bytecode::decode) to run the validator.
 
-use crate::header::FieldFamily;
+use memory::FieldFamily;
+
 use crate::ir::{ElemT, Instr, IntBinOp, IntW, Reg};
 use crate::program::{FieldConstEntry, Program};
 
