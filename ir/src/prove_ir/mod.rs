@@ -21,14 +21,16 @@ pub mod instantiate;
 pub mod lysis_bridge;
 pub mod lysis_lower;
 pub mod lysis_materialize;
-pub mod lysis_oracle;
 pub mod types;
 
 pub use extended::{ExtendedInstruction, TemplateId};
 pub use extended_program::ExtendedIrProgram;
 pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
 pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
-pub use lysis_oracle::canonicalize_ssa;
+
+/// Re-export of [`crate::passes::canonicalize_ssa`] kept for source
+/// stability across the P5 cleanup move. Prefer the canonical path.
+pub use crate::passes::canonicalize_ssa;
 
 pub use circom_interop::{
     CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
