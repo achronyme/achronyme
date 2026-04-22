@@ -318,7 +318,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         eprintln!(
             "    {}: {} instructions",
             style.cyan("IR"),
-            program.instructions.len()
+            program.len()
         );
     }
 
@@ -396,14 +396,12 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     if dump_ir {
         println!("== Circuit IR for {} ==\n", path);
         print!("{program}");
-        let n = program.instructions.len();
+        let n = program.len();
         let n_inputs = program
-            .instructions
             .iter()
             .filter(|i| matches!(i, ir::Instruction::Input { .. }))
             .count();
         let n_constraints = program
-            .instructions
             .iter()
             .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
             .count();

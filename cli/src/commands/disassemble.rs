@@ -142,11 +142,10 @@ fn print_circuit_ir(
 
     print!("{program}");
 
-    let n = program.instructions.len();
+    let n = program.len();
     let n_pub = pub_names.len();
     let n_wit = wit_names.len();
     let n_constraints = program
-        .instructions
         .iter()
         .filter(|i| i.has_side_effects() && !matches!(i, ir::Instruction::Input { .. }))
         .count();
