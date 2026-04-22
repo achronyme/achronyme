@@ -276,13 +276,50 @@ impl<F: FieldBackend> Walker<F> {
                 self.builder.emit_is_lt(dst, l, r);
                 self.bind(*result, dst);
             }
-            Instruction::IsNeq { .. }
-            | Instruction::IsLe { .. }
-            | Instruction::IsLtBounded { .. }
-            | Instruction::IsLeBounded { .. } => {
-                // Lysis opcodes for these are not yet defined in the
-                // bytecode surface. Phase 4 extends; for now refuse.
-                return Err(WalkError::WitnessCallNotSupported);
+            // Desugar: IsNeq(x,y) = 1 - IsEq(x,y).
+            Instruction::IsNeq { result, lhs, rhs } => {
+                let one = self.one()?;
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let eq = self.allocator.alloc()?;
+                self.builder.emit_is_eq(eq, l, r);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, eq);
+                self.bind(*result, dst);
+            }
+            // Desugar: IsLe(x,y) = 1 - IsLt(y,x).
+            Instruction::IsLe { result, lhs, rhs } => {
+                let one = self.one()?;
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let lt = self.allocator.alloc()?;
+                self.builder.emit_is_lt(lt, r, l);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, lt);
+                self.bind(*result, dst);
+            }
+            // Desugar: IsLtBounded(x,y,bits) ignores `bits` in Phase 3;
+            // the bound is a soundness-preserving optimization hint
+            // (upstream already range-checked operands to fit in
+            // `bits`). Emit plain IsLt; Phase 4 adds a bounded opcode.
+            Instruction::IsLtBounded {
+                result, lhs, rhs, ..
+            } => {
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_is_lt(dst, l, r);
+                self.bind(*result, dst);
+            }
+            // Desugar: IsLeBounded(x,y,bits) = 1 - IsLt(y,x); same
+            // rationale as IsLtBounded.
+            Instruction::IsLeBounded {
+                result, lhs, rhs, ..
+            } => {
+                let one = self.one()?;
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let lt = self.allocator.alloc()?;
+                self.builder.emit_is_lt(lt, r, l);
+                let dst = self.allocator.alloc()?;
+                self.builder.emit_sub(dst, one, lt);
+                self.bind(*result, dst);
             }
 
             // ---------- hash ----------
@@ -548,6 +585,34 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
         ],
         Instruction::Assert { .. } => bin(Opcode::EmitAssertEq { lhs: 0, rhs: 0 }),
 
+        Instruction::IsNeq { .. } | Instruction::IsLe { .. } | Instruction::IsLeBounded { .. } => {
+            let cmp = match inst {
+                Instruction::IsNeq { .. } => Opcode::EmitIsEq {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                },
+                _ => Opcode::EmitIsLt {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                },
+            };
+            vec![
+                cmp,
+                Opcode::EmitSub {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                },
+            ]
+        }
+        Instruction::IsLtBounded { .. } => bin(Opcode::EmitIsLt {
+            dst: 0,
+            lhs: 0,
+            rhs: 0,
+        }),
+
         _ => return Err(WalkError::WitnessCallNotSupported),
     })
 }
@@ -567,7 +632,14 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
 }
 
 fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
-    matches!(inst, Instruction::Not { .. } | Instruction::Assert { .. })
+    matches!(
+        inst,
+        Instruction::Not { .. }
+            | Instruction::Assert { .. }
+            | Instruction::IsNeq { .. }
+            | Instruction::IsLe { .. }
+            | Instruction::IsLeBounded { .. }
+    )
 }
 
 #[cfg(test)]
@@ -890,6 +962,139 @@ mod tests {
             .count();
         assert_eq!(consts, 4, "one + 3 distinct iter vars");
         assert_eq!(subs, 3, "Not per iteration");
+    }
+
+    #[test]
+    fn desugars_is_neq_to_is_eq_plus_sub() {
+        // IsNeq(x,y) = 1 - IsEq(x,y).
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsNeq {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let out = run(&body);
+        let eqs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsEq { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(eqs, 1);
+        assert_eq!(subs, 1);
+    }
+
+    #[test]
+    fn desugars_is_le_to_is_lt_reversed_plus_sub() {
+        // IsLe(x,y) = 1 - IsLt(y, x).
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsLe {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let out = run(&body);
+        let lts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(lts, 1);
+        assert_eq!(subs, 1);
+    }
+
+    #[test]
+    fn desugars_is_lt_bounded_ignores_bitwidth_hint() {
+        // In Phase 3 IsLtBounded lowers to plain IsLt; no extra Const/Sub.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsLtBounded {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+                bitwidth: 16,
+            }),
+        ];
+        let out = run(&body);
+        let lts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(lts, 1);
+        assert_eq!(subs, 0);
+    }
+
+    #[test]
+    fn desugars_is_le_bounded_like_is_le() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IsLeBounded {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+                bitwidth: 8,
+            }),
+        ];
+        let out = run(&body);
+        let lts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+            .count();
+        let subs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Sub { .. }))
+            .count();
+        assert_eq!(lts, 1);
+        assert_eq!(subs, 1);
     }
 
     #[test]
