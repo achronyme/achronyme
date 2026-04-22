@@ -5,7 +5,8 @@ pub mod disassemble;
 pub mod inspect;
 pub mod run;
 
-use compiler::{ColorMode, Compiler, CompilerError, Diagnostic, DiagnosticRenderer};
+use compiler::{Compiler, CompilerError};
+use diagnostics::{ColorMode, Diagnostic, DiagnosticRenderer};
 
 /// Create a compiler with std natives pre-registered.
 pub fn new_compiler() -> Compiler {
