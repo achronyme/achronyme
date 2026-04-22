@@ -98,9 +98,21 @@ impl Variable {
 /// assert!(lc_const.is_constant());
 /// assert_eq!(lc_const.constant_value(), Some(FieldElement::from_u64(42)));
 /// ```
+/// Sparse linear combination over R1CS wires.
+///
+/// **Invariant (post-[`Self::simplify`]):** each [`Variable`] appears at
+/// most once, no term carries a zero coefficient, and terms are sorted
+/// by variable index. The `+` / `-` / `*` operators preserve semantic
+/// equality but do NOT canonicalize — call [`Self::simplify`] before
+/// structurally comparing two `LinearCombination`s.
+///
+/// The `terms` field is crate-private to prevent downstream callers
+/// from bypassing [`Self::add_term`] and corrupting the sparse-form
+/// invariant. Use [`Self::terms`] for read access and
+/// [`Self::into_terms`] to consume.
 #[derive(Debug, Clone)]
 pub struct LinearCombination<F: FieldBackend = Bn254Fr> {
-    pub terms: Vec<(Variable, FieldElement<F>)>,
+    pub(crate) terms: Vec<(Variable, FieldElement<F>)>,
 }
 
 impl<F: FieldBackend> Default for LinearCombination<F> {
@@ -421,11 +433,6 @@ impl<F: FieldBackend> ConstraintSystem<F> {
     /// Access constraints for serialization or verification.
     pub fn constraints(&self) -> &[Constraint<F>] {
         &self.constraints
-    }
-
-    /// Mutable access to the constraint list (for optimization passes).
-    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint<F>> {
-        &mut self.constraints
     }
 
     /// Run linear constraint elimination on this constraint system.
