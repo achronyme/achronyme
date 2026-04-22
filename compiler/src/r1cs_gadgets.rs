@@ -67,13 +67,13 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         // By materializing first, we get: w_a × w_b = w_out (1 monomial)
         // plus 1-2 linear constraints (w_a = LC_a, w_b = LC_b) that O1
         // can substitute or O2 can exploit for algebraic deduction.
-        let (a_mat, b_mat) = if a.terms.len() > 1 || b.terms.len() > 1 {
-            let a_clean = if a.terms.len() > 1 {
+        let (a_mat, b_mat) = if a.terms().len() > 1 || b.terms().len() > 1 {
+            let a_clean = if a.terms().len() > 1 {
                 LinearCombination::from_variable(self.materialize_lc(a))
             } else {
                 a.clone()
             };
-            let b_clean = if b.terms.len() > 1 {
+            let b_clean = if b.terms().len() > 1 {
                 LinearCombination::from_variable(self.materialize_lc(b))
             } else {
                 b.clone()

@@ -92,15 +92,27 @@ impl Variable {
 /// use memory::FieldElement;
 ///
 /// let lc_var: LinearCombination = LinearCombination::from_variable(Variable(1));
-/// assert_eq!(lc_var.terms.len(), 1);
+/// assert_eq!(lc_var.terms().len(), 1);
 ///
 /// let lc_const: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(42));
 /// assert!(lc_const.is_constant());
 /// assert_eq!(lc_const.constant_value(), Some(FieldElement::from_u64(42)));
 /// ```
+/// Sparse linear combination over R1CS wires.
+///
+/// **Invariant (post-[`Self::simplify`]):** each [`Variable`] appears at
+/// most once, no term carries a zero coefficient, and terms are sorted
+/// by variable index. The `+` / `-` / `*` operators preserve semantic
+/// equality but do NOT canonicalize — call [`Self::simplify`] before
+/// structurally comparing two `LinearCombination`s.
+///
+/// The `terms` field is crate-private to prevent downstream callers
+/// from bypassing [`Self::add_term`] and corrupting the sparse-form
+/// invariant. Use [`Self::terms`] for read access and
+/// [`Self::into_terms`] to consume.
 #[derive(Debug, Clone)]
 pub struct LinearCombination<F: FieldBackend = Bn254Fr> {
-    pub terms: Vec<(Variable, FieldElement<F>)>,
+    pub(crate) terms: Vec<(Variable, FieldElement<F>)>,
 }
 
 impl<F: FieldBackend> Default for LinearCombination<F> {
@@ -134,6 +146,21 @@ impl<F: FieldBackend> LinearCombination<F> {
     /// Add a (coefficient * variable) term.
     pub fn add_term(&mut self, var: Variable, coeff: FieldElement<F>) {
         self.terms.push((var, coeff));
+    }
+
+    /// Read-only view of the term list. Prefer this over the public
+    /// `terms` field when you only need to iterate — it decouples
+    /// callers from the storage representation and will keep working
+    /// after the field becomes `pub(crate)` in the post-cleanup
+    /// encapsulation pass (structural-cleanup.md §3.4).
+    pub fn terms(&self) -> &[(Variable, FieldElement<F>)] {
+        &self.terms
+    }
+
+    /// Consume the LC and return its term list. Useful for callers
+    /// that want to take ownership (serialization, format conversion).
+    pub fn into_terms(self) -> Vec<(Variable, FieldElement<F>)> {
+        self.terms
     }
 
     /// Merge duplicate variable terms and remove zero coefficients.
@@ -278,6 +305,17 @@ pub struct Constraint<F: FieldBackend = Bn254Fr> {
     pub c: LinearCombination<F>,
 }
 
+impl<F: FieldBackend> Constraint<F> {
+    /// Build a constraint `A · B = C`. `a`, `b`, `c` are linear
+    /// combinations evaluated against the witness vector. The three
+    /// LCs carry no ordering invariant between them; equality of two
+    /// `Constraint`s is not structural — canonicalize via
+    /// `LinearCombination::simplify()` before comparing if needed.
+    pub fn new(a: LinearCombination<F>, b: LinearCombination<F>, c: LinearCombination<F>) -> Self {
+        Self { a, b, c }
+    }
+}
+
 // ============================================================================
 // ConstraintSystem
 // ============================================================================
@@ -395,11 +433,6 @@ impl<F: FieldBackend> ConstraintSystem<F> {
     /// Access constraints for serialization or verification.
     pub fn constraints(&self) -> &[Constraint<F>] {
         &self.constraints
-    }
-
-    /// Mutable access to the constraint list (for optimization passes).
-    pub fn constraints_mut(&mut self) -> &mut Vec<Constraint<F>> {
-        &mut self.constraints
     }
 
     /// Run linear constraint elimination on this constraint system.
