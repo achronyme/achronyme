@@ -13,14 +13,14 @@
 //! - u8 / u32 / u64 / i64 bit-exact integer arithmetic with wrapping
 //!   semantics. u128 / i256 are out of scope.
 //! - Multi-prime bytecode within a field family
-//!   ([`FieldFamily::BnLike256`] covers BN254 + BLS12-381).
+//!   ([`memory::FieldFamily::BnLike256`] covers BN254 + BLS12-381).
 //! - No oracles / foreign calls. No JIT. No heap / GC.
 //! - Mandatory bytecode validator runs on every [`decode`].
 //!
 //! ## Structure
 //!
 //! - [`ir`] — [`Instr`], [`IntW`], [`IntBinOp`], [`RegType`].
-//! - [`header`] — [`ArtikHeader`] + [`FieldFamily`].
+//! - [`header`] — [`ArtikHeader`]. The [`FieldFamily`] tag lives in `memory`.
 //! - [`program`] — [`Program`] + [`FieldConstEntry`].
 //! - [`bytecode`] — [`encode`] / [`decode`].
 //! - [`validate`] — structural invariants (runs inside [`decode`]).
@@ -32,7 +32,6 @@
 //! [`IntBinOp`]: ir::IntBinOp
 //! [`RegType`]: ir::RegType
 //! [`ArtikHeader`]: header::ArtikHeader
-//! [`FieldFamily`]: header::FieldFamily
 //! [`Program`]: program::Program
 //! [`FieldConstEntry`]: program::FieldConstEntry
 //! [`encode`]: bytecode::encode
@@ -53,7 +52,7 @@ pub mod validate;
 pub use builder::{BuilderError, Label, ProgramBuilder};
 pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
-pub use header::{ArtikHeader, FieldFamily};
+pub use header::ArtikHeader;
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
 pub use program::{FieldConstEntry, Program};
 

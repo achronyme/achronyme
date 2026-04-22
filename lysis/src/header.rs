@@ -11,7 +11,7 @@
 //!
 //! See RFC `§4.2 — Header layout` for the normative specification.
 
-use artik::FieldFamily;
+use memory::FieldFamily;
 
 use crate::error::LysisError;
 

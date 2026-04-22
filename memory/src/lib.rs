@@ -11,7 +11,9 @@ mod value_tests;
 
 pub use arena::ArenaError;
 pub use bigint::{BigInt, BigIntError, BigIntWidth};
-pub use field::{Bls12_381Fr, Bn254Fr, FieldBackend, FieldElement, GoldilocksFr, PrimeId};
+pub use field::{
+    Bls12_381Fr, Bn254Fr, FieldBackend, FieldElement, FieldFamily, GoldilocksFr, PrimeId,
+};
 pub use heap::{
     CircomHandle, Closure, Function, GcStats, Heap, IteratorObj, ProofObject, Upvalue,
     UpvalueLocation,

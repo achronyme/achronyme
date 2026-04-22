@@ -215,15 +215,15 @@ fn dispatch_witness_call<F: FieldBackend>(
     Ok(())
 }
 
-/// Map the eval's `FieldBackend` to the Artik `FieldFamily` the
+/// Map the eval's `FieldBackend` to the `FieldFamily` the Artik
 /// bytecode header declares. The lift emits `BnLike256` for BN254
 /// and BLS12-381 (both are 256-bit BN-like primes sharing the Artik
 /// encoding); Goldilocks would need its own family and no circom
 /// lift targets it today.
-fn witness_family<F: FieldBackend>() -> Option<artik::FieldFamily> {
+fn witness_family<F: FieldBackend>() -> Option<memory::FieldFamily> {
     use memory::PrimeId;
     match F::PRIME_ID {
-        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(artik::FieldFamily::BnLike256),
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(memory::FieldFamily::BnLike256),
         _ => None,
     }
 }

@@ -17,8 +17,8 @@
 //! (to serialize) or directly to [`crate::bytecode::validate`] /
 //! [`crate::execute`] without another byte-level round trip.
 
-use artik::FieldFamily;
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
+use memory::FieldFamily;
 
 use crate::bytecode::const_pool::{ConstPool, ConstPoolEntry};
 use crate::bytecode::encoding::encode_opcode;

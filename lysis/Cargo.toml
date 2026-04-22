@@ -12,6 +12,7 @@ categories.workspace = true
 
 [dependencies]
 artik = { path = "../artik" }
+lysis-types = { path = "../lysis-types" }
 memory = { path = "../memory" }
 indexmap = "2"
 siphasher = "1"

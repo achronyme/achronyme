@@ -1019,6 +1019,7 @@ dependencies = [
  "constraints",
  "diagnostics",
  "lysis",
+ "lysis-types",
  "memory",
  "resolve",
  "serde",
@@ -1144,9 +1145,17 @@ dependencies = [
  "artik",
  "criterion",
  "indexmap",
+ "lysis-types",
  "memory",
  "siphasher",
  "smallvec",
+]
+
+[[package]]
+name = "lysis-types"
+version = "0.1.0-beta.19"
+dependencies = [
+ "memory",
 ]
 
 [[package]]

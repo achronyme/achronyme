@@ -1,6 +1,8 @@
 //! `Program` — the decoded Artik bytecode unit: header + const pool + body.
 
-use crate::header::{ArtikHeader, FieldFamily};
+use memory::FieldFamily;
+
+use crate::header::ArtikHeader;
 use crate::ir::Instr;
 
 /// A constant in the pool. Stored as length-prefixed little-endian

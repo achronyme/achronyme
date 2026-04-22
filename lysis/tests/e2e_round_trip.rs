@@ -7,11 +7,11 @@
 //! in `bytecode_fixtures.rs` with a semantic-level check of the
 //! pipeline.
 
-use artik::FieldFamily;
 use lysis::{
     decode, encode, execute, InstructionKind, LysisConfig, ProgramBuilder, StubSink, Visibility,
 };
 use memory::field::{Bn254Fr, FieldElement};
+use memory::FieldFamily;
 
 fn fe(x: u64) -> FieldElement<Bn254Fr> {
     FieldElement::<Bn254Fr>::from_canonical([x, 0, 0, 0])

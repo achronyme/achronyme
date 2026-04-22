@@ -18,8 +18,8 @@
 //! (see RFC §4.4, final paragraph: "duplicate field constants map to
 //! the same index").
 
-use artik::FieldFamily;
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
+use memory::FieldFamily;
 
 use crate::error::LysisError;
 

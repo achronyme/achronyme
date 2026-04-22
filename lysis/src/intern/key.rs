@@ -17,8 +17,7 @@
 
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
 
-use crate::intern::kind::InstructionKind;
-use crate::intern::node::NodeId;
+use crate::intern::{InstructionKind, NodeId};
 
 /// Structural key for a pure, hash-consable node. `PartialEq` + `Eq` +
 /// `Hash` are derived — equality on a `NodeKey` is exactly the

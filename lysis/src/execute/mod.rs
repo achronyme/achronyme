@@ -38,8 +38,8 @@ pub use stub_sink::StubSink;
 
 use std::collections::HashMap;
 
-use artik::FieldFamily;
 use memory::field::{FieldBackend, FieldElement, PrimeId};
+use memory::FieldFamily;
 
 use crate::bytecode::const_pool::ConstPoolEntry;
 use crate::bytecode::Opcode;
@@ -853,8 +853,8 @@ fn pop_frame(frames: &mut Vec<Frame>) -> Result<(), LysisError> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use artik::FieldFamily;
     use memory::field::{Bn254Fr, FieldElement};
+    use memory::FieldFamily;
 
     use crate::builder::ProgramBuilder;
     use crate::intern::Visibility;

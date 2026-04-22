@@ -14,7 +14,6 @@
 
 use std::collections::BTreeSet;
 
-use artik::FieldFamily;
 use ir::prove_ir::extended::ExtendedInstruction;
 use ir::prove_ir::lysis_lower::{
     build_capture_layout, classify, compute_frame_size, extract_template, symbolic_emit,
@@ -22,6 +21,7 @@ use ir::prove_ir::lysis_lower::{
 };
 use ir::types::{Instruction, SsaVar, Visibility};
 use lysis::{execute, InstructionKind, InterningSink, LysisConfig};
+use memory::FieldFamily;
 use memory::{Bn254Fr, FieldElement};
 
 fn fe(n: u64) -> FieldElement<Bn254Fr> {

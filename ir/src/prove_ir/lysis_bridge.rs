@@ -1,23 +1,26 @@
-//! Bridge from Lysis's mirror [`lysis::InstructionKind<F>`] back to
+//! Bridge from Lysis's mirror [`InstructionKind<F>`] back to
 //! the canonical [`Instruction<F>`].
 //!
 //! ## Why the mirror exists
 //!
-//! Phase 1 of Lysis deliberately kept a local [`InstructionKind<F>`]
-//! so the new crate could come online without depending on `ir`
-//! (which transitively pulls the full parser / diagnostics /
-//! resolve / compile tree). That decision left open how the
-//! bytecode-driven emission path would eventually feed the R1CS
-//! backend, whose signature is
+//! The Lysis VM deliberately keeps a mirror [`InstructionKind<F>`]
+//! in the `lysis-types` leaf crate so new emitters can come online
+//! without depending on `ir` (which transitively pulls the full
+//! parser / diagnostics / resolve / compile tree). That decision
+//! left open how the bytecode-driven emission path would eventually
+//! feed the R1CS backend, whose signature is
 //! `compile_ir(&IrProgram<F>) where IrProgram<F>: uses Instruction<F>`.
 //!
 //! ## Why the bridge lives in `ir`
 //!
 //! Rust's orphan rule requires `impl<..> From<A> for B` to be
 //! defined in the crate that owns `A` or `B`. Since `Instruction<F>`
-//! lives in `ir`, the `From` direction goes here. `ir` gains a dep
-//! on `lysis`; `lysis` still has no dep on `ir` — keeping it a
-//! leaf crate as the RFC design intended.
+//! lives in `ir`, the `From` direction goes here. `ir` depends on
+//! `lysis-types` for the mirror surface — a cheap leaf dep. `lysis`
+//! is not needed just for the types anymore, though `ir` still pulls
+//! in the full `lysis` crate because the walker (P7a's job) lives
+//! here and uses the Lysis runtime (Program, ProgramBuilder,
+//! executor, bytecode codec).
 //!
 //! ## Conversion shape
 //!
@@ -30,36 +33,37 @@
 //! the interner's insertion order directly onto the SSA var
 //! numbering the backend expects.
 //!
-//! [`InstructionKind<F>`]: lysis::InstructionKind
-//! [`NodeId`]: lysis::NodeId
+//! [`InstructionKind<F>`]: lysis_types::InstructionKind
+//! [`NodeId`]: lysis_types::NodeId
 
+use lysis_types::{InstructionKind, NodeId, Visibility as LysisVisibility};
 use memory::FieldBackend;
 
 use crate::types::{Instruction, SsaVar, Visibility as IrVisibility};
 
 /// Convert a Lysis `NodeId` into the SSA var numbering the IR uses.
 #[inline]
-pub fn ssa_var_from_node_id(id: lysis::NodeId) -> SsaVar {
+pub fn ssa_var_from_node_id(id: NodeId) -> SsaVar {
     SsaVar(id.index() as u32)
 }
 
 #[inline]
-fn map_visibility(v: lysis::Visibility) -> IrVisibility {
+fn map_visibility(v: LysisVisibility) -> IrVisibility {
     match v {
-        lysis::Visibility::Public => IrVisibility::Public,
-        lysis::Visibility::Witness => IrVisibility::Witness,
+        LysisVisibility::Public => IrVisibility::Public,
+        LysisVisibility::Witness => IrVisibility::Witness,
     }
 }
 
 #[inline]
-fn map_vec_ids(ids: &[lysis::NodeId]) -> Vec<SsaVar> {
+fn map_vec_ids(ids: &[NodeId]) -> Vec<SsaVar> {
     ids.iter().copied().map(ssa_var_from_node_id).collect()
 }
 
-/// Convert a `lysis::InstructionKind<F>` reference into the
+/// Convert a Lysis [`InstructionKind<F>`] reference into the
 /// canonical `ir::Instruction<F>` the R1CS backend consumes.
-pub fn instruction_from_kind<F: FieldBackend>(kind: &lysis::InstructionKind<F>) -> Instruction<F> {
-    use lysis::InstructionKind as K;
+pub fn instruction_from_kind<F: FieldBackend>(kind: &InstructionKind<F>) -> Instruction<F> {
+    use InstructionKind as K;
     match kind {
         K::Const { result, value } => Instruction::Const {
             result: ssa_var_from_node_id(*result),
@@ -254,8 +258,8 @@ mod tests {
 
     use super::*;
 
-    fn node(i: usize) -> lysis::NodeId {
-        lysis::NodeId::from_zero_based(i)
+    fn node(i: usize) -> lysis_types::NodeId {
+        lysis_types::NodeId::from_zero_based(i)
     }
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
@@ -271,7 +275,7 @@ mod tests {
 
     #[test]
     fn const_variant_round_trips() {
-        let k = lysis::InstructionKind::<Bn254Fr>::Const {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::Const {
             result: node(3),
             value: fe(7),
         };
@@ -287,7 +291,7 @@ mod tests {
 
     #[test]
     fn add_variant_maps_operands() {
-        let k = lysis::InstructionKind::<Bn254Fr>::Add {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::Add {
             result: node(10),
             lhs: node(1),
             rhs: node(2),
@@ -305,10 +309,10 @@ mod tests {
 
     #[test]
     fn input_variant_preserves_name_and_visibility() {
-        let k = lysis::InstructionKind::<Bn254Fr>::Input {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::Input {
             result: node(0),
             name: "x".into(),
-            visibility: lysis::Visibility::Witness,
+            visibility: lysis_types::Visibility::Witness,
         };
         let ir = instruction_from_kind(&k);
         match ir {
@@ -327,7 +331,7 @@ mod tests {
 
     #[test]
     fn decompose_maps_bit_results_vec() {
-        let k = lysis::InstructionKind::<Bn254Fr>::Decompose {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::Decompose {
             result: node(0),
             bit_results: vec![node(1), node(2), node(3), node(4)],
             operand: node(0),
@@ -355,7 +359,7 @@ mod tests {
 
     #[test]
     fn witness_call_maps_outputs_inputs_and_bytes() {
-        let k = lysis::InstructionKind::<Bn254Fr>::WitnessCall {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::WitnessCall {
             outputs: vec![node(7), node(8)],
             inputs: vec![node(1), node(2), node(3)],
             program_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
@@ -377,7 +381,7 @@ mod tests {
 
     #[test]
     fn bounded_variants_carry_bitwidth() {
-        let k = lysis::InstructionKind::<Bn254Fr>::IsLtBounded {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::IsLtBounded {
             result: node(0),
             lhs: node(1),
             rhs: node(2),
@@ -402,7 +406,7 @@ mod tests {
 
     #[test]
     fn intmod_carries_max_bits() {
-        let k = lysis::InstructionKind::<Bn254Fr>::IntMod {
+        let k = lysis_types::InstructionKind::<Bn254Fr>::IntMod {
             result: node(0),
             lhs: node(1),
             rhs: node(2),
@@ -427,15 +431,15 @@ mod tests {
 
     #[test]
     fn visibility_round_trip() {
-        let pk = lysis::InstructionKind::<Bn254Fr>::Input {
+        let pk = lysis_types::InstructionKind::<Bn254Fr>::Input {
             result: node(0),
             name: "p".into(),
-            visibility: lysis::Visibility::Public,
+            visibility: lysis_types::Visibility::Public,
         };
-        let wk = lysis::InstructionKind::<Bn254Fr>::Input {
+        let wk = lysis_types::InstructionKind::<Bn254Fr>::Input {
             result: node(0),
             name: "w".into(),
-            visibility: lysis::Visibility::Witness,
+            visibility: lysis_types::Visibility::Witness,
         };
         match instruction_from_kind(&pk) {
             Instruction::Input { visibility, .. } => {

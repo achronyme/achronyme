@@ -50,8 +50,9 @@
 
 use std::collections::HashMap;
 
-use artik::{ElemT, FieldFamily, IntBinOp, IntW, ProgramBuilder, Reg};
+use artik::{ElemT, IntBinOp, IntW, ProgramBuilder, Reg};
 use diagnostics::Span;
+use memory::FieldFamily;
 
 use crate::ast::{BinOp, Expr, FunctionDef, PostfixOp, Stmt, UnaryOp};
 use crate::lowering::context::LoweringContext;

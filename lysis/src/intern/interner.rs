@@ -25,8 +25,8 @@ use memory::field::{Bn254Fr, FieldBackend};
 use crate::intern::effect::{EffectId, SideEffect};
 use crate::intern::hash::{deterministic_hash, DeterministicBuildHasher};
 use crate::intern::key::NodeKey;
-use crate::intern::node::NodeId;
 use crate::intern::span::{SpanList, SpanRange};
+use crate::intern::NodeId;
 
 /// Metadata stored alongside each interned key. The cached hash lets
 /// us answer "were these two nodes structurally equivalent?" in
@@ -228,8 +228,8 @@ mod tests {
     use super::*;
     use memory::field::FieldElement;
 
-    use crate::intern::kind::Visibility;
     use crate::intern::span::SPAN_LIST_CAP;
+    use crate::intern::Visibility;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])
