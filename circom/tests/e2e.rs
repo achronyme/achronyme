@@ -409,7 +409,7 @@ fn poseidon_real_circomlib() {
     ir::passes::optimize(&mut program);
     eprintln!(
         "  ✓ Instantiated + optimized: {} instructions",
-        program.instructions.len()
+        program.len()
     );
 
     // ── Step 3: R1CS compile ──
@@ -593,7 +593,7 @@ fn mimcsponge_real_circomlib() {
     ir::passes::optimize(&mut program);
     eprintln!(
         "  ✓ Instantiated + optimized: {} instructions",
-        program.instructions.len()
+        program.len()
     );
 
     // ── Step 3: R1CS compile ──
@@ -669,7 +669,7 @@ fn circomlib_e2e_verify(test_name: &str, circom_file: &str, inputs: &[(&str, u64
     ir::passes::optimize(&mut program);
     eprintln!(
         "  ✓ Instantiated + optimized: {} instructions",
-        program.instructions.len()
+        program.len()
     );
 
     let mut user_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -783,7 +783,7 @@ fn circomlib_e2e_verify_fe(
     ir::passes::optimize(&mut program);
     eprintln!(
         "  ✓ Instantiated + optimized: {} instructions",
-        program.instructions.len()
+        program.len()
     );
 
     let mut all_signals =
@@ -1017,13 +1017,13 @@ fn eddsaposeidon_compile() {
     ir::passes::optimize(&mut program);
     eprintln!(
         "  ✓ Instantiated + optimized: {} instructions",
-        program.instructions.len()
+        program.len()
     );
 
     eprintln!(
         "\n  EdDSAPoseidonVerifier — {} nodes → {} instructions — INSTANTIATED ✓",
         prove_ir.body.len(),
-        program.instructions.len()
+        program.len()
     );
 }
 
@@ -1787,7 +1787,7 @@ fn sha256_64_r1cs_probe() {
     eprintln!(
         "  [instantiate] {:?}  instructions={}",
         t1.elapsed(),
-        program.instructions.len()
+        program.len()
     );
 
     let t2 = Instant::now();
@@ -1795,7 +1795,7 @@ fn sha256_64_r1cs_probe() {
     eprintln!(
         "  [optimize]    {:?}  instructions={}",
         t2.elapsed(),
-        program.instructions.len()
+        program.len()
     );
 
     // Build R1CS without an inputs map — constraints still get emitted,
@@ -2417,7 +2417,7 @@ fn num2bits_optimization_diagnostic() {
 
     // Print IR instructions to understand wire names
     eprintln!("\n=== IR Instructions ===");
-    for (i, inst) in program.instructions.iter().enumerate() {
+    for (i, inst) in program.iter().enumerate() {
         eprintln!("  [{i:3}] {inst}");
     }
 

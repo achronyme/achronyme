@@ -657,9 +657,9 @@ fn real_num2bits_e2e_instantiate() {
 
     // Verify the IR program has instructions (loop was unrolled)
     assert!(
-        program.instructions.len() > 10,
+        program.len() > 10,
         "expected many instructions after unrolling, got {}",
-        program.instructions.len()
+        program.len()
     );
 }
 
