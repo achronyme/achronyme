@@ -16,6 +16,7 @@ akron = { path = "../akron" }
 constraints = { path = "../constraints" }
 achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
+ir-forge = { path = "../ir-forge" }
 circom = { path = "../circom" }
 resolve = { path = "../resolve" }
 artik = { path = "../artik" }

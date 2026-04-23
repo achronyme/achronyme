@@ -67,8 +67,10 @@ impl<F: FieldBackend> IrLowering<F> {
 
         for name in names {
             if !all_exports.contains(name) {
-                let suggestion =
-                    crate::suggest::find_similar_ir(name, all_exports.iter().map(|s| s.as_str()));
+                let suggestion = ir_forge::suggest::find_similar_ir(
+                    name,
+                    all_exports.iter().map(|s| s.as_str()),
+                );
                 let mut msg = format!("module \"{}\" does not export `{}`", path, name);
                 if let Some(s) = suggestion {
                     msg.push_str(&format!(". Did you mean `{s}`?"));

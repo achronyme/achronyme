@@ -4,7 +4,7 @@
 //! no ProveIR front-end), drives it through
 //! `Walker::lower → execute (InterningSink) → materialize`, and
 //! asserts the resulting `Vec<Instruction<Bn254Fr>>` matches what the
-//! eager `ir::prove_ir::instantiate` path would produce for the same
+//! eager `ir_forge::instantiate` path would produce for the same
 //! circuit — shape-level, not semantic equivalence.
 //!
 //! Also exercises BTA + extract on a Uniform loop to make sure the
@@ -14,12 +14,12 @@
 
 use std::collections::BTreeSet;
 
-use ir::prove_ir::extended::ExtendedInstruction;
-use ir::prove_ir::lysis_lower::{
+use ir::types::{Instruction, SsaVar, Visibility};
+use ir_forge::lysis_lift::{
     build_capture_layout, classify, compute_frame_size, extract_template, symbolic_emit,
     BindingTime, CaptureKind, SlotId, TemplateRegistry, Walker,
 };
-use ir::types::{Instruction, SsaVar, Visibility};
+use ir_forge::ExtendedInstruction;
 use lysis::{execute, InstructionKind, InterningSink, LysisConfig};
 use memory::FieldFamily;
 use memory::{Bn254Fr, FieldElement};
@@ -198,9 +198,9 @@ fn symbolic_then_diff_integration_matches_bta_details() {
     let t0 = symbolic_emit(&body, &[(iter_var, fe(0))]);
     let t1 = symbolic_emit(&body, &[(iter_var, fe(1))]);
     // Structural equivalence modulo slot value — should expose slot 0.
-    let diff = ir::prove_ir::lysis_lower::structural_diff(&t0, &t1);
+    let diff = ir_forge::lysis_lift::structural_diff(&t0, &t1);
     match diff {
-        ir::prove_ir::lysis_lower::Diff::OnlyConstants(slots) => {
+        ir_forge::lysis_lift::Diff::OnlyConstants(slots) => {
             let expected: BTreeSet<SlotId> = [SlotId(0)].into_iter().collect();
             assert_eq!(slots, expected);
         }

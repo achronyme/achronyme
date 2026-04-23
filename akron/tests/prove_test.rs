@@ -123,7 +123,7 @@ impl ProveHandler for RealProveHandler {
     ) -> Result<ProveResult, ProveError> {
         use compiler::r1cs_backend::R1CSCompiler;
 
-        let (prove_ir, _prime_id) = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
+        let (prove_ir, _prime_id) = ir_forge::ProveIR::from_bytes(prove_ir_bytes)
             .map_err(|e| ProveError::IrLowering(format!("ProveIR: {e}")))?;
 
         let mut program = prove_ir

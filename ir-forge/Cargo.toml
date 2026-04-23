@@ -1,0 +1,26 @@
+[package]
+name = "ir-forge"
+description = "Circuit IR front-half: ProveIR AST, ast_lower (language → ProveIR), instantiate pipeline, and the Lysis interop adapters (lysis_lift lifter + lysis_materialize output). Depends on `ir` for the flat-SSA target types (Instruction<F>, SsaVar, IrType) and on `lysis` for the bytecode runtime; consumers like circom and compiler depend on this crate for ProveIR semantics."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+memory = { path = "../memory" }
+diagnostics = { path = "../diagnostics" }
+ir-core = { path = "../ir-core" }
+lysis-types = { path = "../lysis-types" }
+lysis = { path = "../lysis" }
+achronyme-parser = { path = "../achronyme-parser" }
+resolve = { path = "../resolve" }
+serde = { version = "1", features = ["derive"] }
+bincode = "1"
+smallvec = "1"
+
+[features]
+test-support = []

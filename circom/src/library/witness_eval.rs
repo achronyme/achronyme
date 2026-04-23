@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use ir::prove_ir::types::FieldConst;
+use ir_forge::types::FieldConst;
 use memory::{FieldBackend, FieldElement};
 
 use crate::lowering::template::lower_template_with_captures;

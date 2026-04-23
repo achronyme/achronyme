@@ -49,3 +49,57 @@ pub fn dead_code_elimination<F: FieldBackend>(program: &mut IrProgram<F>) {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use diagnostics::SpanRange;
+    use ir_core::{Instruction, IrProgram, Visibility};
+    use memory::FieldElement;
+
+    use super::dead_code_elimination;
+
+    #[test]
+    fn var_spans_survive_dce() {
+        // var_spans are keyed by SsaVar, not instruction index,
+        // so they survive DCE which removes instructions via retain().
+        let mut p: IrProgram = IrProgram::new();
+        let v0 = p.fresh_var();
+        p.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: Visibility::Public,
+        });
+        let span = SpanRange::new(0, 10, 1, 1, 1, 10);
+        p.set_span(v0, span.clone());
+
+        // v1 is unused, will be eliminated by DCE
+        let v1 = p.fresh_var();
+        p.push(Instruction::Const {
+            result: v1,
+            value: FieldElement::from_u64(42),
+        });
+
+        // v2: non-tautological AssertEq (survives DCE)
+        let v2 = p.fresh_var();
+        let v3 = p.fresh_var();
+        p.push(Instruction::Const {
+            result: v3,
+            value: FieldElement::from_u64(0),
+        });
+        p.push(Instruction::AssertEq {
+            result: v2,
+            lhs: v0,
+            rhs: v3,
+            message: None,
+        });
+        let span2 = SpanRange::new(20, 30, 2, 1, 2, 10);
+        p.set_span(v2, span2.clone());
+
+        dead_code_elimination(&mut p);
+
+        // v1 (unused Const) is gone; Input + Const(0) + AssertEq remain.
+        assert_eq!(p.instructions.len(), 3);
+        assert_eq!(p.get_span(v0), Some(&span));
+        assert_eq!(p.get_span(v2), Some(&span2));
+    }
+}

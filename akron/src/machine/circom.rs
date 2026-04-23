@@ -40,7 +40,7 @@ use super::vm::VM;
 /// A single declared output of an instantiated circom template as
 /// it flows back from the handler into the VM.
 ///
-/// Mirrors `ir::prove_ir::CircomTemplateOutput` / the circom
+/// Mirrors `ir_forge::CircomTemplateOutput` / the circom
 /// library's `TemplateOutputValue`, but with field elements
 /// materialized into a form the VM can marshal into `Value`s
 /// without circular dependencies on the ir crate.

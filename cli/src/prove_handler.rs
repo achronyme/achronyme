@@ -81,7 +81,7 @@ impl ProveHandler for DefaultProveHandler {
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
         // 1. Deserialize ProveIR from bytes
-        let (prove_ir, _prime_id) = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
+        let (prove_ir, _prime_id) = ir_forge::ProveIR::from_bytes(prove_ir_bytes)
             .map_err(|e| ProveError::IrLowering(format!("ProveIR deserialization: {e}")))?;
 
         // 2. Instantiate with scope values (captures resolved here)
@@ -109,7 +109,7 @@ impl ProveHandler for DefaultProveHandler {
             .chain(prove_ir.witness_inputs.iter())
         {
             match &input.array_size {
-                Some(ir::prove_ir::ArraySize::Literal(n)) => {
+                Some(ir_forge::ArraySize::Literal(n)) => {
                     for i in 0..*n {
                         let elem_name = format!("{}_{i}", input.name);
                         let fe = scope_values.get(&elem_name).ok_or_else(|| {
@@ -129,7 +129,7 @@ impl ProveHandler for DefaultProveHandler {
                     })?;
                     inputs.insert(input.name.clone(), *fe);
                 }
-                Some(ir::prove_ir::ArraySize::Capture(_)) => {
+                Some(ir_forge::ArraySize::Capture(_)) => {
                     // Capture-sized arrays: elements were expanded during instantiation.
                     // The individual element names are already in scope_values.
                 }

@@ -21,3 +21,4 @@ resolve = { path = "../resolve" }
 compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 ir = { path = "../ir" }
+ir-forge = { path = "../ir-forge" }

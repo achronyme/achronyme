@@ -59,6 +59,7 @@ dependencies = [
  "compiler",
  "constraints",
  "ir",
+ "ir-forge",
  "memory",
  "resolve",
 ]
@@ -531,6 +532,7 @@ dependencies = [
  "constraints",
  "diagnostics",
  "ir",
+ "ir-forge",
  "memory",
  "proving",
  "tempfile",
@@ -593,6 +595,7 @@ dependencies = [
  "diagnostics",
  "getrandom 0.2.17",
  "ir",
+ "ir-forge",
  "memory",
  "open",
  "proving",
@@ -621,6 +624,7 @@ dependencies = [
  "circom",
  "constraints",
  "ir",
+ "ir-forge",
  "memory",
  "proptest",
  "resolve",
@@ -1018,6 +1022,33 @@ dependencies = [
  "bincode",
  "constraints",
  "diagnostics",
+ "ir-core",
+ "ir-forge",
+ "lysis",
+ "lysis-types",
+ "memory",
+ "resolve",
+ "serde",
+ "smallvec",
+]
+
+[[package]]
+name = "ir-core"
+version = "0.1.0-beta.19"
+dependencies = [
+ "diagnostics",
+ "memory",
+ "serde",
+]
+
+[[package]]
+name = "ir-forge"
+version = "0.1.0-beta.19"
+dependencies = [
+ "achronyme-parser",
+ "bincode",
+ "diagnostics",
+ "ir-core",
  "lysis",
  "lysis-types",
  "memory",

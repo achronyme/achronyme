@@ -282,7 +282,7 @@ fn dump_prove_blocks_from_bytecode(bytecode: &[u32], compiler: &compiler::Compil
             continue;
         };
 
-        match ir::prove_ir::ProveIR::from_bytes(blob) {
+        match ir_forge::ProveIR::from_bytes(blob) {
             Ok((prove_ir, prime_id)) => {
                 println!("  prime: {prime_id}");
                 print!("{prove_ir}");

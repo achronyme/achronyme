@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::FieldConst;
+use ir_forge::types::FieldConst;
 
 use super::utils::EvalValue;
 

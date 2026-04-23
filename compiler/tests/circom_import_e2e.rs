@@ -15,7 +15,7 @@
 //!    instantiated body.
 //!
 //! The goal is a smoke-test — detailed unit coverage lives in
-//! `ir::prove_ir::compiler::tests::circom_dispatch` against the
+//! `ir_forge::compiler::tests::circom_dispatch` against the
 //! StubLibrary.
 
 use compiler::codegen::Compiler;

@@ -19,7 +19,7 @@ mod wiring;
 use std::collections::{HashMap, HashSet};
 
 use diagnostics::SpanRange;
-use ir::prove_ir::types::{CircuitExpr, CircuitNode};
+use ir_forge::types::{CircuitExpr, CircuitNode};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
@@ -673,9 +673,9 @@ fn lower_expr_stmt(
                 LoweringError::new("increment target must be an identifier", span)
             })?;
             let inc = CircuitExpr::BinOp {
-                op: ir::prove_ir::types::CircuitBinOp::Add,
+                op: ir_forge::types::CircuitBinOp::Add,
                 lhs: Box::new(CircuitExpr::Var(name.clone())),
-                rhs: Box::new(CircuitExpr::Const(ir::prove_ir::types::FieldConst::one())),
+                rhs: Box::new(CircuitExpr::Const(ir_forge::types::FieldConst::one())),
             };
             nodes.push(CircuitNode::Let {
                 name,
@@ -697,9 +697,9 @@ fn lower_expr_stmt(
                 LoweringError::new("decrement target must be an identifier", span)
             })?;
             let dec = CircuitExpr::BinOp {
-                op: ir::prove_ir::types::CircuitBinOp::Sub,
+                op: ir_forge::types::CircuitBinOp::Sub,
                 lhs: Box::new(CircuitExpr::Var(name.clone())),
-                rhs: Box::new(CircuitExpr::Const(ir::prove_ir::types::FieldConst::one())),
+                rhs: Box::new(CircuitExpr::Const(ir_forge::types::FieldConst::one())),
             };
             nodes.push(CircuitNode::Let {
                 name,
@@ -718,7 +718,7 @@ fn lower_expr_stmt(
 mod tests {
     use super::*;
     use crate::parser::parse_circom;
-    use ir::prove_ir::types::{FieldConst, ForRange};
+    use ir_forge::types::{FieldConst, ForRange};
 
     /// Parse a template and lower its body statements.
     fn lower_template(src: &str) -> Result<Vec<CircuitNode>, LoweringError> {
@@ -829,7 +829,7 @@ mod tests {
                 assert!(matches!(
                     value,
                     CircuitExpr::BinOp {
-                        op: ir::prove_ir::types::CircuitBinOp::Add,
+                        op: ir_forge::types::CircuitBinOp::Add,
                         ..
                     }
                 ));
@@ -968,7 +968,7 @@ mod tests {
                 assert!(matches!(
                     value,
                     CircuitExpr::BinOp {
-                        op: ir::prove_ir::types::CircuitBinOp::Add,
+                        op: ir_forge::types::CircuitBinOp::Add,
                         ..
                     }
                 ));

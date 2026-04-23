@@ -7,7 +7,7 @@
 
 use std::collections::HashMap;
 
-use ir::prove_ir::types::FieldConst;
+use ir_forge::types::FieldConst;
 
 use crate::ast;
 use crate::lowering::utils::{const_eval_u64, const_eval_with_params};

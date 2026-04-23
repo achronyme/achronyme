@@ -225,7 +225,7 @@ impl Default for BuiltinRegistry {
     ///   verifies alignment on every CI run.
     /// - `ProveIrLowerHandle(n)` — `n` is the slot in the ProveIR
     ///   dispatch table (`dispatch_builtin_by_handle` in
-    ///   `ir::prove_ir::compiler`).
+    ///   `ir_forge::compiler`).
     ///
     /// ## Inventory
     ///

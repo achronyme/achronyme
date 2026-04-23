@@ -17,7 +17,7 @@ mod calls;
 mod indexing;
 pub(crate) mod operators;
 
-use ir::prove_ir::types::{CircuitExpr, CircuitUnaryOp, FieldConst};
+use ir_forge::types::{CircuitExpr, CircuitUnaryOp, FieldConst};
 
 use crate::ast::{self, Expr};
 
@@ -350,7 +350,7 @@ mod tests {
     use super::super::test_helpers::{make_ctx, make_env, parse_expr};
     use super::super::utils::const_eval_u64;
     use super::*;
-    use ir::prove_ir::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp};
+    use ir_forge::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp};
 
     // ── Literals ────────────────────────────────────────────────────
 

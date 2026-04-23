@@ -36,6 +36,7 @@ compiler = { path = "../compiler" }
 constraints = { path = "../constraints" }
 diagnostics = { path = "../diagnostics" }
 ir = { path = "../ir" }
+ir-forge = { path = "../ir-forge" }
 circom = { path = "../circom" }
 achronyme-parser = { path = "../achronyme-parser" }
 achronyme-std = { path = "../std" }

@@ -7,7 +7,7 @@
 use std::collections::HashMap;
 
 use diagnostics::SpanRange;
-use ir::prove_ir::types::{CircuitNode, FieldConst, ForRange};
+use ir_forge::types::{CircuitNode, FieldConst, ForRange};
 
 use crate::ast::{self, AssignOp, BinOp, CompoundOp, ElseBranch, Expr, PostfixOp, Stmt};
 

@@ -3,7 +3,7 @@
 //! Lysis is the third specialized VM in the Achronyme toolchain, joining
 //! Akron (bytecode execution for the language surface) and Artik
 //! (witness computation). Its job is to replace the eager
-//! `ir::prove_ir::instantiate` pipeline (3,025 LOC) with a register-based
+//! `ir_forge::instantiate` pipeline (3,025 LOC) with a register-based
 //! bytecode pipeline that uses hash-consing and binding-time analysis to
 //! avoid the multiplicative-amplification class of bugs which OOM
 //! SHA-256(64) at 6.4 GB peak RSS today.

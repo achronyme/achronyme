@@ -9,7 +9,7 @@
 //! inputs to a sub-circuit are known constants, the entire sub-circuit
 //! collapses to a constant — zero constraints.
 
-use ir::prove_ir::types::{CircuitBinOp, CircuitExpr, CircuitUnaryOp, FieldConst};
+use ir_forge::types::{CircuitBinOp, CircuitExpr, CircuitUnaryOp, FieldConst};
 use memory::{Bn254Fr, FieldElement};
 
 /// Try to fold a `CircuitExpr` to a `FieldConst`.

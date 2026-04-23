@@ -10,7 +10,7 @@
 use std::collections::{HashMap, HashSet};
 
 use diagnostics::SpanRange;
-use ir::prove_ir::types::{CircuitBinOp, CircuitExpr, CircuitNode, FieldConst};
+use ir_forge::types::{CircuitBinOp, CircuitExpr, CircuitNode, FieldConst};
 
 use crate::ast::{self, AnonSignalArg, AssignOp, CompoundOp, Expr};
 

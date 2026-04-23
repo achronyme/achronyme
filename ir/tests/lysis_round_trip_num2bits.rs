@@ -29,8 +29,8 @@
 //!    downstream in R1CS. We check the shape up to the asserts.)
 //! ```
 
-use ir::prove_ir::lysis_materialize::materialize_interning_sink;
 use ir::{Instruction, SsaVar};
+use ir_forge::materialize_interning_sink;
 use lysis::{
     bytecode::validate, decode, encode, execute, InterningSink, LysisConfig, ProgramBuilder,
     Visibility,

@@ -11,7 +11,7 @@
 
 use std::collections::HashSet;
 
-use ir::prove_ir::types::{CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, ForRange};
+use ir_forge::types::{CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, ForRange};
 
 /// Classify template parameter captures based on how they are used in the body.
 ///

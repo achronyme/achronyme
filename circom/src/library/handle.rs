@@ -1,6 +1,6 @@
 //! `CircomLibraryHandle` impl for [`CircomLibrary`].
 //!
-//! The trait lives in `ir::prove_ir::circom_interop` (so `ir` can hold
+//! The trait lives in `ir_forge::circom_interop` (so `ir` can hold
 //! trait objects without depending on `circom` and re-creating a
 //! dependency cycle). This file wires a compiled library through to
 //! that trait by delegating every method to the existing library API,
@@ -10,8 +10,8 @@
 use std::collections::HashMap;
 
 use diagnostics::Span;
-use ir::prove_ir::types::{CircuitExpr, FieldConst};
-use ir::prove_ir::{
+use ir_forge::types::{CircuitExpr, FieldConst};
+use ir_forge::{
     CircomDispatchError, CircomInputLayout, CircomInstantiation, CircomLibraryHandle,
     CircomTemplateOutput, CircomTemplateSignature,
 };

@@ -16,7 +16,7 @@ use memory::{Bn254Fr, CircomHandle, FieldElement};
 
 use circom::library::{evaluate_template_witness, resolve_entry, TemplateOutputValue};
 use circom::{CircomLibrary, DimensionExpr};
-use ir::prove_ir::types::FieldConst;
+use ir_forge::types::FieldConst;
 
 /// In-process circom witness handler. Owns the same `Arc<CircomLibrary>`
 /// instances the compiler allocated at compile time so the library

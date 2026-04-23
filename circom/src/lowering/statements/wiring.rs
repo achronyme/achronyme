@@ -35,7 +35,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
+use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 
 use super::super::const_fold::try_fold_const;
 
@@ -523,7 +523,7 @@ mod tests {
     use super::*;
     use crate::ast::{Block, TemplateDef, TemplateModifiers};
     use diagnostics::Span;
-    use ir::prove_ir::types::FieldConst;
+    use ir_forge::types::FieldConst;
 
     fn dummy_span() -> Span {
         Span {

@@ -144,8 +144,8 @@ fn circuit_stats_disabled_no_crash() {
 fn stats_matches_actual_r1cs_count_for_merkle() {
     use compiler::r1cs_backend::R1CSCompiler;
     use ir::passes::bool_prop::compute_proven_boolean;
-    use ir::prove_ir::ProveIrCompiler;
     use ir::stats::CircuitStats;
+    use ir_forge::ProveIrCompiler;
 
     let source = std::fs::read_to_string(fixture("merkle.ach")).unwrap();
     let merkle_path = fixture("merkle.ach");
