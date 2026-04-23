@@ -24,8 +24,8 @@
 
 use memory::FieldBackend;
 
-use crate::prove_ir::lysis_bridge::instruction_from_kind;
 use crate::types::Instruction;
+use ir_forge::instruction_from_kind;
 
 /// Consume a Lysis [`NodeInterner`] and produce a flat
 /// `Vec<Instruction<F>>` ready for the R1CS backend.

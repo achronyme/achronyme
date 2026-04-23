@@ -36,10 +36,9 @@
 //! [`InstructionKind<F>`]: lysis_types::InstructionKind
 //! [`NodeId`]: lysis_types::NodeId
 
+use ir_core::{Instruction, SsaVar, Visibility as IrVisibility};
 use lysis_types::{InstructionKind, NodeId, Visibility as LysisVisibility};
 use memory::FieldBackend;
-
-use crate::types::{Instruction, SsaVar, Visibility as IrVisibility};
 
 /// Convert a Lysis `NodeId` into the SSA var numbering the IR uses.
 #[inline]

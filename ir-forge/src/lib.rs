@@ -25,5 +25,7 @@
 //! - `lysis_lift` — Walker + BTA + diff + extract + symbolic (was `ir::prove_ir::lysis_lower`)
 
 pub mod error;
+pub mod lysis_bridge;
 
 pub use error::{CircomDispatchErrorKind, ProveIrError};
+pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
