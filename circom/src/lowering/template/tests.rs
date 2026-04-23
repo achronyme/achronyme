@@ -4,7 +4,7 @@
 
 use super::*;
 use crate::parser::parse_circom;
-use ir::prove_ir::types::{CaptureUsage, CircuitNode, ForRange};
+use ir_forge::types::{CaptureUsage, CircuitNode, ForRange};
 
 fn parse_and_lower_full(src: &str) -> LowerTemplateResult {
     let (prog, errors) = parse_circom(src).expect("parse failed");

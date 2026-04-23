@@ -7,7 +7,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{FieldConst, ProveIR};
+use ir_forge::types::{FieldConst, ProveIR};
 
 use super::captures::classify_captures;
 use super::LowerTemplateResult;
@@ -75,13 +75,13 @@ pub fn lower_template_with_captures(
     // `env.resolve_array_element(name, i)` can find them.
     for input in &layout.public_inputs {
         env.inputs.insert(input.name.clone());
-        if let Some(ir::prove_ir::types::ArraySize::Literal(len)) = &input.array_size {
+        if let Some(ir_forge::types::ArraySize::Literal(len)) = &input.array_size {
             env.register_array(input.name.clone(), *len);
         }
     }
     for input in &layout.witness_inputs {
         env.inputs.insert(input.name.clone());
-        if let Some(ir::prove_ir::types::ArraySize::Literal(len)) = &input.array_size {
+        if let Some(ir_forge::types::ArraySize::Literal(len)) = &input.array_size {
             env.register_array(input.name.clone(), *len);
         }
     }

@@ -8,7 +8,7 @@
 use std::collections::HashSet;
 
 use diagnostics::SpanRange;
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
+use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 
 use crate::ast::{ElseBranch, Expr, Stmt};
 

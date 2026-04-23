@@ -16,7 +16,7 @@ use circom::{
     LibraryError, TemplateOutput, WitnessEvalError,
 };
 use diagnostics::Span;
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
+use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 use memory::{Bn254Fr, FieldElement};
 
 fn circomlib_dir() -> PathBuf {

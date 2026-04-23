@@ -40,13 +40,13 @@ fn find_array_size(compiler: &Compiler, name: &str) -> Option<usize> {
 /// as ground truth, so `player_1` won't be falsely matched.
 fn find_array_parent(
     name: &str,
-    outer_scope: &std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry>,
+    outer_scope: &std::collections::HashMap<String, ir_forge::OuterScopeEntry>,
 ) -> Option<String> {
     if let Some(pos) = name.rfind('_') {
         let parent = &name[..pos];
         let suffix = &name[pos + 1..];
         if let Ok(idx) = suffix.parse::<usize>() {
-            if let Some(ir::prove_ir::OuterScopeEntry::Array(n)) = outer_scope.get(parent) {
+            if let Some(ir_forge::OuterScopeEntry::Array(n)) = outer_scope.get(parent) {
                 if idx < *n {
                     return Some(parent.to_string());
                 }
@@ -66,12 +66,12 @@ pub(super) fn compile_prove(
     //    Include locals from ALL enclosing function scopes (not just current),
     //    so that upvalue-accessible variables are visible to ProveIR.
     //    Type annotations are propagated so ProveIR knows about arrays.
-    let mut outer_values: std::collections::HashMap<String, ir::prove_ir::OuterScopeEntry> =
+    let mut outer_values: std::collections::HashMap<String, ir_forge::OuterScopeEntry> =
         std::collections::HashMap::new();
-    let to_scope_entry = |ta: &Option<TypeAnnotation>| -> ir::prove_ir::OuterScopeEntry {
+    let to_scope_entry = |ta: &Option<TypeAnnotation>| -> ir_forge::OuterScopeEntry {
         match ta.as_ref().and_then(|t| t.array_len()) {
-            Some(n) => ir::prove_ir::OuterScopeEntry::Array(n),
-            None => ir::prove_ir::OuterScopeEntry::Scalar,
+            Some(n) => ir_forge::OuterScopeEntry::Array(n),
+            None => ir_forge::OuterScopeEntry::Scalar,
         }
     };
     if let Ok(func) = compiler.current_ref() {
@@ -115,7 +115,7 @@ pub(super) fn compile_prove(
             Some(root_module),
             Some(dispatch_by_symbol),
             Some(module_by_key),
-        ) => Some(ir::prove_ir::OuterResolverState {
+        ) => Some(ir_forge::OuterResolverState {
             table: std::sync::Arc::new(table.clone()),
             resolved: std::sync::Arc::new(resolved.clone()),
             root_module,
@@ -141,7 +141,7 @@ pub(super) fn compile_prove(
         .clone()
         .unwrap_or_else(|| compiler.fn_decl_asts.clone());
 
-    let outer_scope = ir::prove_ir::OuterScope {
+    let outer_scope = ir_forge::OuterScope {
         values: outer_values,
         functions,
         circom_imports: crate::statements::circom_imports::build_circom_imports_for_outer_scope(
@@ -193,7 +193,7 @@ pub(super) fn compile_prove(
 
     // 3. Compile AST Block -> ProveIR template.
     let mut prove_ir =
-        ir::prove_ir::ProveIrCompiler::<memory::Bn254Fr>::compile(&compile_body, &outer_scope)
+        ir_forge::ProveIrCompiler::<memory::Bn254Fr>::compile(&compile_body, &outer_scope)
             .map_err(|e| CompilerError::CompileError(format!("{e}"), compiler.cur_span()))?;
     prove_ir.name = name.map(|n| n.to_string());
 
@@ -218,14 +218,14 @@ pub(super) fn compile_prove(
     }
     for input in &prove_ir.public_inputs {
         match &input.array_size {
-            Some(ir::prove_ir::ArraySize::Literal(_)) => {
+            Some(ir_forge::ArraySize::Literal(_)) => {
                 // Array input from outer scope — load the whole list
                 if emitted_arrays.insert(input.name.clone()) {
                     capture_names.push(input.name.clone());
                 }
             }
             None => capture_names.push(input.name.clone()),
-            Some(ir::prove_ir::ArraySize::Capture(_)) => {
+            Some(ir_forge::ArraySize::Capture(_)) => {
                 return Err(CompilerError::CompileError(
                     "capture-sized arrays in prove blocks are not yet supported".into(),
                     compiler.cur_span(),
@@ -235,13 +235,13 @@ pub(super) fn compile_prove(
     }
     for input in &prove_ir.witness_inputs {
         match &input.array_size {
-            Some(ir::prove_ir::ArraySize::Literal(_)) => {
+            Some(ir_forge::ArraySize::Literal(_)) => {
                 if emitted_arrays.insert(input.name.clone()) {
                     capture_names.push(input.name.clone());
                 }
             }
             None => capture_names.push(input.name.clone()),
-            Some(ir::prove_ir::ArraySize::Capture(_)) => {
+            Some(ir_forge::ArraySize::Capture(_)) => {
                 return Err(CompilerError::CompileError(
                     "capture-sized arrays in prove blocks are not yet supported".into(),
                     compiler.cur_span(),

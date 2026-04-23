@@ -8,8 +8,8 @@ use anyhow::{Context, Result};
 use akron::{ProveError, ProveHandler, ProveResult, VerifyHandler};
 use compiler::r1cs_backend::R1CSCompiler;
 use ir::inspector::{build_inspector_graph, InspectorGraph};
-use ir::prove_ir::ProveIrCompiler;
 use ir::SsaVar;
+use ir_forge::ProveIrCompiler;
 use memory::FieldElement;
 
 use super::ErrorFormat;
@@ -59,7 +59,7 @@ fn inspect_circuit(
 ) -> Result<String> {
     let source_path = std::path::Path::new(path);
 
-    let render_error = |e: ir::ProveIrError| -> anyhow::Error {
+    let render_error = |e: ir_forge::ProveIrError| -> anyhow::Error {
         let diag = e.to_diagnostic();
         let rendered = super::render_diagnostic(&diag, source, error_format);
         anyhow::anyhow!("{rendered}")
@@ -255,7 +255,7 @@ impl ProveHandler for InspectorProveHandler {
         prove_ir_bytes: &[u8],
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
-        let (prove_ir, _prime_id) = ir::prove_ir::ProveIR::from_bytes(prove_ir_bytes)
+        let (prove_ir, _prime_id) = ir_forge::ProveIR::from_bytes(prove_ir_bytes)
             .map_err(|e| ProveError::IrLowering(format!("ProveIR deserialization: {e}")))?;
 
         let name = prove_ir.name.as_deref().unwrap_or("");
@@ -283,7 +283,7 @@ impl ProveHandler for InspectorProveHandler {
             .chain(prove_ir.witness_inputs.iter())
         {
             match &input.array_size {
-                Some(ir::prove_ir::ArraySize::Literal(n)) => {
+                Some(ir_forge::ArraySize::Literal(n)) => {
                     for i in 0..*n {
                         let elem_name = format!("{}_{i}", input.name);
                         if let Some(fe) = scope_values.get(&elem_name) {
@@ -296,7 +296,7 @@ impl ProveHandler for InspectorProveHandler {
                         inputs.insert(input.name.clone(), *fe);
                     }
                 }
-                Some(ir::prove_ir::ArraySize::Capture(_)) => {}
+                Some(ir_forge::ArraySize::Capture(_)) => {}
             }
         }
         for cap in &prove_ir.captures {

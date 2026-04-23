@@ -13,6 +13,7 @@ categories.workspace = true
 [dependencies]
 diagnostics = { path = "../diagnostics" }
 ir = { path = "../ir" }
+ir-forge = { path = "../ir-forge" }
 memory = { path = "../memory" }
 artik = { path = "../artik" }
 

@@ -6,7 +6,7 @@
 
 use std::collections::HashMap;
 
-use ir::prove_ir::types::{CircuitExpr, CircuitUnaryOp, FieldConst};
+use ir_forge::types::{CircuitExpr, CircuitUnaryOp, FieldConst};
 
 use crate::ast::{self, Expr};
 
@@ -242,7 +242,7 @@ fn inline_function_call(
                 super::super::artik_lift::LiftedShape::Scalar => {
                     let out_name = output_bindings[0].clone();
                     ctx.pending_nodes
-                        .push(ir::prove_ir::types::CircuitNode::WitnessCall {
+                        .push(ir_forge::types::CircuitNode::WitnessCall {
                             output_bindings,
                             input_signals: lowered_args,
                             program_bytes: lifted.program_bytes,
@@ -264,14 +264,14 @@ fn inline_function_call(
                     //   array   = "__artik_derive_0_out"
                     let array_name = strip_index_suffix(&output_bindings[0]);
                     ctx.pending_nodes
-                        .push(ir::prove_ir::types::CircuitNode::WitnessCall {
+                        .push(ir_forge::types::CircuitNode::WitnessCall {
                             output_bindings: output_bindings.clone(),
                             input_signals: lowered_args,
                             program_bytes: lifted.program_bytes,
                             span: span_range.clone(),
                         });
                     ctx.pending_nodes
-                        .push(ir::prove_ir::types::CircuitNode::LetArray {
+                        .push(ir_forge::types::CircuitNode::LetArray {
                             name: array_name.clone(),
                             elements: output_bindings
                                 .iter()

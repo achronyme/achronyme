@@ -69,13 +69,13 @@ pub(super) fn compile_circuit_decl(
         .resolver_outer_functions
         .clone()
         .unwrap_or_else(|| compiler.fn_decl_asts.clone());
-    let outer_scope = ir::prove_ir::OuterScope {
+    let outer_scope = ir_forge::OuterScope {
         functions,
         circom_imports: circom_imports::build_circom_imports_for_outer_scope(compiler),
         ..Default::default()
     };
     let mut prove_ir =
-        ir::prove_ir::ProveIrCompiler::<memory::Bn254Fr>::compile(&circuit_body, &outer_scope)
+        ir_forge::ProveIrCompiler::<memory::Bn254Fr>::compile(&circuit_body, &outer_scope)
             .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
     prove_ir.name = Some(name.to_string());
 
@@ -150,11 +150,9 @@ pub(super) fn compile_import_circuit(
     })?;
 
     // 3. Compile to ProveIR via compile_circuit (self-contained)
-    let mut prove_ir = ir::prove_ir::ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(
-        &source,
-        Some(&full_path),
-    )
-    .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
+    let mut prove_ir =
+        ir_forge::ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(&source, Some(&full_path))
+            .map_err(|e| CompilerError::CompileError(format!("{e}"), span_box(span)))?;
     prove_ir.name = Some(alias.to_string());
 
     // 4. Serialize to bytes

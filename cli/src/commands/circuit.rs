@@ -7,7 +7,7 @@ use compiler::plonkish_backend::PlonkishCompiler;
 use compiler::r1cs_backend::R1CSCompiler;
 use constraints::PoseidonParamsProvider;
 use constraints::{write_r1cs, write_wtns};
-use ir::prove_ir::ProveIrCompiler;
+use ir_forge::ProveIrCompiler;
 use memory::field::PrimeId;
 use memory::{FieldBackend, FieldElement};
 
@@ -313,7 +313,7 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         .unwrap_or(std::path::Path::new("."))
         .to_path_buf();
 
-    let render_prove_ir_error = |e: ir::ProveIrError| -> anyhow::Error {
+    let render_prove_ir_error = |e: ir_forge::ProveIrError| -> anyhow::Error {
         let diag = e.to_diagnostic();
         let rendered = super::render_diagnostic(&diag, &source, error_format);
         anyhow::anyhow!("{rendered}")

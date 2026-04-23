@@ -20,7 +20,7 @@
 
 use std::path::{Path, PathBuf};
 
-use ir::prove_ir::ProveIrCompiler;
+use ir_forge::ProveIrCompiler;
 use memory::Bn254Fr;
 
 /// Absolute path to the `circuit_gap_24_repro` fixture directory

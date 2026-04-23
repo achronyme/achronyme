@@ -9,8 +9,8 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{ArraySize, FieldConst, ProveInputDecl};
 use ir::types::IrType;
+use ir_forge::types::{ArraySize, FieldConst, ProveInputDecl};
 
 use crate::ast::{Expr, MainComponent, SignalType, Stmt, TemplateDef};
 

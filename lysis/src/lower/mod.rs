@@ -2,9 +2,9 @@
 //!
 //! This module holds the **leaf** pieces of the lowering machinery
 //! (RFC §6): data structures that operate on Lysis-native types only.
-//! Everything that consumes `ir::prove_ir::ExtendedInstruction<F>` —
+//! Everything that consumes `ir_forge::ExtendedInstruction<F>` —
 //! the walker, BTA, symbolic emission, structural diff, template
-//! extraction — lives under `ir::prove_ir::lysis_lower` because the
+//! extraction — lives under `ir_forge::lysis_lower` because the
 //! Phase 3.A bridge already points `ir → lysis`; a `lysis → ir` edge
 //! would create a dependency cycle.
 //!

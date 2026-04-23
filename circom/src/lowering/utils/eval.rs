@@ -479,12 +479,12 @@ pub fn eval_expr(
             if let Ok(v) = value.parse::<i64>() {
                 Some(BigVal::from_i64(v))
             } else {
-                let fc = ir::prove_ir::types::FieldConst::from_decimal_str(value)?;
+                let fc = ir_forge::types::FieldConst::from_decimal_str(value)?;
                 Some(BigVal::from_field_const(fc))
             }
         }
         Expr::HexNumber { value, .. } => {
-            let fc = ir::prove_ir::types::FieldConst::from_hex_str(value)?;
+            let fc = ir_forge::types::FieldConst::from_hex_str(value)?;
             Some(BigVal::from_field_const(fc))
         }
         Expr::Ident { name, .. } => vars.get(name.as_str()).copied(),

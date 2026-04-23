@@ -181,7 +181,7 @@ pub struct Compiler {
     pub resolver_dispatch_by_symbol: Option<Arc<HashMap<SymbolId, String>>>,
     /// Inverse of [`resolver_dispatch_by_symbol`]: fn_table key to
     /// the owning [`ModuleId`]. Consumed by
-    /// [`ir::prove_ir::ProveIrCompiler::compile_user_fn_call`] to
+    /// [`ir_forge::ProveIrCompiler::compile_user_fn_call`] to
     /// push the definer's module onto the resolver stack before
     /// inlining — the structural half of the gap 2.4 fix.
     pub resolver_module_by_key: Option<Arc<HashMap<String, ModuleId>>>,

@@ -6,7 +6,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{CircuitNode, FieldConst};
+use ir_forge::types::{CircuitNode, FieldConst};
 
 use crate::ast::{CircomProgram, Definition, FunctionDef, TemplateDef};
 

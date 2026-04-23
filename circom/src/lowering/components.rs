@@ -16,7 +16,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{
+use ir_forge::types::{
     CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp,
     FieldConst, ForRange,
 };
@@ -863,7 +863,7 @@ use {CircuitBinOp as _, CircuitBoolOp as _, CircuitCmpOp as _, CircuitUnaryOp as
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::prove_ir::types::FieldConst;
+    use ir_forge::types::FieldConst;
 
     #[test]
     fn mangle_name_format() {

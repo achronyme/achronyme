@@ -38,7 +38,7 @@ use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 
 use diagnostics::Diagnostic;
-use ir::prove_ir::types::ProveIR;
+use ir_forge::types::ProveIR;
 
 /// Error returned by the Circom compilation pipeline.
 #[derive(Debug)]

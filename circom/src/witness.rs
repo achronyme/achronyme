@@ -10,7 +10,7 @@
 
 use std::collections::HashMap;
 
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, ForRange, ProveIR};
+use ir_forge::types::{CircuitExpr, CircuitNode, ForRange, ProveIR};
 use memory::{FieldBackend, FieldElement};
 
 /// Compute all witness hint values from a ProveIR body.
@@ -188,7 +188,7 @@ fn eval_hint<F: FieldBackend>(
         CircuitExpr::BinOp { op, lhs, rhs } => {
             let l = eval_hint(lhs, env)?;
             let r = eval_hint(rhs, env)?;
-            use ir::prove_ir::types::CircuitBinOp;
+            use ir_forge::types::CircuitBinOp;
             match op {
                 CircuitBinOp::Add => Some(l.add(&r)),
                 CircuitBinOp::Sub => Some(l.sub(&r)),
@@ -201,7 +201,7 @@ fn eval_hint<F: FieldBackend>(
 
         CircuitExpr::UnaryOp { op, operand } => {
             let v = eval_hint(operand, env)?;
-            use ir::prove_ir::types::CircuitUnaryOp;
+            use ir_forge::types::CircuitUnaryOp;
             Some(match op {
                 CircuitUnaryOp::Neg => v.neg(),
                 CircuitUnaryOp::Not => {
@@ -305,7 +305,7 @@ fn eval_hint<F: FieldBackend>(
         CircuitExpr::Comparison { op, lhs, rhs } => {
             let l = eval_hint(lhs, env)?;
             let r = eval_hint(rhs, env)?;
-            use ir::prove_ir::types::CircuitCmpOp;
+            use ir_forge::types::CircuitCmpOp;
             let result = match op {
                 CircuitCmpOp::Eq => l == r,
                 CircuitCmpOp::Neq => l != r,
@@ -327,7 +327,7 @@ fn eval_hint<F: FieldBackend>(
             let r = eval_hint(rhs, env)?;
             let l_bool = l != FieldElement::<F>::zero();
             let r_bool = r != FieldElement::<F>::zero();
-            use ir::prove_ir::types::CircuitBoolOp;
+            use ir_forge::types::CircuitBoolOp;
             let result = match op {
                 CircuitBoolOp::And => l_bool && r_bool,
                 CircuitBoolOp::Or => l_bool || r_bool,
@@ -414,7 +414,7 @@ fn eval_const_expr_u64(expr: &CircuitExpr, captures: &HashMap<String, u64>) -> O
         CircuitExpr::BinOp { op, lhs, rhs } => {
             let l = eval_const_expr_u64(lhs, captures)?;
             let r = eval_const_expr_u64(rhs, captures)?;
-            use ir::prove_ir::types::CircuitBinOp;
+            use ir_forge::types::CircuitBinOp;
             match op {
                 CircuitBinOp::Add => Some(l.wrapping_add(r)),
                 CircuitBinOp::Sub => Some(l.wrapping_sub(r)),
@@ -495,7 +495,7 @@ fn bit_mask_limbs(num_bits: u32) -> [u64; 4] {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::prove_ir::types::FieldConst;
+    use ir_forge::types::FieldConst;
     use memory::Bn254Fr;
 
     type Fe = FieldElement<Bn254Fr>;
@@ -578,7 +578,7 @@ mod tests {
     fn eval_arithmetic() {
         let env = make_env(&[("a", 3), ("b", 7)]);
         let expr = CircuitExpr::BinOp {
-            op: ir::prove_ir::types::CircuitBinOp::Mul,
+            op: ir_forge::types::CircuitBinOp::Mul,
             lhs: Box::new(CircuitExpr::Input("a".to_string())),
             rhs: Box::new(CircuitExpr::Input("b".to_string())),
         };

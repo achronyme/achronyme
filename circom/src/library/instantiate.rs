@@ -6,7 +6,7 @@
 use std::collections::HashMap;
 
 use diagnostics::Span;
-use ir::prove_ir::types::{CircuitExpr, CircuitNode, FieldConst};
+use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 
 use crate::lowering::components::inline_component_body_with_const_inputs;
 use crate::lowering::context::LoweringContext;

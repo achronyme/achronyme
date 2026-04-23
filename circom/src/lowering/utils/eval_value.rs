@@ -1,6 +1,6 @@
 //! Compile-time value types for Circom function evaluation.
 
-use ir::prove_ir::types::FieldConst;
+use ir_forge::types::FieldConst;
 
 use super::bigval::BigVal;
 use crate::ast::Expr;

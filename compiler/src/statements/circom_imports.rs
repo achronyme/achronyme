@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use achronyme_parser::ast::{Expr, Span};
 use akron::opcode::OpCode;
-use ir::prove_ir::{CircomCallable, CircomLibraryHandle};
+use ir_forge::{CircomCallable, CircomLibraryHandle};
 use memory::{CircomHandle, Value};
 
 use crate::codegen::Compiler;
@@ -184,9 +184,9 @@ impl CircomVmCallEmitter for Compiler {
         // Resolve the layout here (rather than relying on the raw
         // library entry) so parametric sizes like `inputs[nInputs]`
         // collapse to the concrete value the user passed as template arg.
-        let template_const_args: Vec<ir::prove_ir::types::FieldConst> = template_u64_args
+        let template_const_args: Vec<ir_forge::types::FieldConst> = template_u64_args
             .iter()
-            .map(|n| ir::prove_ir::types::FieldConst::from_u64(*n))
+            .map(|n| ir_forge::types::FieldConst::from_u64(*n))
             .collect();
         let layouts = <circom::CircomLibrary as CircomLibraryHandle>::resolve_input_layout(
             library.as_ref(),
@@ -316,7 +316,7 @@ impl CircomVmCallEmitter for Compiler {
 }
 
 /// Flatten all circom imports registered on `compiler` into the
-/// dispatcher key format expected by [`ir::prove_ir::OuterScope::circom_imports`].
+/// dispatcher key format expected by [`ir_forge::OuterScope::circom_imports`].
 ///
 /// Selective imports contribute one entry per template under their
 /// bare name (`"Poseidon"`). Namespace imports (`import "x.circom" as P`)

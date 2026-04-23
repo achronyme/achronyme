@@ -6,7 +6,7 @@
 
 use std::cmp::Ordering;
 
-use ir::prove_ir::types::FieldConst;
+use ir_forge::types::FieldConst;
 
 /// A 256-bit two's complement integer stored as 4 little-endian u64 limbs.
 #[derive(Clone, Copy, PartialEq, Eq, Hash, Default)]

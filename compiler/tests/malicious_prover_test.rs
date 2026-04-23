@@ -538,7 +538,7 @@ fn compile_circuit_witness(
     source: &str,
     inputs: &[(&str, FieldElement)],
 ) -> (R1CSCompiler, Vec<FieldElement>) {
-    use ir::prove_ir::ProveIrCompiler;
+    use ir_forge::ProveIrCompiler;
     use std::path::Path;
 
     let prove_ir =

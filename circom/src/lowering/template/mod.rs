@@ -22,7 +22,7 @@ mod lower;
 
 use std::collections::{HashMap, HashSet};
 
-use ir::prove_ir::types::{FieldConst, ProveIR};
+use ir_forge::types::{FieldConst, ProveIR};
 
 use crate::ast::{CircomProgram, MainComponent, TemplateDef};
 

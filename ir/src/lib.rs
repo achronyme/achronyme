@@ -5,11 +5,9 @@ pub mod eval;
 pub mod inspector;
 pub mod lower;
 pub mod passes;
-pub mod prove_ir;
 pub mod stats;
 
 pub use ir_core::{Instruction, IrError, IrProgram, IrType, SsaVar, Visibility};
-pub use ir_forge::ProveIrError;
 pub use lower::IrLowering;
 
 /// Forward-compat alias. `Visibility` collides with `lysis::Visibility`

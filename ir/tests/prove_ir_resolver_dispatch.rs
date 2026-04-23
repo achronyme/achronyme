@@ -21,7 +21,7 @@ use std::path::{Path, PathBuf};
 use std::sync::Arc;
 
 use achronyme_parser::ast::{Block, Expr, Program, Stmt};
-use ir::prove_ir::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
+use ir_forge::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
 use memory::Bn254Fr;
 use resolve::{
     build_dispatch_maps, build_resolver_state, LoadedModule, ModuleSource, ResolverState, SymbolId,

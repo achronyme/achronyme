@@ -5,7 +5,7 @@
 
 use std::collections::HashMap;
 
-use ir::prove_ir::types::{CircuitBinOp, CircuitExpr, FieldConst};
+use ir_forge::types::{CircuitBinOp, CircuitExpr, FieldConst};
 
 use crate::ast::Expr;
 

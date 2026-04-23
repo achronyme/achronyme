@@ -2,7 +2,7 @@
 //! the same circuit.
 //!
 //! The oracle is the Phase 3 correctness safety net: it compares the
-//! output of the legacy `ir::prove_ir::instantiate` path against the
+//! output of the legacy `ir_forge::instantiate` path against the
 //! output of the Lysis lifter for a growing set of fixtures. Any
 //! deviation surfaces as a concrete `OracleResult` variant — the CI
 //! matrix reads these to decide whether a Lysis change is safe to

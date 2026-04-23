@@ -486,7 +486,7 @@ fn mimcsponge_real_circomlib() {
 
     // DEBUG: count ProveIR node types
     {
-        use ir::prove_ir::types::CircuitNode;
+        use ir_forge::types::CircuitNode;
         let mut lets = 0usize;
         let mut asserts = 0usize;
         let mut hints = 0usize;
@@ -511,7 +511,7 @@ fn mimcsponge_real_circomlib() {
                 match n {
                     CircuitNode::Let { value, .. } => {
                         *lets += 1;
-                        if matches!(value, ir::prove_ir::types::CircuitExpr::Const(_)) {
+                        if matches!(value, ir_forge::types::CircuitExpr::Const(_)) {
                             *const_lets += 1;
                         }
                     }
@@ -1212,7 +1212,7 @@ fn var_postdecl_padding_e2e() {
 /// lift produced four output slots and a matching LetArray.
 #[test]
 fn fn_local_shadowing_lifts_through_artik() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_local_shadowing_test.circom");
@@ -1257,7 +1257,7 @@ fn fn_local_shadowing_lifts_through_artik() {
 /// the structural validator accepts it).
 #[test]
 fn fn_witness_lift_produces_artik_call() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_test.circom");
@@ -1318,7 +1318,7 @@ fn fn_witness_lift_produces_artik_call() {
 /// the payload validates.
 #[test]
 fn fn_witness_lift_unrolls_for_loop() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_loop_test.circom");
@@ -1357,7 +1357,7 @@ fn fn_witness_lift_unrolls_for_loop() {
 /// emitting any JumpIf. Runtime conditions still fall back to E212.
 #[test]
 fn fn_witness_lift_folds_if_else_in_loop() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_ifelse_test.circom");
@@ -1400,7 +1400,7 @@ fn fn_witness_lift_folds_if_else_in_loop() {
 /// the body contains matching allocate / store / load opcodes.
 #[test]
 fn fn_witness_lift_handles_internal_array() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_array_test.circom");
@@ -1445,7 +1445,7 @@ fn fn_witness_lift_handles_internal_array() {
 /// and the resulting payload contains exactly one `Return` opcode.
 #[test]
 fn fn_witness_lift_inlines_nested_call() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_nested_test.circom");
@@ -1489,7 +1489,7 @@ fn fn_witness_lift_inlines_nested_call() {
 /// are emitted.
 #[test]
 fn fn_witness_lift_muxes_runtime_if_else() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_mux_test.circom");
@@ -2002,7 +2002,7 @@ fn fn_witness_lift_e2e_r1cs_artik_dispatch() {
 /// with cond ∈ {0, 1} against a hand-computed reference.
 #[test]
 fn fn_witness_lift_mux_admits_nested_calls() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_mux_calls_test.circom");
@@ -2054,7 +2054,7 @@ fn fn_witness_lift_mux_admits_nested_calls() {
 /// the output cross-validated against the hand-computed reference.
 #[test]
 fn fn_witness_lift_handles_bit_ops() {
-    use ir::prove_ir::types::CircuitNode;
+    use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_bitops_test.circom");

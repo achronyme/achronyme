@@ -3,7 +3,7 @@
 //! Maps Circom arithmetic, comparison, boolean, bitwise, and shift operators
 //! to their ProveIR `CircuitExpr` equivalents.
 
-use ir::prove_ir::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr};
+use ir_forge::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr};
 
 use crate::ast;
 
