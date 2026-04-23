@@ -1027,6 +1027,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "ir-forge"
+version = "0.1.0-beta.19"
+dependencies = [
+ "diagnostics",
+ "memory",
+ "serde",
+]
+
+[[package]]
 name = "is-docker"
 version = "0.2.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
