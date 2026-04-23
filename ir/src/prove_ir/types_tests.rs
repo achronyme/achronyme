@@ -8,7 +8,7 @@ use ir_forge::{
 use memory::field::PrimeId;
 use memory::Bn254Fr;
 
-use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+use ir_forge::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 
 /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
 fn assert_round_trip(prove_ir: &ProveIR) {
@@ -42,7 +42,7 @@ fn round_trip_empty() {
 
 #[test]
 fn round_trip_simple_circuit() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public x\npublic out\nwitness s\nassert_eq(x + s, out)",
     )
     .unwrap();
@@ -51,7 +51,7 @@ fn round_trip_simple_circuit() {
 
 #[test]
 fn round_trip_assert_eq_with_message() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public x\npublic out\nwitness s\nassert_eq(x + s, out, \"sums must match\")",
     )
     .unwrap();
@@ -70,7 +70,7 @@ fn round_trip_assert_eq_with_message() {
 
 #[test]
 fn round_trip_with_all_expr_types() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public a\npublic b\npublic out\n\
          let sum = a + b\n\
          let diff = a - b\n\
@@ -91,7 +91,7 @@ fn round_trip_with_all_expr_types() {
 
 #[test]
 fn round_trip_with_for_loop() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public out\nmut acc = 0\nfor i in 0..5 { acc = acc + i }\nassert_eq(acc, out)",
     )
     .unwrap();
@@ -100,7 +100,7 @@ fn round_trip_with_for_loop() {
 
 #[test]
 fn round_trip_with_if_else() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public c\npublic out\nlet r = if c { 1 } else { 0 }\nassert_eq(r, out)",
     )
     .unwrap();
@@ -127,7 +127,7 @@ fn round_trip_with_captures() {
 
 #[test]
 fn round_trip_with_arrays() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public out\nlet arr = [1, 2, 3]\nassert_eq(arr_0, out)",
     )
     .unwrap();
@@ -136,7 +136,7 @@ fn round_trip_with_arrays() {
 
 #[test]
 fn round_trip_with_functions() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public out\nfn double(x) { x * 2 }\nassert_eq(double(21), out)",
     )
     .unwrap();
@@ -145,7 +145,7 @@ fn round_trip_with_functions() {
 
 #[test]
 fn round_trip_preserves_field_elements() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public out\nassert_eq(Field::ZERO + Field::ONE, out)",
     )
     .unwrap();
@@ -190,9 +190,8 @@ fn round_trip_preserves_field_elements() {
 fn round_trip_instantiate_produces_same_result() {
     use std::collections::HashMap;
 
-    let ir =
-        crate::prove_ir::test_utils::compile_circuit("public x\npublic out\nassert_eq(x + 1, out)")
-            .unwrap();
+    let ir = ir_forge::test_utils::compile_circuit("public x\npublic out\nassert_eq(x + 1, out)")
+        .unwrap();
 
     // Instantiate original
     let program1 = ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
@@ -212,7 +211,7 @@ fn round_trip_instantiate_produces_same_result() {
 
 #[test]
 fn serialized_size_reasonable() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public a\npublic b\npublic out\nassert_eq(poseidon(a, b), out)",
     )
     .unwrap();
@@ -231,7 +230,7 @@ fn serialized_size_reasonable() {
 
 #[test]
 fn display_simple_circuit() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public x\npublic out\nwitness s\nassert_eq(x + s, out)",
     )
     .unwrap();
@@ -265,7 +264,7 @@ fn display_with_captures() {
 
 #[test]
 fn display_with_for_loop() {
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public out\nmut acc = 0\nfor i in 0..3 { acc = acc + i }\nassert_eq(acc, out)",
     )
     .unwrap();
@@ -276,7 +275,7 @@ fn display_with_for_loop() {
 #[test]
 fn display_with_mux_from_if() {
     // if-expressions are desugared to mux by the ProveIR compiler
-    let ir = crate::prove_ir::test_utils::compile_circuit(
+    let ir = ir_forge::test_utils::compile_circuit(
         "public c\npublic out\nlet r = if c { 1 } else { 0 }\nassert_eq(r, out)",
     )
     .unwrap();

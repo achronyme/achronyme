@@ -22,9 +22,9 @@ use memory::FieldBackend;
 
 use super::helpers::{annotation_to_ir_type, to_span};
 use super::{CompEnvValue, FnDef, ProveIrCompiler};
-use crate::prove_ir::types::*;
-use crate::types::IrType;
-use ir_forge::ProveIrError;
+use crate::error::ProveIrError;
+use crate::types::*;
+use ir_core::IrType;
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Compile all statements in a block, appending to self.body.

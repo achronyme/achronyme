@@ -11,11 +11,11 @@ use ir_forge::{
 };
 use memory::{Bn254Fr, FieldElement};
 
-use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
+use ir_forge::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 
 /// Helper: compile source as a circuit and instantiate (no captures).
 fn compile_and_instantiate(source: &str) -> IrProgram<Bn254Fr> {
-    let program = crate::prove_ir::test_utils::compile_circuit(source).unwrap();
+    let program = ir_forge::test_utils::compile_circuit(source).unwrap();
     program.instantiate::<Bn254Fr>(&HashMap::new()).unwrap()
 }
 

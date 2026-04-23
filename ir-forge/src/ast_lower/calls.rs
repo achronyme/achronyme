@@ -26,8 +26,8 @@ use memory::{FieldBackend, FieldElement};
 
 use super::helpers::{flat_index_suffix, to_span};
 use super::{CompEnvValue, DispatchDecision, ProveIrCompiler};
-use crate::prove_ir::types::*;
-use ir_forge::{CircomDispatchErrorKind, ProveIrError};
+use crate::error::{CircomDispatchErrorKind, ProveIrError};
+use crate::types::*;
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
     pub(super) fn compile_static_access(
@@ -417,8 +417,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         span: &Span,
     ) -> Result<
         (
-            HashMap<String, ir_forge::CircomTemplateOutput>,
-            ir_forge::CircomTemplateSignature,
+            HashMap<String, crate::CircomTemplateOutput>,
+            crate::CircomTemplateSignature,
         ),
         ProveIrError,
     > {
@@ -566,7 +566,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 span,
             )
             .map_err(|e| {
-                use ir_forge::CircomDispatchError as CircomErr;
+                use crate::CircomDispatchError as CircomErr;
                 let kind = match e {
                     CircomErr::UnknownTemplate { template, .. } => {
                         CircomDispatchErrorKind::LoweringFailed {
@@ -645,16 +645,14 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
         let out_name = &signature.output_signals[0];
         match outputs.get(out_name) {
-            Some(ir_forge::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
-            Some(ir_forge::CircomTemplateOutput::Array { .. }) => {
-                Err(ProveIrError::CircomDispatch {
-                    kind: CircomDispatchErrorKind::ArrayOutputRequiresIndex {
-                        template: template_name,
-                        signal: out_name.clone(),
-                    },
-                    span: to_span(span),
-                })
-            }
+            Some(crate::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
+            Some(crate::CircomTemplateOutput::Array { .. }) => Err(ProveIrError::CircomDispatch {
+                kind: CircomDispatchErrorKind::ArrayOutputRequiresIndex {
+                    template: template_name,
+                    signal: out_name.clone(),
+                },
+                span: to_span(span),
+            }),
             None => Err(ProveIrError::CircomDispatch {
                 kind: CircomDispatchErrorKind::LoweringFailed {
                     template: template_name,
@@ -724,7 +722,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // resolve the user-facing `r.out` syntax.
         for sig_out in &signature.output_signals {
             match outputs.get(sig_out) {
-                Some(ir_forge::CircomTemplateOutput::Scalar(expr)) => {
+                Some(crate::CircomTemplateOutput::Scalar(expr)) => {
                     let CircuitExpr::Var(mangled) = expr else {
                         // Defensive: library impls return Scalar(Var(...))
                         // today. If a non-Var expression ever appears we
@@ -744,7 +742,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     self.env
                         .insert(dotted, CompEnvValue::Scalar(mangled.clone()));
                 }
-                Some(ir_forge::CircomTemplateOutput::Array { dims, values }) => {
+                Some(crate::CircomTemplateOutput::Array { dims, values }) => {
                     // Row-major flatten: iterate every value and bind
                     // each under "<name>.<out>_<i>" / "<name>.<out>_<i>_<j>".
                     let total: u64 = dims.iter().product();
@@ -786,7 +784,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // `let r = Square()(x); r` keep working unchanged.
         if signature.output_signals.len() == 1 {
             let sole = &signature.output_signals[0];
-            if let Some(ir_forge::CircomTemplateOutput::Scalar(expr)) = outputs.get(sole) {
+            if let Some(crate::CircomTemplateOutput::Scalar(expr)) = outputs.get(sole) {
                 self.body.push(CircuitNode::Let {
                     name: name.to_string(),
                     value: expr.clone(),

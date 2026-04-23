@@ -16,5 +16,10 @@ diagnostics = { path = "../diagnostics" }
 ir-core = { path = "../ir-core" }
 lysis-types = { path = "../lysis-types" }
 lysis = { path = "../lysis" }
+achronyme-parser = { path = "../achronyme-parser" }
+resolve = { path = "../resolve" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
+
+[features]
+test-support = []

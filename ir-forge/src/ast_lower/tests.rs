@@ -3,8 +3,8 @@
 //! Loaded via `#[cfg(test)] mod tests;` in `compiler/mod.rs`.
 
 use super::*;
+use crate::ProveIrError;
 use achronyme_parser::parse_program;
-use ir_forge::ProveIrError;
 use memory::FieldElement;
 
 /// Helper: parse source and compile the first expression to CircuitExpr.
@@ -605,7 +605,7 @@ fn nested_arithmetic() {
 /// Helper: compile a circuit source. Automatically wraps flat format
 /// (public/witness top-level declarations) into `circuit test(...) { body }`.
 fn compile_circuit(source: &str) -> Result<ProveIR, ProveIrError> {
-    crate::prove_ir::test_utils::compile_circuit(source)
+    crate::test_utils::compile_circuit(source)
 }
 
 #[test]
@@ -1947,8 +1947,8 @@ fn indexed_assignment_scalar_rejected() {
 
 mod circom_table {
     use super::super::*;
-    use ir_forge::circom_interop::test_support::StubLibrary;
-    use ir_forge::{CircomLibraryHandle, CircomTemplateSignature};
+    use crate::circom_interop::test_support::StubLibrary;
+    use crate::{CircomLibraryHandle, CircomTemplateSignature};
     use std::sync::Arc;
 
     fn sig(params: &[&str], inputs: &[&str], outputs: &[&str]) -> CircomTemplateSignature {
@@ -2073,11 +2073,11 @@ mod circom_table {
 
 mod circom_dispatch {
     use super::super::*;
-    use diagnostics::Span;
-    use ir_forge::{CircomDispatchErrorKind, ProveIrError};
-    use ir_forge::{
+    use crate::{CircomDispatchErrorKind, ProveIrError};
+    use crate::{
         CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
     };
+    use diagnostics::Span;
     use std::collections::HashMap;
     use std::sync::Arc;
 
@@ -2136,7 +2136,7 @@ mod circom_dispatch {
             &self,
             template_name: &str,
             _template_args: &[FieldConst],
-        ) -> Option<Vec<crate::prove_ir::CircomInputLayout>> {
+        ) -> Option<Vec<crate::CircomInputLayout>> {
             if template_name != self.template_name {
                 return None;
             }
@@ -2144,7 +2144,7 @@ mod circom_dispatch {
                 self.sig
                     .input_signals
                     .iter()
-                    .map(|n| crate::prove_ir::CircomInputLayout {
+                    .map(|n| crate::CircomInputLayout {
                         name: n.clone(),
                         dims: Vec::new(),
                     })
@@ -2158,7 +2158,7 @@ mod circom_dispatch {
             signal_inputs: &HashMap<String, CircuitExpr>,
             parent_prefix: &str,
             _span: &Span,
-        ) -> Result<CircomInstantiation, crate::prove_ir::CircomDispatchError> {
+        ) -> Result<CircomInstantiation, crate::CircomDispatchError> {
             let mut inputs: Vec<(String, CircuitExpr)> = signal_inputs
                 .iter()
                 .map(|(k, v)| (k.clone(), v.clone()))
@@ -2472,12 +2472,12 @@ mod circom_dispatch {
             &self,
             template_name: &str,
             _template_args: &[FieldConst],
-        ) -> Option<Vec<crate::prove_ir::CircomInputLayout>> {
+        ) -> Option<Vec<crate::CircomInputLayout>> {
             if template_name != self.name {
                 return None;
             }
             // Single scalar input `in` for this stub.
-            Some(vec![crate::prove_ir::CircomInputLayout {
+            Some(vec![crate::CircomInputLayout {
                 name: "in".to_string(),
                 dims: Vec::new(),
             }])
@@ -2489,7 +2489,7 @@ mod circom_dispatch {
             _signal_inputs: &HashMap<String, CircuitExpr>,
             parent_prefix: &str,
             _span: &Span,
-        ) -> Result<CircomInstantiation, crate::prove_ir::CircomDispatchError> {
+        ) -> Result<CircomInstantiation, crate::CircomDispatchError> {
             let total: u64 = self.dims.iter().product();
             let values: Vec<CircuitExpr> = (0..total)
                 .map(|i| CircuitExpr::Var(format!("{parent_prefix}_out_{i}")))

@@ -32,8 +32,8 @@ use super::{
     CircuitResolverBundle, CompEnvValue, FnDef, OuterResolverState, OuterScope, OuterScopeEntry,
     ProveIrCompiler,
 };
-use crate::prove_ir::types::{CaptureArrayDef, ProveIR};
-use ir_forge::ProveIrError;
+use crate::error::ProveIrError;
+use crate::types::{CaptureArrayDef, ProveIR};
 use resolve::{
     build_availability_map, build_dispatch_maps, build_resolver_state, AnnotationKey, SymbolId,
 };
@@ -172,8 +172,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         compiler.compile_block_stmts(block)?;
 
         // Classify captures
-        let captures =
-            ir_forge::capture::classify_captures(&compiler.captured_names, &compiler.body);
+        let captures = crate::capture::classify_captures(&compiler.captured_names, &compiler.body);
 
         // Build capture_arrays: arrays from outer scope whose elements were captured
         let mut capture_arrays = Vec::new();
@@ -301,7 +300,9 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                                 "circuit parameter `{}` has no type annotation",
                                 param.name
                             ),
-                            span: crate::error::span_box(Some(diagnostics::SpanRange::from(span))),
+                            span: ir_core::error::span_box(Some(diagnostics::SpanRange::from(
+                                span,
+                            ))),
                         })?;
                 let vis = ta
                     .visibility
@@ -310,7 +311,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                             "circuit parameter `{}` requires Public or Witness",
                             param.name
                         ),
-                        span: crate::error::span_box(Some(diagnostics::SpanRange::from(span))),
+                        span: ir_core::error::span_box(Some(diagnostics::SpanRange::from(span))),
                     })?;
                 let decl = InputDecl {
                     name: param.name.clone(),

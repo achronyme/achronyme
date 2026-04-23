@@ -1,14 +1,12 @@
 pub use ir_core::{error, types};
+pub use ir_forge::{module_loader, resolver_adapter};
 
 pub mod eval;
 pub mod inspector;
 pub mod lower;
-pub mod module_loader;
 pub mod passes;
 pub mod prove_ir;
-pub mod resolver_adapter;
 pub mod stats;
-pub(crate) mod suggest;
 
 pub use ir_core::{Instruction, IrError, IrProgram, IrType, SsaVar, Visibility};
 pub use ir_forge::ProveIrError;

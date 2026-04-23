@@ -1041,12 +1041,14 @@ dependencies = [
 name = "ir-forge"
 version = "0.1.0-beta.19"
 dependencies = [
+ "achronyme-parser",
  "bincode",
  "diagnostics",
  "ir-core",
  "lysis",
  "lysis-types",
  "memory",
+ "resolve",
  "serde",
 ]
 

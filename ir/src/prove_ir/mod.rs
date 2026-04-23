@@ -11,22 +11,18 @@
 //! - **Loops preserved**: not unrolled (deferred to instantiation with concrete values)
 //! - **Parametric**: captures from outer scope are "holes" filled at instantiation
 
-pub mod compiler;
 pub mod lysis_lower;
 
-pub use compiler::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
 pub use ir_forge::types;
 pub use ir_forge::{
     instruction_from_kind, materialize_interner, materialize_interning_sink, ssa_var_from_node_id,
     ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, CircomCallable, CircomDispatchError,
     CircomInputLayout, CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput,
     CircomTemplateSignature, CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitNode,
-    CircuitUnaryOp, ExtendedInstruction, ExtendedIrProgram, FieldConst, ForRange, ProveIR,
-    ProveInputDecl, ProveIrError, TemplateId,
+    CircuitUnaryOp, ExtendedInstruction, ExtendedIrProgram, FieldConst, ForRange,
+    OuterResolverState, OuterScope, OuterScopeEntry, ProveIR, ProveInputDecl, ProveIrCompiler,
+    ProveIrError, TemplateId,
 };
-
-#[cfg(test)]
-pub(crate) mod test_utils;
 
 #[cfg(test)]
 mod instantiate_tests;

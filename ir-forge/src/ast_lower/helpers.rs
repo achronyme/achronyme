@@ -12,8 +12,8 @@
 use achronyme_parser::ast::{BaseType, Block, Program, Span, TypeAnnotation};
 use diagnostics::SpanRange;
 
-use crate::error::{span_box, OptSpan};
-use crate::types::IrType;
+use ir_core::error::{span_box, OptSpan};
+use ir_core::IrType;
 
 /// Convert a parsed Program into a Block (Programs don't carry their own span).
 pub(super) fn program_to_block(source: &str, program: Program) -> Block {
@@ -67,11 +67,11 @@ pub(super) fn to_span(span: &Span) -> OptSpan {
 pub(super) fn annotation_to_ir_type(
     ann: &TypeAnnotation,
     span: &Span,
-) -> Result<IrType, ir_forge::ProveIrError> {
+) -> Result<IrType, crate::error::ProveIrError> {
     match ann.base {
         BaseType::Field => Ok(IrType::Field),
         BaseType::Bool => Ok(IrType::Bool),
-        BaseType::Int | BaseType::String => Err(ir_forge::ProveIrError::TypeNotConstrainable {
+        BaseType::Int | BaseType::String => Err(crate::error::ProveIrError::TypeNotConstrainable {
             type_name: ann.base.to_string(),
             span: to_span(span),
         }),
