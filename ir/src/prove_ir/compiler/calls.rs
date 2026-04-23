@@ -26,8 +26,8 @@ use memory::{FieldBackend, FieldElement};
 
 use super::helpers::{flat_index_suffix, to_span};
 use super::{CompEnvValue, DispatchDecision, ProveIrCompiler};
-use crate::prove_ir::error::{CircomDispatchErrorKind, ProveIrError};
 use crate::prove_ir::types::*;
+use ir_forge::{CircomDispatchErrorKind, ProveIrError};
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
     pub(super) fn compile_static_access(

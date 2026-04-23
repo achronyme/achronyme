@@ -23,3 +23,7 @@
 //! - `instantiate` — eager instantiation (slated for deletion in Lysis Phase 5)
 //! - `ast_lower` — `ProveIrCompiler` + outer scope (was `ir::prove_ir::compiler`)
 //! - `lysis_lift` — Walker + BTA + diff + extract + symbolic (was `ir::prove_ir::lysis_lower`)
+
+pub mod error;
+
+pub use error::{CircomDispatchErrorKind, ProveIrError};

@@ -11,9 +11,9 @@ use memory::{FieldBackend, FieldElement};
 
 use super::utils::fe_to_usize;
 use super::{InstEnvValue, Instantiator};
-use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::{ArraySize, CaptureDef, CaptureUsage, ProveIR, ProveInputDecl};
 use crate::types::{Instruction, IrType, SsaVar, Visibility};
+use ir_forge::ProveIrError;
 
 impl<F: FieldBackend> Instantiator<F> {
     pub(super) fn push_inst(&mut self, inst: Instruction<F>) -> SsaVar {

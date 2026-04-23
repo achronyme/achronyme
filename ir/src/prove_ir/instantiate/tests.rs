@@ -4,12 +4,12 @@
 
 use super::*;
 use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
-use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::{
     ArraySize, CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, ForRange, ProveIR,
     ProveInputDecl,
 };
 use crate::types::{Instruction, IrType, Visibility};
+use ir_forge::ProveIrError;
 use memory::Bn254Fr;
 
 /// Helper: compile source as a circuit and instantiate (no captures).

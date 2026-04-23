@@ -22,8 +22,8 @@ use memory::{FieldBackend, FieldElement};
 
 use super::helpers::to_span;
 use super::{CompEnvValue, ProveIrCompiler};
-use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::*;
+use ir_forge::ProveIrError;
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------

@@ -3,8 +3,7 @@
 use std::fmt;
 
 use diagnostics::{Diagnostic, SpanRange};
-
-use crate::error::OptSpan;
+use ir_core::error::OptSpan;
 
 /// Specific failure modes for circom template dispatch inside a
 /// prove/circuit block. Wrapped under

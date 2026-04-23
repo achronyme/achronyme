@@ -1019,6 +1019,7 @@ dependencies = [
  "constraints",
  "diagnostics",
  "ir-core",
+ "ir-forge",
  "lysis",
  "lysis-types",
  "memory",

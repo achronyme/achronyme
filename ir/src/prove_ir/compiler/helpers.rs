@@ -67,15 +67,13 @@ pub(super) fn to_span(span: &Span) -> OptSpan {
 pub(super) fn annotation_to_ir_type(
     ann: &TypeAnnotation,
     span: &Span,
-) -> Result<IrType, crate::prove_ir::error::ProveIrError> {
+) -> Result<IrType, ir_forge::ProveIrError> {
     match ann.base {
         BaseType::Field => Ok(IrType::Field),
         BaseType::Bool => Ok(IrType::Bool),
-        BaseType::Int | BaseType::String => {
-            Err(crate::prove_ir::error::ProveIrError::TypeNotConstrainable {
-                type_name: ann.base.to_string(),
-                span: to_span(span),
-            })
-        }
+        BaseType::Int | BaseType::String => Err(ir_forge::ProveIrError::TypeNotConstrainable {
+            type_name: ann.base.to_string(),
+            span: to_span(span),
+        }),
     }
 }

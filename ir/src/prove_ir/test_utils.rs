@@ -7,8 +7,8 @@
 use memory::Bn254Fr;
 
 use super::compiler::ProveIrCompiler;
-use super::error::ProveIrError;
 use super::types::ProveIR;
+use ir_forge::ProveIrError;
 
 /// Convert a flat declaration like `"arr[3]"` or `"x: Field"` to a circuit param.
 fn flat_decl_to_param(decl: &str, vis: &str) -> String {

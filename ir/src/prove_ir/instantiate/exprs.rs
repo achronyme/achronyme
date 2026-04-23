@@ -15,9 +15,9 @@
 use memory::{FieldBackend, FieldElement};
 
 use super::{BitwiseOp, InstEnvValue, Instantiator};
-use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::*;
 use crate::types::{Instruction, IrType, SsaVar};
+use ir_forge::ProveIrError;
 
 impl<F: FieldBackend> Instantiator<F> {
     pub(super) fn emit_expr(&mut self, expr: &CircuitExpr) -> Result<SsaVar, ProveIrError> {

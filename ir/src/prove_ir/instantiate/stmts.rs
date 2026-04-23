@@ -14,9 +14,9 @@ use memory::{FieldBackend, FieldElement};
 
 use super::utils::{fe_to_u64, fe_to_usize};
 use super::{InstEnvValue, Instantiator, MAX_INSTANTIATE_ITERATIONS};
-use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::*;
 use crate::types::{Instruction, SsaVar, Visibility};
+use ir_forge::ProveIrError;
 
 impl<F: FieldBackend> Instantiator<F> {
     pub(super) fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {

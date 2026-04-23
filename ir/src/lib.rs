@@ -11,8 +11,8 @@ pub mod stats;
 pub(crate) mod suggest;
 
 pub use ir_core::{Instruction, IrError, IrProgram, IrType, SsaVar, Visibility};
+pub use ir_forge::ProveIrError;
 pub use lower::IrLowering;
-pub use prove_ir::ProveIrError;
 
 /// Forward-compat alias. `Visibility` collides with `lysis::Visibility`
 /// (node-interning binding) and the parser's AST visibility. In the

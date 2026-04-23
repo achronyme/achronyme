@@ -32,8 +32,8 @@ use super::{
     CircuitResolverBundle, CompEnvValue, FnDef, OuterResolverState, OuterScope, OuterScopeEntry,
     ProveIrCompiler,
 };
-use crate::prove_ir::error::ProveIrError;
 use crate::prove_ir::types::{CaptureArrayDef, ProveIR};
+use ir_forge::ProveIrError;
 use resolve::{
     build_availability_map, build_dispatch_maps, build_resolver_state, AnnotationKey, SymbolId,
 };
