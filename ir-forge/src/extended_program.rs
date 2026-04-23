@@ -36,10 +36,10 @@
 use std::collections::HashMap;
 
 use diagnostics::SpanRange;
+use ir_core::{Instruction, IrProgram, IrType, SsaVar};
 use memory::{Bn254Fr, FieldBackend};
 
-use crate::prove_ir::extended::ExtendedInstruction;
-use crate::types::{Instruction, IrProgram, IrType, SsaVar};
+use crate::extended::ExtendedInstruction;
 
 /// `ExtendedInstruction`-shaped counterpart of [`IrProgram`]. Same
 /// side-band metadata, same `fresh_var` / `set_span` API, but the
@@ -190,7 +190,7 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use crate::prove_ir::extended::TemplateId;
+    use crate::extended::TemplateId;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])

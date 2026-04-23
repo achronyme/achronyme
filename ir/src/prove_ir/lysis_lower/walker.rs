@@ -64,8 +64,8 @@ use lysis::program::Program;
 use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
 
-use crate::prove_ir::extended::ExtendedInstruction;
 use crate::types::{Instruction, SsaVar, Visibility};
+use ir_forge::ExtendedInstruction;
 
 /// Errors raised by [`Walker::lower`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -888,7 +888,7 @@ mod tests {
     #[test]
     fn refuses_template_call() {
         let body = vec![ExtendedInstruction::TemplateCall {
-            template_id: crate::prove_ir::extended::TemplateId(0),
+            template_id: ir_forge::TemplateId(0),
             captures: vec![],
             outputs: vec![],
         }];

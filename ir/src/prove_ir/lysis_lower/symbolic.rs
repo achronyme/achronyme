@@ -32,8 +32,8 @@ use std::collections::HashMap;
 use memory::{FieldBackend, FieldElement};
 use smallvec::SmallVec;
 
-use crate::prove_ir::extended::{ExtendedInstruction, TemplateId};
 use crate::types::{Instruction, SsaVar, Visibility};
+use ir_forge::{ExtendedInstruction, TemplateId};
 
 /// Identifier for a slot in a symbolic tree. Two [`SymbolicTree`]s
 /// produced from the same body with different probe values are
@@ -613,7 +613,7 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use crate::prove_ir::extended::TemplateId;
+    use ir_forge::TemplateId;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])

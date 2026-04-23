@@ -37,8 +37,8 @@ use memory::{FieldBackend, FieldElement};
 
 use super::diff::{structural_diff, Diff};
 use super::symbolic::{symbolic_emit, SlotId, SymbolicTree};
-use crate::prove_ir::extended::ExtendedInstruction;
 use crate::types::SsaVar;
+use ir_forge::ExtendedInstruction;
 
 /// Classification of a loop body. Consumed by the lifter (walker,
 /// 3.B.7) to decide which Lysis opcode to emit.

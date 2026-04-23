@@ -36,9 +36,8 @@
 //! [`ExtendedInstruction::Plain`] and the `From<Instruction<F>>`
 //! conversion in the companion commit.
 
+use ir_core::{Instruction, SsaVar};
 use memory::{Bn254Fr, FieldBackend};
-
-use crate::types::{Instruction, SsaVar};
 
 /// Opaque handle for a [`ExtendedInstruction::TemplateBody`]
 /// declaration. `u16` matches the wire-level `template_id` field in
@@ -154,8 +153,9 @@ impl<F: FieldBackend> From<Instruction<F>> for ExtendedInstruction<F> {
 mod tests {
     use memory::{Bn254Fr, FieldElement};
 
+    use ir_core::Visibility;
+
     use super::*;
-    use crate::types::Visibility;
 
     fn ssa(i: u32) -> SsaVar {
         SsaVar(i)
