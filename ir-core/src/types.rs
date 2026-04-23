@@ -504,17 +504,29 @@ impl std::fmt::Display for IrType {
 /// assert_eq!(prog.get_type(v), Some(IrType::Field));
 /// ```
 ///
-/// All fields are `pub(crate)` — external callers go through the
+/// Fields are `pub` because `ir-core` is the leaf vocabulary crate
+/// and downstream IR owners (`ir` for flat SSA passes, `ir-forge` for
+/// ProveIR-side operations) need direct field access for in-place
+/// rewrites. External consumers (cli, circom, compiler, proving)
+/// should prefer the accessor methods (`instructions()`,
+/// `next_var()`, `set_name()`, etc.) — they carry the stable API
+/// contract — but this is a convention, not a compile-time fence.
+/// The stronger `pub(crate)` encapsulation from P3 only made sense
+/// when IrProgram lived in the `ir` crate; after the Phase 7 split
+/// into `ir-core` + `ir` + `ir-forge`, accessor-only access would
+/// require duplicating the entire passes + evaluator + ProveIR
+/// walker infrastructure behind trait objects, for no real gain
+/// pre-1.0.
 /// accessor methods (`push`, `iter`, `len`, `set_name`, etc.) so the
 /// internal storage shape can evolve without breaking downstream code.
 #[derive(Debug)]
 pub struct IrProgram<F: FieldBackend = Bn254Fr> {
-    pub(crate) instructions: Vec<Instruction<F>>,
-    pub(crate) next_var: u32,
-    pub(crate) var_names: HashMap<SsaVar, String>,
-    pub(crate) var_types: HashMap<SsaVar, IrType>,
-    pub(crate) input_spans: HashMap<String, SpanRange>,
-    pub(crate) var_spans: HashMap<SsaVar, SpanRange>,
+    pub instructions: Vec<Instruction<F>>,
+    pub next_var: u32,
+    pub var_names: HashMap<SsaVar, String>,
+    pub var_types: HashMap<SsaVar, IrType>,
+    pub input_spans: HashMap<String, SpanRange>,
+    pub var_spans: HashMap<SsaVar, SpanRange>,
 }
 
 impl<F: FieldBackend> Default for IrProgram<F> {
@@ -865,49 +877,6 @@ mod tests {
         assert!(p.get_span(v1).is_none());
     }
 
-    #[test]
-    fn var_spans_survive_dce() {
-        // var_spans are keyed by SsaVar, not instruction index,
-        // so they survive DCE which removes instructions via retain().
-        let mut p: IrProgram = IrProgram::new();
-        let v0 = p.fresh_var();
-        p.push(Instruction::Input {
-            result: v0,
-            name: "x".into(),
-            visibility: Visibility::Public,
-        });
-        let span = SpanRange::new(0, 10, 1, 1, 1, 10);
-        p.set_span(v0, span.clone());
-
-        // v1 is unused, will be eliminated by DCE
-        let v1 = p.fresh_var();
-        p.push(Instruction::Const {
-            result: v1,
-            value: FieldElement::from_u64(42),
-        });
-
-        // v2: non-tautological AssertEq (survives DCE)
-        let v2 = p.fresh_var();
-        let v3 = p.fresh_var();
-        p.push(Instruction::Const {
-            result: v3,
-            value: FieldElement::from_u64(0),
-        });
-        p.push(Instruction::AssertEq {
-            result: v2,
-            lhs: v0,
-            rhs: v3,
-            message: None,
-        });
-        let span2 = SpanRange::new(20, 30, 2, 1, 2, 10);
-        p.set_span(v2, span2.clone());
-
-        // Simulate DCE: remove unused instructions
-        crate::passes::dce::dead_code_elimination(&mut p);
-
-        // v1 (unused Const) should be gone; Input + Const(0) + AssertEq remain
-        assert_eq!(p.instructions.len(), 3);
-        assert_eq!(p.get_span(v0), Some(&span));
-        assert_eq!(p.get_span(v2), Some(&span2));
-    }
+    // `var_spans_survive_dce` moved to `ir/src/passes/dce.rs` — it exercises
+    // the DCE pass, which lives in `ir` not `ir-core`.
 }

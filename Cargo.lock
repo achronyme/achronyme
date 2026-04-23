@@ -1018,6 +1018,7 @@ dependencies = [
  "bincode",
  "constraints",
  "diagnostics",
+ "ir-core",
  "lysis",
  "lysis-types",
  "memory",
@@ -1027,10 +1028,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "ir-core"
+version = "0.1.0-beta.19"
+dependencies = [
+ "diagnostics",
+ "memory",
+ "serde",
+]
+
+[[package]]
 name = "ir-forge"
 version = "0.1.0-beta.19"
 dependencies = [
  "diagnostics",
+ "ir-core",
  "memory",
  "serde",
 ]

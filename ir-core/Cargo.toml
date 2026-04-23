@@ -1,0 +1,16 @@
+[package]
+name = "ir-core"
+description = "Leaf crate holding the flat-SSA IR vocabulary shared between `ir` (which owns the AST→SSA lowering, passes, and evaluator) and `ir-forge` (which owns the ProveIR layer and its Lysis interop adapters). Contains `Instruction<F>`, `SsaVar`, `IrType`, `Visibility`, `IrProgram<F>`, `IrError`, `OptSpan`, `span_box`. No workspace deps beyond `memory` and `diagnostics`, so both `ir` and `ir-forge` can depend on it without forming a cycle."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+memory = { path = "../memory" }
+diagnostics = { path = "../diagnostics" }
+serde = { version = "1", features = ["derive"] }

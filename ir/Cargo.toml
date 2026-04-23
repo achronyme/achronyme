@@ -19,6 +19,7 @@ resolve = { path = "../resolve" }
 artik = { path = "../artik" }
 lysis = { path = "../lysis" }
 lysis-types = { path = "../lysis-types" }
+ir-core = { path = "../ir-core" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 smallvec = "1"

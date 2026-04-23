@@ -13,4 +13,5 @@ categories.workspace = true
 [dependencies]
 memory = { path = "../memory" }
 diagnostics = { path = "../diagnostics" }
+ir-core = { path = "../ir-core" }
 serde = { version = "1", features = ["derive"] }
