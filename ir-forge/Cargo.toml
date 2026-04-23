@@ -15,4 +15,5 @@ memory = { path = "../memory" }
 diagnostics = { path = "../diagnostics" }
 ir-core = { path = "../ir-core" }
 lysis-types = { path = "../lysis-types" }
+lysis = { path = "../lysis" }
 serde = { version = "1", features = ["derive"] }

@@ -2,7 +2,7 @@
 //! canonical `Vec<Instruction<F>>` the R1CS backend consumes.
 //!
 //! This module is the "last mile" of the bridge started in
-//! [`crate::prove_ir::lysis_bridge`]. The interner holds a
+//! [`crate::lysis_bridge`]. The interner holds a
 //! deduplicated DAG of `InstructionKind<F>`; the backend expects a
 //! flat `Vec<Instruction<F>>`. The two steps combined — consume the
 //! interner, flatten to the mirror enum, convert each node through
@@ -22,10 +22,10 @@
 //! [`NodeInterner`]: lysis::NodeInterner
 //! [`InterningSink`]: lysis::InterningSink
 
+use ir_core::Instruction;
 use memory::FieldBackend;
 
-use crate::types::Instruction;
-use ir_forge::instruction_from_kind;
+use crate::lysis_bridge::instruction_from_kind;
 
 /// Consume a Lysis [`NodeInterner`] and produce a flat
 /// `Vec<Instruction<F>>` ready for the R1CS backend.
@@ -52,8 +52,9 @@ pub fn materialize_interning_sink<F: FieldBackend>(
 mod tests {
     use memory::{Bn254Fr, FieldElement};
 
+    use ir_core::SsaVar;
+
     use super::*;
-    use crate::types::SsaVar;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])

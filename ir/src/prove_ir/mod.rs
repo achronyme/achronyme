@@ -16,14 +16,12 @@ pub mod circom_interop;
 pub mod compiler;
 pub mod instantiate;
 pub mod lysis_lower;
-pub mod lysis_materialize;
 pub mod types;
 
 pub use ir_forge::{
-    instruction_from_kind, ssa_var_from_node_id, ExtendedInstruction, ExtendedIrProgram,
-    ProveIrError, TemplateId,
+    instruction_from_kind, materialize_interner, materialize_interning_sink, ssa_var_from_node_id,
+    ExtendedInstruction, ExtendedIrProgram, ProveIrError, TemplateId,
 };
-pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
 
 pub use circom_interop::{
     CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
