@@ -24,6 +24,8 @@
 //! - `ast_lower` — `ProveIrCompiler` + outer scope (was `ir::prove_ir::compiler`)
 //! - `lysis_lift` — Walker + BTA + diff + extract + symbolic (was `ir::prove_ir::lysis_lower`)
 
+pub mod capture;
+pub mod circom_interop;
 pub mod error;
 pub mod extended;
 pub mod extended_program;
@@ -32,6 +34,10 @@ pub mod lysis_bridge;
 pub mod lysis_materialize;
 pub mod types;
 
+pub use circom_interop::{
+    CircomCallable, CircomDispatchError, CircomInputLayout, CircomInstantiation,
+    CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
+};
 pub use error::{CircomDispatchErrorKind, ProveIrError};
 pub use extended::{ExtendedInstruction, TemplateId};
 pub use extended_program::ExtendedIrProgram;

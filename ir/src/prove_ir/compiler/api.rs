@@ -173,7 +173,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
         // Classify captures
         let captures =
-            crate::prove_ir::capture::classify_captures(&compiler.captured_names, &compiler.body);
+            ir_forge::capture::classify_captures(&compiler.captured_names, &compiler.body);
 
         // Build capture_arrays: arrays from outer scope whose elements were captured
         let mut capture_arrays = Vec::new();

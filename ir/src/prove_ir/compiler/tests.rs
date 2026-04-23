@@ -1947,8 +1947,8 @@ fn indexed_assignment_scalar_rejected() {
 
 mod circom_table {
     use super::super::*;
-    use crate::prove_ir::circom_interop::test_support::StubLibrary;
-    use crate::prove_ir::circom_interop::{CircomLibraryHandle, CircomTemplateSignature};
+    use ir_forge::circom_interop::test_support::StubLibrary;
+    use ir_forge::{CircomLibraryHandle, CircomTemplateSignature};
     use std::sync::Arc;
 
     fn sig(params: &[&str], inputs: &[&str], outputs: &[&str]) -> CircomTemplateSignature {
@@ -2073,11 +2073,11 @@ mod circom_table {
 
 mod circom_dispatch {
     use super::super::*;
-    use crate::prove_ir::circom_interop::{
-        CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
-    };
     use diagnostics::Span;
     use ir_forge::{CircomDispatchErrorKind, ProveIrError};
+    use ir_forge::{
+        CircomInstantiation, CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
+    };
     use std::collections::HashMap;
     use std::sync::Arc;
 

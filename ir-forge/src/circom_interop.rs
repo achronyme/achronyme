@@ -19,7 +19,7 @@ use std::sync::Arc;
 
 use diagnostics::Span;
 
-use super::types::{CircuitExpr, CircuitNode, FieldConst};
+use crate::types::{CircuitExpr, CircuitNode, FieldConst};
 
 /// A single declared output of an instantiated circom template, keyed
 /// by the original (unmangled) signal name in [`CircomInstantiation::outputs`].
@@ -80,7 +80,7 @@ pub struct CircomInputLayout {
 
 /// Reasons a circom template instantiation can be rejected, reported
 /// back to the ProveIR dispatcher so it can surface a proper
-/// [`super::error::ProveIrError`] variant with span information.
+/// [`crate::error::ProveIrError`] variant with span information.
 #[derive(Clone, Debug)]
 pub enum CircomDispatchError {
     /// The library does not contain a template by this name.
@@ -195,8 +195,7 @@ pub struct CircomCallable {
     pub template_name: String,
 }
 
-#[cfg(test)]
-pub(crate) mod test_support {
+pub mod test_support {
     //! Minimal in-memory stub used by unit tests in this crate.
     use super::*;
     use std::collections::HashMap;

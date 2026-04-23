@@ -16,7 +16,7 @@ use achronyme_parser::ast::ExprId;
 use memory::FieldBackend;
 
 use super::{DispatchDecision, ProveIrCompiler};
-use crate::prove_ir::circom_interop::CircomCallable;
+use ir_forge::CircomCallable;
 use resolve::{AnnotationKey, CallableKind, ModuleId, SymbolId};
 
 impl<F: FieldBackend> ProveIrCompiler<F> {
@@ -192,7 +192,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     pub fn register_circom_template(
         &mut self,
         key: String,
-        library: std::sync::Arc<dyn crate::prove_ir::circom_interop::CircomLibraryHandle>,
+        library: std::sync::Arc<dyn ir_forge::CircomLibraryHandle>,
         template_name: String,
     ) {
         self.circom_table.insert(

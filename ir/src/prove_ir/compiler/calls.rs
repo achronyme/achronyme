@@ -417,8 +417,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         span: &Span,
     ) -> Result<
         (
-            HashMap<String, crate::prove_ir::circom_interop::CircomTemplateOutput>,
-            crate::prove_ir::circom_interop::CircomTemplateSignature,
+            HashMap<String, ir_forge::CircomTemplateOutput>,
+            ir_forge::CircomTemplateSignature,
         ),
         ProveIrError,
     > {
@@ -566,7 +566,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 span,
             )
             .map_err(|e| {
-                use crate::prove_ir::circom_interop::CircomDispatchError as CircomErr;
+                use ir_forge::CircomDispatchError as CircomErr;
                 let kind = match e {
                     CircomErr::UnknownTemplate { template, .. } => {
                         CircomDispatchErrorKind::LoweringFailed {
@@ -645,10 +645,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
         let out_name = &signature.output_signals[0];
         match outputs.get(out_name) {
-            Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Scalar(expr)) => {
-                Ok(expr.clone())
-            }
-            Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Array { .. }) => {
+            Some(ir_forge::CircomTemplateOutput::Scalar(expr)) => Ok(expr.clone()),
+            Some(ir_forge::CircomTemplateOutput::Array { .. }) => {
                 Err(ProveIrError::CircomDispatch {
                     kind: CircomDispatchErrorKind::ArrayOutputRequiresIndex {
                         template: template_name,
@@ -726,7 +724,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // resolve the user-facing `r.out` syntax.
         for sig_out in &signature.output_signals {
             match outputs.get(sig_out) {
-                Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Scalar(expr)) => {
+                Some(ir_forge::CircomTemplateOutput::Scalar(expr)) => {
                     let CircuitExpr::Var(mangled) = expr else {
                         // Defensive: library impls return Scalar(Var(...))
                         // today. If a non-Var expression ever appears we
@@ -746,10 +744,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     self.env
                         .insert(dotted, CompEnvValue::Scalar(mangled.clone()));
                 }
-                Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Array {
-                    dims,
-                    values,
-                }) => {
+                Some(ir_forge::CircomTemplateOutput::Array { dims, values }) => {
                     // Row-major flatten: iterate every value and bind
                     // each under "<name>.<out>_<i>" / "<name>.<out>_<i>_<j>".
                     let total: u64 = dims.iter().product();
@@ -791,9 +786,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // `let r = Square()(x); r` keep working unchanged.
         if signature.output_signals.len() == 1 {
             let sole = &signature.output_signals[0];
-            if let Some(crate::prove_ir::circom_interop::CircomTemplateOutput::Scalar(expr)) =
-                outputs.get(sole)
-            {
+            if let Some(ir_forge::CircomTemplateOutput::Scalar(expr)) = outputs.get(sole) {
                 self.body.push(CircuitNode::Let {
                     name: name.to_string(),
                     value: expr.clone(),

@@ -42,8 +42,8 @@ use std::marker::PhantomData;
 use achronyme_parser::ast::*;
 use memory::{Bn254Fr, FieldBackend};
 
-use super::circom_interop::CircomCallable;
 use super::types::*;
+use ir_forge::CircomCallable;
 
 use resolve::{
     AnnotationKey, Availability, ModuleId, ResolvedProgram, ResolverState, SymbolId, SymbolTable,
