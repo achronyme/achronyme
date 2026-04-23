@@ -5,9 +5,8 @@
 //! - [`CaptureDef`] / [`CaptureArrayDef`] / [`CaptureUsage`] — template
 //!   parameters drawn from the outer scope, resolved at instantiation.
 
+use ir_core::IrType;
 use serde::{Deserialize, Serialize};
-
-use crate::types::IrType;
 
 /// An input declaration (public or witness).
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]

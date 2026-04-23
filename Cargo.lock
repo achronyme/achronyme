@@ -1041,6 +1041,7 @@ dependencies = [
 name = "ir-forge"
 version = "0.1.0-beta.19"
 dependencies = [
+ "bincode",
  "diagnostics",
  "ir-core",
  "lysis",

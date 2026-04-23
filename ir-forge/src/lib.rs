@@ -27,11 +27,18 @@
 pub mod error;
 pub mod extended;
 pub mod extended_program;
+pub mod instantiate;
 pub mod lysis_bridge;
 pub mod lysis_materialize;
+pub mod types;
 
 pub use error::{CircomDispatchErrorKind, ProveIrError};
 pub use extended::{ExtendedInstruction, TemplateId};
 pub use extended_program::ExtendedIrProgram;
 pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
 pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
+pub use types::{
+    ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, CircuitBinOp, CircuitBoolOp,
+    CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp, FieldConst, ForRange, ProveIR,
+    ProveInputDecl,
+};

@@ -29,6 +29,3 @@ pub use field_const::FieldConst;
 pub use inputs::{ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, ProveInputDecl};
 pub use nodes::{CircuitNode, ForRange};
 pub use prove_ir::ProveIR;
-
-#[cfg(test)]
-mod tests;

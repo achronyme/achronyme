@@ -38,7 +38,7 @@ use std::collections::HashMap;
 use diagnostics::SpanRange;
 use memory::{FieldBackend, FieldElement};
 
-use crate::types::{IrProgram, SsaVar};
+use ir_core::{IrProgram, SsaVar};
 
 /// Maximum iterations allowed during instantiation (loop unrolling).
 /// This mirrors `MAX_UNROLL_ITERATIONS` in IrLowering but applies to capture-bound
@@ -96,6 +96,3 @@ pub(super) struct Instantiator<F: FieldBackend> {
     /// [`const_cache`] in [`emit_const`].
     pub(super) const_values: HashMap<SsaVar, FieldElement<F>>,
 }
-
-#[cfg(test)]
-mod tests;

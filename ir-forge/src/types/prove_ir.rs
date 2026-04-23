@@ -40,7 +40,7 @@ pub(crate) const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
 /// v3: added `message` field to CircuitNode::AssertEq.
 /// v4: added PrimeId byte after version (multi-prime support).
 /// v5: CircuitExpr::Const uses FieldConst ([u8;32] canonical LE) instead of FieldElement.
-pub(crate) const PROVE_IR_FORMAT_VERSION: u8 = 5;
+pub const PROVE_IR_FORMAT_VERSION: u8 = 5;
 
 /// Maximum allowed size for deserialized ProveIR data (64 MB).
 /// Prevents allocation bombs from crafted length prefixes.

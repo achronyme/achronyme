@@ -17,3 +17,4 @@ ir-core = { path = "../ir-core" }
 lysis-types = { path = "../lysis-types" }
 lysis = { path = "../lysis" }
 serde = { version = "1", features = ["derive"] }
+bincode = "1"

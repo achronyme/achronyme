@@ -1,11 +1,14 @@
 //! Round-trip and validation tests for ProveIR types.
 
-use super::prove_ir::PROVE_IR_FORMAT_VERSION;
-use super::*;
-use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
-use crate::types::IrType;
+use ir_core::IrType;
+use ir_forge::types::prove_ir::PROVE_IR_FORMAT_VERSION;
+use ir_forge::{
+    ArraySize, CircuitExpr, CircuitNode, FieldConst, ForRange, ProveIR, ProveInputDecl,
+};
 use memory::field::PrimeId;
 use memory::Bn254Fr;
+
+use crate::prove_ir::compiler::{OuterScope, OuterScopeEntry, ProveIrCompiler};
 
 /// Round-trip: ProveIR → bytes → ProveIR, verify equality.
 fn assert_round_trip(prove_ir: &ProveIR) {

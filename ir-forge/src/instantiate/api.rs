@@ -20,9 +20,9 @@ use std::collections::{HashMap, HashSet};
 use memory::{FieldBackend, FieldElement};
 
 use super::{InstEnvValue, Instantiator};
-use crate::prove_ir::types::ProveIR;
-use crate::types::{IrProgram, SsaVar, Visibility};
-use ir_forge::ProveIrError;
+use crate::error::ProveIrError;
+use crate::types::ProveIR;
+use ir_core::{IrProgram, SsaVar, Visibility};
 
 impl ProveIR {
     /// Instantiate this template with concrete capture values, producing a flat IrProgram.

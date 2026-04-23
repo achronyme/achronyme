@@ -8,7 +8,7 @@
 
 use memory::{FieldBackend, FieldElement};
 
-use ir_forge::ProveIrError;
+use crate::error::ProveIrError;
 
 /// Convert a FieldElement to u64, with error on overflow.
 /// Only valid for "small" values that fit in a single limb.

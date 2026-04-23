@@ -14,13 +14,14 @@
 pub mod capture;
 pub mod circom_interop;
 pub mod compiler;
-pub mod instantiate;
 pub mod lysis_lower;
-pub mod types;
 
+pub use ir_forge::types;
 pub use ir_forge::{
     instruction_from_kind, materialize_interner, materialize_interning_sink, ssa_var_from_node_id,
-    ExtendedInstruction, ExtendedIrProgram, ProveIrError, TemplateId,
+    ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, CircuitBinOp, CircuitBoolOp,
+    CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp, ExtendedInstruction, ExtendedIrProgram,
+    FieldConst, ForRange, ProveIR, ProveInputDecl, ProveIrError, TemplateId,
 };
 
 pub use circom_interop::{
@@ -28,11 +29,12 @@ pub use circom_interop::{
     CircomLibraryHandle, CircomTemplateOutput, CircomTemplateSignature,
 };
 pub use compiler::{OuterResolverState, OuterScope, OuterScopeEntry, ProveIrCompiler};
-pub use types::{
-    ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, CircuitBinOp, CircuitBoolOp,
-    CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp, FieldConst, ForRange, ProveIR,
-    ProveInputDecl,
-};
 
 #[cfg(test)]
 pub(crate) mod test_utils;
+
+#[cfg(test)]
+mod instantiate_tests;
+
+#[cfg(test)]
+mod types_tests;
