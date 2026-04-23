@@ -57,7 +57,7 @@ pub enum IrError {
     ///
     /// ```
     /// use diagnostics::SpanRange;
-    /// use ir::error::IrError;
+    /// use ir_core::error::IrError;
     ///
     /// let err = IrError::AnnotationMismatch {
     ///     name: "x".into(),

@@ -464,7 +464,7 @@ impl<F: FieldBackend> std::fmt::Display for Instruction<F> {
 /// The IR-level type of an SSA variable (for gradual type checking).
 ///
 /// ```
-/// use ir::types::IrType;
+/// use ir_core::types::IrType;
 ///
 /// let t = IrType::Field;
 /// assert_eq!(format!("{t}"), "Field");
@@ -489,7 +489,7 @@ impl std::fmt::Display for IrType {
 /// A flat SSA program — a sequence of instructions.
 ///
 /// ```
-/// use ir::types::{IrProgram, IrType, Instruction, SsaVar};
+/// use ir_core::types::{IrProgram, IrType, Instruction, SsaVar};
 /// use memory::FieldElement;
 ///
 /// let mut prog: IrProgram = IrProgram::new();
