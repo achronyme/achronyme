@@ -37,8 +37,8 @@ use memory::{FieldBackend, FieldElement};
 
 use super::diff::{structural_diff, Diff};
 use super::symbolic::{symbolic_emit, SlotId, SymbolicTree};
-use crate::types::SsaVar;
-use ir_forge::ExtendedInstruction;
+use crate::ExtendedInstruction;
+use ir_core::SsaVar;
 
 /// Classification of a loop body. Consumed by the lifter (walker,
 /// 3.B.7) to decide which Lysis opcode to emit.
@@ -186,7 +186,7 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use crate::types::{Instruction, Visibility};
+    use ir_core::{Instruction, Visibility};
 
     fn fe(n: i64) -> FieldElement<Bn254Fr> {
         // Map i64 → positive field value for simplicity in tests.

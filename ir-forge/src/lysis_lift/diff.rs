@@ -175,9 +175,9 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use crate::prove_ir::lysis_lower::symbolic::symbolic_emit;
-    use crate::types::{Instruction, SsaVar, Visibility};
-    use ir_forge::ExtendedInstruction;
+    use crate::lysis_lift::symbolic::symbolic_emit;
+    use crate::ExtendedInstruction;
+    use ir_core::{Instruction, SsaVar, Visibility};
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])

@@ -32,6 +32,7 @@ pub mod extended;
 pub mod extended_program;
 pub mod instantiate;
 pub mod lysis_bridge;
+pub mod lysis_lift;
 pub mod lysis_materialize;
 pub mod module_loader;
 pub mod resolver_adapter;

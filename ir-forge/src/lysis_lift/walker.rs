@@ -64,8 +64,8 @@ use lysis::program::Program;
 use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
 
-use crate::types::{Instruction, SsaVar, Visibility};
-use ir_forge::ExtendedInstruction;
+use crate::ExtendedInstruction;
+use ir_core::{Instruction, SsaVar, Visibility};
 
 /// Errors raised by [`Walker::lower`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -746,7 +746,7 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use crate::types::Visibility as IrVisibility;
+    use ir_core::Visibility as IrVisibility;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])
@@ -888,7 +888,7 @@ mod tests {
     #[test]
     fn refuses_template_call() {
         let body = vec![ExtendedInstruction::TemplateCall {
-            template_id: ir_forge::TemplateId(0),
+            template_id: crate::TemplateId(0),
             captures: vec![],
             outputs: vec![],
         }];

@@ -1050,6 +1050,7 @@ dependencies = [
  "memory",
  "resolve",
  "serde",
+ "smallvec",
 ]
 
 [[package]]

@@ -20,6 +20,7 @@ achronyme-parser = { path = "../achronyme-parser" }
 resolve = { path = "../resolve" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
+smallvec = "1"
 
 [features]
 test-support = []

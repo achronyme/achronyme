@@ -11,8 +11,7 @@
 //! - **Loops preserved**: not unrolled (deferred to instantiation with concrete values)
 //! - **Parametric**: captures from outer scope are "holes" filled at instantiation
 
-pub mod lysis_lower;
-
+pub use ir_forge::lysis_lift as lysis_lower;
 pub use ir_forge::types;
 pub use ir_forge::{
     instruction_from_kind, materialize_interner, materialize_interning_sink, ssa_var_from_node_id,

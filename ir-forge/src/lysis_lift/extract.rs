@@ -36,8 +36,8 @@ use std::collections::{BTreeSet, HashMap, HashSet};
 use memory::FieldBackend;
 
 use super::symbolic::{SlotId, SymbolicNode, SymbolicTree};
-use crate::types::SsaVar;
-use ir_forge::TemplateId;
+use crate::TemplateId;
+use ir_core::SsaVar;
 
 /// Maximum legal frame size — matches
 /// [`lysis::lower::MAX_FRAME_SIZE`]. Restated here to keep this
@@ -295,9 +295,9 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use crate::prove_ir::lysis_lower::bta::{classify, BindingTime};
-    use crate::types::Instruction;
-    use ir_forge::ExtendedInstruction;
+    use crate::lysis_lift::bta::{classify, BindingTime};
+    use crate::ExtendedInstruction;
+    use ir_core::Instruction;
 
     fn fe(n: i64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n as u64, 0, 0, 0])
