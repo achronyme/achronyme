@@ -30,6 +30,10 @@ mod api;
 mod bits;
 mod exprs;
 mod scaffold;
+// `sink` is unused at this commit (2.1) — dead-code allowed so
+// `clippy -D warnings` stays green. Commit 2.2 wires it in.
+#[allow(dead_code)]
+mod sink;
 mod stmts;
 mod utils;
 
