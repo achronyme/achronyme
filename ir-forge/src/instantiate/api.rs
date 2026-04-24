@@ -246,6 +246,7 @@ mod tests {
 
     use memory::Bn254Fr;
 
+    use crate::extended::ExtendedInstruction;
     use crate::test_utils::compile_circuit;
 
     type F = Bn254Fr;
@@ -281,10 +282,10 @@ mod tests {
     }
 
     #[test]
-    fn extended_handles_loops_via_inline_unrolling() {
-        // Stage-1 limitation: loops still unroll inline (every
-        // iteration produces Plain entries). LoopUnroll emission
-        // arrives in commit 2.5.
+    fn extended_emits_loop_unroll_for_for_loops() {
+        // Post-2.5: loops emit a single LoopUnroll node containing
+        // the body, instead of N inlined copies. The extended program
+        // is no longer fully Plain.
         let source =
             "public sum\nwitness a\nmut acc = 0\nfor i in 0..4 {\n  acc = acc + a\n}\nassert(acc == sum)";
         let prove_ir = compile_circuit(source).expect("compile_circuit");
@@ -292,8 +293,17 @@ mod tests {
             .instantiate_extended::<F>(&HashMap::new())
             .expect("instantiate_extended");
         assert!(
-            extended.is_fully_plain(),
-            "commit 2.4 still inlines loops as Plain entries"
+            !extended.is_fully_plain(),
+            "post-2.5 the body must contain at least one LoopUnroll"
+        );
+        let loop_unroll_count = extended
+            .body
+            .iter()
+            .filter(|i| matches!(i, ExtendedInstruction::LoopUnroll { .. }))
+            .count();
+        assert_eq!(
+            loop_unroll_count, 1,
+            "exactly one LoopUnroll for one for-loop"
         );
     }
 

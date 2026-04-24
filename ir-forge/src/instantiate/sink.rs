@@ -54,6 +54,26 @@ use memory::FieldBackend;
 
 use crate::extended::ExtendedInstruction;
 
+/// How a sink wants the [`super::Instantiator::emit_range_loop`]
+/// caller to handle a `for i in start..end { body }` construct.
+///
+/// Returned by [`InstrSink::loop_unroll_mode`]. The default is
+/// [`Self::PerIteration`] (LegacySink behaviour); ExtendedSink
+/// overrides to [`Self::Symbolic`] so the body emits exactly once
+/// with `iter_var` bound symbolically and a single
+/// [`ExtendedInstruction::LoopUnroll`] node carries the bounds.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(crate) enum LoopUnrollMode {
+    /// LegacySink — caller emits body once per iteration `start..end`,
+    /// binding the loop var to a fresh `Const(i)` SSA wire each time.
+    /// Byte-identical to the pre-trait pipeline.
+    PerIteration,
+    /// ExtendedSink — caller emits body once with the loop var bound
+    /// to a fresh symbolic SSA slot. Sink has internally swapped to a
+    /// sub-buffer; finalize via [`InstrSink::finish_symbolic_loop`].
+    Symbolic,
+}
+
 /// The emission boundary between [`super::Instantiator`] and its
 /// output stream. See module docs.
 pub(crate) trait InstrSink<F: FieldBackend> {
@@ -87,6 +107,39 @@ pub(crate) trait InstrSink<F: FieldBackend> {
     /// return). Used by `set_next_var` callers and by the
     /// canonicaliser.
     fn next_var(&self) -> u32;
+
+    /// How `for i in start..end { body }` should be emitted. See
+    /// [`LoopUnrollMode`].
+    ///
+    /// Default: `PerIteration` (LegacySink path). ExtendedSink
+    /// overrides to `Symbolic`.
+    fn loop_unroll_mode(&self) -> LoopUnrollMode {
+        LoopUnrollMode::PerIteration
+    }
+
+    /// Begin a symbolic loop body — switch the sink's active push
+    /// target to a fresh sub-buffer that
+    /// [`Self::finish_symbolic_loop`] will fold into a
+    /// [`ExtendedInstruction::LoopUnroll`]. Only called when the
+    /// preceding [`Self::loop_unroll_mode`] returned `Symbolic`.
+    ///
+    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    fn begin_symbolic_loop(&mut self) {
+        unreachable!("begin_symbolic_loop called on a sink whose loop_unroll_mode is PerIteration");
+    }
+
+    /// Finalise a symbolic loop body — pop the sub-buffer started by
+    /// [`Self::begin_symbolic_loop`] and emit one
+    /// [`ExtendedInstruction::LoopUnroll { iter_var, start, end, body }`]
+    /// into the surrounding scope (the outer body, or the next-up loop
+    /// if nested).
+    ///
+    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    fn finish_symbolic_loop(&mut self, _iter_var: SsaVar, _start: i64, _end: i64) {
+        unreachable!(
+            "finish_symbolic_loop called on a sink whose loop_unroll_mode is PerIteration"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -165,6 +218,14 @@ impl<'a, F: FieldBackend> InstrSink<F> for LegacySink<'a, F> {
 /// body: sub_vec }` to the outer stream.
 pub(crate) struct ExtendedSink<'a, F: FieldBackend> {
     body: &'a mut Vec<ExtendedInstruction<F>>,
+    /// Stack of nested-loop sub-buffers. Each [`begin_symbolic_loop`]
+    /// pushes a fresh `Vec<ExtendedInstruction<F>>` here; while non-
+    /// empty, every [`push_inst`] writes to the top of the stack
+    /// instead of the outer `body`. [`finish_symbolic_loop`] pops the
+    /// top, wraps it in [`ExtendedInstruction::LoopUnroll`], and
+    /// emits the LoopUnroll into the next-up scope (the next-up
+    /// stack entry, or `body` if the stack is now empty).
+    loop_stack: Vec<Vec<ExtendedInstruction<F>>>,
     metadata: &'a mut IrProgram<F>,
 }
 
@@ -173,7 +234,21 @@ impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
         body: &'a mut Vec<ExtendedInstruction<F>>,
         metadata: &'a mut IrProgram<F>,
     ) -> Self {
-        Self { body, metadata }
+        Self {
+            body,
+            loop_stack: Vec::new(),
+            metadata,
+        }
+    }
+
+    /// Push a finished `ExtendedInstruction` into the active scope:
+    /// the topmost loop sub-buffer if any, else the outer body.
+    fn push_into_active(&mut self, entry: ExtendedInstruction<F>) {
+        if let Some(top) = self.loop_stack.last_mut() {
+            top.push(entry);
+        } else {
+            self.body.push(entry);
+        }
     }
 }
 
@@ -187,7 +262,7 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
         if let Some(s) = span {
             self.metadata.set_span(var, s.clone());
         }
-        self.body.push(ExtendedInstruction::Plain(inst));
+        self.push_into_active(ExtendedInstruction::Plain(inst));
         var
     }
 
@@ -209,6 +284,27 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
 
     fn next_var(&self) -> u32 {
         self.metadata.next_var()
+    }
+
+    fn loop_unroll_mode(&self) -> LoopUnrollMode {
+        LoopUnrollMode::Symbolic
+    }
+
+    fn begin_symbolic_loop(&mut self) {
+        self.loop_stack.push(Vec::new());
+    }
+
+    fn finish_symbolic_loop(&mut self, iter_var: SsaVar, start: i64, end: i64) {
+        let body = self
+            .loop_stack
+            .pop()
+            .expect("finish_symbolic_loop without matching begin_symbolic_loop");
+        self.push_into_active(ExtendedInstruction::LoopUnroll {
+            iter_var,
+            start,
+            end,
+            body,
+        });
     }
 }
 
@@ -321,6 +417,114 @@ mod tests {
         assert_eq!(b_metadata.next_var(), 2);
         assert_eq!(a_program.len(), 2);
         assert_eq!(b_body.len(), 2);
+    }
+
+    #[test]
+    fn legacy_sink_default_loop_mode_is_per_iteration() {
+        let mut program = IrProgram::<F>::new();
+        let sink = LegacySink::new(&mut program);
+        assert_eq!(sink.loop_unroll_mode(), LoopUnrollMode::PerIteration);
+    }
+
+    #[test]
+    fn extended_sink_loop_mode_is_symbolic() {
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        let sink = ExtendedSink::new(&mut body, &mut metadata);
+        assert_eq!(sink.loop_unroll_mode(), LoopUnrollMode::Symbolic);
+    }
+
+    #[test]
+    fn extended_sink_emits_loop_unroll_with_symbolic_iter_var() {
+        // Direct sink-level test: simulate what emit_range_loop will
+        // do once wired in. The body emits one Mul that references
+        // iter_var symbolically; finalising should produce a single
+        // LoopUnroll containing exactly that one Plain instruction.
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        let mut sink = ExtendedSink::new(&mut body, &mut metadata);
+
+        // Allocate a symbolic iter_var.
+        let iter_var = sink.fresh_var();
+        // Begin a symbolic loop scope.
+        sink.begin_symbolic_loop();
+        // Emit one body instruction that refs iter_var.
+        let mul = sink.fresh_var();
+        sink.push_inst(
+            Instruction::Mul {
+                result: mul,
+                lhs: iter_var,
+                rhs: iter_var,
+            },
+            None,
+        );
+        // Finalise.
+        sink.finish_symbolic_loop(iter_var, 0, 4);
+
+        // Outer body should have exactly one LoopUnroll node.
+        assert_eq!(body.len(), 1, "one LoopUnroll in outer body");
+        match &body[0] {
+            ExtendedInstruction::LoopUnroll {
+                iter_var: iv,
+                start,
+                end,
+                body: loop_body,
+            } => {
+                assert_eq!(*iv, iter_var);
+                assert_eq!(*start, 0);
+                assert_eq!(*end, 4);
+                assert_eq!(loop_body.len(), 1, "one Plain Mul inside the loop");
+                match &loop_body[0] {
+                    ExtendedInstruction::Plain(Instruction::Mul { lhs, rhs, .. }) => {
+                        assert_eq!(*lhs, iter_var);
+                        assert_eq!(*rhs, iter_var);
+                    }
+                    other => panic!("expected Plain(Mul), got {other:?}"),
+                }
+            }
+            other => panic!("expected LoopUnroll, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extended_sink_handles_nested_loops() {
+        // for i in 0..3 { for j in 0..2 { Mul(j, j) } }
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        let mut sink = ExtendedSink::new(&mut body, &mut metadata);
+
+        let i = sink.fresh_var();
+        sink.begin_symbolic_loop();
+
+        let j = sink.fresh_var();
+        sink.begin_symbolic_loop();
+
+        let mul = sink.fresh_var();
+        sink.push_inst(
+            Instruction::Mul {
+                result: mul,
+                lhs: j,
+                rhs: j,
+            },
+            None,
+        );
+
+        sink.finish_symbolic_loop(j, 0, 2);
+        sink.finish_symbolic_loop(i, 0, 3);
+
+        assert_eq!(body.len(), 1, "one outer LoopUnroll");
+        match &body[0] {
+            ExtendedInstruction::LoopUnroll {
+                body: outer_body, ..
+            } => {
+                assert_eq!(outer_body.len(), 1, "outer body has one inner LoopUnroll");
+                assert!(matches!(
+                    outer_body[0],
+                    ExtendedInstruction::LoopUnroll { .. }
+                ));
+            }
+            _ => panic!("expected outer LoopUnroll"),
+        }
     }
 
     #[test]

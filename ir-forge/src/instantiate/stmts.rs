@@ -13,7 +13,7 @@
 use memory::{FieldBackend, FieldElement};
 
 use super::utils::{fe_to_u64, fe_to_usize};
-use super::{InstEnvValue, Instantiator, MAX_INSTANTIATE_ITERATIONS};
+use super::{InstEnvValue, Instantiator, LoopUnrollMode, MAX_INSTANTIATE_ITERATIONS};
 use crate::error::ProveIrError;
 use crate::types::*;
 use ir_core::{Instruction, SsaVar, Visibility};
@@ -611,7 +611,25 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
         }
     }
 
-    /// Unroll a numeric range loop: for var in start..end { body }
+    /// Unroll a numeric range loop: `for var in start..end { body }`.
+    ///
+    /// Two emission strategies depending on
+    /// [`InstrSink::loop_unroll_mode`]:
+    ///
+    /// - **PerIteration (LegacySink):** emit body once per `i in
+    ///   start..end`, binding `var` to a fresh `Const(i)` SSA wire
+    ///   each iteration. Byte-identical to the pre-Stage-2 pipeline.
+    /// - **Symbolic (ExtendedSink):** allocate one fresh SSA slot for
+    ///   `var`, switch the sink to a sub-buffer
+    ///   ([`InstrSink::begin_symbolic_loop`]), emit body **once** with
+    ///   `var` symbolically bound to that slot, then close with
+    ///   [`InstrSink::finish_symbolic_loop`] which folds the
+    ///   sub-buffer into a single
+    ///   [`ExtendedInstruction::LoopUnroll { iter_var, start, end, body }`]
+    ///   in the outer scope. The Lysis lifter's executor handles the
+    ///   per-iteration value binding at run time. This is the Stage-2
+    ///   inflection point where SHA-256(64) loop amplification is
+    ///   eliminated (Phase 3.C.6 commit 2.5).
     fn emit_range_loop(
         &mut self,
         var: &str,
@@ -627,18 +645,40 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 span: None,
             });
         }
-        self.with_saved_var(var, |this| {
-            for i in start..end {
-                let v = this.emit_const(FieldElement::<F>::from_u64(i));
-                this.set_name(v, var.to_string());
-                this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
+        match self.sink.loop_unroll_mode() {
+            LoopUnrollMode::PerIteration => self.with_saved_var(var, |this| {
+                for i in start..end {
+                    let v = this.emit_const(FieldElement::<F>::from_u64(i));
+                    this.set_name(v, var.to_string());
+                    this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
 
-                for node in body {
-                    this.emit_node(node)?;
+                    for node in body {
+                        this.emit_node(node)?;
+                    }
                 }
+                Ok(())
+            }),
+            LoopUnrollMode::Symbolic => {
+                // Allocate iter_var BEFORE the body, in the outer
+                // scope, so the LoopUnroll node refers to a slot
+                // declared in the parent's namespace (the executor's
+                // loop machinery binds it per iteration there).
+                let iter_var = self.fresh_var();
+                self.set_name(iter_var, var.to_string());
+                self.sink.begin_symbolic_loop();
+                let result = self.with_saved_var(var, |this| {
+                    this.env
+                        .insert(var.to_string(), InstEnvValue::Scalar(iter_var));
+                    for node in body {
+                        this.emit_node(node)?;
+                    }
+                    Ok(())
+                });
+                self.sink
+                    .finish_symbolic_loop(iter_var, start as i64, end as i64);
+                result
             }
-            Ok(())
-        })
+        }
     }
 
     /// Save a variable's env binding, run a closure, then restore it.
