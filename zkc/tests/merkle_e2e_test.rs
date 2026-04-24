@@ -1,12 +1,12 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;
 use memory::field::PrimeId;
 use memory::FieldElement;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 /// Build an 8-leaf Merkle tree using Poseidon and return the root.
 fn build_merkle_tree(params: &PoseidonParams, leaves: &[FieldElement; 8]) -> FieldElement {

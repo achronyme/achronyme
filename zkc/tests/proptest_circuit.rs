@@ -7,12 +7,12 @@
 
 use std::collections::HashMap;
 
-use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use ir::IrLowering;
 use memory::FieldElement;
 use proptest::prelude::*;
+use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 // ============================================================================
 // Helpers

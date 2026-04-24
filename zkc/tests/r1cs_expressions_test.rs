@@ -1,7 +1,7 @@
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::error::R1CSError;
 use ir::IrError;
 use ir::IrLowering;
+use zkc::error::R1CSError;
+use zkc::r1cs_backend::R1CSCompiler;
 
 /// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
 /// Returns the R1CSCompiler so tests can inspect constraint counts etc.

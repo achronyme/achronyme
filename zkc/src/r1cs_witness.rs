@@ -3,8 +3,8 @@ use std::collections::HashMap;
 
 use constraints::PoseidonParamsProvider;
 
-use crate::r1cs_backend::R1CSCompiler;
 use crate::error::R1CSError;
+use crate::r1cs_backend::R1CSCompiler;
 use crate::witness::{fill_poseidon_witness, int_divmod_field_pub, WitnessOp};
 
 use ir::types::IrProgram;

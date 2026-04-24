@@ -671,9 +671,9 @@ fn circom_prove_e2e(
     src: &str,
     user_inputs: &[(&str, u64)],
 ) -> (usize, usize, usize, akron::ProveResult) {
-    use zkc::r1cs_backend::R1CSCompiler;
     use memory::{Bn254Fr, FieldElement};
     use std::collections::HashMap;
+    use zkc::r1cs_backend::R1CSCompiler;
 
     let result = crate::compile_to_prove_ir(src).expect("compilation failed");
     let prove_ir = result.prove_ir;

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use ir::error::IrError;
 use ir::IrLowering;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 // ====================================================================
 // Poseidon builtin tests

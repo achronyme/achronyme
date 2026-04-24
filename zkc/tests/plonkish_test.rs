@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
 use memory::{Bn254Fr, FieldElement};
+use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 
 /// Helper: compile IR, generate witness, verify.
 /// Integrates bool_prop analysis to match the real pipeline and avoid

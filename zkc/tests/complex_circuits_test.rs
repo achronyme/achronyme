@@ -5,12 +5,12 @@
 
 use std::collections::HashMap;
 
-use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use ir::IrLowering;
 use memory::FieldElement;
+use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 // ============================================================================
 // Helpers

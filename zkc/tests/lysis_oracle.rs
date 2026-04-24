@@ -24,9 +24,9 @@
 
 use std::collections::HashMap;
 
-use zkc::lysis_oracle::{semantic_equivalence, OracleResult};
 use ir::types::{Instruction, IrProgram, SsaVar, Visibility};
 use memory::{Bn254Fr, FieldElement};
+use zkc::lysis_oracle::{semantic_equivalence, OracleResult};
 
 type F = Bn254Fr;
 

@@ -21,13 +21,13 @@
 use std::collections::HashMap;
 use std::process::Command;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;
 use memory::field::PrimeId;
 use memory::FieldElement;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 // ============================================================================
 // snarkjs infrastructure (mirrors export_test.rs pattern)

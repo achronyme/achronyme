@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use ir::IrLowering;
 use memory::FieldElement;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 /// Helper: compare witness vectors from old path (compile_ir + WitnessGenerator)
 /// and new path (compile_ir_with_witness) for a given circuit and inputs.

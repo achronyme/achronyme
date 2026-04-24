@@ -1,8 +1,8 @@
 use constraints::r1cs::{LinearCombination, Variable};
 use memory::{FieldBackend, FieldElement};
 
-use crate::r1cs_backend::R1CSCompiler;
 use crate::error::R1CSError;
+use crate::r1cs_backend::R1CSCompiler;
 use crate::witness::WitnessOp;
 
 /// Compute 2^n as a field element for any backend.

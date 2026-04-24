@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::{WitnessError, WitnessGenerator};
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use ir::IrLowering;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::{WitnessError, WitnessGenerator};
 
 /// Helper: build compiler via IR pipeline, generate witness, verify.
 fn compile_and_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {

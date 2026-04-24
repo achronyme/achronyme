@@ -19,9 +19,9 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use zkc::r1cs_backend::R1CSCompiler;
 use constraints::r1cs::Variable;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
 
 type Fe = FieldElement<Bn254Fr>;
 

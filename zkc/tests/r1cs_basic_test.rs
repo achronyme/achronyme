@@ -1,6 +1,6 @@
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::error::R1CSError;
 use memory::Bn254Fr;
+use zkc::error::R1CSError;
+use zkc::r1cs_backend::R1CSCompiler;
 
 #[test]
 fn test_new_compiler_is_empty() {

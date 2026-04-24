@@ -1,6 +1,6 @@
-use zkc::r1cs_backend::R1CSCompiler;
 use ir::IrLowering;
 use memory::FieldElement;
+use zkc::r1cs_backend::R1CSCompiler;
 
 #[test]
 fn test_r1cs_integration_simple_multiply() {

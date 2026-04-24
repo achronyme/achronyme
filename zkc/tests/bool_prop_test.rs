@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 // ============================================================================
 // Unit tests for compute_proven_boolean

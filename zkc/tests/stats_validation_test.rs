@@ -1,9 +1,9 @@
-/// Validates that the static CircuitStats cost model matches actual R1CS
-/// constraint counts from the R1CSCompiler backend.
-use zkc::r1cs_backend::R1CSCompiler;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::stats::CircuitStats;
 use ir::IrLowering;
+/// Validates that the static CircuitStats cost model matches actual R1CS
+/// constraint counts from the R1CSCompiler backend.
+use zkc::r1cs_backend::R1CSCompiler;
 
 fn compare_stats(source: &str, public: &[&str], witness: &[&str]) {
     let mut program: ir::types::IrProgram =

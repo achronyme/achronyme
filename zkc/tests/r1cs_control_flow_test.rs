@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use ir::IrError;
 use ir::IrLowering;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 /// Helper: lower source through the IR pipeline, optimize, and compile to R1CS.
 /// Returns the R1CSCompiler so tests can inspect constraint counts etc.

@@ -1,10 +1,10 @@
 use std::collections::HashMap;
 
+use ir::IrLowering;
+use memory::{Bn254Fr, FieldElement};
 use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use zkc::r1cs_backend::R1CSCompiler;
 use zkc::witness::WitnessGenerator;
-use ir::IrLowering;
-use memory::{Bn254Fr, FieldElement};
 
 // ============================================================================
 // R1CS range_check tests

@@ -1,9 +1,9 @@
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use ir::IrLowering;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 /// Full pipeline: source → IR → R1CS → witness → verify.
 fn ir_pipeline_verify(public: &[(&str, u64)], witness: &[(&str, u64)], source: &str) {

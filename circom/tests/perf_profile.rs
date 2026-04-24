@@ -18,8 +18,8 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-use zkc::r1cs_backend::R1CSCompiler;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
 
 /// Profile a single Circom circuit through the full pipeline.
 /// Returns a vec of `(phase_name, millis)` pairs.

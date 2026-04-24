@@ -26,14 +26,14 @@
 
 use std::collections::HashMap;
 
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
 use memory::field::PrimeId;
 use memory::FieldElement;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 // ============================================================================
 // Helpers
