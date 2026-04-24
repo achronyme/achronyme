@@ -26,12 +26,16 @@
 
 use std::collections::{HashMap, HashSet};
 
+use lysis::{execute, expected_family, InterningSink, LysisConfig};
 use memory::{FieldBackend, FieldElement};
 
 use super::{ExtendedSink, InstEnvValue, Instantiator, InstrSink, LegacySink};
 use crate::error::ProveIrError;
 use crate::extended::ExtendedInstruction;
 use crate::extended_program::ExtendedIrProgram;
+use crate::lysis_lift::Walker;
+use crate::lysis_materialize::materialize_interning_sink;
+use crate::lysis_roundtrip::RoundTripError;
 use crate::types::ProveIR;
 use ir_core::{IrProgram, SsaVar, Visibility};
 
@@ -126,6 +130,131 @@ impl ProveIR {
         )?;
         Ok(assemble_extended(body, metadata))
     }
+
+    /// **Lysis path** — instantiate this template through the
+    /// `ExtendedInstruction` schema, then lower through Lysis
+    /// (Walker → InterningSink → materialize) to produce a flat
+    /// [`IrProgram<F>`] ready for the R1CS backend.
+    ///
+    /// Differs from [`Self::instantiate`] in HOW the body is lowered,
+    /// not WHAT comes out: both return `IrProgram<F>` with the same
+    /// post-optimize R1CS multiset (validated by the
+    /// `zkc::lysis_oracle`). The win is structural — Lysis's
+    /// `LoopUnroll` opcode (commit 2.5) collapses N iterations of an
+    /// identical sub-tree into a single shared body, eliminating the
+    /// SHA-256(64) multiplicative amplification (the Phase 3 HARD
+    /// GATE in commit 3.1).
+    pub fn instantiate_lysis<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+    ) -> Result<IrProgram<F>, LysisInstantiateError> {
+        let extended = self.instantiate_extended::<F>(captures)?;
+        lower_extended_through_lysis(extended)
+    }
+
+    /// Lysis variant of [`Self::instantiate_with_outputs`]. Same
+    /// Circom-frontend output semantics, Lysis-lowered body.
+    pub fn instantiate_lysis_with_outputs<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+        output_names: &HashSet<String>,
+    ) -> Result<IrProgram<F>, LysisInstantiateError> {
+        let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
+        lower_extended_through_lysis(extended)
+    }
+}
+
+/// Errors raised by the `instantiate_lysis*` family. Bridges
+/// [`ProveIrError`] (instantiate side) and [`RoundTripError`] (Lysis
+/// pipeline side) into one variant the caller can match against.
+#[derive(Debug)]
+pub enum LysisInstantiateError {
+    /// Instantiate-side error: invalid captures, oversize loop range,
+    /// missing array element, etc.
+    Instantiate(ProveIrError),
+    /// Lysis-side error: Walker rejection (unsupported variant),
+    /// bytecode validation failure, executor abort.
+    Lysis(RoundTripError),
+}
+
+impl std::fmt::Display for LysisInstantiateError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Instantiate(e) => write!(f, "instantiate_lysis: instantiate-side error: {e}"),
+            Self::Lysis(e) => write!(f, "instantiate_lysis: lysis-side error: {e}"),
+        }
+    }
+}
+
+impl std::error::Error for LysisInstantiateError {}
+
+impl From<ProveIrError> for LysisInstantiateError {
+    fn from(e: ProveIrError) -> Self {
+        Self::Instantiate(e)
+    }
+}
+
+impl From<RoundTripError> for LysisInstantiateError {
+    fn from(e: RoundTripError) -> Self {
+        Self::Lysis(e)
+    }
+}
+
+/// Drive a populated [`ExtendedIrProgram<F>`] through the Lysis
+/// pipeline: Walker → encode → decode → validate → execute against
+/// an [`InterningSink`] → materialize to flat [`IrProgram<F>`].
+///
+/// The wire-format round-trip (encode → decode → validate) is
+/// defensive: it exercises the bytecode wire format on every call
+/// so any future schema drift trips here, not at a downstream gate.
+fn lower_extended_through_lysis<F: FieldBackend>(
+    extended: ExtendedIrProgram<F>,
+) -> Result<IrProgram<F>, LysisInstantiateError> {
+    let walker = Walker::<F>::new(expected_family::<F>());
+    let bytecode = walker.lower(&extended.body).map_err(RoundTripError::Walk)?;
+
+    let bytes = lysis::encode(&bytecode);
+    let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
+    lysis::bytecode::validate(&decoded, &LysisConfig::default()).map_err(RoundTripError::Lysis)?;
+
+    let mut sink = InterningSink::<F>::new();
+    execute(&decoded, &[], &LysisConfig::default(), &mut sink).map_err(RoundTripError::Lysis)?;
+    let instructions = materialize_interning_sink(sink);
+
+    // Reassemble: the materialised stream replaces the body, but
+    // metadata (var_names/var_types/var_spans/input_spans) carries
+    // over from the ExtendedSink's parallel skeleton. SSA renumbering
+    // by the interner means the metadata maps may reference vars that
+    // no longer appear in the output — downstream passes treat
+    // missing entries gracefully (Option<T> returns).
+    let mut out = IrProgram::<F>::new();
+    let watermark = ssa_watermark(&instructions);
+    let final_next_var = watermark.max(extended.next_var);
+    out.set_instructions(instructions);
+    out.set_next_var(final_next_var);
+    out.var_names = extended.var_names;
+    out.var_types = extended.var_types;
+    out.var_spans = extended.var_spans;
+    out.input_spans = extended.input_spans;
+    Ok(out)
+}
+
+/// Highest result-var index across `insts` plus 1. Mirrors the
+/// helper in `lysis_roundtrip.rs`; copied to avoid making the
+/// internal helper public.
+fn ssa_watermark<F: FieldBackend>(insts: &[ir_core::Instruction<F>]) -> u32 {
+    let mut max: Option<u32> = None;
+    let mut bump = |v: u32| match max {
+        Some(m) if v <= m => {}
+        _ => max = Some(v),
+    };
+    for inst in insts {
+        bump(inst.result_var().0);
+        for extra in inst.extra_result_vars() {
+            bump(extra.0);
+        }
+    }
+    max.map(|m| m + 1).unwrap_or(0)
 }
 
 /// Shared body of all four entry points. Builds an `Instantiator`
