@@ -29,10 +29,16 @@ pub(super) struct Parser {
 
 impl Parser {
     /// Maximum expression parser recursion depth. Adversarial input
-    /// like `[[[[...]]]` would otherwise overflow the stack before
-    /// hitting any block-level cap. 128 stays well under a 2 MB test
-    /// thread stack even in debug builds under ASAN.
-    pub(super) const MAX_EXPR_DEPTH: usize = 128;
+    /// like `[[[[...]]]]` would otherwise overflow the stack before
+    /// hitting any block-level cap. The Pratt walker burns ~5 frames
+    /// per level in debug builds (parse_expr → parse_expr_bp →
+    /// parse_expr_bp_inner → parse_prefix → parse_array), each
+    /// carrying an `Expr` return value and a `Vec<Expr>` local, so a
+    /// cap of 128 lands right at the edge of the stock 2 MiB test
+    /// thread stack — some runners (nextest, GitHub Actions) sit a
+    /// hair below 2 MiB and hit SIGSEGV before the cap trips. 64
+    /// matches `MAX_BLOCK_DEPTH` and keeps ~50 % headroom.
+    pub(super) const MAX_EXPR_DEPTH: usize = 64;
 
     pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self {
