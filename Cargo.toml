@@ -18,6 +18,7 @@ members = [
     "lysis-types",
     "ir-core",
     "ir-forge",
+    "zkc",
 ]
 exclude = ["wasm"]
 resolver = "2"
