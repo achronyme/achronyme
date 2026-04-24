@@ -15,13 +15,15 @@ use crate::error::ProveIrError;
 use crate::types::{ArraySize, CaptureDef, CaptureUsage, ProveIR, ProveInputDecl};
 use ir_core::{Instruction, IrType, SsaVar, Visibility};
 
-impl<F: FieldBackend> Instantiator<F> {
+impl<'a, F: FieldBackend> Instantiator<'a, F> {
     pub(super) fn push_inst(&mut self, inst: Instruction<F>) -> SsaVar {
-        let var = self.program.push(inst);
-        if let Some(span) = &self.current_span {
-            self.program.set_span(var, span.clone());
-        }
-        var
+        // Delegates to the configured sink (LegacySink → IrProgram, or
+        // ExtendedSink → Vec<ExtendedInstruction::Plain>). The current
+        // span context is forwarded so the sink can attach it to the
+        // result var's span side-channel (LegacySink writes to
+        // IrProgram.var_spans; ExtendedSink writes to its metadata
+        // skeleton).
+        self.sink.push_inst(inst, self.current_span.as_ref())
     }
 
     /// Emit a field constant, deduping against previously emitted Consts
@@ -38,9 +40,9 @@ impl<F: FieldBackend> Instantiator<F> {
         if let Some(&var) = self.const_cache.get(&key) {
             return var;
         }
-        let var = self.program.fresh_var();
+        let var = self.fresh_var();
         self.push_inst(Instruction::Const { result: var, value });
-        self.program.set_type(var, IrType::Field);
+        self.set_type(var, IrType::Field);
         self.const_cache.insert(key, var);
         self.const_values.insert(var, value);
         var
@@ -62,13 +64,13 @@ impl<F: FieldBackend> Instantiator<F> {
     /// (Phase 3.C.6 Stage 1 finding).
     pub(super) fn lower_not(&mut self, operand: SsaVar) -> SsaVar {
         let one = self.emit_const(FieldElement::<F>::one());
-        let v = self.program.fresh_var();
+        let v = self.fresh_var();
         self.push_inst(Instruction::Sub {
             result: v,
             lhs: one,
             rhs: operand,
         });
-        self.program.set_type(v, IrType::Bool);
+        self.set_type(v, IrType::Bool);
         v
     }
 
@@ -131,26 +133,26 @@ impl<F: FieldBackend> Instantiator<F> {
         visibility: Visibility,
         ir_type: IrType,
     ) -> SsaVar {
-        let v = self.program.fresh_var();
+        let v = self.fresh_var();
         self.push_inst(Instruction::Input {
             result: v,
             name: name.to_string(),
             visibility,
         });
-        self.program.set_name(v, name.to_string());
-        self.program.set_type(v, ir_type);
+        self.set_name(v, name.to_string());
+        self.set_type(v, ir_type);
 
         // Bool inputs must be constrained to {0, 1} via RangeCheck(1 bit).
         // Without this, a malicious prover could assign arbitrary field elements
         // to Bool inputs, breaking downstream boolean logic (And, Or, Not, Mux).
         if ir_type == IrType::Bool {
-            let enforced = self.program.fresh_var();
+            let enforced = self.fresh_var();
             self.push_inst(Instruction::RangeCheck {
                 result: enforced,
                 operand: v,
                 bits: 1,
             });
-            self.program.set_type(enforced, IrType::Bool);
+            self.set_type(enforced, IrType::Bool);
             enforced
         } else {
             v
@@ -171,14 +173,14 @@ impl<F: FieldBackend> Instantiator<F> {
             CaptureUsage::CircuitInput | CaptureUsage::Both => {
                 // Becomes a witness input — the concrete value is the witness
                 // assignment provided by the prover.
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::Input {
                     result: v,
                     name: cap.name.clone(),
                     visibility: Visibility::Witness,
                 });
-                self.program.set_name(v, cap.name.clone());
-                self.program.set_type(v, IrType::Field);
+                self.set_name(v, cap.name.clone());
+                self.set_type(v, IrType::Field);
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
 
                 // For `Both` captures: the value is used structurally (loop bounds,
@@ -189,7 +191,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // producing an unsound proof.
                 if cap.usage == CaptureUsage::Both {
                     let const_var = self.emit_const(value);
-                    let eq_var = self.program.fresh_var();
+                    let eq_var = self.fresh_var();
                     self.push_inst(Instruction::AssertEq {
                         result: eq_var,
                         lhs: v,
@@ -201,7 +203,7 @@ impl<F: FieldBackend> Instantiator<F> {
             CaptureUsage::StructureOnly => {
                 // Inlined as a constant — not a circuit wire.
                 let v = self.emit_const(value);
-                self.program.set_name(v, cap.name.clone());
+                self.set_name(v, cap.name.clone());
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
             }
         }

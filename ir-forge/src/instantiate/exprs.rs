@@ -19,7 +19,7 @@ use crate::error::ProveIrError;
 use crate::types::*;
 use ir_core::{Instruction, IrType, SsaVar};
 
-impl<F: FieldBackend> Instantiator<F> {
+impl<'a, F: FieldBackend> Instantiator<'a, F> {
     pub(super) fn emit_expr(&mut self, expr: &CircuitExpr) -> Result<SsaVar, ProveIrError> {
         match expr {
             CircuitExpr::Const(field_const) => {
@@ -98,7 +98,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                 }
 
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 let inst = match op {
                     CircuitBinOp::Add => Instruction::Add {
                         result: v,
@@ -122,7 +122,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     },
                 };
                 self.push_inst(inst);
-                self.program.set_type(v, IrType::Field);
+                self.set_type(v, IrType::Field);
                 Ok(v)
             }
             CircuitExpr::UnaryOp { op, operand } => {
@@ -153,12 +153,12 @@ impl<F: FieldBackend> Instantiator<F> {
                 // `.claude/plans/lysis-phase-3c6.md` Stage-1 finding.
                 match op {
                     CircuitUnaryOp::Neg => {
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::Neg {
                             result: v,
                             operand: inner,
                         });
-                        self.program.set_type(v, IrType::Field);
+                        self.set_type(v, IrType::Field);
                         Ok(v)
                     }
                     CircuitUnaryOp::Not => Ok(self.lower_not(inner)),
@@ -170,7 +170,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // See "lower at emission time" note in UnaryOp branch.
                 let v = match op {
                     CircuitCmpOp::Eq => {
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::IsEq {
                             result: v,
                             lhs: l,
@@ -179,7 +179,7 @@ impl<F: FieldBackend> Instantiator<F> {
                         v
                     }
                     CircuitCmpOp::Lt => {
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::IsLt {
                             result: v,
                             lhs: l,
@@ -189,7 +189,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                     CircuitCmpOp::Gt => {
                         // a > b → IsLt(b, a)
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::IsLt {
                             result: v,
                             lhs: r,
@@ -199,39 +199,39 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                     CircuitCmpOp::Neq => {
                         // a != b → 1 - IsEq(a, b)
-                        let eq = self.program.fresh_var();
+                        let eq = self.fresh_var();
                         self.push_inst(Instruction::IsEq {
                             result: eq,
                             lhs: l,
                             rhs: r,
                         });
-                        self.program.set_type(eq, IrType::Bool);
+                        self.set_type(eq, IrType::Bool);
                         self.lower_not(eq)
                     }
                     CircuitCmpOp::Le => {
                         // a <= b → 1 - IsLt(b, a)
-                        let lt = self.program.fresh_var();
+                        let lt = self.fresh_var();
                         self.push_inst(Instruction::IsLt {
                             result: lt,
                             lhs: r,
                             rhs: l,
                         });
-                        self.program.set_type(lt, IrType::Bool);
+                        self.set_type(lt, IrType::Bool);
                         self.lower_not(lt)
                     }
                     CircuitCmpOp::Ge => {
                         // a >= b → 1 - IsLt(a, b)
-                        let lt = self.program.fresh_var();
+                        let lt = self.fresh_var();
                         self.push_inst(Instruction::IsLt {
                             result: lt,
                             lhs: l,
                             rhs: r,
                         });
-                        self.program.set_type(lt, IrType::Bool);
+                        self.set_type(lt, IrType::Bool);
                         self.lower_not(lt)
                     }
                 };
-                self.program.set_type(v, IrType::Bool);
+                self.set_type(v, IrType::Bool);
                 Ok(v)
             }
             CircuitExpr::BoolOp { op, lhs, rhs } => {
@@ -241,7 +241,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 let v = match op {
                     CircuitBoolOp::And => {
                         // x AND y → Mul(x, y) (boolean operands).
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::Mul {
                             result: v,
                             lhs: l,
@@ -251,19 +251,19 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                     CircuitBoolOp::Or => {
                         // x OR y → Add(x, y) - Mul(x, y) (boolean operands).
-                        let sum = self.program.fresh_var();
+                        let sum = self.fresh_var();
                         self.push_inst(Instruction::Add {
                             result: sum,
                             lhs: l,
                             rhs: r,
                         });
-                        let prod = self.program.fresh_var();
+                        let prod = self.fresh_var();
                         self.push_inst(Instruction::Mul {
                             result: prod,
                             lhs: l,
                             rhs: r,
                         });
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::Sub {
                             result: v,
                             lhs: sum,
@@ -272,7 +272,7 @@ impl<F: FieldBackend> Instantiator<F> {
                         v
                     }
                 };
-                self.program.set_type(v, IrType::Bool);
+                self.set_type(v, IrType::Bool);
                 Ok(v)
             }
             CircuitExpr::Mux {
@@ -283,7 +283,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 let c = self.emit_expr(cond)?;
                 let t = self.emit_expr(if_true)?;
                 let f = self.emit_expr(if_false)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::Mux {
                     result: v,
                     cond: c,
@@ -291,9 +291,9 @@ impl<F: FieldBackend> Instantiator<F> {
                     if_false: f,
                 });
                 // Propagate type if both branches agree
-                if let (Some(tt), Some(ft)) = (self.program.get_type(t), self.program.get_type(f)) {
+                if let (Some(tt), Some(ft)) = (self.get_type(t), self.get_type(f)) {
                     if tt == ft {
-                        self.program.set_type(v, tt);
+                        self.set_type(v, tt);
                     }
                 }
                 Ok(v)
@@ -301,13 +301,13 @@ impl<F: FieldBackend> Instantiator<F> {
             CircuitExpr::PoseidonHash { left, right } => {
                 let l = self.emit_expr(left)?;
                 let r = self.emit_expr(right)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::PoseidonHash {
                     result: v,
                     left: l,
                     right: r,
                 });
-                self.program.set_type(v, IrType::Field);
+                self.set_type(v, IrType::Field);
                 Ok(v)
             }
             CircuitExpr::PoseidonMany(args) => {
@@ -326,7 +326,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 if compiled.len() == 1 {
                     // Match IrLowering semantics: single arg → poseidon(arg, ZERO)
                     let zero = self.emit_const(FieldElement::<F>::zero());
-                    let v = self.program.fresh_var();
+                    let v = self.fresh_var();
                     self.push_inst(Instruction::PoseidonHash {
                         result: v,
                         left: compiled[0],
@@ -339,7 +339,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 let mut iter = compiled.into_iter();
                 let mut acc = iter.next().expect("checked non-empty above");
                 for next in iter {
-                    let v = self.program.fresh_var();
+                    let v = self.fresh_var();
                     self.push_inst(Instruction::PoseidonHash {
                         result: v,
                         left: acc,
@@ -351,7 +351,7 @@ impl<F: FieldBackend> Instantiator<F> {
             }
             CircuitExpr::RangeCheck { value, bits } => {
                 let operand = self.emit_expr(value)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::RangeCheck {
                     result: v,
                     operand,
@@ -405,21 +405,21 @@ impl<F: FieldBackend> Instantiator<F> {
                 // Cost: 2 Mux + 1 Poseidon (365) instead of 2 Poseidon + 1 Mux (724).
                 let mut current = leaf_var;
                 for (sibling, idx) in path_elems.iter().zip(idx_elems.iter()) {
-                    let left = self.program.fresh_var();
+                    let left = self.fresh_var();
                     self.push_inst(Instruction::Mux {
                         result: left,
                         cond: *idx,
                         if_true: *sibling,
                         if_false: current,
                     });
-                    let right = self.program.fresh_var();
+                    let right = self.fresh_var();
                     self.push_inst(Instruction::Mux {
                         result: right,
                         cond: *idx,
                         if_true: current,
                         if_false: *sibling,
                     });
-                    let v = self.program.fresh_var();
+                    let v = self.fresh_var();
                     self.push_inst(Instruction::PoseidonHash {
                         result: v,
                         left,
@@ -429,7 +429,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 }
 
                 // Assert computed root == expected root
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::AssertEq {
                     result: v,
                     lhs: current,
@@ -502,7 +502,7 @@ impl<F: FieldBackend> Instantiator<F> {
             CircuitExpr::IntDiv { lhs, rhs, max_bits } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::IntDiv {
                     result: v,
                     lhs: l,
@@ -514,7 +514,7 @@ impl<F: FieldBackend> Instantiator<F> {
             CircuitExpr::IntMod { lhs, rhs, max_bits } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::IntMod {
                     result: v,
                     lhs: l,
@@ -610,7 +610,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 result = Some(match result {
                     None => current,
                     Some(acc) => {
-                        let v = self.program.fresh_var();
+                        let v = self.fresh_var();
                         self.push_inst(Instruction::Mul {
                             result: v,
                             lhs: acc,
@@ -622,7 +622,7 @@ impl<F: FieldBackend> Instantiator<F> {
             }
             e >>= 1;
             if e > 0 {
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::Mul {
                     result: v,
                     lhs: current,

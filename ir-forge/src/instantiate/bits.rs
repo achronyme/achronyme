@@ -22,7 +22,7 @@ use crate::error::ProveIrError;
 use crate::types::CircuitExpr;
 use ir_core::{Instruction, SsaVar};
 
-impl<F: FieldBackend> Instantiator<F> {
+impl<'a, F: FieldBackend> Instantiator<'a, F> {
     // -------------------------------------------------------------------
     // Bitwise operation expansion
     // -------------------------------------------------------------------
@@ -34,10 +34,10 @@ impl<F: FieldBackend> Instantiator<F> {
         operand: SsaVar,
         num_bits: u32,
     ) -> Result<Vec<SsaVar>, ProveIrError> {
-        let result = self.program.fresh_var();
+        let result = self.fresh_var();
         let mut bit_vars = Vec::with_capacity(num_bits as usize);
         for _ in 0..num_bits {
-            bit_vars.push(self.program.fresh_var());
+            bit_vars.push(self.fresh_var());
         }
         self.push_inst(Instruction::Decompose {
             result,
@@ -61,14 +61,14 @@ impl<F: FieldBackend> Instantiator<F> {
             // coeff = 2^i
             let coeff_var = self.emit_const(power_of_two);
             // term = bit * 2^i
-            let term = self.program.fresh_var();
+            let term = self.fresh_var();
             self.push_inst(Instruction::Mul {
                 result: term,
                 lhs: bit,
                 rhs: coeff_var,
             });
             // acc = acc + term
-            let new_acc = self.program.fresh_var();
+            let new_acc = self.fresh_var();
             self.push_inst(Instruction::Add {
                 result: new_acc,
                 lhs: acc,
@@ -97,7 +97,7 @@ impl<F: FieldBackend> Instantiator<F> {
             let bit = match op {
                 BitwiseOp::And => {
                     // AND: a * b
-                    let v = self.program.fresh_var();
+                    let v = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: v,
                         lhs: bits_l[i],
@@ -107,19 +107,19 @@ impl<F: FieldBackend> Instantiator<F> {
                 }
                 BitwiseOp::Or => {
                     // OR: a + b - a*b
-                    let ab = self.program.fresh_var();
+                    let ab = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: ab,
                         lhs: bits_l[i],
                         rhs: bits_r[i],
                     });
-                    let sum = self.program.fresh_var();
+                    let sum = self.fresh_var();
                     self.push_inst(Instruction::Add {
                         result: sum,
                         lhs: bits_l[i],
                         rhs: bits_r[i],
                     });
-                    let v = self.program.fresh_var();
+                    let v = self.fresh_var();
                     self.push_inst(Instruction::Sub {
                         result: v,
                         lhs: sum,
@@ -129,26 +129,26 @@ impl<F: FieldBackend> Instantiator<F> {
                 }
                 BitwiseOp::Xor => {
                     // XOR: a + b - 2*a*b
-                    let ab = self.program.fresh_var();
+                    let ab = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: ab,
                         lhs: bits_l[i],
                         rhs: bits_r[i],
                     });
                     let two = self.emit_const(FieldElement::<F>::from_u64(2));
-                    let two_ab = self.program.fresh_var();
+                    let two_ab = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: two_ab,
                         lhs: two,
                         rhs: ab,
                     });
-                    let sum = self.program.fresh_var();
+                    let sum = self.fresh_var();
                     self.push_inst(Instruction::Add {
                         result: sum,
                         lhs: bits_l[i],
                         rhs: bits_r[i],
                     });
-                    let v = self.program.fresh_var();
+                    let v = self.fresh_var();
                     self.push_inst(Instruction::Sub {
                         result: v,
                         lhs: sum,
@@ -174,7 +174,7 @@ impl<F: FieldBackend> Instantiator<F> {
 
         let mut result_bits = Vec::with_capacity(num_bits as usize);
         for &bit in &bits {
-            let v = self.program.fresh_var();
+            let v = self.fresh_var();
             self.push_inst(Instruction::Sub {
                 result: v,
                 lhs: one,
@@ -237,13 +237,26 @@ impl<F: FieldBackend> Instantiator<F> {
     /// Creates the array lazily if it doesn't exist, and extends it with
     /// placeholder variables if needed.
     pub(super) fn ensure_array_slot(&mut self, array: &str, idx: usize, var: SsaVar) {
+        // Pre-allocate placeholder vars first so we don't hold a mutable
+        // borrow on `self.env` while calling `self.fresh_var()` (which
+        // also takes `&mut self`). The original `while arr.len() <= idx`
+        // loop runs `idx + 1 - arr.len()` times when extending — so we
+        // need that many placeholders to make `arr[idx] = var` safe.
+        let needed_placeholders = match self.env.get(array) {
+            Some(InstEnvValue::Array(arr)) => (idx + 1).saturating_sub(arr.len()),
+            None => 0, // None branch creates the array fresh below.
+            Some(InstEnvValue::Scalar(_)) => 0,
+        };
+        let mut placeholders = Vec::with_capacity(needed_placeholders);
+        for _ in 0..needed_placeholders {
+            placeholders.push(self.fresh_var());
+        }
+
         match self.env.get_mut(array) {
             Some(InstEnvValue::Array(arr)) => {
-                // Extend if needed
-                while arr.len() <= idx {
-                    let placeholder = self.program.fresh_var();
-                    arr.push(placeholder);
-                }
+                // Extend with the pre-allocated placeholders, then
+                // overwrite the target slot with the caller's var.
+                arr.extend(placeholders);
                 arr[idx] = var;
             }
             Some(InstEnvValue::Scalar(_)) => {
@@ -253,7 +266,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // Create array lazily
                 let mut arr = Vec::with_capacity(idx + 1);
                 for _ in 0..idx {
-                    let placeholder = self.program.fresh_var();
+                    let placeholder = self.fresh_var();
                     arr.push(placeholder);
                 }
                 arr.push(var);

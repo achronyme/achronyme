@@ -1,11 +1,13 @@
 //! Public entry points for ProveIR instantiation.
 //!
 //! [`ProveIR::instantiate`] and [`ProveIR::instantiate_with_outputs`]
-//! are the two ways a caller kicks off instantiation. Both build an
-//! [`Instantiator`] with concrete capture values, declare public +
-//! witness inputs, register each capture as either an inline constant
-//! or a witness input, reconstruct any [`CaptureArrayDef`] env entries,
-//! and finally walk the body emitting instructions.
+//! are the two ways a caller kicks off instantiation. Both build a
+//! fresh [`IrProgram`], wrap it in a [`LegacySink`], hand a borrowed
+//! [`Instantiator`] to the body walk, and return the populated
+//! program when the walk completes. The pre-trait pipeline lived
+//! directly on `Instantiator.program`; commit 2.2 of Phase 3.C.6
+//! routes everything through [`InstrSink`] without changing the
+//! caller-visible behaviour.
 //!
 //! `instantiate_with_outputs` differs only in step 2: for every
 //! [`InputDecl`] whose name appears in `output_names`, it records the
@@ -19,7 +21,7 @@ use std::collections::{HashMap, HashSet};
 
 use memory::{FieldBackend, FieldElement};
 
-use super::{InstEnvValue, Instantiator};
+use super::{InstEnvValue, Instantiator, LegacySink};
 use crate::error::ProveIrError;
 use crate::types::ProveIR;
 use ir_core::{IrProgram, SsaVar, Visibility};
@@ -33,64 +35,9 @@ impl ProveIR {
         &self,
         captures: &HashMap<String, FieldElement<F>>,
     ) -> Result<IrProgram<F>, ProveIrError> {
-        let mut inst = Instantiator {
-            program: IrProgram::new(),
-            env: HashMap::new(),
-            captures: captures.clone(),
-            current_span: None,
-            output_pub_vars: HashMap::new(),
-            const_cache: HashMap::new(),
-            const_values: HashMap::new(),
-        };
-
-        // 1. Validate all required captures are provided
-        inst.validate_captures(self)?;
-
-        // 2. Declare public inputs
-        for input in &self.public_inputs {
-            inst.declare_input(input, Visibility::Public)?;
-        }
-
-        // 3. Declare witness inputs
-        for input in &self.witness_inputs {
-            inst.declare_input(input, Visibility::Witness)?;
-        }
-
-        // 4. Declare captures as circuit inputs or inline constants
-        for cap in &self.captures {
-            inst.declare_capture(cap)?;
-        }
-
-        // 4b. Reconstruct array env entries from capture_arrays.
-        //     Individual element captures (path_0, path_1) were declared above;
-        //     now assemble them into InstEnvValue::Array so array-consuming
-        //     constructs (e.g. merkle_verify) can resolve the array by name.
-        for arr in &self.capture_arrays {
-            let elem_vars: Vec<SsaVar> = (0..arr.size)
-                .map(|i| {
-                    let elem_name = format!("{}_{i}", arr.name);
-                    match inst.env.get(&elem_name) {
-                        Some(InstEnvValue::Scalar(v)) => Ok(*v),
-                        _ => Err(ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "missing array element capture `{elem_name}` for array `{}`",
-                                arr.name
-                            ),
-                            span: None,
-                        }),
-                    }
-                })
-                .collect::<Result<_, _>>()?;
-            inst.env
-                .insert(arr.name.clone(), InstEnvValue::Array(elem_vars));
-        }
-
-        // 5. Emit all body nodes
-        for node in &self.body {
-            inst.emit_node(node)?;
-        }
-
-        Ok(inst.program)
+        let mut program = IrProgram::<F>::new();
+        run_instantiate(self, captures, &mut program, None)?;
+        Ok(program)
     }
 
     /// Instantiate with public output support (Circom frontend).
@@ -110,27 +57,44 @@ impl ProveIR {
         if output_names.is_empty() {
             return self.instantiate(captures);
         }
+        let mut program = IrProgram::<F>::new();
+        run_instantiate(self, captures, &mut program, Some(output_names))?;
+        Ok(program)
+    }
+}
 
-        let mut inst = Instantiator {
-            program: IrProgram::new(),
-            env: HashMap::new(),
-            captures: captures.clone(),
-            current_span: None,
-            output_pub_vars: HashMap::new(),
-            const_cache: HashMap::new(),
-            const_values: HashMap::new(),
-        };
+/// Shared body of both entry points. Builds an `Instantiator` around
+/// a [`LegacySink`] borrowing the caller's `program`, runs validate +
+/// declare + emit, and lets the sink drop at scope end so the program
+/// is once again exclusively borrowed by the caller for the return.
+fn run_instantiate<F: FieldBackend>(
+    prove_ir: &ProveIR,
+    captures: &HashMap<String, FieldElement<F>>,
+    program: &mut IrProgram<F>,
+    output_names: Option<&HashSet<String>>,
+) -> Result<(), ProveIrError> {
+    let sink = LegacySink::new(program);
+    let mut inst = Instantiator {
+        sink: Box::new(sink),
+        env: HashMap::new(),
+        captures: captures.clone(),
+        current_span: None,
+        output_pub_vars: HashMap::new(),
+        const_cache: HashMap::new(),
+        const_values: HashMap::new(),
+    };
 
-        // 1. Validate all required captures are provided
-        inst.validate_captures(self)?;
+    // 1. Validate all required captures are provided
+    inst.validate_captures(prove_ir)?;
 
-        // 2. Declare public inputs (includes both inputs and outputs).
-        //    For outputs, save the element-level SSA vars so that body nodes
-        //    (WitnessHint, Let) reuse them instead of creating new wires.
-        for input in &self.public_inputs {
-            inst.declare_input(input, Visibility::Public)?;
+    // 2. Declare public inputs. For Circom-frontend callers (output_names
+    //    is Some), record element-level SSA vars for outputs so body
+    //    nodes reuse them instead of creating duplicate witness wires.
+    for input in &prove_ir.public_inputs {
+        inst.declare_input(input, Visibility::Public)?;
 
-            if output_names.contains(&input.name) {
+        if let Some(outputs) = output_names {
+            if outputs.contains(&input.name) {
                 match &input.array_size {
                     Some(array_size) => {
                         let size = inst.resolve_array_size(array_size)?;
@@ -149,43 +113,48 @@ impl ProveIR {
                 }
             }
         }
-
-        // 3. Declare witness inputs
-        for input in &self.witness_inputs {
-            inst.declare_input(input, Visibility::Witness)?;
-        }
-
-        // 4. Declare captures
-        for cap in &self.captures {
-            inst.declare_capture(cap)?;
-        }
-
-        // 4b. Reconstruct array env entries from capture_arrays
-        for arr in &self.capture_arrays {
-            let elem_vars: Vec<SsaVar> = (0..arr.size)
-                .map(|i| {
-                    let elem_name = format!("{}_{i}", arr.name);
-                    match inst.env.get(&elem_name) {
-                        Some(InstEnvValue::Scalar(v)) => Ok(*v),
-                        _ => Err(ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "missing array element capture `{elem_name}` for array `{}`",
-                                arr.name
-                            ),
-                            span: None,
-                        }),
-                    }
-                })
-                .collect::<Result<_, _>>()?;
-            inst.env
-                .insert(arr.name.clone(), InstEnvValue::Array(elem_vars));
-        }
-
-        // 5. Emit all body nodes (WitnessHint/Let for outputs are intercepted)
-        for node in &self.body {
-            inst.emit_node(node)?;
-        }
-
-        Ok(inst.program)
     }
+
+    // 3. Declare witness inputs
+    for input in &prove_ir.witness_inputs {
+        inst.declare_input(input, Visibility::Witness)?;
+    }
+
+    // 4. Declare captures as circuit inputs or inline constants
+    for cap in &prove_ir.captures {
+        inst.declare_capture(cap)?;
+    }
+
+    // 4b. Reconstruct array env entries from capture_arrays.
+    //     Individual element captures (path_0, path_1) were declared above;
+    //     now assemble them into InstEnvValue::Array so array-consuming
+    //     constructs (e.g. merkle_verify) can resolve the array by name.
+    for arr in &prove_ir.capture_arrays {
+        let elem_vars: Vec<SsaVar> = (0..arr.size)
+            .map(|i| {
+                let elem_name = format!("{}_{i}", arr.name);
+                match inst.env.get(&elem_name) {
+                    Some(InstEnvValue::Scalar(v)) => Ok(*v),
+                    _ => Err(ProveIrError::UnsupportedOperation {
+                        description: format!(
+                            "missing array element capture `{elem_name}` for array `{}`",
+                            arr.name
+                        ),
+                        span: None,
+                    }),
+                }
+            })
+            .collect::<Result<_, _>>()?;
+        inst.env
+            .insert(arr.name.clone(), InstEnvValue::Array(elem_vars));
+    }
+
+    // 5. Emit all body nodes
+    for node in &prove_ir.body {
+        inst.emit_node(node)?;
+    }
+
+    // `inst` (and the LegacySink it owns) drops here, releasing the
+    // borrow on `program`. Caller returns the populated program.
+    Ok(())
 }

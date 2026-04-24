@@ -18,7 +18,7 @@ use crate::error::ProveIrError;
 use crate::types::*;
 use ir_core::{Instruction, SsaVar, Visibility};
 
-impl<F: FieldBackend> Instantiator<F> {
+impl<'a, F: FieldBackend> Instantiator<'a, F> {
     pub(super) fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
         // Set span context: all instructions emitted while processing this node
         // inherit the node's source span for source mapping.
@@ -40,7 +40,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // the expression and constrain the public wire to equal it.
                 if let Some(&pub_var) = self.output_pub_vars.get(name) {
                     let v = self.emit_expr(value)?;
-                    let result = self.program.fresh_var();
+                    let result = self.fresh_var();
                     self.push_inst(Instruction::AssertEq {
                         result,
                         lhs: pub_var,
@@ -50,7 +50,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     // env keeps pointing to pub_var (not shadowed)
                 } else {
                     let v = self.emit_expr(value)?;
-                    self.program.set_name(v, name.clone());
+                    self.set_name(v, name.clone());
                     self.env.insert(name.clone(), InstEnvValue::Scalar(v));
                 }
             }
@@ -59,7 +59,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 for (i, elem) in elements.iter().enumerate() {
                     let v = self.emit_expr(elem)?;
                     let elem_name = format!("{name}_{i}");
-                    self.program.set_name(v, elem_name.clone());
+                    self.set_name(v, elem_name.clone());
                     self.env.insert(elem_name, InstEnvValue::Scalar(v));
                     elem_vars.push(v);
                 }
@@ -71,7 +71,7 @@ impl<F: FieldBackend> Instantiator<F> {
             } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::AssertEq {
                     result: v,
                     lhs: l,
@@ -87,7 +87,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // byte-equivalent in R1CS multiset (Phase 3.C.6
                 // Stage 1 finding).
                 let one = self.emit_const(FieldElement::<F>::one());
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::AssertEq {
                     result: v,
                     lhs: operand,
@@ -139,12 +139,12 @@ impl<F: FieldBackend> Instantiator<F> {
                 ..
             } => {
                 let operand = self.emit_expr(value)?;
-                let result = self.program.fresh_var();
+                let result = self.fresh_var();
                 let mut bit_vars = Vec::with_capacity(*num_bits as usize);
                 for i in 0..*num_bits {
-                    let bit_v = self.program.fresh_var();
+                    let bit_v = self.fresh_var();
                     let elem_name = format!("{name}_{i}");
-                    self.program.set_name(bit_v, elem_name.clone());
+                    self.set_name(bit_v, elem_name.clone());
                     self.env.insert(elem_name, InstEnvValue::Scalar(bit_v));
                     bit_vars.push(bit_v);
                 }
@@ -167,8 +167,8 @@ impl<F: FieldBackend> Instantiator<F> {
                     // The hint expression is NOT compiled to constraints.
                     // The actual value is provided externally by the prover
                     // (computed from the hint expression off-circuit).
-                    let v = self.program.fresh_var();
-                    self.program.set_name(v, name.clone());
+                    let v = self.fresh_var();
+                    self.set_name(v, name.clone());
                     self.push_inst(Instruction::Input {
                         result: v,
                         name: name.clone(),
@@ -203,7 +203,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // Output signals: constrain the public wire to the expression
                 if let Some(&pub_var) = self.output_pub_vars.get(&elem_name) {
                     let v = self.emit_expr(value)?;
-                    let result = self.program.fresh_var();
+                    let result = self.fresh_var();
                     self.push_inst(Instruction::AssertEq {
                         result,
                         lhs: pub_var,
@@ -213,7 +213,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     // env keeps pointing to pub_var (not shadowed)
                 } else {
                     let v = self.emit_expr(value)?;
-                    self.program.set_name(v, elem_name.clone());
+                    self.set_name(v, elem_name.clone());
                     self.env.insert(elem_name, InstEnvValue::Scalar(v));
                     self.ensure_array_slot(array, idx, v);
                 }
@@ -238,8 +238,8 @@ impl<F: FieldBackend> Instantiator<F> {
                 if self.output_pub_vars.contains_key(&elem_name) {
                     // env already has the public wire — nothing to do.
                 } else {
-                    let v = self.program.fresh_var();
-                    self.program.set_name(v, elem_name.clone());
+                    let v = self.fresh_var();
+                    self.set_name(v, elem_name.clone());
                     self.push_inst(Instruction::Input {
                         result: v,
                         name: elem_name.clone(),
@@ -277,8 +277,8 @@ impl<F: FieldBackend> Instantiator<F> {
                     let v = if let Some(&existing) = self.output_pub_vars.get(name) {
                         existing
                     } else {
-                        let fresh = self.program.fresh_var();
-                        self.program.set_name(fresh, name.clone());
+                        let fresh = self.fresh_var();
+                        self.set_name(fresh, name.clone());
                         self.env.insert(name.clone(), InstEnvValue::Scalar(fresh));
                         fresh
                     };
@@ -630,7 +630,7 @@ impl<F: FieldBackend> Instantiator<F> {
         self.with_saved_var(var, |this| {
             for i in start..end {
                 let v = this.emit_const(FieldElement::<F>::from_u64(i));
-                this.program.set_name(v, var.to_string());
+                this.set_name(v, var.to_string());
                 this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
 
                 for node in body {
