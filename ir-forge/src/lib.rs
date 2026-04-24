@@ -34,6 +34,7 @@ pub mod instantiate;
 pub mod lysis_bridge;
 pub mod lysis_lift;
 pub mod lysis_materialize;
+pub mod lysis_roundtrip;
 pub mod module_loader;
 pub mod resolver_adapter;
 pub mod suggest;
@@ -52,6 +53,7 @@ pub use extended::{ExtendedInstruction, TemplateId};
 pub use extended_program::ExtendedIrProgram;
 pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
 pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
+pub use lysis_roundtrip::{lysis_roundtrip, RoundTripError};
 pub use types::{
     ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, CircuitBinOp, CircuitBoolOp,
     CircuitCmpOp, CircuitExpr, CircuitNode, CircuitUnaryOp, FieldConst, ForRange, ProveIR,
