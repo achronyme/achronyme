@@ -282,7 +282,7 @@ fn export_list_undefined_name() {
 fn compile_fixture_warning_messages(name: &str) -> Vec<String> {
     let path = fixture(name);
     let content = std::fs::read_to_string(&path).unwrap();
-    let mut compiler = compiler::Compiler::new();
+    let mut compiler = akronc::Compiler::new();
     let source_path = Path::new(&path);
     compiler.base_path = Some(source_path.parent().unwrap_or(Path::new(".")).to_path_buf());
     let _ = compiler.compile(&content);

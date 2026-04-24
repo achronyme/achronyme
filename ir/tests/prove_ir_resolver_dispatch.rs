@@ -29,7 +29,7 @@ use resolve::{
 
 /// In-memory `ModuleSource` that serves a single pre-parsed program as
 /// the root and refuses any transitive load. Mirrors the pattern
-/// `compiler::resolver_adapter::CompilerModuleSource::with_root` uses,
+/// `akronc::resolver_adapter::CompilerModuleSource::with_root` uses,
 /// but trimmed down for integration tests that never touch a real
 /// import graph.
 struct InMemoryRoot {

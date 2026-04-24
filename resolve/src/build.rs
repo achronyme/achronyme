@@ -4,7 +4,7 @@
 //! build a [`ModuleGraph`] → [`SymbolTable`] → [`ResolvedProgram`]
 //! chain for the same program. Before Phase 3E each backend grew its
 //! own ad-hoc copy of that sequence (see
-//! `compiler::Compiler::try_auto_build_resolver_state`); this module
+//! `akronc::Compiler::try_auto_build_resolver_state`); this module
 //! is the single entry point they both call now.
 //!
 //! The helper is intentionally thin — it owns the call order

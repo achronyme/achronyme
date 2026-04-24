@@ -1,5 +1,5 @@
 use akron::{CallFrame, VM};
-use compiler::Compiler;
+use akronc::Compiler;
 use memory::{Function, Value};
 
 /// Helper: compile + run a source string and return the result value.

@@ -50,7 +50,7 @@ fn register_std_on_vm() {
 #[test]
 fn compiler_with_std_natives() {
     let table = achronyme_std::std_native_table();
-    let compiler = compiler::Compiler::with_extra_natives(&table);
+    let compiler = akronc::Compiler::with_extra_natives(&table);
 
     // Verify std natives are in global_symbols
     assert!(compiler.global_symbols.contains_key("parse_int"));
@@ -71,7 +71,7 @@ fn compiler_with_std_natives() {
 #[test]
 fn e2e_std_natives() {
     let table = achronyme_std::std_native_table();
-    let mut compiler = compiler::Compiler::with_extra_natives(&table);
+    let mut compiler = akronc::Compiler::with_extra_natives(&table);
     let source = r#"
         let x = (-42).abs()
         assert(x == 42)

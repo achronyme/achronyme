@@ -236,7 +236,7 @@ fn json_warning_format_produces_valid_json() {
     // This source triggers an unused variable warning
     let src = write_temp_source("fn test() { let x = 5; 1 }");
     let content = std::fs::read_to_string(src.path()).unwrap();
-    let mut compiler = compiler::Compiler::new();
+    let mut compiler = akronc::Compiler::new();
     let _ = compiler.compile(&content);
     let warnings = compiler.take_warnings();
     assert!(!warnings.is_empty(), "should have warnings");
@@ -244,7 +244,7 @@ fn json_warning_format_produces_valid_json() {
     // Render each warning as JSON
     for w in &warnings {
         let rendered = cli::commands::render_compile_error(
-            &compiler::CompilerError::DiagnosticError(Box::new(w.clone())),
+            &akronc::CompilerError::DiagnosticError(Box::new(w.clone())),
             &content,
             ErrorFormat::Json,
         );

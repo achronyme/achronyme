@@ -1,5 +1,5 @@
 use akron::{CallFrame, ProveError, ProveHandler, ProveResult, VerifyHandler, VM};
-use compiler::Compiler;
+use akronc::Compiler;
 use memory::FieldElement;
 use memory::{Function, ProofObject, Value};
 use std::collections::HashMap;

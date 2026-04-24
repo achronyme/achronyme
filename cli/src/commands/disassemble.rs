@@ -245,7 +245,7 @@ fn disassemble_vm(path: &str, source: &str, error_format: ErrorFormat) -> Result
 
 /// Scan compiled bytecode for PROVE instructions, deserialize the ProveIR
 /// from the constant pool, and print it.
-fn dump_prove_blocks_from_bytecode(bytecode: &[u32], compiler: &compiler::Compiler) {
+fn dump_prove_blocks_from_bytecode(bytecode: &[u32], compiler: &akronc::Compiler) {
     let main_func = match compiler.compilers.last() {
         Some(f) => f,
         None => return,

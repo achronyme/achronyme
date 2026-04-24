@@ -32,7 +32,7 @@ proving = { path = "../proving" }
 
 memory = { path = "../memory" }
 akron = { path = "../akron" }
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 diagnostics = { path = "../diagnostics" }

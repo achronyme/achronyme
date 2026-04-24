@@ -11,7 +11,7 @@ cargo-fuzz = true
 libfuzzer-sys = "0.4"
 achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 memory = { path = "../memory" }

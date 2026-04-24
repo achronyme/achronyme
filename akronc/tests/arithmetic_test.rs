@@ -1,5 +1,5 @@
 use akron::opcode::{instruction::*, OpCode};
-use compiler::Compiler;
+use akronc::Compiler;
 
 #[test]
 fn test_compile_simple_arithmetic() {

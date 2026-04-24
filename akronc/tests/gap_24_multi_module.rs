@@ -26,7 +26,7 @@
 
 use std::path::PathBuf;
 
-use compiler::Compiler;
+use akronc::Compiler;
 
 /// Absolute path to the `gap_24_repro` fixture directory shipped
 /// alongside this integration test.

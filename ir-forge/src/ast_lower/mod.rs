@@ -131,7 +131,7 @@ pub struct OuterResolverState {
     /// Phase 3F: precomputed map from [`SymbolId`] to the fn_table
     /// key the ProveIR compiler uses. Built once at auto-build
     /// time by walking the resolver's [`SymbolTable`] + module
-    /// graph edges (see `compiler::build_dispatch_maps`).
+    /// graph edges (see `akronc::build_dispatch_maps`).
     /// Consumed by [`resolve_dispatch_via_annotation`] to translate
     /// resolved user-fn annotations into fn_table lookups without
     /// parsing the resolver's name-mangling convention at dispatch

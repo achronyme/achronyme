@@ -5,7 +5,7 @@ pub mod disassemble;
 pub mod inspect;
 pub mod run;
 
-use compiler::{Compiler, CompilerError};
+use akronc::{Compiler, CompilerError};
 use diagnostics::{ColorMode, Diagnostic, DiagnosticRenderer};
 
 /// Create a compiler with std natives pre-registered.

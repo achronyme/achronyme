@@ -3,7 +3,7 @@ members = [
     "diagnostics",
     "memory",
     "akron",
-    "compiler",
+    "akronc",
     "constraints",
     "achronyme-parser",
     "cli",

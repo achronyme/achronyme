@@ -15,10 +15,10 @@
 //!    instantiated body.
 //!
 //! The goal is a smoke-test — detailed unit coverage lives in
-//! `ir_forge::compiler::tests::circom_dispatch` against the
+//! `ir_forge::akronc::tests::circom_dispatch` against the
 //! StubLibrary.
 
-use compiler::codegen::Compiler;
+use akronc::codegen::Compiler;
 use tempfile::TempDir;
 
 /// Owns a `tempfile::TempDir` + a `.circom` file inside it. On drop
