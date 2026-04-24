@@ -13,12 +13,12 @@
 use memory::{FieldBackend, FieldElement};
 
 use super::utils::{fe_to_u64, fe_to_usize};
-use super::{InstEnvValue, Instantiator, MAX_INSTANTIATE_ITERATIONS};
+use super::{InstEnvValue, Instantiator, LoopUnrollMode, MAX_INSTANTIATE_ITERATIONS};
 use crate::error::ProveIrError;
 use crate::types::*;
 use ir_core::{Instruction, SsaVar, Visibility};
 
-impl<F: FieldBackend> Instantiator<F> {
+impl<'a, F: FieldBackend> Instantiator<'a, F> {
     pub(super) fn emit_node(&mut self, node: &CircuitNode) -> Result<(), ProveIrError> {
         // Set span context: all instructions emitted while processing this node
         // inherit the node's source span for source mapping.
@@ -40,7 +40,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // the expression and constrain the public wire to equal it.
                 if let Some(&pub_var) = self.output_pub_vars.get(name) {
                     let v = self.emit_expr(value)?;
-                    let result = self.program.fresh_var();
+                    let result = self.fresh_var();
                     self.push_inst(Instruction::AssertEq {
                         result,
                         lhs: pub_var,
@@ -50,7 +50,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     // env keeps pointing to pub_var (not shadowed)
                 } else {
                     let v = self.emit_expr(value)?;
-                    self.program.set_name(v, name.clone());
+                    self.set_name(v, name.clone());
                     self.env.insert(name.clone(), InstEnvValue::Scalar(v));
                 }
             }
@@ -59,7 +59,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 for (i, elem) in elements.iter().enumerate() {
                     let v = self.emit_expr(elem)?;
                     let elem_name = format!("{name}_{i}");
-                    self.program.set_name(v, elem_name.clone());
+                    self.set_name(v, elem_name.clone());
                     self.env.insert(elem_name, InstEnvValue::Scalar(v));
                     elem_vars.push(v);
                 }
@@ -71,7 +71,7 @@ impl<F: FieldBackend> Instantiator<F> {
             } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                let v = self.program.fresh_var();
+                let v = self.fresh_var();
                 self.push_inst(Instruction::AssertEq {
                     result: v,
                     lhs: l,
@@ -81,10 +81,17 @@ impl<F: FieldBackend> Instantiator<F> {
             }
             CircuitNode::Assert { expr, message, .. } => {
                 let operand = self.emit_expr(expr)?;
-                let v = self.program.fresh_var();
-                self.push_inst(Instruction::Assert {
+                // Lower Assert(x) → AssertEq(x, 1). The Lysis lifter's
+                // Walker performs the same desugaring at lift time;
+                // emitting it here keeps the legacy and Lysis paths
+                // byte-equivalent in R1CS multiset (Phase 3.C.6
+                // Stage 1 finding).
+                let one = self.emit_const(FieldElement::<F>::one());
+                let v = self.fresh_var();
+                self.push_inst(Instruction::AssertEq {
                     result: v,
-                    operand,
+                    lhs: operand,
+                    rhs: one,
                     message: message.clone(),
                 });
             }
@@ -132,12 +139,12 @@ impl<F: FieldBackend> Instantiator<F> {
                 ..
             } => {
                 let operand = self.emit_expr(value)?;
-                let result = self.program.fresh_var();
+                let result = self.fresh_var();
                 let mut bit_vars = Vec::with_capacity(*num_bits as usize);
                 for i in 0..*num_bits {
-                    let bit_v = self.program.fresh_var();
+                    let bit_v = self.fresh_var();
                     let elem_name = format!("{name}_{i}");
-                    self.program.set_name(bit_v, elem_name.clone());
+                    self.set_name(bit_v, elem_name.clone());
                     self.env.insert(elem_name, InstEnvValue::Scalar(bit_v));
                     bit_vars.push(bit_v);
                 }
@@ -160,8 +167,8 @@ impl<F: FieldBackend> Instantiator<F> {
                     // The hint expression is NOT compiled to constraints.
                     // The actual value is provided externally by the prover
                     // (computed from the hint expression off-circuit).
-                    let v = self.program.fresh_var();
-                    self.program.set_name(v, name.clone());
+                    let v = self.fresh_var();
+                    self.set_name(v, name.clone());
                     self.push_inst(Instruction::Input {
                         result: v,
                         name: name.clone(),
@@ -196,7 +203,7 @@ impl<F: FieldBackend> Instantiator<F> {
                 // Output signals: constrain the public wire to the expression
                 if let Some(&pub_var) = self.output_pub_vars.get(&elem_name) {
                     let v = self.emit_expr(value)?;
-                    let result = self.program.fresh_var();
+                    let result = self.fresh_var();
                     self.push_inst(Instruction::AssertEq {
                         result,
                         lhs: pub_var,
@@ -206,7 +213,7 @@ impl<F: FieldBackend> Instantiator<F> {
                     // env keeps pointing to pub_var (not shadowed)
                 } else {
                     let v = self.emit_expr(value)?;
-                    self.program.set_name(v, elem_name.clone());
+                    self.set_name(v, elem_name.clone());
                     self.env.insert(elem_name, InstEnvValue::Scalar(v));
                     self.ensure_array_slot(array, idx, v);
                 }
@@ -231,8 +238,8 @@ impl<F: FieldBackend> Instantiator<F> {
                 if self.output_pub_vars.contains_key(&elem_name) {
                     // env already has the public wire — nothing to do.
                 } else {
-                    let v = self.program.fresh_var();
-                    self.program.set_name(v, elem_name.clone());
+                    let v = self.fresh_var();
+                    self.set_name(v, elem_name.clone());
                     self.push_inst(Instruction::Input {
                         result: v,
                         name: elem_name.clone(),
@@ -270,8 +277,8 @@ impl<F: FieldBackend> Instantiator<F> {
                     let v = if let Some(&existing) = self.output_pub_vars.get(name) {
                         existing
                     } else {
-                        let fresh = self.program.fresh_var();
-                        self.program.set_name(fresh, name.clone());
+                        let fresh = self.fresh_var();
+                        self.set_name(fresh, name.clone());
                         self.env.insert(name.clone(), InstEnvValue::Scalar(fresh));
                         fresh
                     };
@@ -604,7 +611,25 @@ impl<F: FieldBackend> Instantiator<F> {
         }
     }
 
-    /// Unroll a numeric range loop: for var in start..end { body }
+    /// Unroll a numeric range loop: `for var in start..end { body }`.
+    ///
+    /// Two emission strategies depending on
+    /// [`InstrSink::loop_unroll_mode`]:
+    ///
+    /// - **PerIteration (LegacySink):** emit body once per `i in
+    ///   start..end`, binding `var` to a fresh `Const(i)` SSA wire
+    ///   each iteration. Byte-identical to the pre-Stage-2 pipeline.
+    /// - **Symbolic (ExtendedSink):** allocate one fresh SSA slot for
+    ///   `var`, switch the sink to a sub-buffer
+    ///   ([`InstrSink::begin_symbolic_loop`]), emit body **once** with
+    ///   `var` symbolically bound to that slot, then close with
+    ///   [`InstrSink::finish_symbolic_loop`] which folds the
+    ///   sub-buffer into a single
+    ///   [`ExtendedInstruction::LoopUnroll { iter_var, start, end, body }`]
+    ///   in the outer scope. The Lysis lifter's executor handles the
+    ///   per-iteration value binding at run time. This is the Stage-2
+    ///   inflection point where SHA-256(64) loop amplification is
+    ///   eliminated (Phase 3.C.6 commit 2.5).
     fn emit_range_loop(
         &mut self,
         var: &str,
@@ -620,18 +645,40 @@ impl<F: FieldBackend> Instantiator<F> {
                 span: None,
             });
         }
-        self.with_saved_var(var, |this| {
-            for i in start..end {
-                let v = this.emit_const(FieldElement::<F>::from_u64(i));
-                this.program.set_name(v, var.to_string());
-                this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
+        match self.sink.loop_unroll_mode() {
+            LoopUnrollMode::PerIteration => self.with_saved_var(var, |this| {
+                for i in start..end {
+                    let v = this.emit_const(FieldElement::<F>::from_u64(i));
+                    this.set_name(v, var.to_string());
+                    this.env.insert(var.to_string(), InstEnvValue::Scalar(v));
 
-                for node in body {
-                    this.emit_node(node)?;
+                    for node in body {
+                        this.emit_node(node)?;
+                    }
                 }
+                Ok(())
+            }),
+            LoopUnrollMode::Symbolic => {
+                // Allocate iter_var BEFORE the body, in the outer
+                // scope, so the LoopUnroll node refers to a slot
+                // declared in the parent's namespace (the executor's
+                // loop machinery binds it per iteration there).
+                let iter_var = self.fresh_var();
+                self.set_name(iter_var, var.to_string());
+                self.sink.begin_symbolic_loop();
+                let result = self.with_saved_var(var, |this| {
+                    this.env
+                        .insert(var.to_string(), InstEnvValue::Scalar(iter_var));
+                    for node in body {
+                        this.emit_node(node)?;
+                    }
+                    Ok(())
+                });
+                self.sink
+                    .finish_symbolic_loop(iter_var, start as i64, end as i64);
+                result
             }
-            Ok(())
-        })
+        }
     }
 
     /// Save a variable's env binding, run a closure, then restore it.

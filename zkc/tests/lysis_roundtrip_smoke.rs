@@ -68,12 +68,26 @@ fn ssa(i: u32) -> SsaVar {
 }
 
 /// Round-trip a programmatically-built fixture and assert that the
-/// oracle classifies it `Equivalent`.
+/// oracle classifies it `Equivalent` after the production-equivalent
+/// optimization pass runs on both sides.
+///
+/// **Why optimize both sides:** the Lysis pipeline's `InterningSink`
+/// dedups identical pure ops at materialization time (e.g. two
+/// `Mul(a,b)` collapse to one). The legacy `instantiate` does not
+/// — but `ir::passes::optimize` (specifically the CSE sub-pass at
+/// `ir::passes::cse::common_subexpression_elimination`) achieves the
+/// same dedup post-hoc. Both compile through `optimize` before R1CS
+/// in production (see `circom/tests/e2e.rs::sha256_64_r1cs_probe`),
+/// so applying it here is the fair "do these pipelines produce
+/// equivalent R1CS?" question. Comparing pre-optimize would
+/// systematically misclassify CSE divergences as `ConstraintsDiffer`.
 fn assert_roundtrip_equivalent(label: &str, program: IrProgram<F>) {
-    let snapshot = clone_program(&program);
-    let lysis = lysis_roundtrip(program)
+    let mut legacy = clone_program(&program);
+    let mut lysis = lysis_roundtrip(program)
         .unwrap_or_else(|e| panic!("lysis_roundtrip failed for `{label}`: {e}"));
-    let outcome = semantic_equivalence(&snapshot, &lysis, &[]);
+    ir::passes::optimize(&mut legacy);
+    ir::passes::optimize(&mut lysis);
+    let outcome = semantic_equivalence(&legacy, &lysis, &[]);
     assert_eq!(
         outcome,
         OracleResult::Equivalent,
@@ -325,6 +339,78 @@ fn decompose_and_range_check_roundtrips() {
     });
     p.set_next_var(7);
     assert_roundtrip_equivalent("decompose_and_range_check", p);
+}
+
+// ---------------------------------------------------------------------
+// Source-level fixtures (via test_utils::compile_circuit)
+//
+// Originally blocked by the Walker desugaring divergence (see module
+// docs for the Stage-1 finding). Unblocked by Option A (Phase 3.C.6
+// commit 2.0): instantiate now lowers Not/And/Or/IsNeq/IsLe/Assert to
+// the same primitive forms the Walker produces, so the legacy and
+// Lysis pipelines stay byte-equivalent through the oracle's strict
+// multiset compare.
+// ---------------------------------------------------------------------
+
+fn instantiate_source(source: &str) -> IrProgram<F> {
+    use std::collections::HashMap;
+    let prove_ir = ir_forge::test_utils::compile_circuit(source).expect("compile_circuit");
+    prove_ir
+        .instantiate::<F>(&HashMap::new())
+        .expect("instantiate")
+}
+
+fn assert_source_equivalent(label: &str, source: &str) {
+    let mut legacy = instantiate_source(source);
+    let mut lysis = lysis_roundtrip(instantiate_source(source))
+        .unwrap_or_else(|e| panic!("lysis_roundtrip failed for `{label}`: {e}"));
+    ir::passes::optimize(&mut legacy);
+    ir::passes::optimize(&mut lysis);
+    let outcome = semantic_equivalence(&legacy, &lysis, &[]);
+    assert_eq!(
+        outcome,
+        OracleResult::Equivalent,
+        "fixture `{label}` legacy/Lysis disagreement: {outcome:?}"
+    );
+}
+
+#[test]
+fn source_assert_eq_roundtrips() {
+    // `assert(x == y)` lowers to AssertEq(IsEq, one) post-Option-A.
+    assert_source_equivalent(
+        "source_assert_eq",
+        "public z\nwitness x\nlet s = x + x;\nlet p = s * x;\nassert(p == z)",
+    );
+}
+
+#[test]
+fn source_boolean_combinators_roundtrip() {
+    // `!a`, `a && b`, `a || b` all lowered to primitives.
+    assert_source_equivalent(
+        "source_boolean_combinators",
+        "public out\nwitness a\nwitness b\nlet na = !a;\nlet both = a && b;\nlet either = a || b;\nlet combined = na + both + either;\nassert(combined == out)",
+    );
+}
+
+#[test]
+fn source_neq_le_ge_roundtrip() {
+    // !=, <=, >= — the comparison desugarings.
+    assert_source_equivalent(
+        "source_neq_le_ge",
+        "public out\nwitness a\nwitness b\nlet ne = a != b;\nlet le = a <= b;\nlet ge = a >= b;\nlet combined = ne + le + ge;\nassert(combined == out)",
+    );
+}
+
+#[test]
+fn source_unrolled_loop_roundtrips() {
+    // Compile-time-known loop. Stage 1 wraps each unrolled
+    // iteration as Plain — no LoopUnroll yet (that's Stage 2 commit
+    // 2.5). Multiset must match because both pipelines emit the
+    // same flat instructions, modulo Walker dedup.
+    assert_source_equivalent(
+        "source_unrolled_loop",
+        "public sum\nwitness a\nmut acc = 0\nfor i in 0..4 {\n  acc = acc + a\n}\nassert(acc == sum)",
+    );
 }
 
 #[test]

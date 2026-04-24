@@ -30,6 +30,7 @@ mod api;
 mod bits;
 mod exprs;
 mod scaffold;
+mod sink;
 mod stmts;
 mod utils;
 
@@ -38,7 +39,9 @@ use std::collections::HashMap;
 use diagnostics::SpanRange;
 use memory::{FieldBackend, FieldElement};
 
-use ir_core::{IrProgram, SsaVar};
+use ir_core::{IrType, SsaVar};
+
+pub(super) use sink::{ExtendedSink, InstrSink, LegacySink, LoopUnrollMode};
 
 /// Maximum iterations allowed during instantiation (loop unrolling).
 /// This mirrors `MAX_UNROLL_ITERATIONS` in IrLowering but applies to capture-bound
@@ -70,8 +73,17 @@ pub(super) enum InstEnvValue {
 // ---------------------------------------------------------------------------
 
 /// Converts a ProveIR template into a flat IrProgram given concrete capture values.
-pub(super) struct Instantiator<F: FieldBackend> {
-    pub(super) program: IrProgram<F>,
+///
+/// Holds an `&'a mut`-borrowed [`InstrSink`] (boxed `dyn` to keep the
+/// struct non-generic over sink type) so the same emission walk can
+/// produce either flat `Vec<Instruction<F>>` (LegacySink) or
+/// `Vec<ExtendedInstruction<F>>` (ExtendedSink) — see Phase 3.C.6
+/// commit 2.1 for the trait definition and 2.2 for this wiring.
+pub(super) struct Instantiator<'a, F: FieldBackend> {
+    /// The emission target. Constructed by [`super::api`] and
+    /// borrowed for the whole instantiation. Sink-internal state
+    /// lives behind the `&mut`.
+    pub(super) sink: Box<dyn InstrSink<F> + 'a>,
     pub(super) env: HashMap<String, InstEnvValue>,
     /// Concrete capture values (provided by caller).
     pub(super) captures: HashMap<String, FieldElement<F>>,
@@ -88,6 +100,11 @@ pub(super) struct Instantiator<F: FieldBackend> {
     /// emitted Const with that value. Repeated emissions of the same
     /// constant reuse the existing var, saving both a push and a
     /// `set_type` call per reuse. Populated exclusively via [`emit_const`].
+    ///
+    /// Stays on `Instantiator` (not the sink) because the peephole
+    /// const-fold in `emit_expr` reads it synchronously between
+    /// operand resolution and the next push — moving it onto the
+    /// sink would force re-entrant `&mut self` borrow patterns.
     pub(super) const_cache: HashMap<[u8; 32], SsaVar>,
     /// Reverse lookup: SSA var → field value, for every var known to
     /// be a compile-time constant. Enables peephole const-fold in
@@ -95,4 +112,41 @@ pub(super) struct Instantiator<F: FieldBackend> {
     /// `Mul(Const, Const) → Const(fold)`). Populated alongside
     /// [`const_cache`] in [`emit_const`].
     pub(super) const_values: HashMap<SsaVar, FieldElement<F>>,
+}
+
+// ---------------------------------------------------------------------------
+// Instantiator delegation helpers — thin pass-through to the sink so
+// emission sites in {scaffold, exprs, stmts, bits}.rs read as
+// `self.fresh_var()` etc. instead of `self.sink.fresh_var()`.
+// ---------------------------------------------------------------------------
+
+impl<'a, F: FieldBackend> Instantiator<'a, F> {
+    pub(super) fn fresh_var(&mut self) -> SsaVar {
+        self.sink.fresh_var()
+    }
+
+    pub(super) fn set_type(&mut self, var: SsaVar, ty: IrType) {
+        self.sink.set_type(var, ty);
+    }
+
+    pub(super) fn get_type(&self, var: SsaVar) -> Option<IrType> {
+        self.sink.get_type(var)
+    }
+
+    pub(super) fn set_name(&mut self, var: SsaVar, name: String) {
+        self.sink.set_name(var, name);
+    }
+
+    // `set_input_span` and `next_var` are exposed on `InstrSink` for
+    // future call sites (input registration in 2.4, canonicaliser in
+    // 2.6) but not used by the current instantiation walk.
+    #[allow(dead_code)]
+    pub(super) fn set_input_span(&mut self, name: String, span: SpanRange) {
+        self.sink.set_input_span(name, span);
+    }
+
+    #[allow(dead_code)]
+    pub(super) fn next_var(&self) -> u32 {
+        self.sink.next_var()
+    }
 }
