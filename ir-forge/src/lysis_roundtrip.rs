@@ -5,18 +5,19 @@
 //! This is the **Stage 1 smoke gate** of Lysis Phase 3.C.6 (see
 //! `.claude/plans/lysis-phase-3c6.md`). It proves the
 //! `ExtendedInstruction → Lysis → Vec<Instruction>` cable works
-//! end-to-end on the real shape of programs the legacy
-//! `ir_forge::instantiate` pipeline produces — **before** introducing
+//! end-to-end on real `IrProgram<F>` shapes — **before** introducing
 //! the `InstrSink` trait refactor of Stage 2.
 //!
-//! ## Known limitations (Stage-1 only)
+//! ## Stage-1 limitations
 //!
 //! - **No structural reduction.** Every input `Instruction<F>` is
 //!   wrapped as [`ExtendedInstruction::Plain`], so the walker emits a
 //!   flat instruction stream — no `LoopUnroll`. The Lysis interner
 //!   still hash-conses identical pure ops, but multiplicative loop
-//!   amplification (e.g. SHA-256(64)) is unaffected. Stage 2's
-//!   `ExtendedSink` is what emits real `LoopUnroll` nodes.
+//!   amplification (e.g. SHA-256(64)) is unaffected: the HARD GATE
+//!   probe in `circom/tests/e2e.rs::sha256_64_r1cs_probe` will still
+//!   hang under this round-trip path. Stage 2's `ExtendedSink` is
+//!   what emits real `LoopUnroll` nodes and unlocks the gate.
 //! - **Metadata is dropped.** `var_names`, `var_types`, `var_spans`,
 //!   and `input_spans` are not reattached to the materialized
 //!   program: SSA renumbering through the interner makes the
@@ -30,6 +31,29 @@
 //!   Inputs containing `Instruction::Div`, `IntDiv`, or `IntMod`
 //!   bubble up the walker error. These desugarings are deferred to
 //!   Phase 4.
+//! - **Walker desugarings break strict oracle equivalence on a
+//!   subset of variants.** This is the surprising Stage-1 finding —
+//!   the Walker rewrites `Assert(x)` → `AssertEq(x, one)` (with a
+//!   hoisted `Const(1)`), `Not(x)` → `Sub(one, x)`, `And` → `Mul`,
+//!   `Or` → `Add - Mul`, `IsNeq` → `Sub(one, IsEq)`, `IsLe` →
+//!   `Sub(one, IsLt(swap))`, `IsLtBounded`/`IsLeBounded` similarly.
+//!   The rewrites are SEMANTICALLY equivalent at proof time but
+//!   produce a DIFFERENT R1CS constraint multiset (the new `one`
+//!   wire perturbs the linear-combination shape). The oracle's
+//!   step-3 multiset compare is bit-strict, so any fixture whose
+//!   legacy `IrProgram` contains those variants will be classified
+//!   `ConstraintsDiffer` even though both pipelines compute the
+//!   same circuit. The Stage-1 cross-validation test
+//!   (`zkc/tests/lysis_roundtrip_smoke.rs`) works around this by
+//!   building fixtures from the variant subset the Walker
+//!   round-trips byte-identical: `Const`, `Input`, `Add`, `Sub`,
+//!   `Mul`, `IsEq`, `IsLt`, `Mux`, `AssertEq`, `RangeCheck`,
+//!   `Decompose`, `PoseidonHash`. This covers ~80 % of what circom
+//!   actually emits today; the missing 20 % is what Stage 2 has to
+//!   reconcile (probable resolution: emit the primitive form
+//!   directly from `instantiate` so `Plain` wrapping never sees
+//!   `Assert`/`Not`/`And`/`Or`/`Bounded` variants in the first
+//!   place — those become Stage-2 cleanup of the legacy emitter).
 
 use ir_core::{Instruction, IrProgram};
 use lysis::{execute, expected_family, InterningSink, LysisConfig, LysisError};
