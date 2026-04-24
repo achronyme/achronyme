@@ -27,7 +27,7 @@ artik = { path = "../artik" }
 lysis-frontend = []
 
 [dev-dependencies]
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 proving = { path = "../proving" }

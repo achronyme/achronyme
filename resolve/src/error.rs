@@ -150,7 +150,7 @@ pub enum ResolveError {
     /// A module imports itself (directly or transitively) while the
     /// graph builder is still descending its DFS stack — i.e. a true
     /// cycle, not a diamond re-use. Matches the semantics of the legacy
-    /// `CircularImport` error in `compiler::CompilerError`; Phase 6
+    /// `CircularImport` error in `akronc::CompilerError`; Phase 6
     /// cleanup will collapse the two into this one.
     ModuleCycle {
         /// Canonical path of the module that completed the cycle.

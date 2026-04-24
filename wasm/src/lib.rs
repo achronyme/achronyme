@@ -2,7 +2,7 @@ use std::cell::RefCell;
 
 use wasm_bindgen::prelude::*;
 
-use compiler::Compiler;
+use akronc::Compiler;
 use memory::{Closure, Function, Value};
 use akron::error::RuntimeError;
 use akron::native::NativeObj;

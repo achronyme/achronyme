@@ -24,7 +24,7 @@ version = "0.1.0-beta.19"
 dependencies = [
  "ach-macros",
  "akron",
- "compiler",
+ "akronc",
  "memory",
  "resolve",
 ]
@@ -55,13 +55,32 @@ name = "akron"
 version = "0.1.0-beta.19"
 dependencies = [
  "ach-macros",
+ "akronc",
  "byteorder",
- "compiler",
  "constraints",
  "ir",
  "ir-forge",
  "memory",
  "resolve",
+ "zkc",
+]
+
+[[package]]
+name = "akronc"
+version = "0.1.0-beta.19"
+dependencies = [
+ "achronyme-parser",
+ "akron",
+ "artik",
+ "circom",
+ "constraints",
+ "ir",
+ "ir-forge",
+ "memory",
+ "proptest",
+ "resolve",
+ "serde_json",
+ "tempfile",
  "zkc",
 ]
 
@@ -528,8 +547,8 @@ name = "circom"
 version = "0.1.0-beta.19"
 dependencies = [
  "akron",
+ "akronc",
  "artik",
- "compiler",
  "constraints",
  "diagnostics",
  "ir",
@@ -588,11 +607,11 @@ dependencies = [
  "achronyme-parser",
  "achronyme-std",
  "akron",
+ "akronc",
  "anyhow",
  "byteorder",
  "circom",
  "clap",
- "compiler",
  "constraints",
  "diagnostics",
  "getrandom 0.2.17",
@@ -618,25 +637,6 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "b05b61dc5112cbb17e4b6cd61790d9845d13888356391624cbe7e41efeac1e75"
 
 [[package]]
-name = "compiler"
-version = "0.1.0-beta.19"
-dependencies = [
- "achronyme-parser",
- "akron",
- "artik",
- "circom",
- "constraints",
- "ir",
- "ir-forge",
- "memory",
- "proptest",
- "resolve",
- "serde_json",
- "tempfile",
- "zkc",
-]
-
-[[package]]
 name = "constant_time_eq"
 version = "0.4.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -646,7 +646,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 name = "constraints"
 version = "0.1.0-beta.19"
 dependencies = [
- "compiler",
+ "akronc",
  "ir",
  "ir-core",
  "memory",
@@ -1399,6 +1399,7 @@ name = "proving"
 version = "0.1.0-beta.19"
 dependencies = [
  "akron",
+ "akronc",
  "ark-bls12-381",
  "ark-bn254",
  "ark-ec",
@@ -1408,7 +1409,6 @@ dependencies = [
  "ark-serialize",
  "ark-snark",
  "ark-std",
- "compiler",
  "constraints",
  "halo2_proofs",
  "memory",
@@ -2226,8 +2226,8 @@ name = "zkc"
 version = "0.1.0-beta.19"
 dependencies = [
  "achronyme-parser",
+ "akronc",
  "artik",
- "compiler",
  "constraints",
  "ir",
  "ir-core",

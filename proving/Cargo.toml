@@ -39,7 +39,7 @@ plonk-bn254 = ["dep:halo2_proofs", "dep:rand"]
 # Achronyme crates
 memory = { path = "../memory" }
 constraints = { path = "../constraints" }
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 zkc = { path = "../zkc" }
 akron = { path = "../akron" }
 

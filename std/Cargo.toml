@@ -16,5 +16,5 @@ akron = { path = "../akron" }
 ach-macros = { path = "../ach-macros" }
 
 [dev-dependencies]
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 resolve = { path = "../resolve" }

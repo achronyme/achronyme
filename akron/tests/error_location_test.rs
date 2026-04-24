@@ -1,5 +1,5 @@
 use akron::{CallFrame, VM};
-use compiler::Compiler;
+use akronc::Compiler;
 use memory::Function;
 
 /// Helper: compile source, run VM, return the VM (for inspecting error location).

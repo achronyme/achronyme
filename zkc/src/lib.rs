@@ -8,11 +8,11 @@
 //!
 //! Plus the supporting layers:
 //! - [`witness`] — `WitnessOp` log + replay machinery (formerly
-//!   `compiler::witness_gen`).
+//!   `akronc::witness_gen`).
 //! - [`r1cs_witness`] — R1CS-specific witness generator over `WitnessOp`.
 //! - [`r1cs_gadgets`] — shared gadget helpers (power-of-two, etc.).
 //! - [`error`] — `R1CSError` + related types (formerly
-//!   `compiler::r1cs_error`).
+//!   `akronc::r1cs_error`).
 //! - [`lysis_oracle`] — A/B oracle that compares Lysis-lowered programs
 //!   against the legacy instantiate path.
 

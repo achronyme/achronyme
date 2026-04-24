@@ -1,5 +1,5 @@
 use akron::{CallFrame, VM};
-use compiler::Compiler;
+use akronc::Compiler;
 use memory::Function;
 
 /// Helper: compile and run Achronyme source, returning the VM after execution.

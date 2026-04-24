@@ -5,7 +5,7 @@
 
 use akron::opcode::instruction::{encode_abc, encode_abx};
 use akron::{CallFrame, OpCode, RuntimeError, MAX_FRAMES, VM};
-use compiler::Compiler;
+use akronc::Compiler;
 use memory::{Closure, Function, Value};
 
 // ======================================================================

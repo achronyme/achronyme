@@ -1,6 +1,6 @@
 [package]
-name = "compiler"
-description = "Bytecode compiler for Achronyme — lowers AST to Akron bytecode. Constraint-system backends now live in `zkc`."
+name = "akronc"
+description = "Akron Compiler — lowers Achronyme AST to Akron bytecode. (Constraint-system backends live in `zkc`; ProveIR template compilation in `ir-forge`.)"
 version.workspace = true
 edition.workspace = true
 license.workspace = true

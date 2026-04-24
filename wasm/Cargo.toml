@@ -13,7 +13,7 @@ crate-type = ["cdylib"]
 
 [dependencies]
 wasm-bindgen = "0.2"
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 akron = { path = "../akron" }
 memory = { path = "../memory" }
 ach-lsp-core = { git = "https://github.com/achronyme/achronyme-editor.git" }

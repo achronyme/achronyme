@@ -16,7 +16,7 @@ ir-core = { path = "../ir-core" }
 serde_json = "1"
 
 [dev-dependencies]
-compiler = { path = "../compiler" }
+akronc = { path = "../akronc" }
 zkc = { path = "../zkc" }
 ir = { path = "../ir" }
 tempfile = "3"

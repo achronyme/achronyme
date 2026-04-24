@@ -14,7 +14,7 @@
 //! 5. Compilation itself still succeeds — the shadow path is
 //!    observation only.
 
-use compiler::Compiler;
+use akronc::Compiler;
 use resolve::CallableKind;
 
 /// Helper: compile a source string and return the resolver hits plus
