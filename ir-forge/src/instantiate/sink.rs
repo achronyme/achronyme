@@ -163,13 +163,11 @@ impl<'a, F: FieldBackend> InstrSink<F> for LegacySink<'a, F> {
 /// it will swap the active push target to a sub-buffer for the body
 /// builder, then emit a single `LoopUnroll { iter_var, start, end,
 /// body: sub_vec }` to the outer stream.
-#[allow(dead_code)] // Wired in by commit 2.4 (instantiate_extended API).
 pub(crate) struct ExtendedSink<'a, F: FieldBackend> {
     body: &'a mut Vec<ExtendedInstruction<F>>,
     metadata: &'a mut IrProgram<F>,
 }
 
-#[allow(dead_code)] // Wired in by commit 2.4 (instantiate_extended API).
 impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
     pub(crate) fn new(
         body: &'a mut Vec<ExtendedInstruction<F>>,

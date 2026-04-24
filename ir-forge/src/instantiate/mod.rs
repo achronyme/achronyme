@@ -41,9 +41,6 @@ use memory::{FieldBackend, FieldElement};
 
 use ir_core::{IrType, SsaVar};
 
-// `ExtendedSink` is exported here so commit 2.4 can wire it in
-// from `api`; until then it remains unused at the call sites.
-#[allow(unused_imports)]
 pub(super) use sink::{ExtendedSink, InstrSink, LegacySink};
 
 /// Maximum iterations allowed during instantiation (loop unrolling).
