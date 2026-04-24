@@ -1,0 +1,28 @@
+[package]
+name = "zkc"
+description = "ZK constraint compiler: lowers SSA IR to R1CS / Plonkish constraint systems, manages witness generation, and dispatches the Lysis-vs-classic oracle. Sits between `ir`/`ir-forge` (frontend SSA) and `proving` (snark proofs)."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+memory = { path = "../memory" }
+constraints = { path = "../constraints" }
+ir = { path = "../ir" }
+ir-core = { path = "../ir-core" }
+ir-forge = { path = "../ir-forge" }
+artik = { path = "../artik" }
+
+[dev-dependencies]
+proptest = "1"
+serde_json = "1"
+tempfile = "3"
+constraints = { path = "../constraints" }
+compiler = { path = "../compiler" }
+proving = { path = "../proving" }
+achronyme-parser = { path = "../achronyme-parser" }

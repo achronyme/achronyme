@@ -12,6 +12,7 @@ libfuzzer-sys = "0.4"
 achronyme-parser = { path = "../achronyme-parser" }
 ir = { path = "../ir" }
 compiler = { path = "../compiler" }
+zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 memory = { path = "../memory" }
 artik = { path = "../artik" }

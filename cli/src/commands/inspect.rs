@@ -6,11 +6,11 @@ use std::rc::Rc;
 use anyhow::{Context, Result};
 
 use akron::{ProveError, ProveHandler, ProveResult, VerifyHandler};
-use compiler::r1cs_backend::R1CSCompiler;
 use ir::inspector::{build_inspector_graph, InspectorGraph};
 use ir::SsaVar;
 use ir_forge::ProveIrCompiler;
 use memory::FieldElement;
+use zkc::r1cs_backend::R1CSCompiler;
 
 use super::ErrorFormat;
 

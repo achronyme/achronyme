@@ -21,8 +21,8 @@
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 
-use compiler::r1cs_backend::R1CSCompiler;
 use memory::{Bn254Fr, FieldElement};
+use zkc::r1cs_backend::R1CSCompiler;
 
 // ── Test result tracking ─────────────────────────────────────────
 
@@ -1889,9 +1889,9 @@ fn fn_witness_lift_e2e_groth16_triangle_sum() {
 /// IBin at u32 → FieldFromInt → write slot → R1CS witness wire).
 #[test]
 fn fn_witness_lift_e2e_r1cs_bitops_dispatch() {
-    use compiler::r1cs_backend::R1CSCompiler;
     use memory::{Bn254Fr, FieldElement};
     use std::collections::{HashMap, HashSet};
+    use zkc::r1cs_backend::R1CSCompiler;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_bitops_test.circom");
@@ -1951,9 +1951,9 @@ fn fn_witness_lift_e2e_r1cs_bitops_dispatch() {
 /// downstream `===` constraint expects.
 #[test]
 fn fn_witness_lift_e2e_r1cs_artik_dispatch() {
-    use compiler::r1cs_backend::R1CSCompiler;
     use memory::{Bn254Fr, FieldElement};
     use std::collections::{HashMap, HashSet};
+    use zkc::r1cs_backend::R1CSCompiler;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_loop_test.circom");

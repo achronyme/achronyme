@@ -6,7 +6,6 @@
 use std::path::Path;
 
 use akron::ProveResult;
-use compiler::plonkish_backend::PlonkishCompiler;
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner, Value};
 use halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine};
 use halo2_proofs::halo2curves::ff::PrimeField;
@@ -25,6 +24,7 @@ use halo2_proofs::transcript::{
 use halo2_proofs::SerdeFormat;
 use memory::FieldElement;
 use rand::rngs::OsRng;
+use zkc::plonkish_backend::PlonkishCompiler;
 
 // ============================================================================
 // Field conversion

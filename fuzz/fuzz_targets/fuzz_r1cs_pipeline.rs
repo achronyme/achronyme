@@ -34,7 +34,7 @@ fuzz_target!(|data: &[u8]| {
 
             // Phase 3: R1CS compile
             let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
-            let mut compiler = compiler::r1cs_backend::R1CSCompiler::new();
+            let mut compiler = zkc::r1cs_backend::R1CSCompiler::new();
             compiler.set_proven_boolean(proven);
 
             // Build dummy inputs (zero for everything)
