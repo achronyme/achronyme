@@ -26,3 +26,4 @@ constraints = { path = "../constraints" }
 akronc = { path = "../akronc" }
 proving = { path = "../proving" }
 achronyme-parser = { path = "../achronyme-parser" }
+ir-forge = { path = "../ir-forge", features = ["test-support"] }
