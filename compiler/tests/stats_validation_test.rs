@@ -1,6 +1,6 @@
 /// Validates that the static CircuitStats cost model matches actual R1CS
 /// constraint counts from the R1CSCompiler backend.
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::stats::CircuitStats;
 use ir::IrLowering;

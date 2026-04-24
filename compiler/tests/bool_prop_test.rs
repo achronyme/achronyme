@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::WitnessGenerator;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
 use memory::{Bn254Fr, FieldElement};
@@ -245,7 +245,7 @@ assert(both)
 
 #[test]
 fn bool_prop_plonkish_reduces_rows() {
-    use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+    use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 
     let source = r#"
 let eq = x == y

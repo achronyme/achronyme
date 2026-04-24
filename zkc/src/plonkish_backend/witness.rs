@@ -102,7 +102,7 @@ impl<F: FieldBackend> PlonkishWitnessGenerator<F> {
                     let a_limbs = a_val.to_canonical();
                     let b_limbs = b_val.to_canonical();
                     let (q_val, r_val) =
-                        crate::witness_gen::int_divmod_field_pub::<F>(&a_limbs, &b_limbs);
+                        crate::witness::int_divmod_field_pub::<F>(&a_limbs, &b_limbs);
                     assignments.set(q.column, q.row, q_val);
                     assignments.set(r.column, r.row, r_val);
                 }

@@ -6,8 +6,8 @@
 use std::collections::HashMap;
 
 use akron::ProveResult;
-use compiler::plonkish_backend::PlonkishCompiler;
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::plonkish_backend::PlonkishCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use memory::FieldElement;
 
 fn fe(n: u64) -> FieldElement {

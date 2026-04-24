@@ -1,6 +1,6 @@
 [package]
 name = "compiler"
-description = "Bytecode compiler, R1CS backend, and Plonkish backend for Achronyme."
+description = "Bytecode compiler for Achronyme — lowers AST to Akron bytecode. Constraint-system backends now live in `zkc`."
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -25,3 +25,4 @@ artik = { path = "../artik" }
 proptest = "1"
 serde_json = "1"
 tempfile = "3"
+zkc = { path = "../zkc" }

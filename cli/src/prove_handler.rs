@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use std::rc::Rc;
 
 use akron::{ProveError, ProveHandler, ProveResult, VerifyHandler};
-use compiler::plonkish_backend::PlonkishCompiler;
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::plonkish_backend::PlonkishCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use memory::FieldElement;
 
 use memory::field::PrimeId;

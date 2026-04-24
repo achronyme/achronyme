@@ -77,8 +77,8 @@ fn test_r1cs_and_wtns_consistent_wire_count() {
 /// Integration test: compile through the full pipeline and verify export.
 #[test]
 fn test_e2e_pipeline_export() {
-    use compiler::r1cs_backend::R1CSCompiler;
-    use compiler::witness_gen::WitnessGenerator;
+    use zkc::r1cs_backend::R1CSCompiler;
+    use zkc::witness::WitnessGenerator;
     use ir::IrLowering;
     use std::collections::HashMap;
 
@@ -160,8 +160,8 @@ fn test_snarkjs_groth16_full() {
         return;
     }
 
-    use compiler::r1cs_backend::R1CSCompiler;
-    use compiler::witness_gen::WitnessGenerator;
+    use zkc::r1cs_backend::R1CSCompiler;
+    use zkc::witness::WitnessGenerator;
     use ir::IrLowering;
     use std::collections::HashMap;
 
@@ -265,7 +265,7 @@ fn test_snarkjs_groth16_full() {
 /// Integration test: compile a circuit through the Plonkish pipeline and export to JSON.
 #[test]
 fn test_plonkish_json_export_roundtrip() {
-    use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+    use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
     use ir::IrLowering;
     use std::collections::HashMap;
 
@@ -305,8 +305,8 @@ fn test_snarkjs_r1cs_info() {
         return;
     }
 
-    use compiler::r1cs_backend::R1CSCompiler;
-    use compiler::witness_gen::WitnessGenerator;
+    use zkc::r1cs_backend::R1CSCompiler;
+    use zkc::witness::WitnessGenerator;
     use ir::IrLowering;
     use std::collections::HashMap;
 

@@ -9,7 +9,7 @@
 use std::collections::HashMap;
 
 use akron::ProveResult;
-use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
 use memory::FieldElement;

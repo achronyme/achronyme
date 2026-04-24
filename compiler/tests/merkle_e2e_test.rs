@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::WitnessGenerator;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use constraints::{write_r1cs, write_wtns};
 use ir::IrLowering;

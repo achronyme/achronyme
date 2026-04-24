@@ -4,8 +4,8 @@ use std::collections::HashMap;
 use constraints::PoseidonParamsProvider;
 
 use crate::r1cs_backend::R1CSCompiler;
-use crate::r1cs_error::R1CSError;
-use crate::witness_gen::{fill_poseidon_witness, int_divmod_field_pub, WitnessOp};
+use crate::error::R1CSError;
+use crate::witness::{fill_poseidon_witness, int_divmod_field_pub, WitnessOp};
 
 use ir::types::IrProgram;
 
@@ -27,7 +27,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     ///
     /// ```
     /// use std::collections::HashMap;
-    /// use compiler::r1cs_backend::R1CSCompiler;
+    /// use zkc::r1cs_backend::R1CSCompiler;
     /// use ir::IrLowering;
     /// use memory::FieldElement;
     ///
@@ -160,7 +160,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     inputs,
                     program_bytes,
                 } => {
-                    crate::witness_gen::dispatch_artik_call::<F>(
+                    crate::witness::dispatch_artik_call::<F>(
                         outputs,
                         inputs,
                         program_bytes,

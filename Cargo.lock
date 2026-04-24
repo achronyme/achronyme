@@ -62,6 +62,7 @@ dependencies = [
  "ir-forge",
  "memory",
  "resolve",
+ "zkc",
 ]
 
 [[package]]
@@ -537,6 +538,7 @@ dependencies = [
  "proving",
  "tempfile",
  "toml",
+ "zkc",
 ]
 
 [[package]]
@@ -606,6 +608,7 @@ dependencies = [
  "tempfile",
  "tiny_http",
  "toml",
+ "zkc",
 ]
 
 [[package]]
@@ -630,6 +633,7 @@ dependencies = [
  "resolve",
  "serde_json",
  "tempfile",
+ "zkc",
 ]
 
 [[package]]
@@ -648,6 +652,7 @@ dependencies = [
  "memory",
  "serde_json",
  "tempfile",
+ "zkc",
 ]
 
 [[package]]
@@ -1410,6 +1415,7 @@ dependencies = [
  "rand 0.8.5",
  "serde_json",
  "sha2",
+ "zkc",
 ]
 
 [[package]]
@@ -2213,6 +2219,20 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.117",
+]
+
+[[package]]
+name = "zkc"
+version = "0.1.0-beta.19"
+dependencies = [
+ "artik",
+ "constraints",
+ "ir",
+ "ir-core",
+ "ir-forge",
+ "memory",
+ "proptest",
+ "tempfile",
 ]
 
 [[package]]

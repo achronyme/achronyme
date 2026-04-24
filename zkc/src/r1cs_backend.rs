@@ -8,9 +8,9 @@ use std::collections::HashMap;
 
 use ir::types::{Instruction as IrInstruction, IrProgram, SsaVar, Visibility as IrVisibility};
 
-use crate::r1cs_error::R1CSError;
+use crate::error::R1CSError;
 use crate::r1cs_gadgets::power_of_two_generic;
-use crate::witness_gen::WitnessOp;
+use crate::witness::WitnessOp;
 
 /// Maps an R1CS constraint back to the IR instruction that generated it.
 #[derive(Debug, Clone)]
@@ -135,7 +135,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
 
         if !subs.is_empty() {
             // Update witness ops
-            crate::witness_gen::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
+            crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
 
             // Filter constraint_origins to match the new constraint list.
             // We need to rebuild it: the optimization removed some constraints
@@ -162,7 +162,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let (subs, stats) = self.cs.optimize_o2();
 
         if !subs.is_empty() {
-            crate::witness_gen::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
+            crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
             self.constraint_origins.clear();
             self.substitution_map = Some(subs);
         }
@@ -214,7 +214,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// Compile an SSA IR program into R1CS constraints.
     ///
     /// ```
-    /// use compiler::r1cs_backend::R1CSCompiler;
+    /// use zkc::r1cs_backend::R1CSCompiler;
     /// use ir::IrLowering;
     ///
     /// let prog: ir::types::IrProgram = IrLowering::lower_circuit("assert_eq(x * y, z)", &["z"], &["x", "y"]).unwrap();

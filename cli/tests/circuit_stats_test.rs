@@ -142,7 +142,7 @@ fn circuit_stats_disabled_no_crash() {
 
 #[test]
 fn stats_matches_actual_r1cs_count_for_merkle() {
-    use compiler::r1cs_backend::R1CSCompiler;
+    use zkc::r1cs_backend::R1CSCompiler;
     use ir::passes::bool_prop::compute_proven_boolean;
     use ir::stats::CircuitStats;
     use ir_forge::ProveIrCompiler;

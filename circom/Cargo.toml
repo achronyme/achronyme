@@ -28,6 +28,7 @@ lysis-frontend = []
 
 [dev-dependencies]
 compiler = { path = "../compiler" }
+zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 proving = { path = "../proving" }
 akron = { path = "../akron" }

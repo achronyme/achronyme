@@ -121,7 +121,7 @@ impl ProveHandler for RealProveHandler {
         prove_ir_bytes: &[u8],
         scope_values: &HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
-        use compiler::r1cs_backend::R1CSCompiler;
+        use zkc::r1cs_backend::R1CSCompiler;
 
         let (prove_ir, _prime_id) = ir_forge::ProveIR::from_bytes(prove_ir_bytes)
             .map_err(|e| ProveError::IrLowering(format!("ProveIR: {e}")))?;

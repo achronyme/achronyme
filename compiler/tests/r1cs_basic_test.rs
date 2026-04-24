@@ -1,5 +1,5 @@
-use compiler::r1cs_backend::R1CSCompiler;
-use compiler::r1cs_error::R1CSError;
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::error::R1CSError;
 use memory::Bn254Fr;
 
 #[test]

@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 use std::process::Command;
 
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use constraints::{write_r1cs, write_wtns};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;

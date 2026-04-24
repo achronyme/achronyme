@@ -18,7 +18,7 @@ use std::collections::HashMap;
 use std::path::Path;
 use std::time::Instant;
 
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use memory::{Bn254Fr, FieldElement};
 
 /// Profile a single Circom circuit through the full pipeline.

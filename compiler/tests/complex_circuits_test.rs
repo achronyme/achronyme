@@ -5,9 +5,9 @@
 
 use std::collections::HashMap;
 
-use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
-use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::WitnessGenerator;
+use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use ir::IrLowering;
 use memory::FieldElement;

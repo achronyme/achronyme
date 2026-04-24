@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 
-use compiler::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
+use zkc::plonkish_backend::{PlonkishCompiler, PlonkishWitnessGenerator};
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::types::{Instruction, IrProgram, Visibility};
 use memory::{Bn254Fr, FieldElement};

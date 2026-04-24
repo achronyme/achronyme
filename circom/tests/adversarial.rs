@@ -19,7 +19,7 @@
 use std::collections::HashMap;
 use std::path::Path;
 
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use constraints::r1cs::Variable;
 use memory::{Bn254Fr, FieldElement};
 

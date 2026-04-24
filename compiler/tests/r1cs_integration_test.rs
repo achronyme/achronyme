@@ -1,4 +1,4 @@
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use ir::IrLowering;
 use memory::FieldElement;
 

@@ -671,7 +671,7 @@ fn circom_prove_e2e(
     src: &str,
     user_inputs: &[(&str, u64)],
 ) -> (usize, usize, usize, akron::ProveResult) {
-    use compiler::r1cs_backend::R1CSCompiler;
+    use zkc::r1cs_backend::R1CSCompiler;
     use memory::{Bn254Fr, FieldElement};
     use std::collections::HashMap;
 

@@ -19,6 +19,7 @@ resolve = { path = "../resolve" }
 
 [dev-dependencies]
 compiler = { path = "../compiler" }
+zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 ir = { path = "../ir" }
 ir-forge = { path = "../ir-forge" }

@@ -27,7 +27,7 @@
 
 use std::collections::HashMap;
 
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use ir::passes::bool_prop::compute_proven_boolean;
 use ir::IrLowering;
 use memory::FieldElement;

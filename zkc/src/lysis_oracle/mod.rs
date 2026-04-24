@@ -7,7 +7,7 @@
 //! 2. Verify the public-input partition is bit-identical.
 //! 3. Compile both to R1CS via [`crate::r1cs_backend::R1CSCompiler`] and
 //!    compare the constraint sets as a multiset.
-//! 4. Solve both with each test input via [`crate::witness_gen::WitnessGenerator`]
+//! 4. Solve both with each test input via [`crate::witness::WitnessGenerator`]
 //!    and compare the resulting witness vectors.
 //!
 //! Lives in `compiler/` rather than `ir/` because steps 3–4 call the

@@ -1,7 +1,7 @@
 //! Phase 3.C.3 oracle fixtures.
 //!
 //! Each fixture builds two `IrProgram<F>`s programmatically and asserts
-//! that [`compiler::lysis_oracle::semantic_equivalence`] classifies
+//! that [`zkc::lysis_oracle::semantic_equivalence`] classifies
 //! them into the expected [`OracleResult`] variant. The canonical
 //! regression (`oracle_shared_vs_duplicated`) runs first; if it misses
 //! `Equivalent`, the whole Lysis design premise is broken (rollback per
@@ -24,7 +24,7 @@
 
 use std::collections::HashMap;
 
-use compiler::lysis_oracle::{semantic_equivalence, OracleResult};
+use zkc::lysis_oracle::{semantic_equivalence, OracleResult};
 use ir::types::{Instruction, IrProgram, SsaVar, Visibility};
 use memory::{Bn254Fr, FieldElement};
 

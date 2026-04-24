@@ -3,8 +3,8 @@ use std::fs;
 
 use anyhow::{Context, Result};
 
-use compiler::plonkish_backend::PlonkishCompiler;
-use compiler::r1cs_backend::R1CSCompiler;
+use zkc::plonkish_backend::PlonkishCompiler;
+use zkc::r1cs_backend::R1CSCompiler;
 use constraints::PoseidonParamsProvider;
 use constraints::{write_r1cs, write_wtns};
 use ir_forge::ProveIrCompiler;

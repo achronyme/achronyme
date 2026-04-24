@@ -30,7 +30,7 @@
 //!    constraints while one system carries unreferenced wires.
 //!
 //! 4. **Witness agreement**. For each provided test input, solve both
-//!    R1CSs (`crate::witness_gen::WitnessGenerator`) and compare the
+//!    R1CSs (`crate::witness::WitnessGenerator`) and compare the
 //!    resulting witness vectors element-wise. This catches the case
 //!    where the constraint set is identical but the
 //!    witness-computation pipeline (e.g., an Artik blob) diverges.
@@ -44,7 +44,7 @@ use ir::types::{Instruction, IrProgram, Visibility};
 use memory::{FieldBackend, FieldElement};
 
 use crate::r1cs_backend::R1CSCompiler;
-use crate::witness_gen::WitnessGenerator;
+use crate::witness::WitnessGenerator;
 
 /// Outcome of [`semantic_equivalence`].
 #[derive(Debug, Clone, PartialEq, Eq)]

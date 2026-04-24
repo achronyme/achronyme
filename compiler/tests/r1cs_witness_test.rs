@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 
-use compiler::r1cs_backend::R1CSCompiler;
-use compiler::witness_gen::{WitnessError, WitnessGenerator};
+use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::{WitnessError, WitnessGenerator};
 use constraints::poseidon::{poseidon_hash, PoseidonParams};
 use ir::IrLowering;
 use memory::{Bn254Fr, FieldElement};
