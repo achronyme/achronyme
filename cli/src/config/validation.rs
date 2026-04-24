@@ -57,6 +57,16 @@ pub(super) fn validate(toml: &AchronymeToml) -> Result<()> {
         }
     }
 
+    if let Some(ref circom) = toml.circom {
+        if let Some(ref f) = circom.frontend {
+            if !matches!(f.as_str(), "legacy" | "lysis") {
+                anyhow::bail!(
+                    "achronyme.toml: invalid circom.frontend `{f}` (expected \"legacy\" or \"lysis\")"
+                );
+            }
+        }
+    }
+
     Ok(())
 }
 

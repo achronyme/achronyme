@@ -73,6 +73,24 @@ pub struct CircuitSection {
 #[serde(deny_unknown_fields)]
 pub struct CircomSection {
     pub libs: Option<Vec<String>>,
+    /// Which instantiation pipeline `ach circom` should use:
+    /// - `"legacy"` (default): the eager `ProveIR::instantiate_with_outputs`
+    ///   path. Stable, byte-identical to pre-Phase-3.C.6 output.
+    /// - `"lysis"`: the new `ProveIR::instantiate_lysis_with_outputs`
+    ///   path. Same R1CS multiset (validated by `zkc::lysis_oracle`)
+    ///   but uses `ExtendedInstruction::LoopUnroll` + InterningSink
+    ///   hash-cons to collapse identical sub-trees across loop
+    ///   iterations. Necessary for at-scale circuits (SHA-256(64),
+    ///   Merkle depth >30) where eager unrolling triggers OOM.
+    pub frontend: Option<String>,
+}
+
+/// Resolved circom instantiation pipeline. See `CircomSection::frontend`.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub enum CircomFrontend {
+    #[default]
+    Legacy,
+    Lysis,
 }
 
 // ---------------------------------------------------------------------------
@@ -100,6 +118,7 @@ pub struct ProjectConfig {
     pub gc_stats: bool,
     pub circuit_stats: bool,
     pub circom_lib_dirs: Vec<PathBuf>,
+    pub circom_frontend: CircomFrontend,
 }
 
 // ---------------------------------------------------------------------------

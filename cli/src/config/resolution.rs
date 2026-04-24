@@ -166,6 +166,16 @@ pub fn resolve_config(
         })
         .unwrap_or_default();
 
+    // Circom frontend pipeline: TOML circom.frontend ("lysis" | "legacy",
+    // default "legacy"). Validated upstream by `validation::validate`.
+    let circom_frontend = toml
+        .and_then(|t| t.circom.as_ref()?.frontend.as_deref())
+        .map(|f| match f {
+            "lysis" => super::CircomFrontend::Lysis,
+            _ => super::CircomFrontend::Legacy,
+        })
+        .unwrap_or_default();
+
     ProjectConfig {
         project_root: project_root.map(|p| p.to_path_buf()),
         project_name,
@@ -185,6 +195,7 @@ pub fn resolve_config(
         gc_stats,
         circuit_stats,
         circom_lib_dirs,
+        circom_frontend,
     }
 }
 

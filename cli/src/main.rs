@@ -161,6 +161,7 @@ fn main() -> Result<()> {
                 cfg.circuit_stats,
                 &merged_lib_dirs,
                 ef,
+                cfg.circom_frontend,
             )
         }
 
