@@ -81,10 +81,17 @@ impl<F: FieldBackend> Instantiator<F> {
             }
             CircuitNode::Assert { expr, message, .. } => {
                 let operand = self.emit_expr(expr)?;
+                // Lower Assert(x) → AssertEq(x, 1). The Lysis lifter's
+                // Walker performs the same desugaring at lift time;
+                // emitting it here keeps the legacy and Lysis paths
+                // byte-equivalent in R1CS multiset (Phase 3.C.6
+                // Stage 1 finding).
+                let one = self.emit_const(FieldElement::<F>::one());
                 let v = self.program.fresh_var();
-                self.push_inst(Instruction::Assert {
+                self.push_inst(Instruction::AssertEq {
                     result: v,
-                    operand,
+                    lhs: operand,
+                    rhs: one,
                     message: message.clone(),
                 });
             }

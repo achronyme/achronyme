@@ -377,13 +377,29 @@ fn instantiate_comparison_gt_desugars_to_lt() {
 // --- Boolean ops ---
 
 #[test]
-fn instantiate_bool_and() {
+fn instantiate_bool_lowers_and_to_mul() {
+    // `a == 1 && b == 1` lowers to two IsEqs and one Mul (And lowered
+    // to Mul at emission time per Phase 3.C.6 Stage 1; see
+    // ir-forge/src/instantiate/exprs.rs CircuitBoolOp::And). The
+    // outer assert lowers to AssertEq(Mul, 1).
     let ir = compile_and_instantiate("public a\npublic b\nassert(a == 1 && b == 1)");
     let has_and = ir
         .instructions
         .iter()
         .any(|i| matches!(i, Instruction::And { .. }));
-    assert!(has_and);
+    assert!(!has_and, "And must not appear post-lowering");
+    let muls = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Mul { .. }))
+        .count();
+    assert!(muls >= 1, "expected at least one Mul (the And lowering)");
+    let iseqs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::IsEq { .. }))
+        .count();
+    assert_eq!(iseqs, 2, "two `== 1` comparisons");
 }
 
 // --- Function inlining ---
@@ -571,45 +587,83 @@ fn audit_unary_neg() {
     assert_eq!(negs, 1);
 }
 
-// Unary Not
+// Unary Not — lowered to Sub(1, x) at emission time (Phase 3.C.6).
 #[test]
-fn audit_unary_not() {
+fn audit_unary_not_lowers_to_sub() {
     let ir = compile_and_instantiate("public x\npublic out\nassert_eq(!x, out)");
     let nots = ir
         .instructions
         .iter()
         .filter(|i| matches!(i, Instruction::Not { .. }))
         .count();
-    assert_eq!(nots, 1);
+    assert_eq!(nots, 0, "Not must not appear post-lowering");
+    let subs = ir
+        .instructions
+        .iter()
+        .filter(|i| matches!(i, Instruction::Sub { .. }))
+        .count();
+    assert!(subs >= 1, "expected at least one Sub (the Not lowering)");
 }
 
-// Comparison operators Neq, Le, Ge
+// Comparison operators Neq, Le, Ge — lowered at emission time
+// (Phase 3.C.6) so IsNeq / IsLe never appear; the lowered shapes
+// are 1 - IsEq(...) and 1 - IsLt(swap).
 #[test]
-fn audit_comparison_neq() {
+fn audit_comparison_neq_lowers_to_iseq_plus_sub() {
     let ir = compile_and_instantiate("public a\npublic b\nassert(a != b)");
+    assert!(
+        !ir.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsNeq { .. })),
+        "IsNeq must not appear post-lowering"
+    );
     assert!(ir
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::IsNeq { .. })));
+        .any(|i| matches!(i, Instruction::IsEq { .. })));
+    assert!(ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sub { .. })));
 }
 
 #[test]
-fn audit_comparison_le() {
+fn audit_comparison_le_lowers_to_islt_plus_sub() {
     let ir = compile_and_instantiate("public a\npublic b\nassert(a <= b)");
+    assert!(
+        !ir.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsLe { .. })),
+        "IsLe must not appear post-lowering"
+    );
     assert!(ir
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::IsLe { .. })));
+        .any(|i| matches!(i, Instruction::IsLt { .. })));
+    assert!(ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sub { .. })));
 }
 
 #[test]
-fn audit_comparison_ge_desugars_to_le() {
+fn audit_comparison_ge_lowers_to_islt_plus_sub() {
+    // a >= b → 1 - IsLt(a, b)
     let ir = compile_and_instantiate("public a\npublic b\nassert(a >= b)");
-    // a >= b → IsLe(b, a)
+    assert!(
+        !ir.instructions
+            .iter()
+            .any(|i| matches!(i, Instruction::IsLe { .. })),
+        "IsLe must not appear post-lowering"
+    );
     assert!(ir
         .instructions
         .iter()
-        .any(|i| matches!(i, Instruction::IsLe { .. })));
+        .any(|i| matches!(i, Instruction::IsLt { .. })));
+    assert!(ir
+        .instructions
+        .iter()
+        .any(|i| matches!(i, Instruction::Sub { .. })));
 }
 
 // If node with nested constraints in both branches

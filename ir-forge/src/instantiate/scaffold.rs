@@ -52,6 +52,26 @@ impl<F: FieldBackend> Instantiator<F> {
         self.const_values.get(&var).copied()
     }
 
+    /// Lower a logical NOT to its arithmetic primitive: `Sub(1, operand)`.
+    /// Used by `emit_expr` for `CircuitUnaryOp::Not`, by the comparison
+    /// arms (`Neq`, `Le`, `Ge`) for the `1 - IsX(...)` pattern, and by
+    /// `emit_node` for `CircuitNode::Assert`. Centralising the lowering
+    /// keeps the `Const(1)` shared via [`emit_const`]'s cache and matches
+    /// the form `ir-forge::lysis_lift::Walker` produces, so the legacy
+    /// and Lysis pipelines stay byte-equivalent in R1CS multiset
+    /// (Phase 3.C.6 Stage 1 finding).
+    pub(super) fn lower_not(&mut self, operand: SsaVar) -> SsaVar {
+        let one = self.emit_const(FieldElement::<F>::one());
+        let v = self.program.fresh_var();
+        self.push_inst(Instruction::Sub {
+            result: v,
+            lhs: one,
+            rhs: operand,
+        });
+        self.program.set_type(v, IrType::Bool);
+        v
+    }
+
     // -------------------------------------------------------------------
     // Validation
     // -------------------------------------------------------------------

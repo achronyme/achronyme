@@ -143,83 +143,135 @@ impl<F: FieldBackend> Instantiator<F> {
                     }
                 }
 
-                let v = self.program.fresh_var();
-                let inst = match op {
-                    CircuitUnaryOp::Neg => Instruction::Neg {
-                        result: v,
-                        operand: inner,
-                    },
-                    CircuitUnaryOp::Not => Instruction::Not {
-                        result: v,
-                        operand: inner,
-                    },
-                };
-                self.push_inst(inst);
-                let ty = match op {
-                    CircuitUnaryOp::Neg => IrType::Field,
-                    CircuitUnaryOp::Not => IrType::Bool,
-                };
-                self.program.set_type(v, ty);
-                Ok(v)
+                // Lower at emission time: Not / And / Or / IsNeq / IsLe
+                // never appear in instantiate output. The Lysis lifter's
+                // Walker desugars them to the same primitive forms (Sub,
+                // Mul, Add+Mul-Sub, IsEq+Sub, IsLt+Sub) at lift time, so
+                // emitting them here would make the legacy and Lysis
+                // pipelines produce different R1CS multisets even though
+                // they are semantically equivalent. See
+                // `.claude/plans/lysis-phase-3c6.md` Stage-1 finding.
+                match op {
+                    CircuitUnaryOp::Neg => {
+                        let v = self.program.fresh_var();
+                        self.push_inst(Instruction::Neg {
+                            result: v,
+                            operand: inner,
+                        });
+                        self.program.set_type(v, IrType::Field);
+                        Ok(v)
+                    }
+                    CircuitUnaryOp::Not => Ok(self.lower_not(inner)),
+                }
             }
             CircuitExpr::Comparison { op, lhs, rhs } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                let v = self.program.fresh_var();
-                // Gt and Ge are desugared by swapping operands.
-                let inst = match op {
-                    CircuitCmpOp::Eq => Instruction::IsEq {
-                        result: v,
-                        lhs: l,
-                        rhs: r,
-                    },
-                    CircuitCmpOp::Neq => Instruction::IsNeq {
-                        result: v,
-                        lhs: l,
-                        rhs: r,
-                    },
-                    CircuitCmpOp::Lt => Instruction::IsLt {
-                        result: v,
-                        lhs: l,
-                        rhs: r,
-                    },
-                    CircuitCmpOp::Le => Instruction::IsLe {
-                        result: v,
-                        lhs: l,
-                        rhs: r,
-                    },
-                    CircuitCmpOp::Gt => Instruction::IsLt {
-                        result: v,
-                        lhs: r,
-                        rhs: l,
-                    },
-                    CircuitCmpOp::Ge => Instruction::IsLe {
-                        result: v,
-                        lhs: r,
-                        rhs: l,
-                    },
+                // See "lower at emission time" note in UnaryOp branch.
+                let v = match op {
+                    CircuitCmpOp::Eq => {
+                        let v = self.program.fresh_var();
+                        self.push_inst(Instruction::IsEq {
+                            result: v,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        v
+                    }
+                    CircuitCmpOp::Lt => {
+                        let v = self.program.fresh_var();
+                        self.push_inst(Instruction::IsLt {
+                            result: v,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        v
+                    }
+                    CircuitCmpOp::Gt => {
+                        // a > b → IsLt(b, a)
+                        let v = self.program.fresh_var();
+                        self.push_inst(Instruction::IsLt {
+                            result: v,
+                            lhs: r,
+                            rhs: l,
+                        });
+                        v
+                    }
+                    CircuitCmpOp::Neq => {
+                        // a != b → 1 - IsEq(a, b)
+                        let eq = self.program.fresh_var();
+                        self.push_inst(Instruction::IsEq {
+                            result: eq,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        self.program.set_type(eq, IrType::Bool);
+                        self.lower_not(eq)
+                    }
+                    CircuitCmpOp::Le => {
+                        // a <= b → 1 - IsLt(b, a)
+                        let lt = self.program.fresh_var();
+                        self.push_inst(Instruction::IsLt {
+                            result: lt,
+                            lhs: r,
+                            rhs: l,
+                        });
+                        self.program.set_type(lt, IrType::Bool);
+                        self.lower_not(lt)
+                    }
+                    CircuitCmpOp::Ge => {
+                        // a >= b → 1 - IsLt(a, b)
+                        let lt = self.program.fresh_var();
+                        self.push_inst(Instruction::IsLt {
+                            result: lt,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        self.program.set_type(lt, IrType::Bool);
+                        self.lower_not(lt)
+                    }
                 };
-                self.push_inst(inst);
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
             CircuitExpr::BoolOp { op, lhs, rhs } => {
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                let v = self.program.fresh_var();
-                let inst = match op {
-                    CircuitBoolOp::And => Instruction::And {
-                        result: v,
-                        lhs: l,
-                        rhs: r,
-                    },
-                    CircuitBoolOp::Or => Instruction::Or {
-                        result: v,
-                        lhs: l,
-                        rhs: r,
-                    },
+                // See "lower at emission time" note in UnaryOp branch.
+                let v = match op {
+                    CircuitBoolOp::And => {
+                        // x AND y → Mul(x, y) (boolean operands).
+                        let v = self.program.fresh_var();
+                        self.push_inst(Instruction::Mul {
+                            result: v,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        v
+                    }
+                    CircuitBoolOp::Or => {
+                        // x OR y → Add(x, y) - Mul(x, y) (boolean operands).
+                        let sum = self.program.fresh_var();
+                        self.push_inst(Instruction::Add {
+                            result: sum,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        let prod = self.program.fresh_var();
+                        self.push_inst(Instruction::Mul {
+                            result: prod,
+                            lhs: l,
+                            rhs: r,
+                        });
+                        let v = self.program.fresh_var();
+                        self.push_inst(Instruction::Sub {
+                            result: v,
+                            lhs: sum,
+                            rhs: prod,
+                        });
+                        v
+                    }
                 };
-                self.push_inst(inst);
                 self.program.set_type(v, IrType::Bool);
                 Ok(v)
             }
