@@ -248,7 +248,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
 
         match inst {
             IrInstruction::Const { result, value } => {
-                self.lc_map.insert(*result, LinearCombination::from_constant(*value));
+                self.lc_map
+                    .insert(*result, LinearCombination::from_constant(*value));
             }
             IrInstruction::Input {
                 result,
@@ -269,7 +270,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                         v
                     }
                 };
-                self.lc_map.insert(*result, LinearCombination::from_variable(var));
+                self.lc_map
+                    .insert(*result, LinearCombination::from_variable(var));
             }
             IrInstruction::Add { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -285,7 +287,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
             }
             IrInstruction::Neg { result, operand } => {
                 let lc = self.lookup_lc(operand)?;
-                self.lc_map.insert(*result, lc * FieldElement::<F>::one().neg());
+                self.lc_map
+                    .insert(*result, lc * FieldElement::<F>::one().neg());
             }
             IrInstruction::Mul { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -365,8 +368,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let op_lc = self.lookup_lc(operand)?;
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
                 // Skip boolean enforcement if proven boolean or already enforced
-                if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand)
-                {
+                if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand) {
                     self.cs.enforce(
                         op_lc.clone(),
                         one.clone() - op_lc.clone(),
@@ -520,8 +522,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
             } => {
                 let a = self.lookup_lc(lhs)?;
                 let b = self.lookup_lc(rhs)?;
-                let offset =
-                    power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
+                let offset = power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                 let diff = b - a + LinearCombination::from_constant(offset);
                 let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
                 self.lc_map.insert(*result, lt_lc);
@@ -534,8 +535,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
             } => {
                 let a = self.lookup_lc(lhs)?;
                 let b = self.lookup_lc(rhs)?;
-                let offset =
-                    power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
+                let offset = power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                 let diff = a - b + LinearCombination::from_constant(offset);
                 let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
@@ -547,8 +547,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let op_lc = self.lookup_lc(operand)?;
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
                 // Skip boolean enforcement if proven boolean or already enforced
-                if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand)
-                {
+                if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand) {
                     self.cs.enforce(
                         op_lc.clone(),
                         one.clone() - op_lc.clone(),
@@ -592,7 +591,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     internal_count,
                 });
 
-                self.lc_map.insert(*result, LinearCombination::from_variable(hash_var));
+                self.lc_map
+                    .insert(*result, LinearCombination::from_variable(hash_var));
             }
             IrInstruction::Decompose {
                 result,
@@ -626,7 +626,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                         bit_index: i as u32,
                     });
                     // Register each bit in lc_map so subsequent instructions can use it
-                    self.lc_map.insert(*bit_ssa, LinearCombination::from_variable(bit_var));
+                    self.lc_map
+                        .insert(*bit_ssa, LinearCombination::from_variable(bit_var));
                 }
                 self.cs.enforce_equal(src_lc, sum);
                 self.range_bounds.insert(*operand, *num_bits);
@@ -737,7 +738,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 for out_ssa in outputs {
                     let out_var = self.cs.alloc_witness();
                     output_vars.push(out_var);
-                    self.lc_map.insert(*out_ssa, LinearCombination::from_variable(out_var));
+                    self.lc_map
+                        .insert(*out_ssa, LinearCombination::from_variable(out_var));
                 }
                 self.witness_ops.push(WitnessOp::ArtikCall {
                     outputs: output_vars,
