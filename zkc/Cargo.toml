@@ -20,4 +20,9 @@ artik = { path = "../artik" }
 
 [dev-dependencies]
 proptest = "1"
+serde_json = "1"
 tempfile = "3"
+constraints = { path = "../constraints" }
+compiler = { path = "../compiler" }
+proving = { path = "../proving" }
+achronyme-parser = { path = "../achronyme-parser" }

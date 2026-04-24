@@ -2225,13 +2225,17 @@ dependencies = [
 name = "zkc"
 version = "0.1.0-beta.19"
 dependencies = [
+ "achronyme-parser",
  "artik",
+ "compiler",
  "constraints",
  "ir",
  "ir-core",
  "ir-forge",
  "memory",
  "proptest",
+ "proving",
+ "serde_json",
  "tempfile",
 ]
 
