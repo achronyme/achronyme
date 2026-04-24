@@ -123,34 +123,39 @@ fn iszero_template() {
 
 #[test]
 fn num2bits_style() {
+    // Pure var-only body (no signal ops) so the loop stays as
+    // `CircuitNode::For` — a body with any `<--` / `<==` would be
+    // unrolled at lowering by the Phase 1 `IndexedAssignmentLoop`
+    // catch-all.
     let ir = parse_and_lower(
         r#"
-        template Num2Bits() {
+        template VarLoop() {
             signal input in;
             signal output out;
             var lc = 0;
             for (var i = 0; i < 8; i++) {
-                out <-- 1;
                 lc += 1;
             }
+            out <-- lc;
             lc === in;
         }
-        component main = Num2Bits();
+        component main = VarLoop();
         "#,
     );
 
     // var lc = 0 → Let(lc)
     // for loop → For
+    // out <-- lc → Let(out)
     // lc === in → AssertEq
-    assert_eq!(ir.body.len(), 3);
+    assert_eq!(ir.body.len(), 4);
     match &ir.body[1] {
         CircuitNode::For {
             var, range, body, ..
         } => {
             assert_eq!(var, "i");
             assert_eq!(*range, ForRange::Literal { start: 0, end: 8 });
-            // out <-- 1 → Let, lc += 1 → Let
-            assert_eq!(body.len(), 2);
+            // lc += 1 → Let
+            assert_eq!(body.len(), 1);
         }
         other => panic!("expected For, got {:?}", other),
     }
@@ -567,11 +572,16 @@ fn real_num2bits_lowering() {
     // n is a capture (template parameter)
     assert!(!ir.captures.is_empty());
     assert_eq!(ir.captures[0].name, "n");
-    // Body should have: Let(lc1), Let(e2), For { ... }, AssertEq(lc1 === in)
+    // Loop body contains `out[i] <-- ...` where the index references
+    // the loop var `i`, so lowering unrolls it at compile time. The
+    // resulting body is several per-iteration nodes plus the outer
+    // `AssertEq(lc1 === in)`, not a single `CircuitNode::For`.
     assert!(ir.body.len() >= 3, "body has {} nodes", ir.body.len());
-    // Verify the For node exists
-    let has_for = ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. }));
-    assert!(has_for, "should have a For node for the loop");
+    assert!(
+        !ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })),
+        "Num2Bits loop should be unrolled at lowering time \
+         (IndexedAssignmentLoop classification), not emitted as For"
+    );
 }
 
 #[test]

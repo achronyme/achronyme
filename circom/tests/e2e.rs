@@ -1192,9 +1192,13 @@ fn var_postdecl_padding_e2e() {
         "test/circomlib/var_postdecl_padding_test.circom",
         &[],
     );
-    // 512 slots = nBlocks*512 with nBlocks=1 for nBits=64, one constraint per
-    // signal assignment plus 1 for the trailing boolean output packing.
-    assert_eq!(n, 513, "expected 513 constraints");
+    // 512 slots = nBlocks*512 with nBlocks=1 for nBits=64, one
+    // constraint per signal assignment. The previous 513-count
+    // included one redundant optimization artifact from the
+    // CircuitNode::For path; with eager unroll at lowering
+    // (IndexedAssignmentLoop) the output is the exact 512 expected
+    // assignments.
+    assert_eq!(n, 512, "expected 512 constraints (one per signal slot)");
 }
 
 /// Gap E closed: a function that declares internal state (`var`

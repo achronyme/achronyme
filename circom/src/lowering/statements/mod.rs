@@ -872,9 +872,17 @@ mod tests {
 
     #[test]
     fn for_loop_with_literal_bounds() {
-        let nodes = lower_template("signal x; for (var i = 0; i < 8; i++) { x <-- 1; }").unwrap();
-        assert_eq!(nodes.len(), 1);
-        match &nodes[0] {
+        // Pure var-only body: `classify_loop_body` returns `None`
+        // and the loop stays as a `CircuitNode::For`. A body with
+        // any signal op would be unrolled at lowering by the
+        // `IndexedAssignmentLoop` catch-all.
+        let nodes =
+            lower_template("var sum = 0; for (var i = 0; i < 8; i++) { sum = sum + 1; }").unwrap();
+        let for_node = nodes
+            .iter()
+            .find(|n| matches!(n, CircuitNode::For { .. }))
+            .expect("expected a For node");
+        match for_node {
             CircuitNode::For {
                 var, range, body, ..
             } => {
@@ -888,8 +896,13 @@ mod tests {
 
     #[test]
     fn for_loop_le_condition() {
-        let nodes = lower_template("signal x; for (var i = 0; i <= 7; i++) { x <-- 1; }").unwrap();
-        match &nodes[0] {
+        let nodes =
+            lower_template("var sum = 0; for (var i = 0; i <= 7; i++) { sum = sum + 1; }").unwrap();
+        let for_node = nodes
+            .iter()
+            .find(|n| matches!(n, CircuitNode::For { .. }))
+            .expect("expected a For node");
+        match for_node {
             CircuitNode::For { range, .. } => {
                 // i <= 7 → end = 8
                 assert_eq!(*range, ForRange::Literal { start: 0, end: 8 });
