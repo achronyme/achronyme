@@ -644,6 +644,7 @@ version = "0.1.0-beta.19"
 dependencies = [
  "compiler",
  "ir",
+ "ir-core",
  "memory",
  "serde_json",
  "tempfile",
