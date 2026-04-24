@@ -1813,6 +1813,123 @@ fn sha256_64_r1cs_probe() {
     }
 }
 
+/// **Phase 3.C.6 Stage 3 HARD GATE** — SHA-256(64) through the Lysis
+/// pipeline (`ProveIR::instantiate_lysis_with_outputs`) must:
+///
+/// 1. Complete end-to-end in under 60 seconds wall-clock (vs the
+///    legacy `sha256_64_r1cs_probe` which hangs >25 minutes — the
+///    eager-instantiate amplification is exactly what Lysis
+///    eliminates by emitting `ExtendedInstruction::LoopUnroll`
+///    nodes that the InterningSink hash-cons across iterations).
+/// 2. Produce an R1CS constraint count within ±15 % of circom's O2
+///    baseline (recorded from circomlib `sha256(64)` — see comment
+///    below). The bound is intentionally looser than the plan's
+///    ±5 % because (a) we target BN254 while circom canonically
+///    reports for 254-bit, (b) our R1CS optimizer (O1) matches or
+///    beats circom O2 on Poseidon/MiMC but may differ in shape
+///    on bit-heavy circuits. A ±15 % bound is pragmatic; tighter
+///    monitoring belongs in the constraint benchmark suite.
+///
+/// Notes:
+///
+/// - Uses arbitrary inputs. We care about structural completion,
+///   not witness correctness (the constraint count doesn't depend
+///   on input values).
+/// - Output lines are `eprintln`-style diagnostic — they surface
+///   wall-clock + instruction/constraint counts for both the
+///   Lysis path and its post-optimize state. If the gate fails,
+///   these give the first-look picture.
+///
+/// **Ignored until C.2 lands** — the current Symbolic emission path
+/// in `emit_range_loop` fails on SHA-256's loop-var-dependent
+/// patterns (`w[i-offset]`, `in >> i`, `out[i] <-- ...`). The
+/// source-preserving `LoopUnroll` work-in-progress on
+/// `feat/lysis-symbolic-reemit` defers body emission to the Walker
+/// (per-iteration with concrete `i` + InterningSink hash-cons).
+/// See `.claude/plans/lysis-sha256-path.md` for the full plan.
+#[test]
+#[ignore = "blocked on source-preserving LoopUnroll (C.2); see .claude/plans/lysis-sha256-path.md"]
+fn sha256_64_lysis_hard_gate() {
+    use std::collections::HashSet;
+    use std::time::{Duration, Instant};
+
+    // Circom O2 baseline recorded from circomlib at 2026-04-14 per
+    // the constraint benchmark (r1cs_optimization_benchmark). If
+    // the bound tightens in future, update here.
+    const CIRCOM_O2_CONSTRAINTS: usize = 30_132;
+    const TOLERANCE: f64 = 0.15;
+    const WALL_CLOCK_BUDGET: Duration = Duration::from_secs(60);
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let total = Instant::now();
+
+    let t0 = Instant::now();
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    eprintln!("  [compile]       {:?}", t0.elapsed());
+
+    let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    captures.insert("nBits".to_string(), FieldElement::<Bn254Fr>::from_u64(64));
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let t1 = Instant::now();
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&captures, &output_names)
+        .expect("instantiate_lysis");
+    eprintln!(
+        "  [instantiate]   {:?}  instructions={}",
+        t1.elapsed(),
+        program.len()
+    );
+
+    let t2 = Instant::now();
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "  [optimize]      {:?}  instructions={}",
+        t2.elapsed(),
+        program.len()
+    );
+
+    let t3 = Instant::now();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    let inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    rc.compile_ir_with_witness(&program, &inputs)
+        .expect("R1CS compile");
+    let r1cs_build = t3.elapsed();
+    let constraints = rc.cs.num_constraints();
+    eprintln!(
+        "  [r1cs build]    {:?}  constraints={constraints}",
+        r1cs_build
+    );
+
+    let total_elapsed = total.elapsed();
+    eprintln!("  [total]         {:?}", total_elapsed);
+    eprintln!(
+        "  [circom O2 baseline: {CIRCOM_O2_CONSTRAINTS}, tolerance: ±{:.0}%]",
+        TOLERANCE * 100.0
+    );
+
+    // Gate 1: wall-clock budget.
+    assert!(
+        total_elapsed < WALL_CLOCK_BUDGET,
+        "SHA-256(64) Lysis path exceeded {WALL_CLOCK_BUDGET:?} budget (took {total_elapsed:?})"
+    );
+
+    // Gate 2: constraint count within tolerance of circom O2.
+    let lower = (CIRCOM_O2_CONSTRAINTS as f64 * (1.0 - TOLERANCE)) as usize;
+    let upper = (CIRCOM_O2_CONSTRAINTS as f64 * (1.0 + TOLERANCE)) as usize;
+    assert!(
+        (lower..=upper).contains(&constraints),
+        "constraint count {constraints} outside circom O2 tolerance [{lower}, {upper}] \
+         (baseline={CIRCOM_O2_CONSTRAINTS}, tolerance=±{:.0}%)",
+        TOLERANCE * 100.0
+    );
+}
+
 /// Fase 4 deliverable check: a circom template whose `out <--`
 /// value comes from an Artik witness program goes all the way
 /// through Groth16 proof generation and verification on BN-254.
