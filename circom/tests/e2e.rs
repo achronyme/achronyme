@@ -1849,27 +1849,25 @@ fn sha256_64_r1cs_probe() {
 /// closes the last symbolic-loop emit gap: shifts whose amount is
 /// the loop iter var no longer fail at `resolve_const_u32`, and Σ
 /// helpers (Sigma0/Sigma1/sigma0/sigma1) classify Uniform under BTA.
-/// Running the gate today pushes the failure two phases deeper:
 ///
-///   1. **Compile time** — `[compile]` ≈ 250s before
+/// **Architectural blockers post-Gap-3 (status as of 2026-04-25):**
+///
+///   1. **Lifted template frame overflow** — *closed*
+///      (`9828dcbe` + `f42f3ce0`). `lift_uniform_loops` would
+///      compute a 576-register skeleton for one of the Σ helpers,
+///      exceeding the RFC §5.1 cap of 255. Fallback to inline
+///      `LoopUnroll` (`9828dcbe`) plus mid-iter `split_in_per_iter`
+///      inside `emit_loop_unroll_per_iter` (`f42f3ce0`, Gap 4) lets
+///      the wide single-iteration body chain across multiple ≤255-
+///      slot frames without losing the per-iter `iter_var` literal.
+///   2. **Compile time** — *open*. `[compile]` ≈ 250s before
 ///      `instantiate_lysis` even starts. Source: circom lowering of
-///      circomlib's full SHA-256, not Gap 3 work. See
-///      `.claude/plans/circom-lowering-perf.md`.
-///   2. **Lifted template frame overflow** — `lift_uniform_loops`
-///      computes a 576-register skeleton for one of the Σ helpers,
-///      exceeding the RFC §5.1 cap of 255 (`MAX_FRAME_SIZE`). The
-///      lift surfaces `OperandOutOfRange { kind:
-///      "lift_uniform_loops.frame_size", got: 576 }` and refuses to
-///      proceed. Two paths to unblock: (a) graceful degradation —
-///      have `lift_uniform_loops` fall back to inline `LoopUnroll`
-///      when extraction would overflow, or (b) per-template split
-///      inside the lift pass mirroring Phase 1.5's top-level split.
-///
-/// Both items are post-Gap-3 work — they don't reflect a bug in the
-/// shift fix, they reflect SHA-256 being the largest single circom
-/// program in the corpus and the first to stress these limits.
+///      circomlib's full SHA-256, not a Lysis issue. See
+///      `.claude/plans/circom-lowering-perf.md`. While this dominates
+///      wall clock, it doesn't represent a correctness regression —
+///      the gate stays ignored until the lowering perf work lands.
 #[test]
-#[ignore = "Gap 3 closed IR-Instantiator gap; new blockers are 250s compile + 576-reg lifted template frame (post-Gap-3 architecture)"]
+#[ignore = "Gap 4 closed walker frame-overflow gap; remaining blocker is 250s circom-lowering compile (separate work)"]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
