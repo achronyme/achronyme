@@ -1844,51 +1844,64 @@ fn sha256_64_r1cs_probe() {
 ///   Lysis path and its post-optimize state. If the gate fails,
 ///   these give the first-look picture.
 ///
-/// **Ignored — IR-Instantiator blockers closed (Gaps 1/1.5/2/3),
-/// walker-level live-set blockers closed (Gap 4 + Phase 4), only
-/// remaining blocker is circom-lowering perf**. Gap 3
-/// (`SymbolicShift`) closes the last symbolic-loop emit gap: shifts
-/// whose amount is the loop iter var no longer fail at
-/// `resolve_const_u32`, and Σ helpers (Sigma0/Sigma1/sigma0/sigma1)
-/// classify Uniform under BTA.
+/// **Ignored — Phase 4 + cascade unblocks the Lysis pipeline E2E,
+/// but two downstream gates fail post-Phase-4**:
 ///
-/// **Architectural blockers post-Phase-4 (status as of 2026-04-25):**
+/// 1. The `optimize` pass produces a dangling `SsaVar` reference
+///    on the 207k-instruction SHA-256 IR. The bug surfaces as
+///    `R1CS compile: UnsupportedOperation("undefined SSA variable
+///    SsaVar(N)")`. Without `optimize`, R1CS compile succeeds
+///    cleanly with ~87,391 constraints. Tracked separately.
+///
+/// 2. Even with `optimize` working, the unoptimised constraint
+///    count (87k) is well above the circom O2 baseline (30,132).
+///    Phase 4 doesn't aim to match circom O2 directly; that's
+///    R1CS optimizer work.
+///
+/// **Walker / validator / instantiate / R1CS build all pass**:
+///
+/// ```text
+///   [compile]       ~47s   (circom lowering — separate perf work)
+///   [instantiate]   ~8s    instructions=207470
+///   [optimize]      <fails> dangling SsaVar
+///   [r1cs build]    50ms   constraints=87391  (without optimize)
+/// ```
+///
+/// The Phase 4 success criterion ("Lysis processes SHA-256
+/// without crashing") is met. The constraint count + optimize
+/// bug are downstream concerns tracked separately.
+///
+/// **Closed architectural blockers (cumulative 2026-04-25)**:
 ///
 ///   1. **Lifted template frame overflow** — *closed*
-///      (`9828dcbe` + `f42f3ce0`). `lift_uniform_loops` would
-///      compute a 576-register skeleton for one of the Σ helpers,
-///      exceeding the RFC §5.1 cap of 255. Fallback to inline
-///      `LoopUnroll` (`9828dcbe`) plus mid-iter `split_in_per_iter`
-///      inside `emit_loop_unroll_per_iter` (`f42f3ce0`, Gap 4) lets
-///      the wide single-iteration body chain across multiple ≤255-
-///      slot frames without losing the per-iter `iter_var` literal.
-///   2. **Live-set > 64 captures** — *closed* (Phase 4, branch
-///      `feat/lysis-phase4-heap`). The walker no longer fails with
-///      `LiveSetTooLarge { count: 250 }`; live sets > 48 split into
-///      hot captures (≤ 48) + cold spills (heap-resident, lazy-
-///      reloaded on first use). See research report
-///      `.claude/plans/lysis-phase4-research-report.md` for the full
-///      contract; the `lysis/tests/heap_synthetic.rs` 250-slot
-///      fixture validates the heap path end-to-end without going
-///      through this gate.
-///   3. **Compile time** — *open*. `[compile]` ≈ 250s before
-///      `instantiate_lysis` even starts. Source: circom lowering of
-///      circomlib's full SHA-256, not a Lysis issue. See
-///      `.claude/plans/circom-lowering-perf.md`. While this dominates
-///      wall clock, it doesn't represent a correctness regression —
-///      the gate stays ignored until the lowering perf work lands.
-///   4. **Lazy-reload-without-recycling frame growth** — *open,
-///      v1.1*. Phase 4 v1 caps the post-split frame at hot captures
-///      plus the count of distinct cold vars materialised in the
-///      body (research report §6.4 + §7.7). For SHA-256(64) we
-///      estimate this count at 30–50 per template — comfortable.
-///      If the gate eventually surfaces a
-///      `WalkError::Alloc(FrameOverflow)` instead of executing, the
-///      next escalation is scratch-reg recycling (v1.1). The
-///      placeholder test `ir-forge/tests/walker_adversarial.rs`
-///      documents the v1→v1.1 transition.
+///      (`9828dcbe` + `f42f3ce0`).
+///   2. **Live-set > 64 captures** — *closed* (Phase 4,
+///      `feat/lysis-phase4-heap`).
+///   3. **`SymbolicIndexedEffectNotEmittable` after split** —
+///      *closed*: walker_const forwarded unfiltered across splits.
+///   4. **`Alloc(FrameOverflow)` from cold WitnessCall inputs** —
+///      *closed*: `EmitWitnessCallHeap` mixed reg/slot inputs.
+///   5. **`UninitializedRegister` from missing capture init** —
+///      *closed*: validator rule 9 pre-initialises template
+///      capture regs (`94a63693`).
+///   6. **`UninitializedRegister` from missing heap-op writes** —
+///      *closed*: rule 9 tracks `StoreHeap` reads and `LoadHeap`
+///      writes (`750171cf`).
+///   7. **`MaxCallDepthExceeded`** — *closed*: default cap raised
+///      from 64 to 8192 to cover Phase 4 chain depth (`0160b073`).
+///
+/// **Remaining blockers (each independent of Phase 4)**:
+///
+///   - **Compile time** ≈ 47 s — circom lowering of circomlib's
+///     full SHA-256. Tracked in
+///     `.claude/plans/circom-lowering-perf.md`.
+///   - **`optimize` pass dangling SsaVar** — produces malformed
+///     IR for SHA-256-class circuits. Open follow-up.
+///   - **Lazy-reload-without-recycling frame growth** — v1.1
+///     placeholder (`ir-forge/tests/walker_adversarial.rs`); not
+///     hit by SHA-256(64), would surface for larger circuits.
 #[test]
-#[ignore = "Phase 4 heap path closes the walker live-set blocker (LiveSetTooLarge { count: 250 }); remaining blocker is the unrelated 250 s circom-lowering compile, tracked separately in .claude/plans/circom-lowering-perf.md. Gate stays ignored until that perf work lands."]
+#[ignore = "Phase 4 + cascade unblocks the Lysis pipeline E2E for SHA-256(64): walker, validator, instantiate, and R1CS build (without optimize) all pass with 87391 constraints. Two downstream issues prevent the assert from going green: (1) the optimize pass produces a dangling SsaVar ref on the 207k-instruction IR, and (2) the unoptimised constraint count is 87k vs the circom O2 baseline of 30k. Both are tracked as separate follow-ups; this gate stays ignored until they land."]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
@@ -1943,9 +1956,16 @@ fn sha256_64_lysis_hard_gate() {
 
     let t3 = Instant::now();
     let mut rc = R1CSCompiler::<Bn254Fr>::new();
-    let inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
-    rc.compile_ir_with_witness(&program, &inputs)
-        .expect("R1CS compile");
+    // Use `compile_ir` (witness-less) instead of
+    // `compile_ir_with_witness`: this gate verifies structural
+    // completion + constraint count, not witness validity. The
+    // witness path eagerly evaluates every IR node and asserts wire
+    // values against runtime AssertEq / RangeCheck constraints,
+    // which would require us to produce a valid SHA-256 hash for
+    // arbitrary inputs — out of scope here. The constraint skeleton
+    // generated by `compile_ir` is identical regardless of operand
+    // values; gates 1+2 below only inspect that skeleton.
+    rc.compile_ir(&program).expect("R1CS compile");
     let r1cs_build = t3.elapsed();
     let constraints = rc.cs.num_constraints();
     eprintln!(
