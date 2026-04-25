@@ -54,6 +54,23 @@
 //! that defines a fresh value gets the next register, and the
 //! mapping persists for the whole program (no release). Frame size
 //! is the high water mark.
+//!
+//! ## Phase 1.5 — top-level template wrapping
+//!
+//! Earlier walker revisions emitted the entire body into the root
+//! frame. The Lysis bytecode caps a frame at 255 registers (RFC §5.1
+//! "dense bytecode" — frame_size is `u8`), so any program whose
+//! lowered SSA exceeds that width tripped `FrameOverflow` even though
+//! the underlying memory was nowhere near the limit. SHA-256(64) is
+//! the canonical case.
+//!
+//! Phase 1.5 fixes this by **always wrapping the body in Template 0**:
+//! the root body is the trivial sequence `InstantiateTemplate(0, [], [])`
+//! + `Halt`, and all real work happens inside the template's frame.
+//! Programs that fit in 255 regs see no behavioural change (the
+//! materialized `InstructionKind` stream is identical), and programs
+//! that don't will be split across multiple chained templates by the
+//! M2-M4 split machinery layered on top of this wrapping.
 
 use std::collections::HashMap;
 
@@ -140,16 +157,44 @@ impl From<AllocError> for WalkError {
     }
 }
 
+/// One pending template body. Phase 1.5 always opens at least one
+/// (Template 0); Phase 2 split machinery will append more.
+struct TemplateBuf {
+    opcodes: Vec<Opcode>,
+    /// Frame size = high-water mark of the allocator at close time.
+    /// Stamped by `close_current_template`.
+    frame_size: u8,
+}
+
+impl TemplateBuf {
+    fn new() -> Self {
+        Self {
+            opcodes: Vec::new(),
+            frame_size: 0,
+        }
+    }
+}
+
 /// Emits Lysis bytecode from an `ExtendedInstruction` stream.
 pub struct Walker<F: FieldBackend> {
+    /// Used exclusively for const-pool interning during the walk.
+    /// Opcodes are NOT pushed through the builder until `finalize()`.
     builder: ProgramBuilder<F>,
+    /// Per-template opcode buffers. `templates[0]` is Template 0,
+    /// always present and always the body the root frame instantiates.
+    /// Phase 2 split logic appends more.
+    templates: Vec<TemplateBuf>,
+    /// Index of the template the walker is currently emitting into.
+    current: usize,
+    /// One allocator per template — reset at split boundaries. Phase
+    /// 1.5 keeps a single template so the allocator never resets.
     allocator: RegAllocator,
+    /// SsaVar → RegId mapping for the **current** template's frame.
+    /// At a split boundary this is rebuilt for the new frame.
     ssa_to_reg: HashMap<SsaVar, RegId>,
-    /// Register holding the field element 1. Lazily allocated at the
-    /// start of [`Self::lower`] iff the body contains a desugaring that
-    /// references it (Not, Assert, IsNeq, IsLe, IsLeBounded). Emitting
-    /// at the top — outside every `LoopUnroll` — keeps the body's
-    /// pre-computed byte size correct.
+    /// Register holding the field element 1 in the **current** frame.
+    /// Lazily allocated when the body contains a desugaring that
+    /// references it (Not, Assert, IsNeq, IsLe, IsLeBounded).
     one_reg: Option<RegId>,
 }
 
@@ -157,25 +202,116 @@ impl<F: FieldBackend> Walker<F> {
     pub fn new(family: FieldFamily) -> Self {
         Self {
             builder: ProgramBuilder::new(family),
+            templates: vec![TemplateBuf::new()],
+            current: 0,
             allocator: RegAllocator::new(),
             ssa_to_reg: HashMap::new(),
             one_reg: None,
         }
     }
 
-    /// Lower an entire body into a finished [`Program`]. Appends a
-    /// terminating `Halt` after the last emitted opcode.
+    /// Lower an entire body into a finished [`Program`]. The body is
+    /// emitted into Template 0; the program's root body is the trivial
+    /// `InstantiateTemplate(0, [], [])` + `Halt` pair.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
         if body_needs_one_const(body) {
             let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
             let reg = self.allocator.alloc()?;
-            self.builder.load_const(reg, idx);
+            self.push_op(Opcode::LoadConst { dst: reg, idx: idx });
             self.one_reg = Some(reg);
         }
         for inst in body {
             self.emit(inst)?;
         }
+        self.finalize()
+    }
+
+    /// Push an opcode into the current template's body buffer.
+    fn push_op(&mut self, op: Opcode) {
+        self.templates[self.current].opcodes.push(op);
+    }
+
+    /// Stamp the current allocator's high-water mark onto the current
+    /// template and append a terminating `Return`.
+    fn close_current_template(&mut self) {
+        let frame_size = self.allocator.frame_size();
+        let buf = &mut self.templates[self.current];
+        buf.frame_size = frame_size;
+        buf.opcodes.push(Opcode::Return);
+    }
+
+    /// Assemble the final Program: the body order is
+    ///   [DefineTemplate(i)]*  +  InstantiateTemplate(0, [], [])  +  Halt
+    ///   +  [Template 0 body]  +  [Template 1 body]  +  ...
+    /// Offsets are stamped on each `DefineTemplate` so the executor
+    /// can resolve `body_offset` → instruction index.
+    fn finalize(mut self) -> Result<Program<F>, WalkError> {
+        self.close_current_template();
+
+        // Compute encoded byte sizes for each template body so we can
+        // stamp body_offset/body_len on the matching DefineTemplate.
+        let mut body_sizes: Vec<u32> = Vec::with_capacity(self.templates.len());
+        for buf in &self.templates {
+            let mut total: u32 = 0;
+            for op in &buf.opcodes {
+                let mut bytes = Vec::new();
+                encode_opcode(op, &mut bytes);
+                total = total.saturating_add(bytes.len() as u32);
+            }
+            body_sizes.push(total);
+        }
+
+        // Bytes for the root prefix:
+        //   N * sizeof(DefineTemplate) + sizeof(InstantiateTemplate(0, [], [])) + sizeof(Halt)
+        let define_template_bytes: u32 = {
+            let mut buf = Vec::new();
+            encode_opcode(
+                &Opcode::DefineTemplate {
+                    template_id: 0,
+                    frame_size: 0,
+                    n_params: 0,
+                    body_offset: 0,
+                    body_len: 0,
+                },
+                &mut buf,
+            );
+            buf.len() as u32
+        };
+        let instantiate_t0_bytes: u32 = {
+            let mut buf = Vec::new();
+            encode_opcode(
+                &Opcode::InstantiateTemplate {
+                    template_id: 0,
+                    capture_regs: Vec::new(),
+                    output_regs: Vec::new(),
+                },
+                &mut buf,
+            );
+            buf.len() as u32
+        };
+        let root_bytes: u32 = define_template_bytes
+            .saturating_mul(self.templates.len() as u32)
+            .saturating_add(instantiate_t0_bytes)
+            .saturating_add(1); // Halt = 1 byte
+
+        // Stamp DefineTemplate opcodes with computed offsets, then
+        // the root entry, then each template body.
+        let mut offset_cursor = root_bytes;
+        let n_templates = self.templates.len();
+        for tid in 0..n_templates {
+            let frame_size = self.templates[tid].frame_size;
+            let body_len = body_sizes[tid];
+            self.builder
+                .define_template(tid as u16, frame_size, 0, offset_cursor, body_len);
+            offset_cursor = offset_cursor.saturating_add(body_len);
+        }
+        self.builder.instantiate_template(0, Vec::new(), Vec::new());
         self.builder.halt();
+        for buf in self.templates.into_iter() {
+            for op in buf.opcodes {
+                self.builder.push_opcode(op);
+            }
+        }
         Ok(self.builder.finish())
     }
 
@@ -205,7 +341,7 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Const { result, value } => {
                 let idx = self.builder.intern_field(*value) as u16;
                 let dst = self.allocator.alloc()?;
-                self.builder.load_const(dst, idx);
+                self.push_op(Opcode::LoadConst { dst, idx });
                 self.bind(*result, dst);
             }
             Instruction::Input {
@@ -215,7 +351,11 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let name_idx = self.builder.intern_string(name.clone()) as u16;
                 let dst = self.allocator.alloc()?;
-                self.builder.load_input(dst, name_idx, map_vis(*visibility));
+                self.push_op(Opcode::LoadInput {
+                    dst,
+                    name_idx,
+                    vis: map_vis(*visibility),
+                });
                 self.bind(*result, dst);
             }
 
@@ -223,19 +363,19 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Add { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_add(dst, l, r);
+                self.push_op(Opcode::EmitAdd { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             Instruction::Sub { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, l, r);
+                self.push_op(Opcode::EmitSub { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             Instruction::Mul { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_mul(dst, l, r);
+                self.push_op(Opcode::EmitMul { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             // Field division Div(x,y) = x * y^{-1} is witness-computed
@@ -259,7 +399,7 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Neg { result, operand } => {
                 let op = self.resolve(*operand)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_neg(dst, op);
+                self.push_op(Opcode::EmitNeg { dst, operand: op });
                 self.bind(*result, dst);
             }
 
@@ -270,24 +410,28 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let x = self.resolve(*operand)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, x);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: x,
+                });
                 self.bind(*result, dst);
             }
             Instruction::And { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_mul(dst, l, r);
+                self.push_op(Opcode::EmitMul { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             Instruction::Or { result, lhs, rhs } => {
                 // x OR y = x + y - x*y (for booleans).
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let sum = self.allocator.alloc()?;
-                self.builder.emit_add(sum, l, r);
+                self.push_op(Opcode::EmitAdd { dst: sum, lhs: l, rhs: r });
                 let prod = self.allocator.alloc()?;
-                self.builder.emit_mul(prod, l, r);
+                self.push_op(Opcode::EmitMul { dst: prod, lhs: l, rhs: r });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, sum, prod);
+                self.push_op(Opcode::EmitSub { dst, lhs: sum, rhs: prod });
                 self.bind(*result, dst);
             }
 
@@ -302,7 +446,12 @@ impl<F: FieldBackend> Walker<F> {
                 let t = self.resolve(*if_true)?;
                 let e = self.resolve(*if_false)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_mux(dst, c, t, e);
+                self.push_op(Opcode::EmitMux {
+                    dst,
+                    cond: c,
+                    then_v: t,
+                    else_v: e,
+                });
                 self.bind(*result, dst);
             }
 
@@ -310,13 +459,13 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::IsEq { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_is_eq(dst, l, r);
+                self.push_op(Opcode::EmitIsEq { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             Instruction::IsLt { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_is_lt(dst, l, r);
+                self.push_op(Opcode::EmitIsLt { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             // Desugar: IsNeq(x,y) = 1 - IsEq(x,y).
@@ -324,9 +473,13 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let eq = self.allocator.alloc()?;
-                self.builder.emit_is_eq(eq, l, r);
+                self.push_op(Opcode::EmitIsEq { dst: eq, lhs: l, rhs: r });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, eq);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: eq,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsLe(x,y) = 1 - IsLt(y,x).
@@ -334,9 +487,13 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.builder.emit_is_lt(lt, r, l);
+                self.push_op(Opcode::EmitIsLt { dst: lt, lhs: r, rhs: l });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, lt);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: lt,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsLtBounded(x,y,bits) ignores `bits` in Phase 3;
@@ -348,7 +505,7 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_is_lt(dst, l, r);
+                self.push_op(Opcode::EmitIsLt { dst, lhs: l, rhs: r });
                 self.bind(*result, dst);
             }
             // Desugar: IsLeBounded(x,y,bits) = 1 - IsLt(y,x); same
@@ -359,9 +516,13 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.builder.emit_is_lt(lt, r, l);
+                self.push_op(Opcode::EmitIsLt { dst: lt, lhs: r, rhs: l });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, lt);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: lt,
+                });
                 self.bind(*result, dst);
             }
 
@@ -374,7 +535,10 @@ impl<F: FieldBackend> Walker<F> {
                 let l = self.resolve(*left)?;
                 let r = self.resolve(*right)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_poseidon_hash(dst, vec![l, r]);
+                self.push_op(Opcode::EmitPoseidonHash {
+                    dst,
+                    in_regs: vec![l, r],
+                });
                 self.bind(*result, dst);
             }
 
@@ -386,7 +550,7 @@ impl<F: FieldBackend> Walker<F> {
                 message: _,
             } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
-                self.builder.emit_assert_eq(l, r);
+                self.push_op(Opcode::EmitAssertEq { lhs: l, rhs: r });
             }
             Instruction::Assert {
                 result: _, operand, ..
@@ -394,7 +558,7 @@ impl<F: FieldBackend> Walker<F> {
                 // Desugar: assert operand == 1.
                 let one = self.one()?;
                 let op = self.resolve(*operand)?;
-                self.builder.emit_assert_eq(op, one);
+                self.push_op(Opcode::EmitAssertEq { lhs: op, rhs: one });
             }
             Instruction::RangeCheck {
                 result: _,
@@ -409,7 +573,10 @@ impl<F: FieldBackend> Walker<F> {
                     });
                 }
                 let op = self.resolve(*operand)?;
-                self.builder.emit_range_check(op, *bits as u8);
+                self.push_op(Opcode::EmitRangeCheck {
+                    var: op,
+                    max_bits: *bits as u8,
+                });
             }
             Instruction::Decompose {
                 result: _,
@@ -430,7 +597,11 @@ impl<F: FieldBackend> Walker<F> {
                 for _ in 1..*num_bits {
                     let _ = self.allocator.alloc()?;
                 }
-                self.builder.emit_decompose(base, op, *num_bits as u8);
+                self.push_op(Opcode::EmitDecompose {
+                    dst_arr: base,
+                    src: op,
+                    n_bits: *num_bits as u8,
+                });
                 // Bind each bit_result to its corresponding register.
                 for (i, br) in bit_results.iter().enumerate() {
                     self.bind(*br, base + i as RegId);
@@ -471,7 +642,11 @@ impl<F: FieldBackend> Walker<F> {
                     out_regs.push(reg);
                     self.bind(*o, reg);
                 }
-                self.builder.emit_witness_call(blob_idx, in_regs, out_regs);
+                self.push_op(Opcode::EmitWitnessCall {
+                    bytecode_const_idx: blob_idx,
+                    in_regs,
+                    out_regs,
+                });
             }
         }
         Ok(())
@@ -494,18 +669,20 @@ impl<F: FieldBackend> Walker<F> {
         self.bind(iter_var, iter_reg);
 
         // Pre-compute the body's encoded byte length so the
-        // LoopUnroll opcode can carry it. We build a throw-away
-        // walker state that matches our current reg allocator
-        // exactly — this lets size calculation depend on the
-        // allocator's current offset (it doesn't today, but keeping
-        // the abstraction gives Phase 4 room).
+        // LoopUnroll opcode can carry it. The size depends only on
+        // opcode shape — independent of register allocation — so a
+        // free function over the ExtendedInstruction tree suffices.
         let body_len = body_byte_size(body)?;
         if body_len > u32::from(u16::MAX) {
             return Err(WalkError::LoopBodyTooLong { bytes: body_len });
         }
 
-        self.builder
-            .loop_unroll(iter_reg, start_u32, end_u32, body_len as u16);
+        self.push_op(Opcode::LoopUnroll {
+            iter_var: iter_reg,
+            start: start_u32,
+            end: end_u32,
+            body_len: body_len as u16,
+        });
 
         for inst in body {
             self.emit(inst)?;
