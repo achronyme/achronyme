@@ -14,8 +14,10 @@
 
 use memory::{FieldBackend, FieldElement};
 
+use super::utils::fe_to_u64;
 use super::{BitwiseOp, InstEnvValue, Instantiator, LoopUnrollMode};
 use crate::error::ProveIrError;
+use crate::extended::ShiftDirection;
 use crate::types::*;
 use ir_core::{Instruction, IrType, SsaVar};
 
@@ -559,28 +561,93 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 operand,
                 shift,
                 num_bits,
-            } => {
-                // If both operand and shift are compile-time constants, fold entirely
-                if let Ok(fe) = self.eval_const_expr(expr) {
-                    return Ok(self.emit_const(fe));
-                }
-                let op = self.emit_expr(operand)?;
-                let shift_val = self.resolve_const_u32(shift, "shift right amount")?;
-                self.emit_shift_right(op, shift_val, *num_bits)
-            }
+            } => self.emit_shift_dispatch(expr, operand, shift, *num_bits, ShiftDirection::Right),
             CircuitExpr::ShiftL {
                 operand,
                 shift,
                 num_bits,
-            } => {
-                // If both operand and shift are compile-time constants, fold entirely
-                if let Ok(fe) = self.eval_const_expr(expr) {
-                    return Ok(self.emit_const(fe));
-                }
-                let op = self.emit_expr(operand)?;
-                let shift_val = self.resolve_const_u32(shift, "shift left amount")?;
-                self.emit_shift_left(op, shift_val, *num_bits)
+            } => self.emit_shift_dispatch(expr, operand, shift, *num_bits, ShiftDirection::Left),
+        }
+    }
+
+    /// Common path for `ShiftR` / `ShiftL`. Tries const-fold (entire
+    /// expression, then shift amount only) before falling back to
+    /// emit-then-extract; if the shift amount is still symbolic, splits
+    /// on `loop_unroll_mode` between an `ExtendedInstruction::
+    /// SymbolicShift` (Lysis) and the legacy "must be a compile-time
+    /// constant" error (PerIteration).
+    fn emit_shift_dispatch(
+        &mut self,
+        full_expr: &CircuitExpr,
+        operand: &CircuitExpr,
+        shift: &CircuitExpr,
+        num_bits: u32,
+        direction: ShiftDirection,
+    ) -> Result<SsaVar, ProveIrError> {
+        let context = match direction {
+            ShiftDirection::Right => "shift right amount",
+            ShiftDirection::Left => "shift left amount",
+        };
+        // Fast path 1: both operand and shift are compile-time
+        // constants — fold the entire expression to a single Const.
+        if let Ok(fe) = self.eval_const_expr(full_expr) {
+            return Ok(self.emit_const(fe));
+        }
+        let op = self.emit_expr(operand)?;
+        // Fast path 2: shift folds without emitting (handles captured
+        // template params like `Sigma(7, 18, 3)` where 7/18/3 ride into
+        // the body as captures).
+        if let Ok(fe) = self.eval_const_expr(shift) {
+            let val = fe_to_u64(&fe, context)?;
+            let shift_val = u32::try_from(val).map_err(|_| ProveIrError::UnsupportedOperation {
+                description: format!("{context} too large for u32"),
+                span: None,
+            })?;
+            return self.emit_shift_op(op, shift_val, num_bits, direction);
+        }
+        // Fast path 3: emit shift; result may still resolve to a const
+        // via `extract_const_index` (post-lowering const-prop). Mirrors
+        // the historical `resolve_const_u32` fallback.
+        let shift_var = self.emit_expr(shift)?;
+        if let Some(n) = self.extract_const_index(shift_var) {
+            if let Ok(shift_val) = u32::try_from(n) {
+                return self.emit_shift_op(op, shift_val, num_bits, direction);
             }
+        }
+        // Truly symbolic shift amount. Two paths split by sink mode:
+        //   - Symbolic (ExtendedSink): emit a structured SymbolicShift
+        //     that the walker (Gap 3 Stage 3) resolves per-iteration
+        //     via a Decompose + recompose chain.
+        //   - PerIteration (LegacySink): preserve the historical
+        //     UnsupportedOperation error.
+        match self.sink.loop_unroll_mode() {
+            LoopUnrollMode::Symbolic => {
+                let result_var = self.fresh_var();
+                let span = self.current_span.clone();
+                self.sink
+                    .push_symbolic_shift(result_var, op, shift_var, num_bits, direction, span);
+                Ok(result_var)
+            }
+            LoopUnrollMode::PerIteration => Err(ProveIrError::UnsupportedOperation {
+                description: format!("{context} must be a compile-time constant"),
+                span: None,
+            }),
+        }
+    }
+
+    /// Dispatch to `emit_shift_right` / `emit_shift_left` based on
+    /// direction. Centralises the branch so [`Self::emit_shift_dispatch`]
+    /// and any future const-shift call site share the same pivot.
+    fn emit_shift_op(
+        &mut self,
+        operand: SsaVar,
+        shift: u32,
+        num_bits: u32,
+        direction: ShiftDirection,
+    ) -> Result<SsaVar, ProveIrError> {
+        match direction {
+            ShiftDirection::Right => self.emit_shift_right(operand, shift, num_bits),
+            ShiftDirection::Left => self.emit_shift_left(operand, shift, num_bits),
         }
     }
 
