@@ -4341,6 +4341,105 @@ mod tests {
         }
     }
 
+    /// Phase 4 §6.5 Commit 5.5 — heuristic vs naive comparison.
+    ///
+    /// Builds a synthetic post-split body where the live set has 100
+    /// vars and the body references ssa(60..=99) earliest, then
+    /// ssa(0..=59). With `MAX_CAPTURES_HOT=48`, the **first-use
+    /// heuristic** picks ssa(60..=99) + 8 more (the 48 hot) and
+    /// spills 52 cold; the **naive ordering** picks ssa(0..=47) hot
+    /// and spills ssa(48..=99) cold.
+    ///
+    /// Observed metric: `LoadHeap` emissions in the first half of
+    /// the body (the "early window"). The heuristic should always
+    /// produce ≤ naive count there, since vars referenced earliest
+    /// stay hot.
+    ///
+    /// Decision rule from research report §6.5: if the win is
+    /// < 5 % the simpler naive ordering replaces the heuristic; if
+    /// ≥ 20 % the heuristic is justified. This test prints the
+    /// numbers so the user can read them during the Commit 5.5 sign-off
+    /// without needing a separate criterion harness, and asserts the
+    /// monotonicity property (heuristic never *worse* than naive on
+    /// this fixture).
+    #[test]
+    fn heuristic_vs_naive_first_use_advantage() {
+        let live: Vec<SsaVar> = (0..100).map(ssa).collect();
+        // Body: first half references ssa(60..=99) (40 vars), second
+        // half references ssa(0..=59) (60 vars). The first-use
+        // heuristic captures 60..=99 + ssa(0..=7) = 48; naive
+        // captures 0..=47 = 48 (different set).
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = (60u32..100)
+            .chain(0u32..60)
+            .map(|i| {
+                plain(Instruction::Add {
+                    result: ssa(1000 + i),
+                    lhs: ssa(i),
+                    rhs: ssa(i),
+                })
+            })
+            .collect();
+        let force = HashSet::new();
+
+        let (heur_hot, heur_cold) = partition_live_set(&live, &body, &force);
+
+        // Naive partition: sort live by SsaVar.0, take first 48 as hot.
+        let mut sorted_live = live.clone();
+        sorted_live.sort_unstable_by_key(|v| v.0);
+        let naive_hot: Vec<SsaVar> = sorted_live[..MAX_CAPTURES_HOT].to_vec();
+        let naive_cold: Vec<SsaVar> = sorted_live[MAX_CAPTURES_HOT..].to_vec();
+
+        // For each strategy, count *unique* cold vars referenced
+        // anywhere in the *first half* of the body (the early
+        // window). Each unique cold var produces exactly one
+        // `LoadHeap` per template body that references it (per
+        // walker contract enforced by `Walker::resolve`).
+        let count_loads_first_half = |cold: &[SsaVar]| -> usize {
+            let cold_set: std::collections::HashSet<_> = cold.iter().copied().collect();
+            let mut loaded: std::collections::HashSet<SsaVar> = std::collections::HashSet::new();
+            for inst in body.iter().take(body.len() / 2) {
+                let mut refs = std::collections::HashSet::new();
+                collect_in_extinst(inst, &mut refs);
+                for v in refs {
+                    if cold_set.contains(&v) {
+                        loaded.insert(v);
+                    }
+                }
+            }
+            loaded.len()
+        };
+
+        let heur_loads = count_loads_first_half(&heur_cold);
+        let naive_loads = count_loads_first_half(&naive_cold);
+
+        // Visible report — captured by `cargo test -- --nocapture` for
+        // the §6.5 sign-off.
+        eprintln!(
+            "[lysis-spill-bench] heuristic_loads={heur_loads} \
+             naive_loads={naive_loads} \
+             win_pct={:.1}",
+            if naive_loads == 0 {
+                0.0
+            } else {
+                (naive_loads as f64 - heur_loads as f64) * 100.0 / naive_loads as f64
+            }
+        );
+
+        // Sanity: hot and cold partition the live set in both cases.
+        assert_eq!(heur_hot.len() + heur_cold.len(), live.len());
+        assert_eq!(naive_hot.len() + naive_cold.len(), live.len());
+
+        // Monotonicity: heuristic must not produce *more* LoadHeaps
+        // in the early window than naive ordering. If this fails,
+        // the heuristic has regressed and we should investigate
+        // before keeping it (research report §6.5 + Reviewer 1.2).
+        assert!(
+            heur_loads <= naive_loads,
+            "heuristic emitted {heur_loads} LoadHeaps in early window vs naive {naive_loads}; \
+             expected heuristic ≤ naive (first-use ordering should never lose to SsaVar.0 ordering)"
+        );
+    }
+
     #[test]
     fn small_body_emits_no_heap_ops() {
         // Sanity: a program that fits in MAX_CAPTURES_HOT ought to
