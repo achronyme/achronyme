@@ -12,6 +12,14 @@ modes: as a **full circuit** (via `import circuit "x.circom" as C`) or as a
 below covers the dispatch architecture, the dependency-cycle break, and the
 scope limitations of the current (beta.20) implementation.
 
+> **Extended public reference.** This file is the in-tree contributor map. The
+> full, exhaustive architecture reference — grammar, AST, ProveIR, all three
+> VMs (Akron / Artik / Lysis), opcodes, runtime model, constraint backends —
+> lives at <https://achrony.me/docs/architecture/pipeline/> and is mirrored in
+> Spanish at <https://achrony.me/es/docs/architecture/pipeline/>. The web
+> reference is sourced from `achronyme-web/src/content/docs-{en,es}/architecture/`.
+> Keep both in sync when touching cross-cutting structure.
+
 ## Pipeline
 
 ```
@@ -44,7 +52,7 @@ Source (.ach)                    Source (.circom)
 └────┬─────┘
      ▼
 ┌──────────┐    R1CSCompiler / PlonkishCompiler
-│ Backend  │    compiler/src/
+│ Backend  │    zkc/src/
 └────┬─────┘
      │  ConstraintSystem
      ▼
@@ -55,40 +63,63 @@ Source (.ach)                    Source (.circom)
 
 ## Crate Map
 
+The workspace contains **19 crates** after the structural cleanup closed on
+2026-04-24 (renames `vm → akron`, `witness → artik`, `compiler → akronc`; new
+crates `ir-core`, `ir-forge`, `zkc`, `resolve`, `lysis`, `lysis-types`).
+
 | Crate | Path | Purpose | Key Types |
 |-------|------|---------|-----------|
-| `diagnostics` | `diagnostics/` | Shared diagnostic infrastructure (zero deps) | `Span`, `Diagnostic`, `SpanRange`, `DiagnosticRenderer` |
-| `memory` | `memory/` | Generic field arithmetic (`F: FieldBackend`), tagged values, heap/GC | `FieldElement<F>`, `FieldBackend`, `Value`, `Heap` |
-| `achronyme-parser` | `achronyme-parser/` | Recursive descent parser, AST types | `Program`, `Stmt`, `Expr`, `Block` |
-| `constraints` | `constraints/` | R1CS + Plonkish constraint systems, export | `ConstraintSystem`, `Variable`, `LinearCombination`, `PlonkishSystem` |
-| `ir` | `ir/` | SSA intermediate representation, lowering, optimization; also hosts `prove_ir::circom_interop` (trait-only surface for circom dispatch) | `IrProgram`, `SsaVar`, `Instruction`, `IrLowering`, `CircomLibraryHandle`, `CircomCallable` |
-| `compiler` | `compiler/` | Bytecode compiler + ZK backends + compile-time circom handle/library registries | `R1CSCompiler`, `PlonkishCompiler`, `Compiler`, `CircomHandleInterner`, `CircomLibraryRegistry` |
-| `akron` | `akron/` | General-purpose bytecode VM (tagged values, GC) + `CallCircomTemplate` opcode dispatcher | `VM`, `CircomWitnessHandler`, `CircomCallResult` |
-| `artik` | `artik/` | Dedicated witness-computation VM: register-based, Artik bytecode, executed at prove time for lifted circom functions | `ArtikContext`, `ArtikError`, `Program`, `execute` |
+| `diagnostics` | `diagnostics/` | Spans, errors, suggestions, rustc-style renderer (zero-dep leaf) | `Span`, `Diagnostic`, `SpanRange`, `DiagnosticRenderer` |
+| `memory` | `memory/` | Generic field arithmetic, tagged values, heap/GC | `FieldElement<F>`, `FieldBackend`, `Value`, `Heap` |
+| `ach-macros` | `ach-macros/` | Proc-macros: `#[ach_native]`, `#[ach_module]` | — |
+| `achronyme-parser` | `achronyme-parser/` | Lexer, Pratt + recursive descent parser, AST | `Program`, `Stmt`, `Expr`, `Block`, `ExprId` |
+| `resolve` | `resolve/` | Symbol table, builtin registry, unified dispatch resolver (Movimiento 2) | `SymbolId`, `CallableKind`, `Availability`, `BuiltinRegistry`, `ModuleGraph` |
+| `lysis-types` | `lysis-types/` | Vocabulary leaf shared with the Lysis VM | `InstructionKind<F>`, `NodeId`, `Visibility` |
+| `constraints` | `constraints/` | R1CS + Plonkish systems, Poseidon, binary export | `ConstraintSystem`, `Variable`, `LinearCombination`, `PlonkishSystem` |
+| `ir-core` | `ir-core/` | SSA primitives (leaf, breaks `ir`/`ir-forge` cycle) | `Instruction<F>`, `SsaVar`, `IrType` |
+| `ir-forge` | `ir-forge/` | ProveIR templates, AST→ProveIR compiler, Lysis lift walker | `ProveIR`, `CircuitExpr`, `CircuitNode`, `ProveIrCompiler`, `ExtendedInstruction` |
+| `ir` | `ir/` | IR passes (DCE/CSE/const-fold/taint), evaluator, module loader, inspector, ProveIR orchestration | `IrProgram`, `IrLowering`, `CircomLibraryHandle`, `CircomCallable` |
+| `zkc` | `zkc/` | Constraint compiler: R1CS backend, Plonkish backend, witness ops, oracle scaffold | `R1CSCompiler`, `PlonkishCompiler`, `WitnessOp`, `lysis_oracle` |
+| `akronc` | `akronc/` | Bytecode compiler for the Akron VM | `Compiler`, `CircomHandleInterner`, `CircomLibraryRegistry` |
+| `akron` | `akron/` | Register-based general-purpose bytecode VM (tagged values, tri-color GC) | `Vm`, `CircomWitnessHandler`, `CircomCallResult` |
+| `artik` | `artik/` | Witness-computation SSA VM (no heap, no GC) | `ArtikContext`, `Program`, `execute_with_budget` |
+| `lysis` | `lysis/` | **In-progress** third VM: structural template instantiator with hash-consing interner | `lysis::execute`, `IrSink`, `InterningSink` |
+| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, lowering, library-mode template API | `parse_circom`, `compile_to_prove_ir`, `compile_template_library`, `instantiate_template_into`, `evaluate_template_witness` |
 | `proving` | `proving/` | Groth16 (arkworks), PlonK (halo2-KZG), Solidity verifier | `groth16_prove`, `halo2_prove` |
 | `achronyme-std` | `std/` | Standard library via `NativeModule` trait | `StdModule` |
-| `ach-macros` | `ach-macros/` | Proc-macros: `#[ach_native]`, `#[ach_module]` | — |
-| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, ProveIR lowering, library-mode template API | `parse_circom`, `lower_template`, `compile_template_library`, `instantiate_template_into`, `evaluate_template_witness` |
 | `cli` | `cli/` | Command-line interface, prove handler, circom witness handler, project config | `DefaultProveHandler`, `DefaultCircomWitnessHandler`, `AchronymeToml`, `ProjectConfig` |
 
 ### Dependency Graph
 
 ```
-diagnostics (zero deps)
-  │
-  ├──→ achronyme-parser
-  │         │
-  ├──→ ir ──┘──→ memory, constraints
-  │    │
-  ├──→ circom ──→ ir
-  │
-  └──→ compiler → ir, achronyme-parser, memory, constraints, artik
-          │
-          └──→ cli → compiler, akron, proving
-                      │
-                      └──→ akron → memory
-                      └──→ artik → memory   (witness-computation VM, side-channel
-                                             via ir::Instruction::WitnessCall)
+Tier 0 (zero workspace deps): diagnostics · memory · ach-macros · lysis-types
+
+Tier 1 (vocabulary):
+    achronyme-parser → diagnostics
+    resolve          → achronyme-parser, diagnostics
+    constraints      → memory
+    ir-core          → memory, diagnostics
+
+Tier 2 (IR + circuit compilation):
+    ir-forge → ir-core, achronyme-parser, resolve, diagnostics, lysis-types, circom
+    ir       → ir-core, ir-forge, resolve
+    zkc      → ir-core, constraints, memory
+    circom   → achronyme-parser, diagnostics, ir-forge, resolve
+
+Tier 3 (bytecode + VMs):
+    akronc → achronyme-parser, resolve, diagnostics
+    akron  → memory, constraints, ir, ir-forge
+    artik  → memory
+    lysis  → memory, artik, lysis-types
+
+Tier 4 (top-level):
+    proving       → constraints, memory
+    achronyme-std → akron, memory, ach-macros
+    cli           → akron, akronc, ir, ir-forge, zkc, circom, proving, resolve, achronyme-std
+
+The Lysis walker lives in `ir-forge::lysis_lift`; the oracle scaffold lives in
+`zkc::lysis_oracle`. Artik is dispatched from R1CS witness-gen via
+`WitnessOp::ArtikCall` (side-channel through `ir_core::Instruction::WitnessCall`).
 ```
 
 ## Field Architecture
@@ -169,7 +200,7 @@ Runs three passes in sequence:
 ### 4. Compile to R1CS
 
 ```rust
-// compiler/src/r1cs_backend.rs
+// zkc/src/r1cs_backend.rs
 impl<F: FieldBackend + PoseidonParamsProvider> R1CSCompiler<F> {
     pub fn compile_ir(&mut self, program: &IrProgram<F>) -> Result<(), R1CSError>
 
@@ -217,24 +248,35 @@ Produces binary files directly consumable by `snarkjs r1cs info` and
 | `ConstraintSystem<F>` | Collects `A * B = C` constraints, allocates wires, verifies witnesses |
 | `PlonkishSystem<F>` | Gate/lookup/copy constraint system for Plonkish arithmetization |
 
-### ir
+### ir-core / ir / ir-forge
 
-| Type | Description |
-|------|-------------|
-| `SsaVar(u32)` | SSA variable — defined exactly once |
-| `Instruction` | One of 19 variants: `Const`, `Input`, `Add`, `Sub`, `Mul`, `Div`, `Neg`, `Mux`, `AssertEq`, `PoseidonHash`, `RangeCheck`, `Not`, `And`, `Or`, `IsEq`, `IsNeq`, `IsLt`, `IsLe`, `Assert` |
-| `IrProgram<F>` | Flat list of instructions + variable name map. `Const` embeds `FieldElement<F>` |
-| `IrLowering<F>` | AST→IR converter with environment, function table, call stack |
-| `FieldConst` | Field-erased `[u8;32]` constant in ProveIR. Reconstructed to `FieldElement<F>` at instantiation |
+| Type | Crate | Description |
+|------|-------|-------------|
+| `SsaVar(u32)` | `ir-core` | SSA variable — defined exactly once |
+| `Instruction<F>` | `ir-core` | 21 variants: `Const`, `Input`, `Add`, `Sub`, `Mul`, `Div`, `Neg`, `Mux`, `PoseidonHash`, `Not`, `And`, `Or`, `Decompose`, `IsEq`, `IsNeq`, `IsLt`, `IsLe`, `IsLtBounded`, `IsLeBounded`, `IntDiv`, `IntMod`, `AssertEq`, `Assert`, `RangeCheck`, `WitnessCall` |
+| `IrProgram<F>` | `ir-core` | Flat list of instructions + variable name map. `Const` embeds `FieldElement<F>` |
+| `IrLowering<F>` | `ir` | AST→IR converter with environment, function table, call stack |
+| `ProveIR` | `ir-forge` | Pre-compiled circuit template: `public_inputs`, `witness_inputs`, `captures`, `body: Vec<CircuitNode>`. Format version v5 |
+| `CircuitExpr` / `CircuitNode` | `ir-forge` | ProveIR expression and statement nodes |
+| `ProveIrCompiler` | `ir-forge` | AST→ProveIR compiler. Entry: `compile_prove_block(block, outer_scope, resolver_state)` |
+| `ExtendedInstruction<F>` | `ir-forge` | Bridge to Lysis: `Plain`/`TemplateBody`/`TemplateCall`/`LoopUnroll` |
+| `FieldConst` | `ir-forge` | Field-erased `[u8;32]` constant. Reconstructed to `FieldElement<F>` at instantiation |
 
-### compiler
+### zkc
 
 | Type | Description |
 |------|-------------|
 | `R1CSCompiler<F>` | IR→R1CS: maps `SsaVar` to `LinearCombination<F>`, emits constraints |
 | `PlonkishCompiler<F>` | IR→Plonkish: deferred add/sub, cell-based with arith rows |
-| `WitnessOp` | Trace entry for witness generation replay |
-| `Compiler` | Bytecode compiler for VM execution (non-circuit path) |
+| `WitnessOp<F>` | Trace entry for witness generation replay (incl. `ArtikCall`) |
+| `lysis_oracle::*` | Phase 3.C oracle scaffolding: SSA canonicalisation + semantic equivalence |
+
+### akronc
+
+| Type | Description |
+|------|-------------|
+| `Compiler` | Bytecode compiler for Akron VM execution (non-circuit path) |
+| `CircomHandleInterner`, `CircomLibraryRegistry` | Compile-time circom handle/library state for the `CallCircomTemplate` opcode |
 
 ## Circuit Compilation Deep Dive
 
@@ -327,7 +369,7 @@ When a `prove {}` or `circuit` block calls a circom template, the `ProveIrCompil
 
 **Implementation** (`circom/src/library/handle.rs`): `impl CircomLibraryHandle for CircomLibrary` delegates every method to the existing library API. `template_signature` projects out the cached `CircomTemplateEntry`; `instantiate_template` wraps `instantiate_template_into` and converts `TemplateOutput` / `InstantiationError` into the ir-local shapes.
 
-**Seeding** (`compiler/src/statements/circom_imports.rs::build_circom_imports_for_outer_scope`): flattens `compiler.circom_template_aliases` (selective imports) and `compiler.circom_namespaces` (namespace imports) into the flat `HashMap<String, CircomCallable>` that `OuterScope.circom_imports` carries into the ProveIR compiler.
+**Seeding** (`akronc/src/statements/circom_imports.rs::build_circom_imports_for_outer_scope`): flattens `compiler.circom_template_aliases` (selective imports) and `compiler.circom_namespaces` (namespace imports) into the flat `HashMap<String, CircomCallable>` that `OuterScope.circom_imports` carries into the ProveIR compiler.
 
 **Call-site resolution** (`ir/src/prove_ir/compiler.rs::compile_call`): the dispatcher pattern-matches on `Call { callee: Call { callee: Ident(T) | Ident(P).field, args: template_args }, args: signal_inputs }`, looks up the key in `circom_table`, evaluates template args to `CircuitExpr::Const` (rejecting runtime values), maps signal inputs by declared name, allocates a fresh `circom_call_N` prefix, and calls `instantiate_template`. The returned body is appended to `self.body`; outputs bind under `"<let_name>.<output_name>"` env keys for single-scalar templates and `"<let_name>.<output_name>_<i>"` for array outputs. `compile_dot_access` checks these dotted keys alongside the existing `module::field` namespace constants.
 
@@ -351,7 +393,7 @@ pub struct CircomHandle {
 
 `CircomHandle` is a leaf GC object (no nested Values). The compiler allocates one per call site via `CircomHandleInterner`, intern-style; the bytecode loader bulk-imports the vec into the heap's `circom_handles` arena at program-load time with `Heap::import_circom_handles`, mirroring `import_bytes`.
 
-**Opcode** (`vm/src/opcode.rs::CallCircomTemplate = 162`, ABC encoding):
+**Opcode** (`akron/src/opcode.rs::CallCircomTemplate = 162`, ABC encoding):
 
 ```
 R[A] = CircomCall(R[B-1] as handle, R[B..B+C] as inputs)
@@ -369,7 +411,7 @@ R[A] = CircomCall(R[B-1] as handle, R[B..B+C] as inputs)
 
 The compiler always loads the handle with a preceding `LoadConst`, then compiles each signal input into the next contiguous register slot. This reuses the exact register-layout convention `compile_method_call` already uses and avoids introducing a new opcode format.
 
-**Handler trait + dispatcher** (`vm/src/machine/circom.rs`):
+**Handler trait + dispatcher** (`akron/src/machine/circom.rs`):
 
 ```rust
 pub trait CircomWitnessHandler: Send + Sync {
@@ -390,7 +432,7 @@ pub struct VM {
 
 `CircomCallError` variants: `HandlerNotConfigured`, `UnknownLibraryId`, `InvalidSignalInput`, `WitnessEvaluation`, `OutputMarshalling`. The opcode maps all of them through `RuntimeError::CircomHandlerNotConfigured` (for the `None` case) or `resource_limit_exceeded` (for runtime failures) so the CLI error renderer handles them uniformly.
 
-**Compiler-side emission** (`compiler/src/statements/circom_imports.rs::CircomVmCallEmitter`):
+**Compiler-side emission** (`akronc/src/statements/circom_imports.rs::CircomVmCallEmitter`):
 
 - `try_resolve_circom_vm_call(inner_callee)` — same resolution logic as the ProveIR dispatcher but against `compiler.circom_template_aliases` and `compiler.circom_namespaces` directly (no `OuterScope` indirection needed — we're still in the bytecode compiler's own state).
 - `compile_circom_vm_call(library, template_name, template_args, signal_inputs)` — validates arity, parses each template arg as a compile-time integer literal (Phase 4 limitation; runtime/computed params deferred), interns the `Arc<CircomLibrary>` into `compiler.circom_library_registry` to get a `library_id`, builds the `CircomHandle`, interns it via `CircomHandleInterner`, and emits the register sequence described above. Called from `expressions/mod.rs::compile_call` via a short-circuit pre-dispatch that runs before the normal method-call / function-call match.
@@ -491,8 +533,8 @@ Each crate's error type implements a `to_diagnostic()` method:
 | Error Type | Crate | Conversion |
 |------------|-------|------------|
 | `ParseError` | `achronyme-parser` | Already a `Diagnostic` (parser emits diagnostics directly) |
-| `CompilerError` | `compiler` | `to_diagnostic()` — extracts `OptSpan` from each variant |
-| `CompilerError::DiagnosticError` | `compiler` | Passthrough — already wraps a `Box<Diagnostic>` |
+| `AkroncError` | `akronc` | `to_diagnostic()` — extracts `OptSpan` from each variant |
+| `AkroncError::DiagnosticError` | `akronc` | Passthrough — already wraps a `Box<Diagnostic>` |
 | `IrError` | `ir` | `to_diagnostic()` — `ParseError` variant wraps `Box<Diagnostic>` directly |
 
 ### Rendering
@@ -538,7 +580,7 @@ The CLI (`cli/src/commands/mod.rs`) supports three output formats via `--error-f
 
 ### Compiler Warnings
 
-The bytecode compiler (`compiler/src/codegen.rs`) collects warnings in a `Vec<Diagnostic>`.
+The bytecode compiler (`akronc/src/codegen.rs`) collects warnings in a `Vec<Diagnostic>`.
 They are emitted after successful compilation via `Compiler::take_warnings()`.
 
 | Code | Warning | Emitted by |
@@ -560,7 +602,7 @@ When an undefined variable is encountered (`codegen.rs:undefined_var_error`):
 4. Exact matches and `_`-prefixed names are excluded
 5. If a match is found, it's attached as a `Suggestion` on the `Diagnostic`
 
-Source: `compiler/src/suggest.rs`
+Source: `akronc/src/suggest.rs`
 
 ### Error Recovery (Parser)
 
@@ -594,8 +636,8 @@ nodes in the AST.
 4. Handle in `ir/src/eval.rs` (concrete evaluation)
 5. Handle in `ir/src/passes/const_fold.rs` if foldable
 6. Handle in `ir/src/passes/dce.rs` (is it side-effecting?)
-7. Handle in `compiler/src/r1cs_backend.rs` (`compile_ir` match arm)
-8. Handle in `compiler/src/plonkish_backend.rs` (Plonkish match arm)
+7. Handle in `zkc/src/r1cs_backend.rs` (`compile_ir` match arm)
+8. Handle in `zkc/src/plonkish_backend.rs` (Plonkish match arm)
 9. Add witness op if the instruction needs intermediate wire values
 
 ### Adding a builtin function
@@ -603,8 +645,8 @@ nodes in the AST.
 1. Add the function name to the match in `ir/src/lower.rs` (`lower_call`)
 2. Emit the appropriate IR instruction(s)
 3. Add evaluation logic in `ir/src/eval.rs`
-4. Add R1CS constraint logic in `compiler/src/r1cs_backend.rs`
-5. Add Plonkish constraint logic in `compiler/src/plonkish_backend.rs`
+4. Add R1CS constraint logic in `zkc/src/r1cs_backend.rs`
+5. Add Plonkish constraint logic in `zkc/src/plonkish_backend.rs`
 
 ### Adding an optimization pass
 
@@ -627,10 +669,10 @@ nodes in the AST.
 The runtime-side dispatch lives in `cli/src/circom_handler.rs::DefaultCircomWitnessHandler`. To support a new circom feature at runtime:
 
 1. Update `CircomHandle` in `memory/src/heap.rs` if the opcode needs new per-call state
-2. Update `CircomCallResult` / `CircomOutputValue` in `vm/src/machine/circom.rs` if the return shape changes
+2. Update `CircomCallResult` / `CircomOutputValue` in `akron/src/machine/circom.rs` if the return shape changes
 3. Update `DefaultCircomWitnessHandler::invoke` to handle the new case
-4. If marshalling into a `Value` needs a new shape, update `marshal_outputs_to_value` in `vm/src/machine/circom.rs`
-5. Mirror the compile-time side in `compiler/src/statements/circom_imports.rs::compile_circom_vm_call` so the opcode gets emitted with the right operands
+4. If marshalling into a `Value` needs a new shape, update `marshal_outputs_to_value` in `akron/src/machine/circom.rs`
+5. Mirror the compile-time side in `akronc/src/statements/circom_imports.rs::compile_circom_vm_call` so the opcode gets emitted with the right operands
 6. Add an end-to-end test in `cli/tests/circom_vm_mode_test.rs` that drives a real `.circom` file through `cli::commands::run::run_file`
 
 ## Project Configuration (`achronyme.toml`)
