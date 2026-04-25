@@ -44,7 +44,7 @@
 
 use std::collections::HashMap;
 
-use ir_forge::types::{CircuitExpr, CircuitUnaryOp, FieldConst};
+use ir_forge::types::{CircuitBinOp, CircuitExpr, CircuitUnaryOp, FieldConst};
 
 /// Inferred bit-width of a `CircuitExpr`'s runtime value.
 ///
@@ -116,9 +116,16 @@ impl BitWidth {
     }
 }
 
-/// Inference context carried through `infer_expr`. Stage 1 only reads
-/// from this; Stage 2 will extend it with the constrained-signal
-/// table and `Num2Bits` library lookups.
+/// Side-table of signal-name → known [`BitWidth`]. Populated by the
+/// lowering pipeline (e.g., `wiring.rs::PendingComponent::inline_into`)
+/// when it instantiates a library template with a constraint-driving
+/// signature like `Num2Bits(n)`. Lookups for `CircuitExpr::Input(name)`
+/// and `Var(name)` consult this table before falling back to `Field`.
+pub type SignalWidths = HashMap<String, BitWidth>;
+
+/// Inference context carried through `infer_expr`. Stage 2 adds the
+/// `signal_widths` table for constrained-signal lookups; Stage 1
+/// only used `param_values` + `known_constants`.
 #[derive(Debug, Clone, Default)]
 pub struct InferenceCtx<'a> {
     /// Captures bound to compile-time `FieldConst`s. Mirrors
@@ -126,21 +133,29 @@ pub struct InferenceCtx<'a> {
     /// circular dep between `circom::lowering` and this module.
     pub param_values: Option<&'a HashMap<String, FieldConst>>,
     /// Known constants from the `LoweringEnv` (signals whose value the
-    /// const-fold pass has resolved). Stage 1 reads these the same way
-    /// as `param_values` — both yield exact bit-widths.
+    /// const-fold pass has resolved). Read the same way as
+    /// `param_values` — both yield exact bit-widths.
     pub known_constants: Option<&'a HashMap<String, FieldConst>>,
+    /// Stage 2: signal names whose bit-width is provably bounded via
+    /// constraint context (e.g., outputs of `Num2Bits(n)` are
+    /// `Exact(1)`). Lookups consulted by `Input` / `Var` before the
+    /// `Field` fallback.
+    pub signal_widths: Option<&'a SignalWidths>,
 }
 
 impl<'a> InferenceCtx<'a> {
-    /// Build a context with both maps. Convenience for call sites
-    /// that have access to both `LoweringContext` and `LoweringEnv`.
+    /// Build a context with all three maps. Convenience for call sites
+    /// that have access to `LoweringContext`, `LoweringEnv`, and the
+    /// signal-widths side-table.
     pub fn new(
         param_values: &'a HashMap<String, FieldConst>,
         known_constants: &'a HashMap<String, FieldConst>,
+        signal_widths: &'a SignalWidths,
     ) -> Self {
         Self {
             param_values: Some(param_values),
             known_constants: Some(known_constants),
+            signal_widths: Some(signal_widths),
         }
     }
 
@@ -156,6 +171,10 @@ impl<'a> InferenceCtx<'a> {
             }
         }
         None
+    }
+
+    fn lookup_signal_width(&self, name: &str) -> Option<BitWidth> {
+        self.signal_widths.and_then(|map| map.get(name).copied())
     }
 }
 
@@ -182,21 +201,21 @@ pub fn infer_expr(expr: &CircuitExpr, ctx: &InferenceCtx<'_>) -> BitWidth {
         // ---- Leaves ----
         CircuitExpr::Const(fc) => BitWidth::Exact(bits_of_field_const(fc)),
         CircuitExpr::Capture(name) | CircuitExpr::Var(name) => {
-            // If the capture/var resolves to a compile-time constant
-            // via param_values or known_constants, the binding's
-            // bit-width is known *exactly*. Otherwise fall back to
-            // Field — Stage 2 will tighten this via constrained-signal
-            // tables.
+            // First try compile-time constant resolution via
+            // param_values / known_constants — yields exact width.
             if let Some(fc) = ctx.lookup(name) {
-                BitWidth::Exact(bits_of_field_const(&fc))
-            } else {
-                BitWidth::Field
+                return BitWidth::Exact(bits_of_field_const(&fc));
             }
+            // Stage 2: Var may also be a constrained signal whose
+            // bit-width is recorded in the side-table (e.g., outputs
+            // of an inlined Num2Bits(n)). Default to Field if absent.
+            ctx.lookup_signal_width(name).unwrap_or(BitWidth::Field)
         }
-        // Stage 1 doesn't model signal-input bit-widths — no
-        // constraint context is consulted. Stage 2 will hook in
-        // `Num2Bits(n)`-detected widths here.
-        CircuitExpr::Input(_) => BitWidth::Field,
+        // Stage 2: Input signal — consult the constraint side-table
+        // populated by the lowering pipeline. Each output bit of an
+        // inlined `Num2Bits(n)` is registered as `Exact(1)`; signals
+        // without provenance default to `Field`.
+        CircuitExpr::Input(name) => ctx.lookup_signal_width(name).unwrap_or(BitWidth::Field),
 
         // ---- Predicate-shaped exprs always produce 0 or 1 ----
         CircuitExpr::Comparison { .. } | CircuitExpr::BoolOp { .. } => BitWidth::Exact(1),
@@ -244,13 +263,26 @@ pub fn infer_expr(expr: &CircuitExpr, ctx: &InferenceCtx<'_>) -> BitWidth {
             CircuitUnaryOp::Neg => BitWidth::Field,
         },
 
-        // ---- BinOp: arithmetic propagation deferred to Stage 2 ----
-        // Stage 1 returns Field for arithmetic — it's sound but
-        // pessimistic. The propagation rules (`Add: max+1`, `Mul: a+b`,
-        // `Sub: Field`, `Div: Field`) need careful saturation handling
-        // that will land in Stage 2 alongside the bigger
-        // constrained-signal infrastructure.
-        CircuitExpr::BinOp { .. } => BitWidth::Field,
+        // ---- BinOp arithmetic propagation (Stage 2) ----
+        // - Add: max(lhs, rhs) + 1 — accommodates carry. Saturates at
+        //   FIELD_BITS via `widen`, so adding 32-bit values 224 times
+        //   correctly degrades to `Field` instead of u32-wrapping.
+        // - Mul: lhs + rhs — total bit-width.
+        // - Sub / Div: `Field` — modular borrow / inverse can land
+        //   anywhere in `[0, p)`.
+        CircuitExpr::BinOp { op, lhs, rhs } => match op {
+            CircuitBinOp::Add => {
+                let l = infer_expr(lhs, ctx).to_num_bits();
+                let r = infer_expr(rhs, ctx).to_num_bits();
+                BitWidth::widen(l.max(r).saturating_add(1))
+            }
+            CircuitBinOp::Mul => {
+                let l = infer_expr(lhs, ctx).to_num_bits();
+                let r = infer_expr(rhs, ctx).to_num_bits();
+                BitWidth::widen(l.saturating_add(r))
+            }
+            CircuitBinOp::Sub | CircuitBinOp::Div => BitWidth::Field,
+        },
 
         // ---- Hashes / Merkle / RangeCheck ----
         CircuitExpr::PoseidonHash { .. } | CircuitExpr::PoseidonMany(_) => BitWidth::Field,
@@ -366,10 +398,155 @@ fn const_eval_shift(expr: &CircuitExpr, ctx: &InferenceCtx<'_>) -> Option<u32> {
     fc.to_u64().and_then(|v| u32::try_from(v).ok())
 }
 
+// =====================================================================
+// IR rewriter — tightens `num_bits` fields in-place using inference
+// =====================================================================
+
+/// Walk `expr` recursively and tighten every `num_bits` / `max_bits`
+/// field whose inferred upper bound is strictly tighter than the
+/// currently-stored value. Mutating in-place keeps downstream
+/// consumers (Decompose, RangeCheck, Lysis lift) seeing the tightened
+/// bounds without having to thread a side-table.
+///
+/// **Soundness invariant**: `num_bits` only ever decreases. The
+/// rewriter computes an upper bound on the operand's runtime value,
+/// guaranteeing that the new `num_bits` ≥ the actual bit-width — so
+/// any downstream `Decompose(num_bits)` still produces a valid bit
+/// decomposition. Increasing `num_bits` would be sound (just
+/// wasteful), but the rewriter never does it; the explicit
+/// `new <= old` clamp inside [`tighten`] makes the invariant
+/// machine-checkable.
+///
+/// Recurses post-order: tighten sub-expressions first, then use the
+/// (now-tightened) sub-expression bit-widths to derive the parent's
+/// inferred width and apply.
+pub fn rewrite_num_bits_in_expr(expr: &mut CircuitExpr, ctx: &InferenceCtx<'_>) {
+    // First, recurse into children.
+    match expr {
+        CircuitExpr::BinOp { lhs, rhs, .. }
+        | CircuitExpr::Comparison { lhs, rhs, .. }
+        | CircuitExpr::BoolOp { lhs, rhs, .. } => {
+            rewrite_num_bits_in_expr(lhs, ctx);
+            rewrite_num_bits_in_expr(rhs, ctx);
+        }
+        CircuitExpr::UnaryOp { operand, .. } => {
+            rewrite_num_bits_in_expr(operand, ctx);
+        }
+        CircuitExpr::Mux {
+            cond,
+            if_true,
+            if_false,
+        } => {
+            rewrite_num_bits_in_expr(cond, ctx);
+            rewrite_num_bits_in_expr(if_true, ctx);
+            rewrite_num_bits_in_expr(if_false, ctx);
+        }
+        CircuitExpr::PoseidonHash { left, right } => {
+            rewrite_num_bits_in_expr(left, ctx);
+            rewrite_num_bits_in_expr(right, ctx);
+        }
+        CircuitExpr::PoseidonMany(args) => {
+            for a in args {
+                rewrite_num_bits_in_expr(a, ctx);
+            }
+        }
+        CircuitExpr::MerkleVerify { root, leaf, .. } => {
+            rewrite_num_bits_in_expr(root, ctx);
+            rewrite_num_bits_in_expr(leaf, ctx);
+        }
+        CircuitExpr::Pow { base, .. } => {
+            rewrite_num_bits_in_expr(base, ctx);
+        }
+        CircuitExpr::ArrayIndex { index, .. } => {
+            rewrite_num_bits_in_expr(index, ctx);
+        }
+        CircuitExpr::IntDiv { lhs, rhs, .. } | CircuitExpr::IntMod { lhs, rhs, .. } => {
+            rewrite_num_bits_in_expr(lhs, ctx);
+            rewrite_num_bits_in_expr(rhs, ctx);
+        }
+        CircuitExpr::BitAnd { lhs, rhs, .. }
+        | CircuitExpr::BitOr { lhs, rhs, .. }
+        | CircuitExpr::BitXor { lhs, rhs, .. } => {
+            rewrite_num_bits_in_expr(lhs, ctx);
+            rewrite_num_bits_in_expr(rhs, ctx);
+        }
+        CircuitExpr::BitNot { operand, .. } => {
+            rewrite_num_bits_in_expr(operand, ctx);
+        }
+        CircuitExpr::ShiftR { operand, shift, .. } | CircuitExpr::ShiftL { operand, shift, .. } => {
+            rewrite_num_bits_in_expr(operand, ctx);
+            rewrite_num_bits_in_expr(shift, ctx);
+        }
+        CircuitExpr::RangeCheck { value, .. } => {
+            rewrite_num_bits_in_expr(value, ctx);
+        }
+        CircuitExpr::Const(_)
+        | CircuitExpr::Input(_)
+        | CircuitExpr::Capture(_)
+        | CircuitExpr::Var(_)
+        | CircuitExpr::ArrayLen(_) => {}
+    }
+
+    // Then, tighten THIS node's `num_bits` from the operand's
+    // inferred width. Each rule mirrors the inference rule for that
+    // variant — we infer the OPERAND's width and use that as the new
+    // `num_bits` field for ops like Decompose/BitAnd/etc.
+    match expr {
+        CircuitExpr::BitAnd { lhs, rhs, num_bits } => {
+            let l = infer_expr(lhs, ctx);
+            let r = infer_expr(rhs, ctx);
+            tighten(num_bits, min_width(l, r).to_num_bits());
+        }
+        CircuitExpr::BitOr { lhs, rhs, num_bits } | CircuitExpr::BitXor { lhs, rhs, num_bits } => {
+            let l = infer_expr(lhs, ctx);
+            let r = infer_expr(rhs, ctx);
+            tighten(num_bits, max_width(l, r).to_num_bits());
+        }
+        CircuitExpr::BitNot { operand, num_bits } => {
+            let w = infer_expr(operand, ctx);
+            tighten(num_bits, w.to_num_bits());
+        }
+        CircuitExpr::ShiftR {
+            operand, num_bits, ..
+        }
+        | CircuitExpr::ShiftL {
+            operand, num_bits, ..
+        } => {
+            // Decompose+recompose width is the OPERAND's bit-width.
+            // Even if the result is narrower (right shift), the
+            // decomposition itself is over the operand. Tightening
+            // here drops `num_bits=254` to e.g. `num_bits=32` for
+            // SHA-256-shaped circuits.
+            let w = infer_expr(operand, ctx);
+            tighten(num_bits, w.to_num_bits());
+        }
+        CircuitExpr::RangeCheck { value, bits } => {
+            let w = infer_expr(value, ctx);
+            tighten(bits, w.to_num_bits());
+        }
+        CircuitExpr::IntDiv { lhs, max_bits, .. } | CircuitExpr::IntMod { lhs, max_bits, .. } => {
+            // `max_bits` bounds the LHS for IntDiv/Mod's gadget.
+            let w = infer_expr(lhs, ctx);
+            tighten(max_bits, w.to_num_bits());
+        }
+        // Variants without a `num_bits` field — nothing to tighten.
+        _ => {}
+    }
+}
+
+/// Tighten `field` to `new` if `new < *field`. Never raises;
+/// preserves the soundness invariant that `num_bits` is only ever
+/// reduced toward truth.
+fn tighten(field: &mut u32, new: u32) {
+    if new < *field {
+        *field = new;
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir_forge::types::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp};
+    use ir_forge::types::{CircuitBoolOp, CircuitCmpOp};
 
     fn fc(value: u64) -> FieldConst {
         FieldConst::from_u64(value)
@@ -492,11 +669,38 @@ mod tests {
     }
 
     #[test]
+    fn infer_input_consults_signal_widths() {
+        let params = HashMap::new();
+        let known = HashMap::new();
+        let mut widths = SignalWidths::new();
+        widths.insert("c_n2b_out_0".to_string(), BitWidth::Exact(1));
+        let ctx = InferenceCtx::new(&params, &known, &widths);
+        assert_eq!(
+            infer_expr(&CircuitExpr::Input("c_n2b_out_0".into()), &ctx),
+            BitWidth::Exact(1)
+        );
+    }
+
+    #[test]
+    fn infer_var_consults_signal_widths_if_no_const() {
+        let params = HashMap::new();
+        let known = HashMap::new();
+        let mut widths = SignalWidths::new();
+        widths.insert("c_n2b_out_3".to_string(), BitWidth::Exact(1));
+        let ctx = InferenceCtx::new(&params, &known, &widths);
+        assert_eq!(
+            infer_expr(&CircuitExpr::Var("c_n2b_out_3".into()), &ctx),
+            BitWidth::Exact(1)
+        );
+    }
+
+    #[test]
     fn infer_capture_resolves_via_param_values() {
         let mut params = HashMap::new();
         params.insert("n".to_string(), fc(64));
         let known = HashMap::new();
-        let ctx = InferenceCtx::new(&params, &known);
+        let widths = SignalWidths::new();
+        let ctx = InferenceCtx::new(&params, &known, &widths);
         assert_eq!(
             infer_expr(&CircuitExpr::Capture("n".into()), &ctx),
             BitWidth::Exact(7)
@@ -517,7 +721,8 @@ mod tests {
         let params = HashMap::new();
         let mut known = HashMap::new();
         known.insert("k".to_string(), fc(0x1234));
-        let ctx = InferenceCtx::new(&params, &known);
+        let widths = SignalWidths::new();
+        let ctx = InferenceCtx::new(&params, &known, &widths);
         assert_eq!(
             infer_expr(&CircuitExpr::Var("k".into()), &ctx),
             BitWidth::Exact(13) // 0x1234 = 4660 → 13 bits
@@ -686,7 +891,8 @@ mod tests {
         let mut params = HashMap::new();
         params.insert("n".to_string(), fc(7));
         let known = HashMap::new();
-        let ctx = InferenceCtx::new(&params, &known);
+        let widths = SignalWidths::new();
+        let ctx = InferenceCtx::new(&params, &known, &widths);
         let expr = CircuitExpr::ShiftR {
             operand: Box::new(CircuitExpr::Const(fc(0xffff_ffff))), // 32 bits
             shift: Box::new(CircuitExpr::Capture("n".into())),      // = 7
@@ -742,18 +948,218 @@ mod tests {
     }
 
     // ------------------------------------------------------------------
-    // infer_expr — arithmetic (Stage 1 returns Field)
+    // infer_expr — arithmetic propagation (Stage 2)
     // ------------------------------------------------------------------
 
     #[test]
-    fn stage1_binop_falls_back_to_field() {
+    fn infer_add_carries_one_bit() {
         let ctx = empty_ctx();
         let expr = CircuitExpr::BinOp {
             op: CircuitBinOp::Add,
+            lhs: Box::new(CircuitExpr::Const(fc(0xff))), // 8 bits
+            rhs: Box::new(CircuitExpr::Const(fc(1))),    // 1 bit
+        };
+        // max(8, 1) + 1 = 9
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::AtMost(9));
+    }
+
+    #[test]
+    fn infer_add_of_two_32_bit_yields_33() {
+        let ctx = empty_ctx();
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Add,
+            lhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+            rhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+        };
+        // max(32, 32) + 1 = 33
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::AtMost(33));
+    }
+
+    #[test]
+    fn infer_add_saturates_at_field() {
+        // Build nested Add of 32-bit constants ~225 times so the
+        // accumulated bit-width crosses FIELD_BITS = 254 and the
+        // saturating widen converts to Field.
+        let ctx = empty_ctx();
+        let mut expr = CircuitExpr::Const(fc(0xffff_ffff));
+        for _ in 0..225 {
+            expr = CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(expr),
+                rhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+            };
+        }
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::Field);
+    }
+
+    #[test]
+    fn infer_mul_sums_widths() {
+        let ctx = empty_ctx();
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Mul,
+            lhs: Box::new(CircuitExpr::Const(fc(0xff))), // 8
+            rhs: Box::new(CircuitExpr::Const(fc(0xffff))), // 16
+        };
+        // 8 + 16 = 24
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::AtMost(24));
+    }
+
+    #[test]
+    fn infer_mul_saturates_at_field() {
+        let ctx = empty_ctx();
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Mul,
+            lhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))), // 32
+            rhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))), // 32
+        };
+        // 32 + 32 = 64 — still under field
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::AtMost(64));
+    }
+
+    #[test]
+    fn infer_sub_yields_field() {
+        let ctx = empty_ctx();
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Sub,
             lhs: Box::new(CircuitExpr::Const(fc(0xff))),
             rhs: Box::new(CircuitExpr::Const(fc(1))),
         };
-        // Stage 2 will tighten this to AtMost(9). Stage 1 punts.
+        // Modular borrow → Field even with concrete operands.
         assert_eq!(infer_expr(&expr, &ctx), BitWidth::Field);
+    }
+
+    #[test]
+    fn infer_div_yields_field() {
+        let ctx = empty_ctx();
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Div,
+            lhs: Box::new(CircuitExpr::Const(fc(0xff))),
+            rhs: Box::new(CircuitExpr::Const(fc(0xff))),
+        };
+        // Field-inverse → Field.
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::Field);
+    }
+
+    #[test]
+    fn infer_shift_right_after_arithmetic_narrows() {
+        // The SHA-256 motivating case: rotate-right on a value that
+        // came from arithmetic. After Stage 2 inference, an Add of
+        // two 32-bit values is AtMost(33); a >>7 of that is AtMost(26).
+        let ctx = empty_ctx();
+        let expr = CircuitExpr::ShiftR {
+            operand: Box::new(CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+                rhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+            }),
+            shift: Box::new(CircuitExpr::Const(fc(7))),
+            num_bits: FIELD_BITS,
+        };
+        // 33 - 7 = 26
+        assert_eq!(infer_expr(&expr, &ctx), BitWidth::AtMost(26));
+    }
+
+    // ------------------------------------------------------------------
+    // rewrite_num_bits_in_expr — IR mutation pass
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn rewrite_tightens_shift_r_num_bits() {
+        let ctx = empty_ctx();
+        let mut expr = CircuitExpr::ShiftR {
+            operand: Box::new(CircuitExpr::Const(fc(0xff))), // 8 bits
+            shift: Box::new(CircuitExpr::Const(fc(3))),
+            num_bits: FIELD_BITS, // 254
+        };
+        rewrite_num_bits_in_expr(&mut expr, &ctx);
+        match &expr {
+            CircuitExpr::ShiftR { num_bits, .. } => assert_eq!(*num_bits, 8),
+            _ => panic!("expected ShiftR"),
+        }
+    }
+
+    #[test]
+    fn rewrite_tightens_via_signal_widths() {
+        // SHA-256 motivating case: signal `bit_0` is `Exact(1)` from
+        // Num2Bits; a `BitOr(bit_0, bit_1)` should drop num_bits from
+        // 254 to 1.
+        let params = HashMap::new();
+        let known = HashMap::new();
+        let mut widths = SignalWidths::new();
+        widths.insert("bit_0".to_string(), BitWidth::Exact(1));
+        widths.insert("bit_1".to_string(), BitWidth::Exact(1));
+        let ctx = InferenceCtx::new(&params, &known, &widths);
+        let mut expr = CircuitExpr::BitOr {
+            lhs: Box::new(CircuitExpr::Input("bit_0".into())),
+            rhs: Box::new(CircuitExpr::Input("bit_1".into())),
+            num_bits: FIELD_BITS,
+        };
+        rewrite_num_bits_in_expr(&mut expr, &ctx);
+        match &expr {
+            CircuitExpr::BitOr { num_bits, .. } => assert_eq!(*num_bits, 1),
+            _ => panic!("expected BitOr"),
+        }
+    }
+
+    #[test]
+    fn rewrite_does_not_loosen() {
+        // num_bits already tighter than inferred — must not raise.
+        let ctx = empty_ctx();
+        let mut expr = CircuitExpr::BitAnd {
+            lhs: Box::new(CircuitExpr::Const(fc(0xff_ffff))), // 24 bits
+            rhs: Box::new(CircuitExpr::Const(fc(0xff_ffff))),
+            num_bits: 8, // pre-tightened to 8 (would imply user intent)
+        };
+        rewrite_num_bits_in_expr(&mut expr, &ctx);
+        match &expr {
+            CircuitExpr::BitAnd { num_bits, .. } => {
+                // Inferred would be Exact(24); we must NOT raise from 8.
+                assert_eq!(*num_bits, 8);
+            }
+            _ => panic!("expected BitAnd"),
+        }
+    }
+
+    #[test]
+    fn rewrite_recurses_into_nested() {
+        let ctx = empty_ctx();
+        let mut expr = CircuitExpr::Mux {
+            cond: Box::new(CircuitExpr::Const(fc(1))),
+            if_true: Box::new(CircuitExpr::ShiftR {
+                operand: Box::new(CircuitExpr::Const(fc(0xff))), // 8 bits
+                shift: Box::new(CircuitExpr::Const(fc(2))),
+                num_bits: FIELD_BITS,
+            }),
+            if_false: Box::new(CircuitExpr::Const(fc(0))),
+        };
+        rewrite_num_bits_in_expr(&mut expr, &ctx);
+        match &expr {
+            CircuitExpr::Mux { if_true, .. } => match if_true.as_ref() {
+                CircuitExpr::ShiftR { num_bits, .. } => assert_eq!(*num_bits, 8),
+                _ => panic!("expected ShiftR inside Mux"),
+            },
+            _ => panic!("expected Mux"),
+        }
+    }
+
+    #[test]
+    fn rewrite_via_arithmetic_propagation() {
+        // Add of two 32-bit consts → AtMost(33). Then a >>7 of that
+        // → tighten to num_bits=33.
+        let ctx = empty_ctx();
+        let mut expr = CircuitExpr::ShiftR {
+            operand: Box::new(CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+                rhs: Box::new(CircuitExpr::Const(fc(0xffff_ffff))),
+            }),
+            shift: Box::new(CircuitExpr::Const(fc(7))),
+            num_bits: FIELD_BITS,
+        };
+        rewrite_num_bits_in_expr(&mut expr, &ctx);
+        match &expr {
+            CircuitExpr::ShiftR { num_bits, .. } => assert_eq!(*num_bits, 33),
+            _ => panic!("expected ShiftR"),
+        }
     }
 }
