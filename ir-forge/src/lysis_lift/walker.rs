@@ -82,7 +82,7 @@ use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
 
 use crate::extended::IndexedEffectKind;
-use crate::ExtendedInstruction;
+use crate::{ExtendedInstruction, TemplateId};
 use ir_core::{Instruction, SsaVar, Visibility};
 
 /// Hard cap on the frame size (`u8` in RFC §5.1). The walker keeps
@@ -173,6 +173,15 @@ pub enum WalkError {
     /// declaring `Plain(Input)` or `WitnessArrayDecl`. Surfaces the
     /// missing slot index for diagnosis.
     SymbolicArrayReadUnboundSlot { idx: usize, slot: SsaVar },
+    /// `TemplateBody.captures.len()` did not match the declared
+    /// `n_params`. The lift always sets them equal; a mismatch is a
+    /// pipeline corruption. (Gap 2.)
+    TemplateCapturesMismatch { n_params: u8, captures_len: usize },
+    /// `TemplateCall.outputs` is non-empty. Phase 3 lift uses
+    /// **Option B** (loop runs inside the template, no return values
+    /// — side-effects flow through the shared sink). Output wiring
+    /// via `Opcode::TemplateOutput` is a Phase 4 deliverable.
+    TemplateOutputsNotSupported,
 }
 
 impl std::fmt::Display for WalkError {
@@ -222,6 +231,13 @@ impl std::fmt::Display for WalkError {
             Self::SymbolicArrayReadUnboundSlot { idx, slot } => write!(
                 f,
                 "walker: SymbolicArrayRead slot at index {idx} (SsaVar {slot}) has no register binding — upstream pre-emission missed this slot"
+            ),
+            Self::TemplateCapturesMismatch { n_params, captures_len } => write!(
+                f,
+                "walker: TemplateBody declares n_params={n_params} but captures.len()={captures_len} (lift pipeline bug)"
+            ),
+            Self::TemplateOutputsNotSupported => f.write_str(
+                "walker: TemplateCall.outputs is non-empty (Option B lift uses side-effects only; output wiring is Phase 4)",
             ),
         }
     }
@@ -549,9 +565,18 @@ impl<F: FieldBackend> Walker<F> {
                 end,
                 body,
             } => self.emit_loop_unroll(*iter_var, *start, *end, body),
-            ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
-                Err(WalkError::TemplateNotSupported)
-            }
+            ExtendedInstruction::TemplateCall {
+                template_id,
+                captures,
+                outputs,
+            } => self.emit_template_call(*template_id, captures, outputs),
+            ExtendedInstruction::TemplateBody {
+                id,
+                frame_size,
+                n_params,
+                captures,
+                body,
+            } => self.emit_template_body(*id, *frame_size, *n_params, captures, body),
             ExtendedInstruction::SymbolicIndexedEffect {
                 kind,
                 array_slots,
@@ -607,6 +632,117 @@ impl<F: FieldBackend> Walker<F> {
         )?;
         self.bind(result_var, slot_reg);
         Ok(())
+    }
+
+    /// Emit `Opcode::InstantiateTemplate` for an
+    /// [`ExtendedInstruction::TemplateCall`]. Captures resolve to
+    /// register ids in the caller's frame; the executor copies them
+    /// into the callee's `regs[0..n_params]` before the body runs
+    /// (see `lysis::execute::dispatch`'s InstantiateTemplate handler).
+    /// Outputs are not supported in the Phase 3 lift (Option B uses
+    /// side-effects only — see `WalkError::TemplateOutputsNotSupported`).
+    fn emit_template_call(
+        &mut self,
+        template_id: TemplateId,
+        captures: &[SsaVar],
+        outputs: &[SsaVar],
+    ) -> Result<(), WalkError> {
+        if !outputs.is_empty() {
+            return Err(WalkError::TemplateOutputsNotSupported);
+        }
+        if captures.len() > u8::MAX as usize {
+            return Err(WalkError::OperandOutOfRange {
+                kind: "TemplateCall.captures",
+                limit: u32::from(u8::MAX),
+                got: captures.len() as u32,
+            });
+        }
+        let mut capture_regs: Vec<u8> = Vec::with_capacity(captures.len());
+        for v in captures {
+            capture_regs.push(self.resolve(*v)?);
+        }
+        self.push_op(Opcode::InstantiateTemplate {
+            template_id: template_id.0,
+            capture_regs,
+            output_regs: Vec::new(),
+        });
+        Ok(())
+    }
+
+    /// Emit a separate template buffer for an
+    /// [`ExtendedInstruction::TemplateBody`]. The body's frame is
+    /// independent of the caller's: a fresh `RegAllocator` starts
+    /// after `n_params` (the executor pre-fills regs `0..n_params`
+    /// from the call's `capture_regs`), `ssa_to_reg` is rebuilt with
+    /// `captures[i] → i`, and `one_reg` + `walker_const` reset. After
+    /// the body emits, `close_current_template` stamps the high-water
+    /// frame_size and appends `Return`; caller state is restored so
+    /// emission resumes in the previous template.
+    ///
+    /// The declared `frame_size` and `n_params` from the lift are
+    /// recorded for diagnostic purposes only; the actual frame_size
+    /// stamped on the bytecode is `allocator.frame_size()` after the
+    /// body runs (true high-water, not the lift's
+    /// over-approximation).
+    fn emit_template_body(
+        &mut self,
+        _id: TemplateId,
+        _declared_frame_size: u8,
+        n_params: u8,
+        captures: &[SsaVar],
+        body: &[ExtendedInstruction<F>],
+    ) -> Result<(), WalkError> {
+        if usize::from(n_params) != captures.len() {
+            return Err(WalkError::TemplateCapturesMismatch {
+                n_params,
+                captures_len: captures.len(),
+            });
+        }
+
+        // Save caller state. Each TemplateBody emission opens a new
+        // template buffer and emits independently; on return the
+        // walker resumes emitting where the parent left off.
+        let saved_current = self.current;
+        let saved_allocator = std::mem::replace(&mut self.allocator, RegAllocator::new());
+        let saved_ssa_to_reg = std::mem::take(&mut self.ssa_to_reg);
+        let saved_one_reg = self.one_reg.take();
+        let saved_walker_const = std::mem::take(&mut self.walker_const);
+
+        // Open a fresh template buffer at the tail of `templates`.
+        self.templates.push(TemplateBuf::new(n_params));
+        self.current = self.templates.len() - 1;
+        self.allocator = RegAllocator::new_after_captures(n_params);
+
+        // Bind capture SSA vars to regs `0..n_params`. The executor
+        // mirrors this by writing `capture_regs[i]` into the
+        // callee's `regs[i]` before the body runs.
+        for (i, v) in captures.iter().enumerate() {
+            self.bind(*v, i as RegId);
+        }
+
+        // Emit the body, propagating any walker error.
+        let emit_result: Result<(), WalkError> = (|| {
+            for inst in body {
+                self.emit(inst)?;
+            }
+            Ok(())
+        })();
+
+        // Close the template regardless of body emission outcome so
+        // the templates vector stays consistent. `close_current_template`
+        // stamps frame_size and appends `Return`. The terminator is
+        // benign on the error path because the program won't be
+        // finalised.
+        self.close_current_template();
+
+        // Restore caller state.
+        self.current = saved_current;
+        self.allocator = saved_allocator;
+        self.ssa_to_reg = saved_ssa_to_reg;
+        self.one_reg = saved_one_reg;
+        self.walker_const = saved_walker_const;
+
+        emit_result
     }
 
     /// Resolve a `SymbolicIndexedEffect` at walker time. Requires
@@ -1292,9 +1428,26 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
             total = total.saturating_add(body_byte_size(body)?);
             Ok(total)
         }
-        ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
-            Err(WalkError::TemplateNotSupported)
+        // TemplateCall encodes as one `InstantiateTemplate` opcode in
+        // the parent's body bytes. Compute its encoded size from a
+        // placeholder shape — operand widths drive the size, not the
+        // specific values.
+        ExtendedInstruction::TemplateCall { captures, .. } => {
+            let placeholder = Opcode::InstantiateTemplate {
+                template_id: 0,
+                capture_regs: vec![0u8; captures.len()],
+                output_regs: Vec::new(),
+            };
+            let mut buf = Vec::new();
+            encode_opcode(&placeholder, &mut buf);
+            Ok(buf.len() as u32)
         }
+        // TemplateBody emits sideways into its own template buffer,
+        // not into the parent's body bytes — its contribution to the
+        // parent's `body_len` is zero. (Walker `emit_template_body`
+        // routes the actual bytecode emission through a separate
+        // TemplateBuf.)
+        ExtendedInstruction::TemplateBody { .. } => Ok(0),
         // TODO Gap 1 Stage 3: replace with the synthesized per-
         // iteration cost. Until the unfolding is implemented the
         // variant cannot reach this path through normal flow — it
@@ -1629,8 +1782,11 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
             }
             total
         }
-        // TemplateCall / TemplateBody are walker-rejected before
-        // they'd contribute to a split decision.
+        // TemplateCall emits one InstantiateTemplate opcode in the
+        // parent frame; captures resolve to existing regs without
+        // allocating fresh ones. TemplateBody emits sideways into
+        // its own template buffer, so it contributes nothing to the
+        // parent frame's reg pressure.
         ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => 0,
         // Stage 3 will materialize one synthesized scalar op per
         // iteration of the enclosing LoopUnroll. The body emits
@@ -1725,14 +1881,19 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
                 collect_in_extinst(nested, out);
             }
         }
-        // TemplateCall / TemplateBody are refused by the walker
-        // before split decisions are made; they should never appear
-        // in a stream where collect_referenced_ssa_vars runs.
+        // TemplateCall.captures are uses in the parent scope — must
+        // cross any top-level split between the call and its
+        // surrounding template.
         ExtendedInstruction::TemplateCall { captures, .. } => {
             for v in captures {
                 out.insert(*v);
             }
         }
+        // TemplateBody emits sideways into its own template frame
+        // and references its captures internally via reg 0..n_params.
+        // The captures already appear in the matching TemplateCall's
+        // capture list (guaranteed by the lift), so the live-set scan
+        // doesn't need to add them again here.
         ExtendedInstruction::TemplateBody { .. } => {}
         // The variant references `index_var` and (for Let) `value_var`;
         // both are SSA vars defined in the enclosing scope and must
@@ -2369,15 +2530,91 @@ mod tests {
     }
 
     #[test]
-    fn refuses_template_call() {
+    fn refuses_template_call_with_outputs() {
+        // Phase 3 Option B lift uses side-effects only — non-empty
+        // outputs are reserved for Phase 4 (Opcode::TemplateOutput
+        // wiring). Verify the walker rejects them rather than
+        // silently miscompiling.
         let body = vec![ExtendedInstruction::TemplateCall {
             template_id: crate::TemplateId(0),
             captures: vec![],
-            outputs: vec![],
+            outputs: vec![ssa(0)],
         }];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
-        assert_eq!(err, WalkError::TemplateNotSupported);
+        let err = walker.lower(&body).expect_err("should refuse outputs");
+        assert_eq!(err, WalkError::TemplateOutputsNotSupported);
+    }
+
+    #[test]
+    fn rejects_template_body_captures_mismatch() {
+        // n_params declares 2 but captures has 1 → pipeline corruption.
+        let body = vec![ExtendedInstruction::TemplateBody {
+            id: crate::TemplateId(1),
+            frame_size: 4,
+            n_params: 2,
+            captures: vec![ssa(0)],
+            body: vec![],
+        }];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse mismatch");
+        assert!(matches!(
+            err,
+            WalkError::TemplateCapturesMismatch {
+                n_params: 2,
+                captures_len: 1
+            }
+        ));
+    }
+
+    #[test]
+    fn lowers_template_body_plus_call_pair() {
+        // Lift-shaped fixture: an outer Plain(Input) becomes an
+        // OuterRef capture; a TemplateBody wraps a tiny LoopUnroll
+        // that uses the captured input; a TemplateCall instantiates
+        // it. The walker should emit one root template (Template 0,
+        // the wrapper) plus the lifted template body. The execution
+        // dispatch is exercised by lysis e2e tests; here we just
+        // verify the walker doesn't error and produces a non-empty
+        // program with the expected number of templates.
+        let outer_input = ssa(0);
+        let iter_var = ssa(1);
+        let lifted = ExtendedInstruction::TemplateBody {
+            id: crate::TemplateId(1),
+            frame_size: 4,
+            n_params: 1,
+            captures: vec![outer_input],
+            body: vec![ExtendedInstruction::LoopUnroll {
+                iter_var,
+                start: 0,
+                end: 2,
+                body: vec![plain(Instruction::Mul {
+                    result: ssa(2),
+                    lhs: outer_input,
+                    rhs: outer_input,
+                })],
+            }],
+        };
+        let body = vec![
+            plain(Instruction::Input {
+                result: outer_input,
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            lifted,
+            ExtendedInstruction::TemplateCall {
+                template_id: crate::TemplateId(1),
+                captures: vec![outer_input],
+                outputs: vec![],
+            },
+        ];
+
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower OK");
+        // Templates: 0 (root wrapper) + 1 (lifted) = 2.
+        assert_eq!(program.templates.len(), 2);
+        // Template 1 carries n_params=1 (the captured outer input).
+        assert_eq!(program.templates[1].n_params, 1);
+        assert!(program.templates[1].frame_size >= 1);
     }
 
     #[test]

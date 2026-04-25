@@ -461,6 +461,7 @@ fn lift_uniform_to_template<F: FieldBackend>(
             id: template_id,
             frame_size,
             n_params,
+            captures: outer_refs.clone(),
             body: vec![loop_unroll],
         },
         ExtendedInstruction::TemplateCall {
@@ -752,10 +753,12 @@ mod tests {
             ExtendedInstruction::TemplateBody {
                 id,
                 n_params,
+                captures,
                 body,
                 ..
             } => {
                 assert_eq!(*n_params, 1, "one OuterRef capture");
+                assert_eq!(captures, &vec![ssa(99)]);
                 assert_eq!(body.len(), 1, "body wraps the original LoopUnroll");
                 assert!(matches!(body[0], ExtendedInstruction::LoopUnroll { .. }));
                 (*id, body)
