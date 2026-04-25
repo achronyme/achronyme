@@ -475,13 +475,21 @@ impl<F: FieldBackend> Walker<F> {
     /// post-split frame and would lose any outer SsaVar that
     /// `body[0..j]` references but `body[j..N]` doesn't. `iter_var` is
     /// always force-live so the per-iter literal binding survives.
+    /// Plus all `walker_const` keys are force-live so any **enclosing**
+    /// per-iter loop's `iter_var` (also tracked in walker_const) flows
+    /// through the boundary — without this, nested per-iter unrolls
+    /// where the inner loop triggers a split would lose the outer
+    /// iter_var binding from `ssa_to_reg`.
     fn split_in_per_iter(
         &mut self,
         body: &[ExtendedInstruction<F>],
         iter_var: SsaVar,
     ) -> Result<(), WalkError> {
         let referenced = collect_referenced_ssa_vars(body);
-        let live = self.compute_live_set(|v| referenced.contains(v) || *v == iter_var)?;
+        let walker_const_keys: HashSet<SsaVar> = self.walker_const.keys().copied().collect();
+        let live = self.compute_live_set(|v| {
+            referenced.contains(v) || *v == iter_var || walker_const_keys.contains(v)
+        })?;
         self.perform_split(&live)
     }
 
@@ -1671,6 +1679,14 @@ impl<F: FieldBackend> Walker<F> {
         pre_body_walker_const.remove(&iter_var);
 
         for i in start_u32..end_u32 {
+            // Track current at iter start so we can detect any split
+            // that fires during this iteration — including splits
+            // triggered by NESTED per-iter unrolls inside `body`. A
+            // nested split moves `self.current` without setting our
+            // local `split_happened_this_iter` flag, so detect via
+            // `current_at_iter_start != self.current` instead.
+            let current_at_iter_start = self.current;
+
             self.allocator.restore_to(pre_body_alloc_ckpt);
             self.ssa_to_reg = pre_body_bindings.clone();
             self.bind(iter_var, iter_reg);
@@ -1686,27 +1702,28 @@ impl<F: FieldBackend> Walker<F> {
                 idx: const_idx,
             });
 
-            let mut split_happened_this_iter = false;
             for (j, inst) in body.iter().enumerate() {
                 if j > 0 {
                     let cost = reg_cost_of_extinst(inst);
                     let projected = self.allocator.next_slot().saturating_add(cost);
                     if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
                         self.split_in_per_iter(body, iter_var)?;
-                        split_happened_this_iter = true;
                     }
                 }
                 self.emit(inst)?;
             }
 
-            if split_happened_this_iter {
-                // After the split, `self.current` points at a fresh
-                // chained template. Refresh the per-iter snapshots so
-                // the NEXT iteration restores from this frame's state
-                // instead of the now-invalid parent state. iter_var
-                // was force-live across the split, so its rebound reg
-                // (a capture slot) is in `ssa_to_reg`; track it as the
-                // new `iter_reg` for upcoming LoadConst writes.
+            if self.current != current_at_iter_start {
+                // Either an outer mid-emit split fired (above) or a
+                // nested per-iter unroll inside `body` triggered its
+                // own split. Either way, `self.current` now points at
+                // a fresh chained template. Refresh the per-iter
+                // snapshots so the NEXT iteration restores from this
+                // frame's state instead of the now-invalid parent
+                // state. iter_var was force-live across the split, so
+                // its rebound reg (a capture slot) is in `ssa_to_reg`;
+                // track it as the new `iter_reg` for upcoming
+                // LoadConst writes.
                 iter_reg = self
                     .ssa_to_reg
                     .get(&iter_var)
