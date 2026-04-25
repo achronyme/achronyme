@@ -390,13 +390,32 @@ fn emit_one<F: FieldBackend>(
             ssa_to_idx.insert(*result_var, idx);
             tree.body_order.push(idx);
         }
-        ExtendedInstruction::SymbolicShift { .. } => {
-            // Stage 1 (Gap 3) conservative classification: fall
-            // through to the `NestedLoop` sentinel so the enclosing
-            // loop classifies `DataDependent` until Stage 4 introduces
-            // a dedicated `SymbolicNode::Shift` that allows two probes
-            // to differ structurally only in the shift-amount slot.
+        ExtendedInstruction::SymbolicShift {
+            result_var,
+            operand_var,
+            shift_var,
+            ..
+        } => {
+            // Stage 1 (Gap 3) — pull `operand_var` and `shift_var`
+            // through `resolve_operand` so the lift's `OuterRef` /
+            // slot-tagged-Const accounting sees them. Without this,
+            // the symbolic tree would be opaque (`NestedLoop`-only)
+            // and the lift's capture scan would miss `operand_var`,
+            // leaving it unbound when the per-iter walker emits the
+            // shift expansion. `result_var` binds to the sentinel
+            // node so downstream AssertEq operands resolve to a
+            // stable NodeIdx instead of synthesising an `OuterRef`
+            // (which would corrupt the capture set).
+            //
+            // Stage 4 will replace the `NestedLoop` sentinel with a
+            // dedicated `SymbolicNode::Shift { operand_anchor,
+            // shift_operand, num_bits, direction }` so two probes
+            // classify equal under `structural_diff` even when
+            // shift-amount slots diverge.
+            let _operand_anchor = resolve_operand(*operand_var, tree, ssa_to_idx);
+            let _shift_operand = resolve_operand(*shift_var, tree, ssa_to_idx);
             let idx = tree.push(SymbolicNode::NestedLoop);
+            ssa_to_idx.insert(*result_var, idx);
             tree.body_order.push(idx);
         }
     }
