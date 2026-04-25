@@ -440,6 +440,10 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
             })
             .collect(),
         Opcode::EmitPoseidonHash { in_regs, .. } => in_regs.clone(),
+        // StoreHeap reads its src_reg before writing it to the heap;
+        // LoadHeap reads from the heap, not from regs (its read-side
+        // is governed by Rules 12+13, not Rule 9).
+        Opcode::StoreHeap { src_reg, .. } => vec![*src_reg],
         Opcode::EmitIntDiv { lhs, rhs, .. } | Opcode::EmitIntMod { lhs, rhs, .. } => {
             vec![*lhs, *rhs]
         }
@@ -471,6 +475,13 @@ fn writes_of(op: &Opcode) -> Vec<u8> {
             dst_arr, n_bits, ..
         } => (*dst_arr..dst_arr.saturating_add(*n_bits)).collect(),
         Opcode::EmitWitnessCall { out_regs, .. } => out_regs.clone(),
+        // LoadHeap materialises a heap entry into dst_reg — that's a
+        // write from Rule 9's perspective. Without this, downstream
+        // reads of the loaded reg fire false `UninitializedRegister`
+        // errors.
+        Opcode::LoadHeap { dst_reg, .. } => vec![*dst_reg],
+        // EmitWitnessCallHeap outputs go to heap slots, not regs;
+        // it writes nothing register-visible.
         _ => Vec::new(),
     }
 }
