@@ -223,6 +223,8 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         Opcode::EmitIntDiv { dst, lhs, rhs, .. } | Opcode::EmitIntMod { dst, lhs, rhs, .. } => {
             vec![*dst, *lhs, *rhs]
         }
+        Opcode::StoreHeap { src_reg, .. } => vec![*src_reg],
+        Opcode::LoadHeap { dst_reg, .. } => vec![*dst_reg],
     }
 }
 

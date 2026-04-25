@@ -704,6 +704,19 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             frames[frame_idx].write(*dst, id);
             Ok(Step::Next)
         }
+
+        // Heap opcodes round-trip through encoding but the executor
+        // surfaces them as a validation error until the heap state is
+        // wired in. With the v1 bytecode header, `heap_size_hint` is
+        // structurally absent, so any program containing these opcodes
+        // is malformed and the validator (rule 12, Phase 4) is the
+        // gatekeeper. Reaching this arm means hand-crafted bytecode
+        // bypassed validation.
+        StoreHeap { .. } | LoadHeap { .. } => Err(LysisError::ValidationFailed {
+            rule: 12,
+            location: offset,
+            detail: "heap opcodes require v2 header with heap_size_hint > 0",
+        }),
     }
 }
 
