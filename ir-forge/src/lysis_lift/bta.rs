@@ -420,6 +420,65 @@ mod tests {
     // -----------------------------------------------------------------
 
     #[test]
+    fn body_with_symbolic_indexed_effect_classifies_uniform() {
+        // for i in 0..3: array[i] := value (where value is OuterRef).
+        // The slot-tagged Const for iter_var is the only thing that
+        // shifts between probes; the IndexedEffect node itself is
+        // structurally identical across probes (same array_anchor,
+        // same value_operand).
+        use crate::extended::IndexedEffectKind;
+        let body: Vec<ExtendedInstruction<Bn254Fr>> =
+            vec![ExtendedInstruction::SymbolicIndexedEffect {
+                kind: IndexedEffectKind::Let,
+                // Simulate the Stage 2 instantiate-time slot snapshot.
+                // The slot SsaVars are OuterRefs from the BTA's POV.
+                array_slots: vec![ssa(10), ssa(11), ssa(12)],
+                index_var: ssa(0),
+                value_var: Some(ssa(20)),
+                span: None,
+            }];
+        let c = classify(ssa(0), &body, 0, 3, fe);
+        match &c.binding_time {
+            BindingTime::Uniform { captures, .. } => {
+                assert!(captures.contains(&SlotId(0)));
+            }
+            BindingTime::DataDependent => panic!("expected Uniform"),
+        }
+    }
+
+    #[test]
+    fn body_with_symbolic_indexed_effect_distinct_arrays_diff_structurally() {
+        // Two bodies with IndexedEffects targeting different arrays
+        // diverge on `array_anchor`. structural_diff catches that —
+        // the diff between two such trees is `Structural`. Use the
+        // diff API directly so we can construct two heterogeneous
+        // trees.
+        use crate::extended::IndexedEffectKind;
+        use crate::lysis_lift::symbolic::symbolic_emit;
+        let body_a: Vec<ExtendedInstruction<Bn254Fr>> =
+            vec![ExtendedInstruction::SymbolicIndexedEffect {
+                kind: IndexedEffectKind::Let,
+                array_slots: vec![ssa(10), ssa(11)],
+                index_var: ssa(0),
+                value_var: Some(ssa(20)),
+                span: None,
+            }];
+        let body_b: Vec<ExtendedInstruction<Bn254Fr>> =
+            vec![ExtendedInstruction::SymbolicIndexedEffect {
+                kind: IndexedEffectKind::Let,
+                // Different array.
+                array_slots: vec![ssa(30), ssa(31)],
+                index_var: ssa(0),
+                value_var: Some(ssa(20)),
+                span: None,
+            }];
+        let tree_a = symbolic_emit(&body_a, &[(ssa(0), fe(0))]);
+        let tree_b = symbolic_emit(&body_b, &[(ssa(0), fe(0))]);
+        let d = structural_diff(&tree_a, &tree_b);
+        assert!(matches!(d, Diff::Structural), "{d:?}");
+    }
+
+    #[test]
     fn details_expose_all_three_diffs() {
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![Instruction::Mul {
             result: ssa(1),

@@ -32,6 +32,7 @@ use std::collections::HashMap;
 use memory::{FieldBackend, FieldElement};
 use smallvec::SmallVec;
 
+use crate::extended::IndexedEffectKind;
 use crate::{ExtendedInstruction, TemplateId};
 use ir_core::{Instruction, SsaVar, Visibility};
 
@@ -141,6 +142,23 @@ pub enum SymbolicNode<F: FieldBackend> {
     /// (A Phase 4 refinement could recursively classify the nested
     /// loop.)
     NestedLoop,
+    /// A symbolic-index write produced by Gap 1
+    /// [`ExtendedInstruction::SymbolicIndexedEffect`]. The
+    /// `index_operand` typically resolves to the slot-tagged `Const`
+    /// pushed by the probe binding (for `arr[i]`-style writes), so two
+    /// probes of the same body produce structurally-identical
+    /// `IndexedEffect` nodes whose `index_operand`'s slot value is the
+    /// only point of divergence — `structural_diff` lifts that as
+    /// `OnlyConstants` and BTA classifies the enclosing loop
+    /// `Uniform`. `array_anchor` carries the resolved slot wires (one
+    /// `NodeIdx` per array element) so two probes targeting different
+    /// arrays diverge structurally.
+    IndexedEffect {
+        kind: IndexedEffectKind,
+        array_anchor: SmallVec<[NodeIdx; 4]>,
+        index_operand: NodeIdx,
+        value_operand: Option<NodeIdx>,
+    },
 }
 
 impl<F: FieldBackend> SymbolicNode<F> {
@@ -310,6 +328,27 @@ fn emit_one<F: FieldBackend>(
             // that forces the enclosing classification to
             // DataDependent. Phase 4 can lift this.
             let idx = tree.push(SymbolicNode::NestedLoop);
+            tree.body_order.push(idx);
+        }
+        ExtendedInstruction::SymbolicIndexedEffect {
+            kind,
+            array_slots,
+            index_var,
+            value_var,
+            span: _,
+        } => {
+            let array_anchor: SmallVec<[NodeIdx; 4]> = array_slots
+                .iter()
+                .map(|v| resolve_operand(*v, tree, ssa_to_idx))
+                .collect();
+            let index_operand = resolve_operand(*index_var, tree, ssa_to_idx);
+            let value_operand = value_var.map(|v| resolve_operand(v, tree, ssa_to_idx));
+            let idx = tree.push(SymbolicNode::IndexedEffect {
+                kind: *kind,
+                array_anchor,
+                index_operand,
+                value_operand,
+            });
             tree.body_order.push(idx);
         }
     }

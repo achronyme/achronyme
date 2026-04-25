@@ -21,6 +21,25 @@ pub enum VarKind {
     Capture,
 }
 
+/// Downstream pipeline target. Lowering decisions that depend on which
+/// pipeline will consume the ProveIR (eager R1CS vs. Lysis lifter)
+/// branch on this. In particular, the catch-all `IndexedAssignmentLoop`
+/// classifier in `loops.rs` keeps the loop rolled when targeting Lysis
+/// so the `SymbolicIndexedEffect` path can carry the indexed write
+/// rather than amplifying the body N times at lowering time.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Frontend {
+    /// Eager R1CS pipeline — every loop with signal ops gets unrolled
+    /// at lowering time. Default to preserve byte-identical behaviour
+    /// for callers that don't opt in.
+    #[default]
+    Legacy,
+    /// Lysis lifter pipeline — leave loops with loop-var-indexed
+    /// signal writes rolled so the symbolic-index walker can do the
+    /// per-iteration unfolding at bytecode emission time.
+    Lysis,
+}
+
 /// Environment for resolving identifiers during lowering.
 ///
 /// Tracks which names are inputs, locals, or captures so that
@@ -48,6 +67,12 @@ pub struct LoweringEnv {
     /// like `var C[n] = POSEIDON_C(t)`.  Used to resolve `C[expr]`
     /// to a field constant during lowering.
     pub known_array_values: HashMap<String, EvalValue>,
+    /// Pipeline target. Drives the `IndexedAssignmentLoop` /
+    /// "any signal ops" gate in `classify_loop_body` — `Lysis` keeps
+    /// loops with loop-var-indexed signal writes rolled so the
+    /// `SymbolicIndexedEffect` path can carry the write through to
+    /// the walker.
+    pub frontend: Frontend,
 }
 
 impl LoweringEnv {
@@ -61,7 +86,17 @@ impl LoweringEnv {
             component_arrays: HashSet::new(),
             known_constants: HashMap::new(),
             known_array_values: HashMap::new(),
+            frontend: Frontend::default(),
         }
+    }
+
+    /// Identical to [`Self::new`] but stamps the given pipeline
+    /// frontend on the env. Used by Lysis-targeting compilation paths
+    /// so the loop classifier preserves rolled symbolic-index loops.
+    pub fn with_frontend(frontend: Frontend) -> Self {
+        let mut env = Self::new();
+        env.frontend = frontend;
+        env
     }
 
     /// Resolve an identifier to its kind, or None if unknown.

@@ -7,7 +7,7 @@
 use diagnostics::SpanRange;
 use serde::{Deserialize, Serialize};
 
-use super::CircuitExpr;
+use super::{ArraySize, CircuitExpr};
 
 /// A node in the circuit body.
 ///
@@ -88,6 +88,22 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// Witness array declaration: pre-allocates `size` slots for an
+    /// internal signal array.
+    ///
+    /// Used by the Lysis-frontend lowering path to materialize
+    /// `signal X[N];` (no init) at instantiate time so a downstream
+    /// `SymbolicIndexedEffect` can reference `array_slots` for the
+    /// array. Each slot becomes a witness `Input` named
+    /// `{name}_{i}`. The legacy R1CS path doesn't need this — it
+    /// per-iteration unrolls indexed assignments at lowering time
+    /// and `ensure_array_slot` lazily creates the slots.
+    WitnessArrayDecl {
+        name: String,
+        size: ArraySize,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
     /// Indexed let binding: `array[index] = value` inside a for loop.
     ///
     /// During instantiation, `index` resolves to a compile-time constant `i`,
@@ -151,6 +167,7 @@ impl CircuitNode {
             | CircuitNode::Expr { span, .. }
             | CircuitNode::Decompose { span, .. }
             | CircuitNode::WitnessHint { span, .. }
+            | CircuitNode::WitnessArrayDecl { span, .. }
             | CircuitNode::LetIndexed { span, .. }
             | CircuitNode::WitnessHintIndexed { span, .. }
             | CircuitNode::WitnessCall { span, .. } => span.as_ref(),

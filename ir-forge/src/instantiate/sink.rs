@@ -52,7 +52,7 @@ use diagnostics::SpanRange;
 use ir_core::{Instruction, IrProgram, IrType, SsaVar};
 use memory::FieldBackend;
 
-use crate::extended::ExtendedInstruction;
+use crate::extended::{ExtendedInstruction, IndexedEffectKind};
 
 /// How a sink wants the [`super::Instantiator::emit_range_loop`]
 /// caller to handle a `for i in start..end { body }` construct.
@@ -138,6 +138,29 @@ pub(crate) trait InstrSink<F: FieldBackend> {
     fn finish_symbolic_loop(&mut self, _iter_var: SsaVar, _start: i64, _end: i64) {
         unreachable!(
             "finish_symbolic_loop called on a sink whose loop_unroll_mode is PerIteration"
+        );
+    }
+
+    /// Push a [`ExtendedInstruction::SymbolicIndexedEffect`] into the
+    /// active scope (the topmost loop sub-buffer if any, else the
+    /// outer body). Only callable when [`Self::loop_unroll_mode`]
+    /// returns `Symbolic`; the caller must have used `Symbolic` mode
+    /// to enter the surrounding loop. `array_slots` is the
+    /// pre-resolved list of element SSA wires so the walker can
+    /// per-iteration materialise without needing the instantiate-time
+    /// env (closes risk-audit invariant #4 in the Gap 1 plan).
+    ///
+    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    fn push_symbolic_indexed_effect(
+        &mut self,
+        _kind: IndexedEffectKind,
+        _array_slots: Vec<SsaVar>,
+        _index_var: SsaVar,
+        _value_var: Option<SsaVar>,
+        _span: Option<SpanRange>,
+    ) {
+        unreachable!(
+            "push_symbolic_indexed_effect called on a sink whose loop_unroll_mode is PerIteration"
         );
     }
 }
@@ -304,6 +327,23 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
             start,
             end,
             body,
+        });
+    }
+
+    fn push_symbolic_indexed_effect(
+        &mut self,
+        kind: IndexedEffectKind,
+        array_slots: Vec<SsaVar>,
+        index_var: SsaVar,
+        value_var: Option<SsaVar>,
+        span: Option<SpanRange>,
+    ) {
+        self.push_into_active(ExtendedInstruction::SymbolicIndexedEffect {
+            kind,
+            array_slots,
+            index_var,
+            value_var,
+            span,
         });
     }
 }
@@ -524,6 +564,55 @@ mod tests {
                 ));
             }
             _ => panic!("expected outer LoopUnroll"),
+        }
+    }
+
+    #[test]
+    fn extended_sink_pushes_symbolic_indexed_effect() {
+        // Simulate what `emit_let_indexed_symbolic` does inside a
+        // symbolic loop body: begin loop, push effect, finish loop.
+        // The resulting ExtendedInstruction tree must wrap the effect
+        // inside the LoopUnroll body, not the outer scope.
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        let mut sink = ExtendedSink::new(&mut body, &mut metadata);
+
+        let iter_var = sink.fresh_var();
+        let slot0 = sink.fresh_var();
+        let slot1 = sink.fresh_var();
+        let value_var = sink.fresh_var();
+
+        sink.begin_symbolic_loop();
+        sink.push_symbolic_indexed_effect(
+            IndexedEffectKind::Let,
+            vec![slot0, slot1],
+            iter_var,
+            Some(value_var),
+            None,
+        );
+        sink.finish_symbolic_loop(iter_var, 0, 2);
+
+        assert_eq!(body.len(), 1, "one outer LoopUnroll");
+        match &body[0] {
+            ExtendedInstruction::LoopUnroll { body: inner, .. } => {
+                assert_eq!(inner.len(), 1);
+                match &inner[0] {
+                    ExtendedInstruction::SymbolicIndexedEffect {
+                        kind,
+                        array_slots,
+                        index_var,
+                        value_var: vv,
+                        ..
+                    } => {
+                        assert_eq!(*kind, IndexedEffectKind::Let);
+                        assert_eq!(array_slots, &vec![slot0, slot1]);
+                        assert_eq!(*index_var, iter_var);
+                        assert_eq!(*vv, Some(value_var));
+                    }
+                    other => panic!("expected SymbolicIndexedEffect, got {other:?}"),
+                }
+            }
+            other => panic!("expected LoopUnroll, got {other:?}"),
         }
     }
 

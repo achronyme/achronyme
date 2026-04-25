@@ -13,7 +13,7 @@ use super::captures::classify_captures;
 use super::LowerTemplateResult;
 use crate::ast::{CircomProgram, TemplateDef};
 use crate::lowering::context::LoweringContext;
-use crate::lowering::env::LoweringEnv;
+use crate::lowering::env::{Frontend, LoweringEnv};
 use crate::lowering::error::LoweringError;
 use crate::lowering::statements::lower_stmts;
 use crate::lowering::{signals, utils};
@@ -33,6 +33,26 @@ pub fn lower_template_with_captures(
     captures: &HashMap<String, FieldConst>,
     public_signals: &[String],
     program: &CircomProgram,
+) -> Result<LowerTemplateResult, LoweringError> {
+    lower_template_with_captures_and_frontend(
+        template,
+        captures,
+        public_signals,
+        program,
+        Frontend::Legacy,
+    )
+}
+
+/// Frontend-aware variant of [`lower_template_with_captures`]. Used by
+/// the Lysis-targeting compilation path so the loop classifier sees
+/// `Frontend::Lysis` and keeps loop-var-indexed signal-write loops
+/// rolled.
+pub fn lower_template_with_captures_and_frontend(
+    template: &TemplateDef,
+    captures: &HashMap<String, FieldConst>,
+    public_signals: &[String],
+    program: &CircomProgram,
+    frontend: Frontend,
 ) -> Result<LowerTemplateResult, LoweringError> {
     let mut ctx = LoweringContext::from_program(program);
     for (name, &val) in captures {
@@ -67,7 +87,7 @@ pub fn lower_template_with_captures(
     }
 
     // 2. Build lowering environment
-    let mut env = LoweringEnv::new();
+    let mut env = LoweringEnv::with_frontend(frontend);
 
     // Input signals → env.inputs. Array-valued inputs (e.g.
     // `signal input hin[256]`) additionally register their length

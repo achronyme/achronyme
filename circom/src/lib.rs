@@ -40,6 +40,8 @@ use std::path::{Path, PathBuf};
 use diagnostics::Diagnostic;
 use ir_forge::types::ProveIR;
 
+pub use lowering::env::Frontend;
+
 /// Error returned by the Circom compilation pipeline.
 #[derive(Debug)]
 pub enum CircomError {
@@ -209,8 +211,22 @@ pub fn compile_file(
     path: &Path,
     library_dirs: &[PathBuf],
 ) -> Result<CircomCompileResult, CircomError> {
+    compile_file_with_frontend(path, library_dirs, Frontend::Legacy)
+}
+
+/// Compile a `.circom` file targeting the given downstream pipeline.
+/// `Frontend::Legacy` matches [`compile_file`] byte-for-byte;
+/// `Frontend::Lysis` keeps loops with loop-var-indexed signal writes
+/// rolled (see `LoopLowering::IndexedAssignmentLoop`'s Stage-5 gate)
+/// so the Lysis lifter can carry them through to per-iteration walker
+/// unfolding rather than amplifying the body N times at lowering.
+pub fn compile_file_with_frontend(
+    path: &Path,
+    library_dirs: &[PathBuf],
+    frontend: Frontend,
+) -> Result<CircomCompileResult, CircomError> {
     let (program, warnings) = load_and_validate_program(path, library_dirs)?;
-    compile_program_with_warnings(&program, warnings)
+    compile_program_with_warnings_and_frontend(&program, warnings, frontend)
 }
 
 /// Shared pipeline between [`compile_file`] and
@@ -338,6 +354,18 @@ fn compile_program_with_warnings(
     program: &ast::CircomProgram,
     warnings: Vec<Diagnostic>,
 ) -> Result<CircomCompileResult, CircomError> {
+    compile_program_with_warnings_and_frontend(program, warnings, Frontend::Legacy)
+}
+
+/// Frontend-aware variant of [`compile_program_with_warnings`]. Same
+/// pipeline, but threads the [`Frontend`] toggle into
+/// [`lowering::template::lower_template`] so the loop classifier
+/// gates on it.
+fn compile_program_with_warnings_and_frontend(
+    program: &ast::CircomProgram,
+    warnings: Vec<Diagnostic>,
+    frontend: Frontend,
+) -> Result<CircomCompileResult, CircomError> {
     // 1. Find main component and its template
     let main = program
         .main_component
@@ -367,8 +395,9 @@ fn compile_program_with_warnings(
         })?;
 
     // 4. Lower to ProveIR
-    let lower_result = lowering::template::lower_template(template, Some(main), program)
-        .map_err(CircomError::LoweringError)?;
+    let lower_result =
+        lowering::template::lower_template_with_frontend(template, Some(main), program, frontend)
+            .map_err(CircomError::LoweringError)?;
 
     // 5. Extract capture values from main component template args
     let mut capture_values = HashMap::new();

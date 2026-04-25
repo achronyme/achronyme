@@ -123,6 +123,14 @@ fn walk_node(
             // referenced in it still need to be provided as values.
             walk_expr(hint, false, structural, constraint);
         }
+        CircuitNode::WitnessArrayDecl { size, .. } => {
+            // The array size is a structural position — if it
+            // references a capture (e.g., `signal X[N]`), N must be
+            // structurally provided.
+            if let crate::types::ArraySize::Capture(name) = size {
+                structural.insert(name.clone());
+            }
+        }
         CircuitNode::LetIndexed { index, value, .. } => {
             walk_expr(index, false, structural, constraint);
             walk_expr(value, false, structural, constraint);
