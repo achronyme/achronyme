@@ -753,6 +753,57 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             frames[frame_idx].write(*dst_reg, id);
             Ok(Step::Next)
         }
+
+        // Heap-output WitnessCall (Phase 4 follow-up). Mirrors
+        // `EmitWitnessCall` but writes outputs to heap[slot] instead
+        // of frame.regs[reg]. Used when output count exceeds the
+        // u8 reg cap. The downstream LoadHeap path materialises
+        // outputs into regs on first use.
+        EmitWitnessCallHeap {
+            bytecode_const_idx,
+            in_regs,
+            out_slots,
+        } => {
+            let entry = program.const_pool.get(*bytecode_const_idx as usize).ok_or(
+                LysisError::ConstIdxOutOfRange {
+                    at_offset: offset,
+                    idx: *bytecode_const_idx as u32,
+                    len: program.const_pool.len() as u32,
+                },
+            )?;
+            let blob = match entry {
+                ConstPoolEntry::ArtikBytecode(b) => b.clone(),
+                _ => {
+                    return Err(LysisError::ValidationFailed {
+                        rule: 4,
+                        location: offset,
+                        detail: "EmitWitnessCallHeap bytecode_const_idx is not an Artik blob",
+                    });
+                }
+            };
+            let inputs: Vec<NodeId> = in_regs
+                .iter()
+                .map(|r| read_reg(&frames[frame_idx], *r, offset))
+                .collect::<Result<_, _>>()?;
+            let outputs: Vec<NodeId> = (0..out_slots.len()).map(|_| sink.fresh_id()).collect();
+            sink.emit_effect(InstructionKind::WitnessCall {
+                outputs: outputs.clone(),
+                inputs,
+                program_bytes: blob,
+            });
+            for (slot, id) in out_slots.iter().zip(outputs.iter()) {
+                let slot_idx = *slot as usize;
+                if slot_idx >= heap.len() {
+                    return Err(LysisError::ValidationFailed {
+                        rule: 12,
+                        location: offset,
+                        detail: "EmitWitnessCallHeap out_slot >= heap_size_hint",
+                    });
+                }
+                heap[slot_idx] = Some(*id);
+            }
+            Ok(Step::Next)
+        }
     }
 }
 
@@ -1630,5 +1681,76 @@ mod tests {
         let sink = run(&builder.finish(), &[]);
         // Two Consts emitted (LoadHeap doesn't emit a new instruction).
         assert_eq!(sink.count(), 2);
+    }
+
+    // -----------------------------------------------------------------
+    // §4.3.7 EmitWitnessCallHeap (Phase 4 follow-up)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn witness_call_heap_writes_outputs_to_heap_slots() {
+        // 2 inputs in regs → Artik program → 4 outputs to heap slots
+        // 0..=3. Pull two of them back via LoadHeap and verify the
+        // sink saw exactly one WitnessCall + the two LoadConsts that
+        // populated the inputs.
+        let mut builder = b().with_heap_size_hint(8);
+        builder.intern_field(seven());
+        let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
+        builder
+            .load_const(0, 0)
+            .load_const(1, 0)
+            .emit_witness_call_heap(
+                blob_idx as u16,
+                vec![0, 1],       // in_regs
+                vec![0, 1, 2, 3], // out_slots
+            )
+            .load_heap(5, 0)
+            .load_heap(6, 3)
+            .halt();
+        let sink = run(&builder.finish(), &[]);
+        // Sink emissions: 2 Const (one Const value, but separate calls
+        // — InterningSink would dedupe; StubSink doesn't). Plus the
+        // WitnessCall side-effect.
+        let witness_calls = sink
+            .instructions()
+            .iter()
+            .filter(|k| matches!(k, InstructionKind::WitnessCall { .. }))
+            .count();
+        assert_eq!(
+            witness_calls, 1,
+            "exactly one WitnessCall side-effect emitted"
+        );
+    }
+
+    #[test]
+    fn witness_call_heap_oob_slot_rejected_by_rule_12() {
+        // out_slot=99, heap_size_hint=4 → Rule 12 fires at runtime
+        // even if the validator was bypassed.
+        let mut builder = b().with_heap_size_hint(4);
+        let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
+        builder
+            .emit_witness_call_heap(blob_idx as u16, vec![], vec![99])
+            .halt();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();
+        assert!(
+            matches!(err, LysisError::ValidationFailed { rule: 12, .. }),
+            "expected ValidationFailed rule 12, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn witness_call_heap_with_non_artik_const_idx_errors() {
+        // bytecode_const_idx points at a Field entry, not Artik blob.
+        // Same rule-4 surface as classic EmitWitnessCall.
+        let mut builder = b().with_heap_size_hint(2);
+        builder.intern_field(seven());
+        builder.emit_witness_call_heap(0, vec![], vec![0]).halt();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();
+        assert!(
+            matches!(err, LysisError::ValidationFailed { rule: 4, .. }),
+            "expected ValidationFailed rule 4, got {err:?}"
+        );
     }
 }

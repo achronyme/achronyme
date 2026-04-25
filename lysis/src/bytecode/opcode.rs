@@ -1,4 +1,4 @@
-//! `Opcode` — the 33 instructions Lysis understands, exactly matching
+//! `Opcode` — the 34 instructions Lysis understands, exactly matching
 //! the table in RFC §4.3.
 //!
 //! Each variant carries its operands inline so that after a successful
@@ -26,7 +26,7 @@
 
 use crate::intern::Visibility;
 
-/// All 33 Lysis opcodes, grouped per RFC §4.3 section.
+/// All 34 Lysis opcodes, grouped per RFC §4.3 section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     // -----------------------------------------------------------------
@@ -202,6 +202,29 @@ pub enum Opcode {
         dst_reg: u8,
         slot: u16,
     },
+
+    // -----------------------------------------------------------------
+    // §4.3.7 Heap-output WitnessCall (Phase 4 follow-up)
+    //
+    // `EmitWitnessCallHeap` is the heap-destination twin of
+    // `EmitWitnessCall`. The walker emits this variant when the
+    // Artik program produces too many outputs to fit alongside hot
+    // captures in a u8 frame (canonical case: SHA-256 with 256
+    // output bits, where `EmitWitnessCall` would need 256 fresh
+    // registers and exceed the `FRAME_CAP = 255` cap structurally).
+    //
+    // Outputs land directly in heap slots (`u16` indices, length-
+    // prefixed by `u16`) instead of register slots (`u8` indices,
+    // length-prefixed by `u8`). Subsequent opcodes that read an
+    // output materialise it via `LoadHeap` through the walker's
+    // lazy-reload path. Inputs still live in regs since input count
+    // is bounded by what the program can compute upstream.
+    // -----------------------------------------------------------------
+    EmitWitnessCallHeap {
+        bytecode_const_idx: u16,
+        in_regs: Vec<u8>,
+        out_slots: Vec<u16>,
+    },
 }
 
 /// Raw byte identifiers from RFC §4.3.
@@ -250,6 +273,9 @@ pub mod code {
     // §4.3.6 (Phase 4 — heap spill)
     pub const STORE_HEAP: u8 = 0x50;
     pub const LOAD_HEAP: u8 = 0x51;
+
+    // §4.3.7 (Phase 4 follow-up — heap-output WitnessCall)
+    pub const EMIT_WITNESS_CALL_HEAP: u8 = 0x52;
 }
 
 impl Opcode {
@@ -290,6 +316,7 @@ impl Opcode {
             Self::EmitIntMod { .. } => EMIT_INT_MOD,
             Self::StoreHeap { .. } => STORE_HEAP,
             Self::LoadHeap { .. } => LOAD_HEAP,
+            Self::EmitWitnessCallHeap { .. } => EMIT_WITNESS_CALL_HEAP,
         }
     }
 
@@ -330,6 +357,7 @@ impl Opcode {
             Self::EmitIntMod { .. } => "EmitIntMod",
             Self::StoreHeap { .. } => "StoreHeap",
             Self::LoadHeap { .. } => "LoadHeap",
+            Self::EmitWitnessCallHeap { .. } => "EmitWitnessCallHeap",
         }
     }
 
@@ -421,7 +449,7 @@ mod tests {
     }
 
     #[test]
-    fn all_33_codes_are_unique() {
+    fn all_34_codes_are_unique() {
         let all = [
             code::LOAD_CAPTURE,
             code::LOAD_CONST,
@@ -456,12 +484,37 @@ mod tests {
             code::EMIT_INT_MOD,
             code::STORE_HEAP,
             code::LOAD_HEAP,
+            code::EMIT_WITNESS_CALL_HEAP,
         ];
-        assert_eq!(all.len(), 33, "RFC §4.3 lists 33 opcodes");
+        assert_eq!(all.len(), 34, "RFC §4.3 lists 34 opcodes");
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 33, "opcode bytes must be unique");
+        assert_eq!(sorted.len(), 34, "opcode bytes must be unique");
+    }
+
+    #[test]
+    fn emit_witness_call_heap_does_not_write_register() {
+        // Outputs go to heap slots, not registers — so this op is NOT
+        // a register-writing op from the validator's perspective.
+        // The validator's rule 9 (uninitialized register check) must
+        // not consider any register written by this instruction.
+        assert!(!Opcode::EmitWitnessCallHeap {
+            bytecode_const_idx: 0,
+            in_regs: vec![],
+            out_slots: vec![],
+        }
+        .writes_register());
+    }
+
+    #[test]
+    fn emit_witness_call_heap_falls_through() {
+        assert!(Opcode::EmitWitnessCallHeap {
+            bytecode_const_idx: 0,
+            in_regs: vec![],
+            out_slots: vec![],
+        }
+        .falls_through());
     }
 
     #[test]
