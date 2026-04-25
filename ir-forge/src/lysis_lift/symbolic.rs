@@ -351,6 +351,15 @@ fn emit_one<F: FieldBackend>(
             });
             tree.body_order.push(idx);
         }
+        ExtendedInstruction::SymbolicArrayRead { .. } => {
+            // Stage 1 (Gap 1.5) conservative classification: fall
+            // through to the `NestedLoop` sentinel so the enclosing
+            // loop classifies `DataDependent` until Stage 4 introduces
+            // a dedicated `SymbolicNode::ArrayRead` that allows two
+            // probes to differ structurally only in the index slot.
+            let idx = tree.push(SymbolicNode::NestedLoop);
+            tree.body_order.push(idx);
+        }
     }
 }
 

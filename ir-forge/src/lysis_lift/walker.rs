@@ -156,6 +156,23 @@ pub enum WalkError {
     /// — the instantiator promised a value side it didn't supply.
     /// Should be impossible if Stage 2 is wired correctly.
     SymbolicIndexedEffectMissingValue,
+    /// A `SymbolicArrayRead` reached the walker but its `index_var`
+    /// could not be const-folded to a literal `usize`. Same surface
+    /// limitation as [`Self::SymbolicIndexedEffectNotEmittable`] — the
+    /// walker's const-prop only sees Add/Sub/Mul/Neg over loop-iter
+    /// constants. (Gap 1.5 Stage 3.)
+    SymbolicArrayReadNotEmittable,
+    /// `SymbolicArrayRead.index_var` const-folded but pointed at an
+    /// array slot beyond `array_slots.len()`. Bug at lowering or
+    /// instantiation, not something the walker can fix.
+    SymbolicArrayReadIndexOutOfRange { idx: i64, len: usize },
+    /// `SymbolicArrayRead` resolved its slot to an `SsaVar` that has
+    /// no register binding. Read-side cannot synthesise a witness
+    /// wire on demand the way `SymbolicIndexedEffect` does — a read
+    /// of an unbound slot means upstream forgot to pre-emit the
+    /// declaring `Plain(Input)` or `WitnessArrayDecl`. Surfaces the
+    /// missing slot index for diagnosis.
+    SymbolicArrayReadUnboundSlot { idx: usize, slot: SsaVar },
 }
 
 impl std::fmt::Display for WalkError {
@@ -194,6 +211,17 @@ impl std::fmt::Display for WalkError {
             ),
             Self::SymbolicIndexedEffectMissingValue => f.write_str(
                 "walker: SymbolicIndexedEffect kind=Let but value_var=None — instantiator bug",
+            ),
+            Self::SymbolicArrayReadNotEmittable => f.write_str(
+                "walker: SymbolicArrayRead index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+            ),
+            Self::SymbolicArrayReadIndexOutOfRange { idx, len } => write!(
+                f,
+                "walker: SymbolicArrayRead resolved to index {idx} but array has {len} slots"
+            ),
+            Self::SymbolicArrayReadUnboundSlot { idx, slot } => write!(
+                f,
+                "walker: SymbolicArrayRead slot at index {idx} (SsaVar {slot}) has no register binding — upstream pre-emission missed this slot"
             ),
         }
     }
@@ -531,6 +559,13 @@ impl<F: FieldBackend> Walker<F> {
                 value_var,
                 span: _,
             } => self.emit_symbolic_indexed_effect(*kind, array_slots, *index_var, *value_var),
+            // Stage 3 of Gap 1.5 replaces this with a per-iteration
+            // resolver mirroring `emit_symbolic_indexed_effect`. Until
+            // then the variant only reaches `emit` when test fixtures
+            // construct it directly — flag and reject.
+            ExtendedInstruction::SymbolicArrayRead { .. } => {
+                Err(WalkError::SymbolicArrayReadNotEmittable)
+            }
         }
     }
 
@@ -1057,16 +1092,16 @@ impl<F: FieldBackend> Walker<F> {
             return Err(WalkError::NegativeLoopBound { start, end });
         }
 
-        // Gap 1 Stage 3: when the body (recursively, through nested
-        // LoopUnrolls) contains a `SymbolicIndexedEffect`, the runtime
-        // `LoopUnroll` opcode can't carry it — the symbolic-index
-        // resolution needs a literal `iter_var = i` on every
-        // iteration. Per-iter unroll the body at walker time, threading
-        // walker-side const-prop into the SymbolicIndexedEffect arm.
-        // Loops without indexed effects keep the rolled `LoopUnroll`
-        // opcode + InterningSink dedup — Phase 1.5's value isn't
-        // sacrificed for the rest of the program.
-        if body_has_symbolic_indexed_effect(body) {
+        // Gap 1/1.5 Stage 3: when the body (recursively, through
+        // nested LoopUnrolls) contains a `SymbolicIndexedEffect` or
+        // `SymbolicArrayRead`, the runtime `LoopUnroll` opcode can't
+        // carry either — both need a literal `iter_var = i` on every
+        // iteration so the walker can const-fold the index. Per-iter
+        // unroll the body at walker time. Loops without symbolic ops
+        // keep the rolled `LoopUnroll` opcode + InterningSink dedup —
+        // Phase 1.5's value isn't sacrificed for the rest of the
+        // program.
+        if body_has_symbolic_op(body) {
             return self.emit_loop_unroll_per_iter(iter_var, start, end, body);
         }
 
@@ -1226,6 +1261,12 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
         // surfaces only when test fixtures construct it directly.
         ExtendedInstruction::SymbolicIndexedEffect { .. } => {
             Err(WalkError::SymbolicIndexedEffectNotEmittable)
+        }
+        // Read-side per-iteration alias — Stage 3 of Gap 1.5 will
+        // replace this with the unfolding cost (zero opcodes; size 0)
+        // once the per-iter walker rebinds slot regs.
+        ExtendedInstruction::SymbolicArrayRead { .. } => {
+            Err(WalkError::SymbolicArrayReadNotEmittable)
         }
     }
 }
@@ -1406,15 +1447,18 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
 }
 
 /// `true` iff `body` (recursively, including nested `LoopUnroll`
-/// bodies) contains at least one `SymbolicIndexedEffect`. Drives the
-/// per-iteration unrolling decision in `emit_loop_unroll`. Stops at
-/// the first hit — short-circuits via `iter::any`.
-fn body_has_symbolic_indexed_effect<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
+/// bodies) contains at least one symbolic-index op — either a
+/// `SymbolicIndexedEffect` (write) or a `SymbolicArrayRead` (read).
+/// Drives the per-iteration unrolling decision in `emit_loop_unroll`:
+/// the rolled runtime `LoopUnroll` opcode can't symbolic-resolve an
+/// index against a literal `iter_var`, so any loop that contains
+/// either op gets per-iter walker materialisation. Stops at the
+/// first hit — short-circuits via `iter::any`.
+fn body_has_symbolic_op<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
     body.iter().any(|inst| match inst {
-        ExtendedInstruction::SymbolicIndexedEffect { .. } => true,
-        ExtendedInstruction::LoopUnroll { body: nested, .. } => {
-            body_has_symbolic_indexed_effect(nested)
-        }
+        ExtendedInstruction::SymbolicIndexedEffect { .. }
+        | ExtendedInstruction::SymbolicArrayRead { .. } => true,
+        ExtendedInstruction::LoopUnroll { body: nested, .. } => body_has_symbolic_op(nested),
         ExtendedInstruction::Plain(_)
         | ExtendedInstruction::TemplateCall { .. }
         | ExtendedInstruction::TemplateBody { .. } => false,
@@ -1451,6 +1495,9 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
         // safe (the variant only reaches a frame whose other
         // instructions already drove the answer).
         ExtendedInstruction::SymbolicIndexedEffect { .. } => false,
+        // Read-side never desugars through `one` — the walker rebinds
+        // an existing slot reg with no extra ops.
+        ExtendedInstruction::SymbolicArrayRead { .. } => false,
     })
 }
 
@@ -1490,6 +1537,19 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
             format!(
                 "SymbolicIndexedEffect({:?}, slots={}, idx_var={})",
                 kind,
+                array_slots.len(),
+                index_var
+            )
+        }
+        ExtendedInstruction::SymbolicArrayRead {
+            result_var,
+            array_slots,
+            index_var,
+            ..
+        } => {
+            format!(
+                "SymbolicArrayRead(result={}, slots={}, idx_var={})",
+                result_var,
                 array_slots.len(),
                 index_var
             )
@@ -1541,6 +1601,10 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
         // over-approximates and prevents a wide indexed effect from
         // overflowing pre-emit.
         ExtendedInstruction::SymbolicIndexedEffect { .. } => 2,
+        // Read-side allocates no fresh reg — the walker rebinds
+        // `result_var` to the slot's already-bound register. Cost 0
+        // is exact, not over-approximated.
+        ExtendedInstruction::SymbolicArrayRead { .. } => 0,
     }
 }
 
@@ -1644,6 +1708,16 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
             if let Some(v) = value_var {
                 out.insert(*v);
             }
+        }
+        // Read-side mirrors the write-side rationale: `index_var` is
+        // an enclosing-scope use that must cross a split boundary.
+        // `array_slots` are NOT collected — slots come from a sibling
+        // pre-Plain(Input) emission inside the same template, so a
+        // split between the LoopUnroll and its parent never separates
+        // them from this read. `result_var` is a definition produced
+        // by the read itself, so it isn't an operand.
+        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
+            out.insert(*index_var);
         }
     }
 }

@@ -156,6 +156,45 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         value_var: Option<SsaVar>,
         span: Option<SpanRange>,
     },
+
+    /// A read from an array slot at an SSA-symbolic index — the
+    /// symmetric counterpart of [`Self::SymbolicIndexedEffect`] on the
+    /// read side. Pre-Gap-1.5, every `out[i] <-- in[i]` in a circom
+    /// loop required `in[i]` to const-fold at instantiate time
+    /// ([`crate::instantiate`] eager array indexing); for the SHA-256
+    /// padding loop the index is the loop var so the read can't fold
+    /// without unrolling, the very thing Gap 1 keeps rolled.
+    ///
+    /// With `SymbolicArrayRead`, instantiation mints a fresh SSA
+    /// `result_var` to hand back to the caller without emitting any
+    /// `Plain` instruction; at walker time the read resolves to
+    /// `array_slots[idx]` per iteration and `result_var` is rebound to
+    /// that slot's already-bound register. No opcode is emitted — the
+    /// node is a symbolic alias that disappears once the index is
+    /// known.
+    ///
+    /// # Field semantics
+    ///
+    /// - `result_var` — fresh SSA var produced for the caller of
+    ///   `emit_expr`. Per-iteration the walker rebinds it to the
+    ///   resolved slot's register; downstream uses inside the same
+    ///   iteration body resolve correctly. Outside the rolled loop
+    ///   `result_var` would carry the LAST iteration's binding, but
+    ///   construction-by-construction the read is only emitted for
+    ///   loop-iter-dependent indices, so its uses are necessarily
+    ///   inside the same loop body.
+    /// - `array_slots` — pre-resolved list of element SSA vars (same
+    ///   shape as `SymbolicIndexedEffect::array_slots`).
+    /// - `index_var` — SSA var holding the index expression. Walker
+    ///   const-folds this via `walker_const`; failure to fold is a
+    ///   `WalkError::SymbolicArrayReadNotEmittable`.
+    /// - `span` — optional source span.
+    SymbolicArrayRead {
+        result_var: SsaVar,
+        array_slots: Vec<SsaVar>,
+        index_var: SsaVar,
+        span: Option<SpanRange>,
+    },
 }
 
 /// Discriminator for [`ExtendedInstruction::SymbolicIndexedEffect`].
@@ -348,6 +387,58 @@ mod tests {
             }
             _ => panic!("expected SymbolicIndexedEffect"),
         }
+    }
+
+    #[test]
+    fn symbolic_array_read_carries_result_and_slots() {
+        let read = ExtendedInstruction::<Bn254Fr>::SymbolicArrayRead {
+            result_var: ssa(40),
+            array_slots: vec![ssa(10), ssa(11), ssa(12), ssa(13)],
+            index_var: ssa(20),
+            span: None,
+        };
+        assert!(!read.is_plain());
+        assert!(read.as_plain().is_none());
+        match read {
+            ExtendedInstruction::SymbolicArrayRead {
+                result_var,
+                array_slots,
+                index_var,
+                ..
+            } => {
+                assert_eq!(result_var, ssa(40));
+                assert_eq!(array_slots.len(), 4);
+                assert_eq!(index_var, ssa(20));
+            }
+            _ => panic!("expected SymbolicArrayRead"),
+        }
+    }
+
+    #[test]
+    fn symbolic_array_read_distinct_from_indexed_effect() {
+        let read = ExtendedInstruction::<Bn254Fr>::SymbolicArrayRead {
+            result_var: ssa(0),
+            array_slots: vec![ssa(1)],
+            index_var: ssa(2),
+            span: None,
+        };
+        let write = ExtendedInstruction::<Bn254Fr>::SymbolicIndexedEffect {
+            kind: IndexedEffectKind::Let,
+            array_slots: vec![ssa(1)],
+            index_var: ssa(2),
+            value_var: Some(ssa(3)),
+            span: None,
+        };
+        // Sanity: the two variants don't accidentally pattern-match the
+        // same tag, so downstream exhaustive matches stay exhaustive.
+        assert!(matches!(
+            read,
+            ExtendedInstruction::SymbolicArrayRead { .. }
+        ));
+        assert!(matches!(
+            write,
+            ExtendedInstruction::SymbolicIndexedEffect { .. }
+        ));
     }
 
     #[test]
