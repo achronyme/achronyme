@@ -81,6 +81,7 @@ use lysis::program::Program;
 use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
 
+use super::extract::{lift_uniform_loops, ExtractError, TemplateRegistry, MAX_FRAME_SIZE};
 use crate::extended::IndexedEffectKind;
 use crate::{ExtendedInstruction, TemplateId};
 use ir_core::{Instruction, SsaVar, Visibility};
@@ -182,6 +183,13 @@ pub enum WalkError {
     /// — side-effects flow through the shared sink). Output wiring
     /// via `Opcode::TemplateOutput` is a Phase 4 deliverable.
     TemplateOutputsNotSupported,
+    /// `TemplateCall.template_id` references a `TemplateId` whose
+    /// matching `TemplateBody` was never emitted. Either the IR
+    /// stream is malformed or the `TemplateBody` declaration sits
+    /// AFTER its first call site (lift always emits the body
+    /// immediately before the call so this should not happen in
+    /// practice).
+    UndefinedTemplateId(TemplateId),
 }
 
 impl std::fmt::Display for WalkError {
@@ -238,6 +246,10 @@ impl std::fmt::Display for WalkError {
             ),
             Self::TemplateOutputsNotSupported => f.write_str(
                 "walker: TemplateCall.outputs is non-empty (Option B lift uses side-effects only; output wiring is Phase 4)",
+            ),
+            Self::UndefinedTemplateId(id) => write!(
+                f,
+                "walker: TemplateCall references {id} but no matching TemplateBody emitted yet"
             ),
         }
     }
@@ -307,6 +319,15 @@ pub struct Walker<F: FieldBackend> {
     /// only producer of "iter_var = literal" entries; outside that
     /// path the map only sees source-level constants.
     walker_const: HashMap<SsaVar, i64>,
+    /// Maps lift-time `TemplateId` (allocated by
+    /// `lysis_lift::extract::TemplateRegistry`) to the walker's
+    /// internal `templates` buffer index. The IR stream uses lift
+    /// IDs (sequential from 0); the walker pre-reserves index 0 for
+    /// the root wrapper, so a lifted `TemplateBody { id: TemplateId(0) }`
+    /// lands at buffer index 1. The wire-level `template_id` in
+    /// `Opcode::InstantiateTemplate` must match the buffer index, so
+    /// every `emit_template_call` translates through this map.
+    template_id_map: HashMap<TemplateId, u16>,
 }
 
 impl<F: FieldBackend> Walker<F> {
@@ -320,6 +341,7 @@ impl<F: FieldBackend> Walker<F> {
             ssa_to_reg: HashMap::new(),
             one_reg: None,
             walker_const: HashMap::new(),
+            template_id_map: HashMap::new(),
         }
     }
 
@@ -331,10 +353,38 @@ impl<F: FieldBackend> Walker<F> {
     /// chains a fresh template if it would push the current frame
     /// past `FRAME_CAP - FRAME_MARGIN`, forwarding live SSA vars as
     /// captures.
+    ///
+    /// Gap 2 Stage 4: before emission, the body is run through
+    /// `lift_uniform_loops` — each `BindingTime::Uniform` `LoopUnroll`
+    /// gets replaced with a `TemplateBody` + `TemplateCall` pair so
+    /// the bytecode emission path can isolate wide single instructions
+    /// (`Decompose(254)`, `BinSum(32, n)`) into their own 255-slot
+    /// frames. The pass uses `Vec` ownership; we clone `body` once at
+    /// the entry point and own the lifted result thereafter.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
+        let mut registry = TemplateRegistry::<F>::new();
+        let lifted = lift_uniform_loops(body.to_vec(), &mut registry).map_err(|e| {
+            // The lift's frame/template-space errors are walker-relevant
+            // — surface them through the existing error channel rather
+            // than silently dropping the lift.
+            match e {
+                ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
+                    kind: "lift_uniform_loops.frame_size",
+                    limit: MAX_FRAME_SIZE,
+                    got: requested,
+                },
+                ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
+                    kind: "lift_uniform_loops.template_id",
+                    limit: u32::from(u16::MAX),
+                    got: u32::from(u16::MAX) + 1,
+                },
+            }
+        })?;
+
         // Lazy `one` loading: deferred to first desugaring that needs
         // it, so wide single-instruction templates (Decompose, Or)
         // don't pay the slot tax up-front.
+        let body = lifted;
         for (i, inst) in body.iter().enumerate() {
             // Pre-emit split decision. Skip the check at i == 0 —
             // the allocator is at most at 1 (just the `one` const)
@@ -343,7 +393,7 @@ impl<F: FieldBackend> Walker<F> {
                 let cost = reg_cost_of_extinst(inst);
                 let projected = self.allocator.next_slot().saturating_add(cost);
                 if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
-                    self.do_split(body, i)?;
+                    self.do_split(&body, i)?;
                 }
             }
             self.emit(inst).map_err(|e| match e {
@@ -657,12 +707,17 @@ impl<F: FieldBackend> Walker<F> {
                 got: captures.len() as u32,
             });
         }
+        let walker_idx = self
+            .template_id_map
+            .get(&template_id)
+            .copied()
+            .ok_or(WalkError::UndefinedTemplateId(template_id))?;
         let mut capture_regs: Vec<u8> = Vec::with_capacity(captures.len());
         for v in captures {
             capture_regs.push(self.resolve(*v)?);
         }
         self.push_op(Opcode::InstantiateTemplate {
-            template_id: template_id.0,
+            template_id: walker_idx,
             capture_regs,
             output_regs: Vec::new(),
         });
@@ -686,7 +741,7 @@ impl<F: FieldBackend> Walker<F> {
     /// over-approximation).
     fn emit_template_body(
         &mut self,
-        _id: TemplateId,
+        id: TemplateId,
         _declared_frame_size: u8,
         n_params: u8,
         captures: &[SsaVar],
@@ -709,6 +764,18 @@ impl<F: FieldBackend> Walker<F> {
         let saved_walker_const = std::mem::take(&mut self.walker_const);
 
         // Open a fresh template buffer at the tail of `templates`.
+        // Record the lift-id → buffer-index mapping BEFORE emitting
+        // the body so a recursive TemplateCall referencing this id
+        // (e.g. self-recursive templates, though Phase 3 lift never
+        // emits them) resolves correctly.
+        let walker_idx = u16::try_from(self.templates.len()).map_err(|_| {
+            WalkError::OperandOutOfRange {
+                kind: "templates",
+                limit: u32::from(u16::MAX),
+                got: self.templates.len() as u32,
+            }
+        })?;
+        self.template_id_map.insert(id, walker_idx);
         self.templates.push(TemplateBuf::new(n_params));
         self.current = self.templates.len() - 1;
         self.allocator = RegAllocator::new_after_captures(n_params);
@@ -2564,6 +2631,40 @@ mod tests {
                 captures_len: 1
             }
         ));
+    }
+
+    #[test]
+    fn walker_lower_lifts_uniform_loops_internally() {
+        // Stage 4 wiring: Walker::lower runs lift_uniform_loops as
+        // its first step. A bare Uniform LoopUnroll handed to the
+        // walker should land as a 2-template program (Template 0
+        // root wrapper + Template 1 lifted body), even though the
+        // caller never built the lift output explicitly.
+        let outer_input = ssa(0);
+        let iter_var = ssa(1);
+        let body = vec![
+            plain(Instruction::Input {
+                result: outer_input,
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var,
+                start: 0,
+                end: 3,
+                body: vec![plain(Instruction::Mul {
+                    result: ssa(2),
+                    lhs: outer_input,
+                    rhs: outer_input,
+                })],
+            },
+        ];
+
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower OK");
+        // Lift produced a template; walker has root + lifted = 2.
+        assert_eq!(program.templates.len(), 2);
+        assert_eq!(program.templates[1].n_params, 1, "outer_input captured");
     }
 
     #[test]
