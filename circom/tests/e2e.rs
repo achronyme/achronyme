@@ -1844,25 +1844,32 @@ fn sha256_64_r1cs_probe() {
 ///   Lysis path and its post-optimize state. If the gate fails,
 ///   these give the first-look picture.
 ///
-/// **Ignored — current blocker (Gap 1.5 closed, Gap 2 + shift fix
-/// pending)** — Gap 1 Stage 5 landed `Frontend::Lysis` +
-/// `WitnessArrayDecl` pre-allocation. Gap 1.5 (the read-side mirror
-/// of `SymbolicIndexedEffect`) added `SymbolicArrayRead` so
-/// `paddedIn[k] <== in[k]` and friends instantiate without
-/// const-folding the index. The gate now passes the entire compile
-/// phase and reaches `instantiate_lysis`; the new blocker is in
-/// `Instantiator::emit_expr` for `CircuitExpr::ShiftR`/`ShiftL`,
-/// which still requires a compile-time constant shift amount even
-/// though the `shift` field accepts `CircuitExpr`. With Lysis
-/// rolling loops, shifts whose amount references a loop var (or any
-/// non-const SsaVar derived from one) reach `resolve_const_u32` and
-/// fail with "shift right amount must be a compile-time constant".
-/// Beyond that, the next expected blocker is `Decompose(254)` in
-/// `Num2Bits_strict` — both are Gap 2 territory (BTA + structural
-/// extraction so wide single instructions get their own template
-/// frames).
+/// **Ignored — IR-Instantiator blockers closed (Gaps 1/1.5/2/3),
+/// new blockers are Lysis-architecture-level**. Gap 3 (`SymbolicShift`)
+/// closes the last symbolic-loop emit gap: shifts whose amount is
+/// the loop iter var no longer fail at `resolve_const_u32`, and Σ
+/// helpers (Sigma0/Sigma1/sigma0/sigma1) classify Uniform under BTA.
+/// Running the gate today pushes the failure two phases deeper:
+///
+///   1. **Compile time** — `[compile]` ≈ 250s before
+///      `instantiate_lysis` even starts. Source: circom lowering of
+///      circomlib's full SHA-256, not Gap 3 work. See
+///      `.claude/plans/circom-lowering-perf.md`.
+///   2. **Lifted template frame overflow** — `lift_uniform_loops`
+///      computes a 576-register skeleton for one of the Σ helpers,
+///      exceeding the RFC §5.1 cap of 255 (`MAX_FRAME_SIZE`). The
+///      lift surfaces `OperandOutOfRange { kind:
+///      "lift_uniform_loops.frame_size", got: 576 }` and refuses to
+///      proceed. Two paths to unblock: (a) graceful degradation —
+///      have `lift_uniform_loops` fall back to inline `LoopUnroll`
+///      when extraction would overflow, or (b) per-template split
+///      inside the lift pass mirroring Phase 1.5's top-level split.
+///
+/// Both items are post-Gap-3 work — they don't reflect a bug in the
+/// shift fix, they reflect SHA-256 being the largest single circom
+/// program in the corpus and the first to stress these limits.
 #[test]
-#[ignore = "Gap 1.5 closed; new blocker is symbolic shift amount in Sigma/sigma helpers (Gap 2)"]
+#[ignore = "Gap 3 closed IR-Instantiator gap; new blockers are 250s compile + 576-reg lifted template frame (post-Gap-3 architecture)"]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};

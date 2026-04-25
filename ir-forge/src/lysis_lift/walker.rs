@@ -82,7 +82,7 @@ use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
 
 use super::extract::{lift_uniform_loops, ExtractError, TemplateRegistry, MAX_FRAME_SIZE};
-use crate::extended::IndexedEffectKind;
+use crate::extended::{IndexedEffectKind, ShiftDirection};
 use crate::{ExtendedInstruction, TemplateId};
 use ir_core::{Instruction, SsaVar, Visibility};
 
@@ -174,6 +174,19 @@ pub enum WalkError {
     /// declaring `Plain(Input)` or `WitnessArrayDecl`. Surfaces the
     /// missing slot index for diagnosis.
     SymbolicArrayReadUnboundSlot { idx: usize, slot: SsaVar },
+    /// A `SymbolicShift` reached the walker but its `shift_var`
+    /// could not be const-folded to a non-negative integer at walker
+    /// time. Same surface limitation as
+    /// [`Self::SymbolicArrayReadNotEmittable`] — the walker's
+    /// const-prop only sees Add/Sub/Mul/Neg over loop-iter
+    /// constants. (Gap 3 Stage 3.)
+    SymbolicShiftNotEmittable,
+    /// `SymbolicShift.shift_var` const-folded but to a negative
+    /// integer. The legacy `emit_shift_right`/`emit_shift_left`
+    /// path uses a `u32` shift amount so negatives are a logic bug
+    /// at lowering or instantiation, not something the walker can
+    /// fix.
+    SymbolicShiftNegativeAmount { shift: i64 },
     /// `TemplateBody.captures.len()` did not match the declared
     /// `n_params`. The lift always sets them equal; a mismatch is a
     /// pipeline corruption. (Gap 2.)
@@ -239,6 +252,13 @@ impl std::fmt::Display for WalkError {
             Self::SymbolicArrayReadUnboundSlot { idx, slot } => write!(
                 f,
                 "walker: SymbolicArrayRead slot at index {idx} (SsaVar {slot}) has no register binding — upstream pre-emission missed this slot"
+            ),
+            Self::SymbolicShiftNotEmittable => f.write_str(
+                "walker: SymbolicShift amount could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+            ),
+            Self::SymbolicShiftNegativeAmount { shift } => write!(
+                f,
+                "walker: SymbolicShift resolved to negative shift amount {shift} — shift amounts must be non-negative"
             ),
             Self::TemplateCapturesMismatch { n_params, captures_len } => write!(
                 f,
@@ -640,6 +660,20 @@ impl<F: FieldBackend> Walker<F> {
                 index_var,
                 span: _,
             } => self.emit_symbolic_array_read(*result_var, array_slots, *index_var),
+            ExtendedInstruction::SymbolicShift {
+                result_var,
+                operand_var,
+                shift_var,
+                num_bits,
+                direction,
+                span: _,
+            } => self.emit_symbolic_shift(
+                *result_var,
+                *operand_var,
+                *shift_var,
+                *num_bits,
+                *direction,
+            ),
         }
     }
 
@@ -681,6 +715,148 @@ impl<F: FieldBackend> Walker<F> {
             },
         )?;
         self.bind(result_var, slot_reg);
+        Ok(())
+    }
+
+    /// Resolve a `SymbolicShift` at walker time. Requires
+    /// `walker_const[shift_var]` populated — the per-iteration loop
+    /// unroll is the only producer in Phase 2.
+    ///
+    /// Mirrors [`crate::instantiate::Instantiator::emit_shift_right`] /
+    /// `emit_shift_left` once `shift_var` is known to be a literal
+    /// `u32`. The expansion is a single `EmitDecompose` followed by a
+    /// linear recompose chain over the *kept* bits — only non-zero
+    /// terms are emitted (zero terms in a left shift would const-fold
+    /// to zero in the legacy IR path; the walker's `InterningSink`
+    /// dedupes Const but doesn't peephole `bit * 0`, so we omit those
+    /// terms directly).
+    ///
+    /// For `shift >= num_bits` the result is the constant zero — same
+    /// early return as the legacy path.
+    fn emit_symbolic_shift(
+        &mut self,
+        result_var: SsaVar,
+        operand_var: SsaVar,
+        shift_var: SsaVar,
+        num_bits: u32,
+        direction: ShiftDirection,
+    ) -> Result<(), WalkError> {
+        let shift_signed = self
+            .walker_const
+            .get(&shift_var)
+            .copied()
+            .ok_or(WalkError::SymbolicShiftNotEmittable)?;
+        if shift_signed < 0 {
+            return Err(WalkError::SymbolicShiftNegativeAmount {
+                shift: shift_signed,
+            });
+        }
+        let shift = shift_signed as u32;
+
+        // shift >= num_bits — the entire operand shifts out and the
+        // result is zero. Mirrors `emit_shift_right` / `emit_shift_left`'s
+        // early return in `instantiate/bits.rs`.
+        if shift >= num_bits {
+            let zero_idx = self.builder.intern_field(FieldElement::<F>::zero()) as u16;
+            let dst = self.allocator.alloc()?;
+            self.push_op(Opcode::LoadConst { dst, idx: zero_idx });
+            self.bind(result_var, dst);
+            return Ok(());
+        }
+
+        // `EmitDecompose.n_bits` is a `u8`; reject wider operands at
+        // walker time rather than miscompiling. The legacy path's
+        // `Instruction::Decompose` walker arm (line 1207) applies the
+        // same gate.
+        if num_bits > u32::from(u8::MAX) {
+            return Err(WalkError::OperandOutOfRange {
+                kind: "SymbolicShift.num_bits",
+                limit: u32::from(u8::MAX),
+                got: num_bits,
+            });
+        }
+
+        let operand_reg = self.resolve(operand_var)?;
+
+        // Allocate `num_bits` consecutive registers for the bit array,
+        // then emit `EmitDecompose`. Mirrors the
+        // `Instruction::Decompose` walker arm exactly.
+        let base = self.allocator.alloc()?;
+        for _ in 1..num_bits {
+            let _ = self.allocator.alloc()?;
+        }
+        self.push_op(Opcode::EmitDecompose {
+            dst_arr: base,
+            src: operand_reg,
+            n_bits: num_bits as u8,
+        });
+
+        // Recompose the kept bits.
+        //
+        //   ShiftR(op, shift): result = sum_{j in 0..n_kept} bits[shift + j] * 2^j
+        //   ShiftL(op, shift): result = sum_{j in 0..n_kept} bits[j] * 2^(j + shift)
+        //
+        // Both unify by iterating j over the kept range, picking the
+        // appropriate bit index, and tracking `current_power` (the
+        // coefficient for the j-th term). We start with the smallest
+        // power for the direction and double per iteration.
+        let n_kept = num_bits - shift;
+        let mut current_power = FieldElement::<F>::one();
+        if matches!(direction, ShiftDirection::Left) {
+            for _ in 0..shift {
+                current_power = current_power.add(&current_power);
+            }
+        }
+
+        let mut acc: Option<RegId> = None;
+        for j in 0..n_kept {
+            let bit_idx = match direction {
+                ShiftDirection::Right => shift + j,
+                ShiftDirection::Left => j,
+            };
+            let bit_reg = base + bit_idx as RegId;
+
+            // Skip the multiplication when the coefficient is 1
+            // (matches `emit_recompose`'s peephole: the LSB is taken
+            // directly).
+            let term_reg = if current_power == FieldElement::<F>::one() {
+                bit_reg
+            } else {
+                let power_idx = self.builder.intern_field(current_power) as u16;
+                let power_reg = self.allocator.alloc()?;
+                self.push_op(Opcode::LoadConst {
+                    dst: power_reg,
+                    idx: power_idx,
+                });
+                let term_reg = self.allocator.alloc()?;
+                self.push_op(Opcode::EmitMul {
+                    dst: term_reg,
+                    lhs: bit_reg,
+                    rhs: power_reg,
+                });
+                term_reg
+            };
+
+            acc = Some(match acc {
+                None => term_reg,
+                Some(prev) => {
+                    let next = self.allocator.alloc()?;
+                    self.push_op(Opcode::EmitAdd {
+                        dst: next,
+                        lhs: prev,
+                        rhs: term_reg,
+                    });
+                    next
+                }
+            });
+
+            current_power = current_power.add(&current_power);
+        }
+
+        // `n_kept >= 1` because `shift < num_bits` was checked above,
+        // so the loop always runs at least once and `acc` is `Some`.
+        let result_reg = acc.expect("n_kept >= 1 implies acc is bound");
+        self.bind(result_var, result_reg);
         Ok(())
     }
 
@@ -1527,6 +1703,12 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
         ExtendedInstruction::SymbolicArrayRead { .. } => {
             Err(WalkError::SymbolicArrayReadNotEmittable)
         }
+        // TODO Gap 3 Stage 3: replace with the synthesised per-
+        // iteration cost (one EmitDecompose plus the recompose chain
+        // of Const/Mul/Add opcodes for the resolved shift amount).
+        // Until the unfolding is implemented the variant cannot
+        // reach this path through normal flow.
+        ExtendedInstruction::SymbolicShift { .. } => Err(WalkError::SymbolicShiftNotEmittable),
     }
 }
 
@@ -1716,7 +1898,8 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
 fn body_has_symbolic_op<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
     body.iter().any(|inst| match inst {
         ExtendedInstruction::SymbolicIndexedEffect { .. }
-        | ExtendedInstruction::SymbolicArrayRead { .. } => true,
+        | ExtendedInstruction::SymbolicArrayRead { .. }
+        | ExtendedInstruction::SymbolicShift { .. } => true,
         ExtendedInstruction::LoopUnroll { body: nested, .. } => body_has_symbolic_op(nested),
         ExtendedInstruction::Plain(_)
         | ExtendedInstruction::TemplateCall { .. }
@@ -1757,6 +1940,9 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
         // Read-side never desugars through `one` — the walker rebinds
         // an existing slot reg with no extra ops.
         ExtendedInstruction::SymbolicArrayRead { .. } => false,
+        // Shift desugars to Decompose + Const/Mul/Add — none of those
+        // touch the `one` register either.
+        ExtendedInstruction::SymbolicShift { .. } => false,
     })
 }
 
@@ -1813,6 +1999,19 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
                 index_var
             )
         }
+        ExtendedInstruction::SymbolicShift {
+            result_var,
+            operand_var,
+            shift_var,
+            num_bits,
+            direction,
+            ..
+        } => {
+            format!(
+                "SymbolicShift({:?}, result={}, op={}, shift_var={}, num_bits={})",
+                direction, result_var, operand_var, shift_var, num_bits
+            )
+        }
     }
 }
 
@@ -1867,6 +2066,15 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
         // `result_var` to the slot's already-bound register. Cost 0
         // is exact, not over-approximated.
         ExtendedInstruction::SymbolicArrayRead { .. } => 0,
+        // Stage 3 emits a Decompose + recompose chain per iteration.
+        // The Decompose allocates `num_bits` consecutive slots; the
+        // recompose chain accumulates into one further reg. Mirror
+        // `Instruction::Decompose`'s cost (which also returns
+        // `num_bits`) plus one for the accumulator. The body emits
+        // ONCE inside the per-iter walker loop (regs shared across
+        // iterations), so this is the exact alloc count, not an
+        // over-approximation.
+        ExtendedInstruction::SymbolicShift { num_bits, .. } => num_bits.saturating_add(1),
     }
 }
 
@@ -1985,6 +2193,19 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
         // by the read itself, so it isn't an operand.
         ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
             out.insert(*index_var);
+        }
+        // Both `operand_var` and `shift_var` are enclosing-scope uses
+        // that must cross any top-level split between the LoopUnroll's
+        // parent template and the LoopUnroll itself. `result_var` is
+        // a definition produced by the shift expansion, so it isn't
+        // an operand.
+        ExtendedInstruction::SymbolicShift {
+            operand_var,
+            shift_var,
+            ..
+        } => {
+            out.insert(*operand_var);
+            out.insert(*shift_var);
         }
     }
 }
@@ -2593,6 +2814,209 @@ mod tests {
             matches!(err, WalkError::SymbolicArrayReadUnboundSlot { idx: 0, .. }),
             "got {err:?}"
         );
+    }
+
+    #[test]
+    fn unfolds_symbolic_shift_per_iteration() {
+        // Body: for i in 0..3 { sink := operand >> i }. Per-iteration
+        // the walker resolves shift_var=i to a literal, decomposes
+        // operand to 4 bits, and recomposes the kept high bits. We
+        // count Decompose ops (one per iter, no dedup at executor
+        // level since each iter's emission is structurally unique
+        // until BTA Stage 4 lifts it) and AssertEqs (one per iter).
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "operand".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "sink".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 3,
+                body: vec![
+                    ExtendedInstruction::SymbolicShift {
+                        result_var: ssa(3),
+                        operand_var: ssa(0),
+                        shift_var: ssa(2),
+                        num_bits: 4,
+                        direction: ShiftDirection::Right,
+                        span: None,
+                    },
+                    plain(Instruction::AssertEq {
+                        result: ssa(4),
+                        lhs: ssa(1),
+                        rhs: ssa(3),
+                        message: None,
+                    }),
+                ],
+            },
+        ];
+        let out = run(&body);
+
+        // 3 Decomposes (one per iteration of the rolled loop).
+        let decomps = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Decompose { .. }))
+            .count();
+        assert_eq!(decomps, 3, "3 Decomposes, one per iteration");
+
+        // 3 AssertEqs (one per iter). Each rhs picks up a different
+        // recomposed wire because the kept-bit set + powers vary.
+        let asserts: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::AssertEq { lhs, rhs, .. } => Some((*lhs, *rhs)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asserts.len(), 3, "3 AssertEqs");
+        let lhs_set: std::collections::HashSet<_> = asserts.iter().map(|(l, _)| *l).collect();
+        assert_eq!(lhs_set.len(), 1, "all 3 lhs share the sink reg");
+    }
+
+    #[test]
+    fn unfolds_symbolic_shift_left_with_affine_amount() {
+        // Body: for i in 0..3 { sink := operand << (i + 1) }. Index is
+        // computed inside the body via Const(1) + Add; walker_const
+        // tracks the fold and the shift resolves to 1, 2, 3.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "operand".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "sink".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 3,
+                body: vec![
+                    plain(Instruction::Const {
+                        result: ssa(3),
+                        value: fe(1),
+                    }),
+                    plain(Instruction::Add {
+                        result: ssa(4),
+                        lhs: ssa(2),
+                        rhs: ssa(3),
+                    }),
+                    ExtendedInstruction::SymbolicShift {
+                        result_var: ssa(5),
+                        operand_var: ssa(0),
+                        shift_var: ssa(4),
+                        num_bits: 4,
+                        direction: ShiftDirection::Left,
+                        span: None,
+                    },
+                    plain(Instruction::AssertEq {
+                        result: ssa(6),
+                        lhs: ssa(1),
+                        rhs: ssa(5),
+                        message: None,
+                    }),
+                ],
+            },
+        ];
+        let out = run(&body);
+
+        // Each iteration runs a Decompose. 3 iterations → 3 Decomposes.
+        let decomps = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Decompose { .. }))
+            .count();
+        assert_eq!(decomps, 3, "3 Decomposes, one per iteration");
+
+        let asserts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::AssertEq { .. }))
+            .count();
+        assert_eq!(asserts, 3, "3 AssertEqs");
+    }
+
+    #[test]
+    fn rejects_symbolic_shift_when_amount_not_const_foldable() {
+        // shift_var depends on a runtime Input (not a loop-iter const)
+        // — walker can't resolve. Expect the dedicated error.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "operand".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "runtime_shift".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 1,
+                body: vec![ExtendedInstruction::SymbolicShift {
+                    result_var: ssa(3),
+                    operand_var: ssa(0),
+                    shift_var: ssa(1),
+                    num_bits: 4,
+                    direction: ShiftDirection::Right,
+                    span: None,
+                }],
+            },
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert!(
+            matches!(err, WalkError::SymbolicShiftNotEmittable),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn symbolic_shift_full_drop_yields_zero_const() {
+        // shift = num_bits → result is the constant zero. The walker
+        // emits one LoadConst(0) per iteration and no Decompose.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "operand".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Const {
+                result: ssa(1),
+                value: fe(8),
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 1,
+                body: vec![ExtendedInstruction::SymbolicShift {
+                    result_var: ssa(3),
+                    operand_var: ssa(0),
+                    // shift_var bound to the source-level Const(8) so
+                    // walker_const resolves to 8 — equals num_bits.
+                    shift_var: ssa(1),
+                    num_bits: 8,
+                    direction: ShiftDirection::Right,
+                    span: None,
+                }],
+            },
+        ];
+        let out = run(&body);
+
+        let decomps = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Decompose { .. }))
+            .count();
+        assert_eq!(decomps, 0, "no Decompose when shift drops everything");
     }
 
     #[test]

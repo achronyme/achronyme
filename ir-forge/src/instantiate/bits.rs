@@ -8,7 +8,7 @@
 //!   [`emit_shift_left`]. Drive the `BitAnd` / `BitOr` / `BitXor` /
 //!   `BitNot` / `ShiftL` / `ShiftR` arms of [`super::exprs::emit_expr`].
 //! - **Indexing utilities** — [`extract_const_index`],
-//!   [`ensure_array_slot`], [`extract_const_u32`], [`resolve_const_u32`].
+//!   [`ensure_array_slot`].
 //!   Used by `LetIndexed` / `WitnessHintIndexed` / array-index lowering
 //!   to fold compile-time-known indices into env updates.
 //!
@@ -16,10 +16,8 @@
 
 use memory::{FieldBackend, FieldElement};
 
-use super::utils::fe_to_u64;
 use super::{BitwiseOp, InstEnvValue, Instantiator};
 use crate::error::ProveIrError;
-use crate::types::CircuitExpr;
 use ir_core::{Instruction, SsaVar};
 
 impl<'a, F: FieldBackend> Instantiator<'a, F> {
@@ -273,39 +271,5 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 self.env.insert(array.to_string(), InstEnvValue::Array(arr));
             }
         }
-    }
-
-    /// Extract a constant u32 from an emitted variable, with a descriptive error.
-    pub(super) fn extract_const_u32(
-        &self,
-        var: SsaVar,
-        context: &str,
-    ) -> Result<u32, ProveIrError> {
-        self.extract_const_index(var)
-            .and_then(|n| u32::try_from(n).ok())
-            .ok_or_else(|| ProveIrError::UnsupportedOperation {
-                description: format!("{context} must be a compile-time constant"),
-                span: None,
-            })
-    }
-
-    /// Resolve a circuit expression to a u32 constant, trying eval_const_expr
-    /// first (for captures) then falling back to emit + extract.
-    pub(super) fn resolve_const_u32(
-        &mut self,
-        expr: &CircuitExpr,
-        context: &str,
-    ) -> Result<u32, ProveIrError> {
-        // Try constant evaluation first (handles captures and arithmetic)
-        if let Ok(fe) = self.eval_const_expr(expr) {
-            let val = fe_to_u64(&fe, context)?;
-            return u32::try_from(val).map_err(|_| ProveIrError::UnsupportedOperation {
-                description: format!("{context} too large for u32"),
-                span: None,
-            });
-        }
-        // Fall back to emit + extract
-        let var = self.emit_expr(expr)?;
-        self.extract_const_u32(var, context)
     }
 }

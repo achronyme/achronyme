@@ -52,7 +52,7 @@ use diagnostics::SpanRange;
 use ir_core::{Instruction, IrProgram, IrType, SsaVar};
 use memory::FieldBackend;
 
-use crate::extended::{ExtendedInstruction, IndexedEffectKind};
+use crate::extended::{ExtendedInstruction, IndexedEffectKind, ShiftDirection};
 
 /// How a sink wants the [`super::Instantiator::emit_range_loop`]
 /// caller to handle a `for i in start..end { body }` construct.
@@ -185,6 +185,29 @@ pub(crate) trait InstrSink<F: FieldBackend> {
         unreachable!(
             "push_symbolic_array_read called on a sink whose loop_unroll_mode is PerIteration"
         );
+    }
+
+    /// Push a [`ExtendedInstruction::SymbolicShift`] into the active
+    /// scope. The caller must have already minted `result_var` via
+    /// [`Self::fresh_var`], emitted `operand_var` via the normal
+    /// `emit_expr` path, and resolved `shift_var` from the shift
+    /// expression. The walker (Gap 3 Stage 3) will const-fold
+    /// `shift_var` per iteration and synthesise the equivalent
+    /// Decompose + recompose chain that
+    /// [`crate::instantiate::Instantiator::emit_shift_right`] /
+    /// `emit_shift_left` would emit at instantiate time.
+    ///
+    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    fn push_symbolic_shift(
+        &mut self,
+        _result_var: SsaVar,
+        _operand_var: SsaVar,
+        _shift_var: SsaVar,
+        _num_bits: u32,
+        _direction: ShiftDirection,
+        _span: Option<SpanRange>,
+    ) {
+        unreachable!("push_symbolic_shift called on a sink whose loop_unroll_mode is PerIteration");
     }
 }
 
@@ -381,6 +404,25 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
             result_var,
             array_slots,
             index_var,
+            span,
+        });
+    }
+
+    fn push_symbolic_shift(
+        &mut self,
+        result_var: SsaVar,
+        operand_var: SsaVar,
+        shift_var: SsaVar,
+        num_bits: u32,
+        direction: ShiftDirection,
+        span: Option<SpanRange>,
+    ) {
+        self.push_into_active(ExtendedInstruction::SymbolicShift {
+            result_var,
+            operand_var,
+            shift_var,
+            num_bits,
+            direction,
             span,
         });
     }
@@ -687,6 +729,56 @@ mod tests {
                         assert_eq!(*index_var, iter_var);
                     }
                     other => panic!("expected SymbolicArrayRead, got {other:?}"),
+                }
+            }
+            other => panic!("expected LoopUnroll, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extended_sink_pushes_symbolic_shift() {
+        // Mirror of the read- and write-side tests: simulate the
+        // emit-site arm in `instantiate/exprs.rs` for `ShiftR`/`ShiftL`
+        // when the shift amount is loop-iter-dependent.
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        let mut sink = ExtendedSink::new(&mut body, &mut metadata);
+
+        let iter_var = sink.fresh_var();
+        let operand_var = sink.fresh_var();
+        let result_var = sink.fresh_var();
+
+        sink.begin_symbolic_loop();
+        sink.push_symbolic_shift(
+            result_var,
+            operand_var,
+            iter_var,
+            32,
+            ShiftDirection::Right,
+            None,
+        );
+        sink.finish_symbolic_loop(iter_var, 0, 32);
+
+        assert_eq!(body.len(), 1, "one outer LoopUnroll");
+        match &body[0] {
+            ExtendedInstruction::LoopUnroll { body: inner, .. } => {
+                assert_eq!(inner.len(), 1);
+                match &inner[0] {
+                    ExtendedInstruction::SymbolicShift {
+                        result_var: rv,
+                        operand_var: ov,
+                        shift_var,
+                        num_bits,
+                        direction,
+                        ..
+                    } => {
+                        assert_eq!(*rv, result_var);
+                        assert_eq!(*ov, operand_var);
+                        assert_eq!(*shift_var, iter_var);
+                        assert_eq!(*num_bits, 32);
+                        assert_eq!(*direction, ShiftDirection::Right);
+                    }
+                    other => panic!("expected SymbolicShift, got {other:?}"),
                 }
             }
             other => panic!("expected LoopUnroll, got {other:?}"),

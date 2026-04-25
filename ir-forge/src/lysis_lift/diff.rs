@@ -189,6 +189,20 @@ fn nodes_equal<F: FieldBackend>(
                 index_operand: ib,
             },
         ) => aa == ab && ia == ib,
+        (
+            N::Shift {
+                operand_anchor: oa,
+                shift_operand: sa,
+                num_bits: na,
+                direction: da,
+            },
+            N::Shift {
+                operand_anchor: ob,
+                shift_operand: sb,
+                num_bits: nb,
+                direction: db,
+            },
+        ) => oa == ob && sa == sb && na == nb && da == db,
         // Different variants → structural.
         _ => false,
     }

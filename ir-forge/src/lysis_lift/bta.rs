@@ -526,6 +526,87 @@ mod tests {
     }
 
     #[test]
+    fn body_with_symbolic_shift_classifies_uniform() {
+        // for i in 0..3: result := operand >> i. The shift's NodeIdx
+        // is identical across probes (same operand_anchor, same body
+        // position); only the slot-tagged Const for iter_var (the
+        // shift_operand) shifts. structural_diff classifies
+        // `OnlyConstants(slot 0)` and BTA marks the loop Uniform.
+        use crate::extended::ShiftDirection;
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(10),
+            shift_var: ssa(0),
+            num_bits: 32,
+            direction: ShiftDirection::Right,
+            span: None,
+        }];
+        let c = classify(ssa(0), &body, 0, 3, fe);
+        match &c.binding_time {
+            BindingTime::Uniform { captures, .. } => {
+                assert!(captures.contains(&SlotId(0)));
+            }
+            BindingTime::DataDependent => panic!("expected Uniform"),
+        }
+    }
+
+    #[test]
+    fn body_with_symbolic_shift_distinct_directions_diff_structurally() {
+        // Two shifts with different directions diverge structurally
+        // — `ShiftDirection::Right` vs `Left` is part of the node's
+        // structural fingerprint.
+        use crate::extended::ShiftDirection;
+        use crate::lysis_lift::symbolic::symbolic_emit;
+        let body_a: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(10),
+            shift_var: ssa(0),
+            num_bits: 32,
+            direction: ShiftDirection::Right,
+            span: None,
+        }];
+        let body_b: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(10),
+            shift_var: ssa(0),
+            num_bits: 32,
+            direction: ShiftDirection::Left,
+            span: None,
+        }];
+        let tree_a = symbolic_emit(&body_a, &[(ssa(0), fe(0))]);
+        let tree_b = symbolic_emit(&body_b, &[(ssa(0), fe(0))]);
+        let d = structural_diff(&tree_a, &tree_b);
+        assert!(matches!(d, Diff::Structural), "{d:?}");
+    }
+
+    #[test]
+    fn body_with_symbolic_shift_distinct_widths_diff_structurally() {
+        // Two shifts with different `num_bits` diverge structurally.
+        use crate::extended::ShiftDirection;
+        use crate::lysis_lift::symbolic::symbolic_emit;
+        let body_a: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(10),
+            shift_var: ssa(0),
+            num_bits: 32,
+            direction: ShiftDirection::Right,
+            span: None,
+        }];
+        let body_b: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(10),
+            shift_var: ssa(0),
+            num_bits: 64,
+            direction: ShiftDirection::Right,
+            span: None,
+        }];
+        let tree_a = symbolic_emit(&body_a, &[(ssa(0), fe(0))]);
+        let tree_b = symbolic_emit(&body_b, &[(ssa(0), fe(0))]);
+        let d = structural_diff(&tree_a, &tree_b);
+        assert!(matches!(d, Diff::Structural), "{d:?}");
+    }
+
+    #[test]
     fn details_expose_all_three_diffs() {
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![Instruction::Mul {
             result: ssa(1),

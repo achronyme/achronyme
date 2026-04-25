@@ -206,6 +206,70 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         index_var: SsaVar,
         span: Option<SpanRange>,
     },
+
+    /// A `>>` or `<<` shift whose amount is an SSA-symbolic
+    /// expression — i.e. depends on the enclosing `LoopUnroll`'s
+    /// `iter_var` rather than a compile-time constant.
+    ///
+    /// **Phase 2 Gap 3.** Pre-Gap-3, every `(in >> i)` / `(in << i)`
+    /// where `i` is a loop-iter variable hit the `resolve_const_u32`
+    /// gate in [`crate::instantiate`]'s `ShiftR`/`ShiftL` arms
+    /// (`exprs.rs:558-583`) and surfaced as
+    /// `ProveIrError::UnsupportedOperation "shift right amount must
+    /// be a compile-time constant"`. SHA-256's padding loop
+    /// (`paddedIn[…] <== (nBits >> k) & 1` for `k = 0..nBits`)
+    /// triggered this even though `k` is a loop-iter constant — the
+    /// instantiator's symbolic mode treats `k` as an SSA value.
+    ///
+    /// With `SymbolicShift`, the IR keeps the shift rolled inside a
+    /// `LoopUnroll`; per-iteration the walker const-folds `shift_var`
+    /// via `walker_const`, then materialises the same
+    /// decompose-then-recompose sequence that
+    /// [`crate::instantiate::Instantiator::emit_shift_right`] /
+    /// `emit_shift_left` would have emitted at instantiate time. The
+    /// rolled body (with the structural shift node) lifts to a
+    /// `TemplateBody` if BTA classifies it `Uniform`.
+    ///
+    /// # Field semantics
+    ///
+    /// - `result_var` — fresh SSA var produced for the caller of
+    ///   `emit_expr`. Per-iteration the walker rebinds it to the
+    ///   register that holds the shifted value. Same containment
+    ///   invariant as `SymbolicArrayRead::result_var`: the var is
+    ///   only used inside the rolled body that introduced it.
+    /// - `operand_var` — SSA var holding the value being shifted,
+    ///   already emitted as a normal `Plain` instruction by the
+    ///   instantiator before this extended op.
+    /// - `shift_var` — SSA var holding the shift amount. Walker
+    ///   const-folds this to a non-negative `i64` via `walker_const`;
+    ///   failure to fold is a
+    ///   `WalkError::SymbolicShiftNotEmittable`.
+    /// - `num_bits` — bit-width for the operand decomposition
+    ///   (constant at instantiate time, identical to the
+    ///   non-symbolic shift path's `num_bits` field).
+    /// - `direction` — right vs left shift discriminator (see
+    ///   [`ShiftDirection`]).
+    /// - `span` — optional source span; passes through diagnostic
+    ///   reporting.
+    SymbolicShift {
+        result_var: SsaVar,
+        operand_var: SsaVar,
+        shift_var: SsaVar,
+        num_bits: u32,
+        direction: ShiftDirection,
+        span: Option<SpanRange>,
+    },
+}
+
+/// Discriminator for [`ExtendedInstruction::SymbolicShift`].
+///
+/// `Right` — `operand >> shift` drops the lowest `shift` bits.
+/// `Left` — `operand << shift` prepends `shift` zero bits, truncated
+/// to `num_bits`.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum ShiftDirection {
+    Right,
+    Left,
 }
 
 /// Discriminator for [`ExtendedInstruction::SymbolicIndexedEffect`].
@@ -451,6 +515,65 @@ mod tests {
             write,
             ExtendedInstruction::SymbolicIndexedEffect { .. }
         ));
+    }
+
+    #[test]
+    fn symbolic_shift_carries_operand_amount_and_width() {
+        let shift = ExtendedInstruction::<Bn254Fr>::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(10),
+            shift_var: ssa(20),
+            num_bits: 32,
+            direction: ShiftDirection::Right,
+            span: None,
+        };
+        assert!(!shift.is_plain());
+        assert!(shift.as_plain().is_none());
+        match shift {
+            ExtendedInstruction::SymbolicShift {
+                result_var,
+                operand_var,
+                shift_var,
+                num_bits,
+                direction,
+                ..
+            } => {
+                assert_eq!(result_var, ssa(50));
+                assert_eq!(operand_var, ssa(10));
+                assert_eq!(shift_var, ssa(20));
+                assert_eq!(num_bits, 32);
+                assert_eq!(direction, ShiftDirection::Right);
+            }
+            _ => panic!("expected SymbolicShift"),
+        }
+    }
+
+    #[test]
+    fn symbolic_shift_left_distinct_from_right() {
+        let l = ExtendedInstruction::<Bn254Fr>::SymbolicShift {
+            result_var: ssa(0),
+            operand_var: ssa(1),
+            shift_var: ssa(2),
+            num_bits: 8,
+            direction: ShiftDirection::Left,
+            span: None,
+        };
+        let r = ExtendedInstruction::<Bn254Fr>::SymbolicShift {
+            result_var: ssa(0),
+            operand_var: ssa(1),
+            shift_var: ssa(2),
+            num_bits: 8,
+            direction: ShiftDirection::Right,
+            span: None,
+        };
+        // Discriminator differs even with otherwise-identical fields.
+        match (&l, &r) {
+            (
+                ExtendedInstruction::SymbolicShift { direction: dl, .. },
+                ExtendedInstruction::SymbolicShift { direction: dr, .. },
+            ) => assert_ne!(dl, dr),
+            _ => panic!("expected two SymbolicShift"),
+        }
     }
 
     #[test]
