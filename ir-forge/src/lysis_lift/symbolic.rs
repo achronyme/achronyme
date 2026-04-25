@@ -1070,14 +1070,25 @@ mod tests {
         let add_node = t
             .nodes
             .iter()
-            .find(|n| matches!(n, SymbolicNode::Op { tag: OpTag::Add, .. }))
+            .find(|n| {
+                matches!(
+                    n,
+                    SymbolicNode::Op {
+                        tag: OpTag::Add,
+                        ..
+                    }
+                )
+            })
             .expect("Add node missing");
         match add_node {
             SymbolicNode::Op {
                 tag: OpTag::Add,
                 operands,
             } => {
-                assert_eq!(operands.as_slice(), &[read_idx as NodeIdx, read_idx as NodeIdx]);
+                assert_eq!(
+                    operands.as_slice(),
+                    &[read_idx as NodeIdx, read_idx as NodeIdx]
+                );
             }
             _ => unreachable!(),
         }

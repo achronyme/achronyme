@@ -2221,7 +2221,11 @@ mod tests {
         let lhs_set: std::collections::HashSet<_> = asserts.iter().map(|(l, _)| *l).collect();
         assert_eq!(lhs_set.len(), 1, "all 3 lhs share the sink_target reg");
         let rhs_set: std::collections::HashSet<_> = asserts.iter().map(|(_, r)| *r).collect();
-        assert_eq!(rhs_set.len(), 3, "3 distinct slot rhs (rebind per iteration)");
+        assert_eq!(
+            rhs_set.len(),
+            3,
+            "3 distinct slot rhs (rebind per iteration)"
+        );
     }
 
     #[test]
@@ -2359,10 +2363,7 @@ mod tests {
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
         let err = walker.lower(&body).expect_err("should refuse");
         assert!(
-            matches!(
-                err,
-                WalkError::SymbolicArrayReadUnboundSlot { idx: 0, .. }
-            ),
+            matches!(err, WalkError::SymbolicArrayReadUnboundSlot { idx: 0, .. }),
             "got {err:?}"
         );
     }

@@ -443,18 +443,14 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 // `eval_const_expr` is side-effect-free, so trying it
                 // first costs nothing and avoids polluting the IR
                 // stream with an emission we'd then discard.
-                if let Some(idx) = self
-                    .eval_const_expr(index)
-                    .ok()
-                    .and_then(|fe| {
-                        let limbs = fe.to_canonical();
-                        if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
-                            usize::try_from(limbs[0]).ok()
-                        } else {
-                            None
-                        }
-                    })
-                {
+                if let Some(idx) = self.eval_const_expr(index).ok().and_then(|fe| {
+                    let limbs = fe.to_canonical();
+                    if limbs[1] == 0 && limbs[2] == 0 && limbs[3] == 0 {
+                        usize::try_from(limbs[0]).ok()
+                    } else {
+                        None
+                    }
+                }) {
                     return self.resolve_array_at(array, idx);
                 }
 
@@ -489,9 +485,7 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 //     legacy lowering already unrolls indexed reads
                 //     before they reach instantiation.
                 match self.sink.loop_unroll_mode() {
-                    LoopUnrollMode::Symbolic => {
-                        self.emit_array_index_symbolic(array, idx_var)
-                    }
+                    LoopUnrollMode::Symbolic => self.emit_array_index_symbolic(array, idx_var),
                     LoopUnrollMode::PerIteration => Err(ProveIrError::UnsupportedOperation {
                         description: format!(
                             "array index into `{array}` must be a compile-time constant"
