@@ -395,11 +395,22 @@ fn compile_program_with_warnings_and_frontend(
         })?;
 
     // 4. Lower to ProveIR
-    let lower_result =
+    let mut lower_result =
         lowering::template::lower_template_with_frontend(template, Some(main), program, frontend)
             .map_err(CircomError::LoweringError)?;
 
-    // 5. Extract capture values from main component template args
+    // 5. Bit-width inference rewriter — tightens `num_bits` /
+    //    `max_bits` fields where the operand's actual range is
+    //    provably narrower than the conservative
+    //    `DEFAULT_MAX_BITS = 254` default. Sound: only ever
+    //    decreases. With empty side-tables, catches literal-driven
+    //    and arithmetic-propagation cases. Stage 2C will populate
+    //    `signal_widths` from constraint context to unblock
+    //    `Num2Bits`-shaped circuits like SHA-256.
+    let inference_ctx = lowering::bit_width::InferenceCtx::default();
+    lowering::bit_width::rewrite_num_bits_in_prove_ir(&mut lower_result.prove_ir, &inference_ctx);
+
+    // 6. Extract capture values from main component template args
     let mut capture_values = HashMap::new();
     for (i, param) in template.params.iter().enumerate() {
         if let Some(arg_expr) = main.template_args.get(i) {

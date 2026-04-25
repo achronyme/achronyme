@@ -543,6 +543,90 @@ fn tighten(field: &mut u32, new: u32) {
     }
 }
 
+/// Walk a [`CircuitNode`] and tighten every nested `CircuitExpr`'s
+/// `num_bits` / `max_bits` fields. Recurses into `For` and `If`
+/// bodies. Currently does not introspect node-level fields like
+/// `Decompose { num_bits }` or `WitnessArrayDecl { size }` —
+/// future Stage-3 work could tighten those by inferring from the
+/// `value` operand, but the immediate SHA-256-shaped wins all live
+/// inside `CircuitExpr` (Shifts, BitAnd/Or/Xor, RangeCheck).
+pub fn rewrite_num_bits_in_node(node: &mut ir_forge::types::CircuitNode, ctx: &InferenceCtx<'_>) {
+    use ir_forge::types::CircuitNode;
+    match node {
+        CircuitNode::Let { value, .. }
+        | CircuitNode::Expr { expr: value, .. }
+        | CircuitNode::Decompose { value, .. }
+        | CircuitNode::WitnessHint { hint: value, .. } => {
+            rewrite_num_bits_in_expr(value, ctx);
+        }
+        CircuitNode::LetArray { elements, .. } => {
+            for e in elements {
+                rewrite_num_bits_in_expr(e, ctx);
+            }
+        }
+        CircuitNode::AssertEq { lhs, rhs, .. } => {
+            rewrite_num_bits_in_expr(lhs, ctx);
+            rewrite_num_bits_in_expr(rhs, ctx);
+        }
+        CircuitNode::Assert { expr, .. } => {
+            rewrite_num_bits_in_expr(expr, ctx);
+        }
+        CircuitNode::For { body, .. } => {
+            for n in body {
+                rewrite_num_bits_in_node(n, ctx);
+            }
+        }
+        CircuitNode::If {
+            cond,
+            then_body,
+            else_body,
+            ..
+        } => {
+            rewrite_num_bits_in_expr(cond, ctx);
+            for n in then_body {
+                rewrite_num_bits_in_node(n, ctx);
+            }
+            for n in else_body {
+                rewrite_num_bits_in_node(n, ctx);
+            }
+        }
+        CircuitNode::LetIndexed { index, value, .. } => {
+            rewrite_num_bits_in_expr(index, ctx);
+            rewrite_num_bits_in_expr(value, ctx);
+        }
+        CircuitNode::WitnessHintIndexed { index, hint, .. } => {
+            rewrite_num_bits_in_expr(index, ctx);
+            rewrite_num_bits_in_expr(hint, ctx);
+        }
+        CircuitNode::WitnessArrayDecl { .. } => {
+            // No CircuitExpr fields with num_bits.
+        }
+        CircuitNode::WitnessCall { input_signals, .. } => {
+            for e in input_signals {
+                rewrite_num_bits_in_expr(e, ctx);
+            }
+        }
+    }
+}
+
+/// Top-level entry point: tighten `num_bits` fields throughout an
+/// entire `ProveIR` body. Call once per circuit, post-lowering, before
+/// any downstream consumer (instantiator, Lysis lift, R1CS backend).
+///
+/// The `ctx` carries the inference's only side-state — `param_values`,
+/// `known_constants`, `signal_widths`. With all three empty, the pass
+/// still tightens literal-driven bit-widths and arithmetic
+/// propagation; populated tables enable the constraint-context
+/// tightening that unblocks SHA-256-shaped circuits.
+pub fn rewrite_num_bits_in_prove_ir(
+    prove_ir: &mut ir_forge::types::ProveIR,
+    ctx: &InferenceCtx<'_>,
+) {
+    for node in &mut prove_ir.body {
+        rewrite_num_bits_in_node(node, ctx);
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
