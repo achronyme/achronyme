@@ -465,25 +465,60 @@ impl<F: FieldBackend> Walker<F> {
         // `one` const is intentionally excluded — re-load is cheaper
         // than capture-bind, and the InterningSink dedupes anyway.
         let referenced = collect_referenced_ssa_vars(&body[next_idx..]);
+        let live = self.compute_live_set(|v| referenced.contains(v))?;
+        self.perform_split(&live)
+    }
+
+    /// Mid-emit split inside `emit_loop_unroll_per_iter`. The live set
+    /// is computed against the **whole body** (not just `body[j..]`)
+    /// because subsequent iterations re-emit `body[0..N]` from the
+    /// post-split frame and would lose any outer SsaVar that
+    /// `body[0..j]` references but `body[j..N]` doesn't. `iter_var` is
+    /// always force-live so the per-iter literal binding survives.
+    fn split_in_per_iter(
+        &mut self,
+        body: &[ExtendedInstruction<F>],
+        iter_var: SsaVar,
+    ) -> Result<(), WalkError> {
+        let referenced = collect_referenced_ssa_vars(body);
+        let live = self.compute_live_set(|v| referenced.contains(v) || *v == iter_var)?;
+        self.perform_split(&live)
+    }
+
+    /// Build the deterministic, capped live set for a split. Filters
+    /// `ssa_to_reg` keys by `predicate`, sorts by `SsaVar.0`, and
+    /// rejects sets larger than [`MAX_CAPTURES`].
+    fn compute_live_set(
+        &self,
+        predicate: impl Fn(&SsaVar) -> bool,
+    ) -> Result<Vec<SsaVar>, WalkError> {
         let mut live: Vec<SsaVar> = self
             .ssa_to_reg
             .keys()
             .copied()
-            .filter(|v| referenced.contains(v))
+            .filter(|v| predicate(v))
             .collect();
         // Deterministic order is load-bearing for proving-key
         // stability — without this the HashMap iteration order would
         // leak into capture_regs slot ids. SsaVar wraps `u32`; sort
         // by it directly rather than threading `Ord` through ir-core.
         live.sort_unstable_by_key(|v| v.0);
-
         if live.len() > MAX_CAPTURES {
             return Err(WalkError::LiveSetTooLarge {
                 count: live.len(),
                 max: MAX_CAPTURES,
             });
         }
+        Ok(live)
+    }
 
+    /// Common post-live-set machinery shared by [`Self::do_split`]
+    /// (Phase 1.5 top-level) and [`Self::split_in_per_iter`] (Gap 4
+    /// mid-iter). Emits the chaining `InstantiateTemplate`, closes the
+    /// current template, opens a fresh one with `live` as captures,
+    /// rebinds each captured SsaVar to its new frame slot, and
+    /// forwards `walker_const` entries for the captures.
+    fn perform_split(&mut self, live: &[SsaVar]) -> Result<(), WalkError> {
         let capture_regs: Vec<u8> = live.iter().map(|v| self.ssa_to_reg[v]).collect();
         let next_template_id = self.templates.len() as u16;
 
@@ -526,7 +561,7 @@ impl<F: FieldBackend> Walker<F> {
         // boundary so that `body[j..]`'s SymbolicShift / SymbolicArrayRead
         // / SymbolicIndexedEffect arms still const-fold.
         let prior_walker_const = std::mem::take(&mut self.walker_const);
-        for var in &live {
+        for var in live {
             if let Some(val) = prior_walker_const.get(var) {
                 self.walker_const.insert(*var, *val);
             }
@@ -1591,6 +1626,17 @@ impl<F: FieldBackend> Walker<F> {
     /// iterations and restored before each one, so body-internal
     /// regs get reused across iterations rather than ballooning past
     /// the 255-slot frame cap.
+    ///
+    /// **Gap 4 — mid-iter split**: when a single iteration's body
+    /// would itself overflow the available frame slots, we apply a
+    /// `split_in_per_iter` mid-emission, mirroring Phase 1.5's
+    /// top-level split but with a live set computed against the
+    /// **whole** body (because subsequent iterations re-emit
+    /// `body[0..N]` from the post-split frame and need every outer
+    /// SsaVar reference to remain bound). The split chains a fresh
+    /// template, body emission resumes there, and `pre_body_*`
+    /// snapshots refresh so the next iteration's restore-and-emit
+    /// cycle works against the new frame's state.
     fn emit_loop_unroll_per_iter(
         &mut self,
         iter_var: SsaVar,
@@ -1609,16 +1655,20 @@ impl<F: FieldBackend> Walker<F> {
         }
 
         // Allocate iter_var's reg ONCE for the whole per-iter loop.
-        let iter_reg = self.allocator.alloc()?;
+        // Becomes mutable because mid-iter splits may rebind iter_var
+        // to a new capture reg in the post-split frame.
+        let mut iter_reg = self.allocator.alloc()?;
         self.bind(iter_var, iter_reg);
 
-        // Snapshot pre-body state. The HashMap clones are O(n) per
-        // iteration but n is small in practice (body-local SsaVars
-        // only); per-iter walker scope is meant for loops the InterningSink
-        // wouldn't have helped on anyway.
-        let pre_body_alloc_ckpt = self.allocator.checkpoint();
-        let pre_body_bindings = self.ssa_to_reg.clone();
-        let pre_body_walker_const = self.walker_const.clone();
+        // Snapshot pre-body state. Mutable so a mid-iter split can
+        // refresh the snapshot from the post-split frame, letting the
+        // next iteration restore-and-re-emit body in the chained
+        // template. iter_var is removed from the walker_const snapshot
+        // because it's set per-iter anyway.
+        let mut pre_body_alloc_ckpt = self.allocator.checkpoint();
+        let mut pre_body_bindings = self.ssa_to_reg.clone();
+        let mut pre_body_walker_const = self.walker_const.clone();
+        pre_body_walker_const.remove(&iter_var);
 
         for i in start_u32..end_u32 {
             self.allocator.restore_to(pre_body_alloc_ckpt);
@@ -1636,13 +1686,41 @@ impl<F: FieldBackend> Walker<F> {
                 idx: const_idx,
             });
 
-            for inst in body {
+            let mut split_happened_this_iter = false;
+            for (j, inst) in body.iter().enumerate() {
+                if j > 0 {
+                    let cost = reg_cost_of_extinst(inst);
+                    let projected = self.allocator.next_slot().saturating_add(cost);
+                    if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
+                        self.split_in_per_iter(body, iter_var)?;
+                        split_happened_this_iter = true;
+                    }
+                }
                 self.emit(inst)?;
+            }
+
+            if split_happened_this_iter {
+                // After the split, `self.current` points at a fresh
+                // chained template. Refresh the per-iter snapshots so
+                // the NEXT iteration restores from this frame's state
+                // instead of the now-invalid parent state. iter_var
+                // was force-live across the split, so its rebound reg
+                // (a capture slot) is in `ssa_to_reg`; track it as the
+                // new `iter_reg` for upcoming LoadConst writes.
+                iter_reg = self
+                    .ssa_to_reg
+                    .get(&iter_var)
+                    .copied()
+                    .ok_or(WalkError::UndefinedSsaVar(iter_var))?;
+                pre_body_alloc_ckpt = self.allocator.checkpoint();
+                pre_body_bindings = self.ssa_to_reg.clone();
+                pre_body_walker_const = self.walker_const.clone();
+                pre_body_walker_const.remove(&iter_var);
             }
         }
 
-        // Don't leak per-iter walker_const entries past the loop.
-        self.walker_const = pre_body_walker_const;
+        // Don't leak per-iter walker_const[iter_var] past the loop.
+        self.walker_const.remove(&iter_var);
         Ok(())
     }
 
@@ -3736,6 +3814,131 @@ mod tests {
             .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
             .count();
         assert_eq!(inputs, 2, "Inputs preserved across split");
+    }
+
+    /// Gap 4: a per-iter unrolled body whose single iteration would
+    /// itself overflow the frame cap must trigger a mid-iter split. The
+    /// chain must remain semantically equivalent across iterations:
+    /// every iteration completes its body, the iter_var literal flows
+    /// across the split (so SymbolicShift / SymbolicArrayRead still
+    /// const-fold), and no template ever crosses [`FRAME_CAP`].
+    #[test]
+    fn mid_iter_split_handles_wide_per_iter_body() {
+        // Per-iter body: SymbolicShift (forces per-iter unroll +
+        // exercises the iter_var literal forwarding) + ~250 Adds
+        // whose results are not consumed downstream. Each Add still
+        // allocates a fresh reg so the alloc tally crosses
+        // `FRAME_CAP - FRAME_MARGIN` mid-body, but the SsaVars stay
+        // OUT of the live set (no later instruction references them),
+        // keeping the capture count well under MAX_CAPTURES.
+        const ADD_FAT_LEN: u32 = 250;
+        let mut iter_body = Vec::new();
+        iter_body.push(ExtendedInstruction::SymbolicShift {
+            result_var: ssa(3),
+            operand_var: ssa(0),
+            shift_var: ssa(2),
+            num_bits: 4,
+            direction: ShiftDirection::Right,
+            span: None,
+        });
+        for k in 0..ADD_FAT_LEN {
+            iter_body.push(plain(Instruction::Add {
+                result: ssa(100 + k),
+                lhs: ssa(0),
+                rhs: ssa(0),
+            }));
+        }
+        // Final SymbolicShift: re-uses iter_var post-split. If the
+        // walker_const[iter_var] forwarding is broken, this errors
+        // with `SymbolicShiftNotEmittable`.
+        iter_body.push(ExtendedInstruction::SymbolicShift {
+            result_var: ssa(50),
+            operand_var: ssa(0),
+            shift_var: ssa(2),
+            num_bits: 4,
+            direction: ShiftDirection::Left,
+            span: None,
+        });
+        // Side-effect: AssertEq survives interning across the split.
+        iter_body.push(plain(Instruction::AssertEq {
+            result: ssa(0xDEAD),
+            lhs: ssa(50),
+            rhs: ssa(1),
+            message: None,
+        }));
+
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "operand".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "sink".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 2,
+                body: iter_body,
+            },
+        ];
+
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+
+        assert!(
+            program.templates.len() >= 2,
+            "expected mid-iter split to chain ≥2 templates, got {}",
+            program.templates.len()
+        );
+
+        for t in &program.templates {
+            assert!(
+                t.frame_size <= 251,
+                "template {} frame_size {} should stay near cap",
+                t.id,
+                t.frame_size
+            );
+        }
+
+        // Both iterations must complete — at least one AssertEq per
+        // iteration survives interning. The exact count after dedup is
+        // ≥ 1; we assert ≥ 1 so the test is robust to interner tuning
+        // but still proves the mid-split body executes through.
+        let mut sink = InterningSink::<Bn254Fr>::new();
+        execute(&program, &[], &LysisConfig::default(), &mut sink).expect("exec");
+        let out = sink.materialize();
+        let asserts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::AssertEq { .. }))
+            .count();
+        assert!(
+            asserts >= 1,
+            "AssertEq must survive mid-iter splits, got {}",
+            asserts
+        );
+        // Both Inputs survive (side-effects).
+        let inputs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
+            .count();
+        assert_eq!(inputs, 2, "Inputs preserved across mid-iter split");
+        // Decomposes survive — one per iteration of the rolled loop,
+        // each in a different post-split frame for iters that crossed
+        // a boundary. Lower bound: 1 (post-interning the structurally
+        // identical decomposes may collapse).
+        let decomps = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Decompose { .. }))
+            .count();
+        assert!(
+            decomps >= 1,
+            "Decompose from SymbolicShift must survive mid-iter split, got {}",
+            decomps
+        );
     }
 
     /// Even when no split is needed (small program), the walker still
