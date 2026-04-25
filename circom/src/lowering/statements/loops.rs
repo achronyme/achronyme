@@ -112,7 +112,7 @@ pub(super) fn lower_for_loop<'a>(
 
     // Classify the body to decide whether to unroll at lowering time
     // and — if so — which strategy governs the unroll.
-    let Some(strategy) = classify_loop_body(&body.stmts, env) else {
+    let Some(strategy) = classify_loop_body(&body.stmts, env, &var_name) else {
         return emit_for_node(var_name, bound, start, body, span, env, nodes, ctx, pending);
     };
 
@@ -703,17 +703,36 @@ pub(super) enum LoopLowering {
     /// drive coefficients in signal expressions, so they need to
     /// be concrete constants, not circuit variables.
     MixedSignalVar,
+
+    /// Body contains an array indexing expression `arr[idx]` whose
+    /// index references the loop variable — either as an assignment
+    /// target (`arr[i] <== ...`, `arr[i] <-- ...`) or as a read
+    /// inside any expression (`acc += a[i]`, `mux.c[0][i]`, nested
+    /// component `comp.in[i]`). The downstream emission pipeline
+    /// (ProveIR `LetIndexed` / `WitnessHintIndexed` /
+    /// `CircuitExpr::ArrayIndex`) needs a compile-time constant
+    /// index at instantiate time; the Lysis Symbolic path in
+    /// particular cannot resolve a loop-var SSA slot there. Unroll
+    /// at lowering so every per-iteration expansion sees a concrete
+    /// `i`. Example: SHA-256 `paddedIn[k] <-- 0` (write) and
+    /// `sigmaPlus.sum.in[i] <== prior[i]` (read + write).
+    IndexedAssignmentLoop,
 }
 
 /// Classify a `for` loop body into a [`LoopLowering`] strategy, or
 /// return `None` if the body can stay as a `CircuitNode::For` node.
 ///
-/// Priority: `MixedSignalVar` > `ComponentArrayOps` > `KnownArrayRefs`.
-/// A mixed-signal-var body can also contain component ops and known-
-/// array refs, but it additionally requires the compile-time eval
-/// machinery that the other two don't need — picking `MixedSignalVar`
-/// when multiple conditions match gives the correct behaviour.
-pub(super) fn classify_loop_body(stmts: &[Stmt], env: &LoweringEnv) -> Option<LoopLowering> {
+/// Priority chain: `MixedSignalVar`, `ComponentArrayOps`,
+/// `KnownArrayRefs`, `IndexedAssignmentLoop`. The first three depend
+/// on compile-time eval semantics that preempt a pure indexed-
+/// assignment classification; `IndexedAssignmentLoop` is the
+/// catch-all for loops whose only lowering-time requirement is
+/// concrete indices in assignment targets.
+pub(super) fn classify_loop_body(
+    stmts: &[Stmt],
+    env: &LoweringEnv,
+    loop_var: &str,
+) -> Option<LoopLowering> {
     if body_mixes_signals_and_vars(stmts) {
         return Some(LoopLowering::MixedSignalVar);
     }
@@ -723,7 +742,234 @@ pub(super) fn classify_loop_body(stmts: &[Stmt], env: &LoweringEnv) -> Option<Lo
     if body_references_known_arrays(stmts, env) {
         return Some(LoopLowering::KnownArrayRefs);
     }
+    if body_has_loop_var_indexed_assignments(stmts, loop_var) {
+        return Some(LoopLowering::IndexedAssignmentLoop);
+    }
+    // Catch-all: any loop whose body emits signal work (constraints,
+    // witness hints, component wiring) is not safe for the Lysis
+    // Symbolic `LoopUnroll` path today — the walker's per-iteration
+    // register file is capped at 255 and heavy bodies overflow, and
+    // not every signal op in a loop body has a const-index shape the
+    // Symbolic emitter accepts. Phase 1 policy: if signal ops are
+    // present, unroll at lowering so downstream only sees
+    // `CircuitNode::Let` / assignments with concrete indices. Loops
+    // with only compile-time `var` arithmetic (accumulators,
+    // counters) remain as `CircuitNode::For` and still go through
+    // the Symbolic fast path.
+    if body_has_any_signal_ops(stmts) {
+        return Some(LoopLowering::IndexedAssignmentLoop);
+    }
     None
+}
+
+/// `true` if the body contains any signal-level statement —
+/// constraint/signal assignment, constraint-eq, signal-decl init,
+/// or component-decl init. Walks into `IfElse`, nested `Block`, and
+/// nested loop bodies (those loops get their own classification
+/// when lowered, but a signal op *somewhere* in the tree means we
+/// cannot leave the current loop rolled for Lysis Symbolic v1).
+fn body_has_any_signal_ops(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_any_signal_op)
+}
+
+fn stmt_has_any_signal_op(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Substitution {
+            op:
+                AssignOp::ConstraintAssign
+                | AssignOp::SignalAssign
+                | AssignOp::RConstraintAssign
+                | AssignOp::RSignalAssign,
+            ..
+        } => true,
+        Stmt::ConstraintEq { .. } => true,
+        Stmt::SignalDecl {
+            init: Some((AssignOp::ConstraintAssign | AssignOp::SignalAssign, _)),
+            ..
+        } => true,
+        Stmt::ComponentDecl { init: Some(_), .. } => true,
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body.stmts.iter().any(stmt_has_any_signal_op)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_any_signal_op),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_any_signal_op(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_any_signal_op),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(stmt_has_any_signal_op)
+        }
+        _ => false,
+    }
+}
+
+/// `true` if the body contains any `arr[idx]` expression — as an
+/// assignment target or anywhere inside an expression — whose
+/// `idx` references `loop_var`. Covers reads (`in[i]`,
+/// `comp.x[i]`), writes (`out[i] <== ...`), and mixed uses
+/// (`sum += in[i] * K[i]`).
+///
+/// Walks into `IfElse`, nested `Block`, `CompoundAssign` and
+/// `Substitution` RHS expressions. Does not descend into nested
+/// `For` loops — those are classified separately when they are
+/// lowered.
+fn body_has_loop_var_indexed_assignments(stmts: &[Stmt], loop_var: &str) -> bool {
+    stmts
+        .iter()
+        .any(|s| stmt_has_loop_var_dependent_index(s, loop_var))
+}
+
+fn stmt_has_loop_var_dependent_index(stmt: &Stmt, loop_var: &str) -> bool {
+    match stmt {
+        Stmt::Substitution { target, value, .. } => {
+            expr_has_loop_var_indexed(target, loop_var)
+                || expr_has_loop_var_indexed(value, loop_var)
+        }
+        Stmt::CompoundAssign { target, value, .. } => {
+            expr_has_loop_var_indexed(target, loop_var)
+                || expr_has_loop_var_indexed(value, loop_var)
+        }
+        Stmt::ConstraintEq { lhs, rhs, .. } => {
+            expr_has_loop_var_indexed(lhs, loop_var) || expr_has_loop_var_indexed(rhs, loop_var)
+        }
+        Stmt::VarDecl { init, .. } => init
+            .as_ref()
+            .is_some_and(|v| expr_has_loop_var_indexed(v, loop_var)),
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_has_loop_var_indexed(condition, loop_var)
+                || then_body
+                    .stmts
+                    .iter()
+                    .any(|s| stmt_has_loop_var_dependent_index(s, loop_var))
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(|s| stmt_has_loop_var_dependent_index(s, loop_var)),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_loop_var_dependent_index(s, loop_var),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b
+            .stmts
+            .iter()
+            .any(|s| stmt_has_loop_var_dependent_index(s, loop_var)),
+        // Descend into nested `for` / `while` / `do-while` bodies
+        // keeping the same target `loop_var`. A nested loop's own
+        // iterator is a different name, so references to the outer
+        // `loop_var` inside the inner body are exactly what we need
+        // to detect (e.g., BinSum's
+        // `for (k) { for (j) { lin += in[j][k] * e2 } }`).
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => body
+            .stmts
+            .iter()
+            .any(|s| stmt_has_loop_var_dependent_index(s, loop_var)),
+        _ => false,
+    }
+}
+
+/// `true` if `expr` contains an `Expr::Index { index }` anywhere in
+/// its subtree whose `index` references `loop_var`.
+fn expr_has_loop_var_indexed(expr: &Expr, loop_var: &str) -> bool {
+    match expr {
+        Expr::Index { object, index, .. } => {
+            expr_references_ident(index, loop_var) || expr_has_loop_var_indexed(object, loop_var)
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_has_loop_var_indexed(lhs, loop_var) || expr_has_loop_var_indexed(rhs, loop_var)
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_has_loop_var_indexed(operand, loop_var),
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_has_loop_var_indexed(condition, loop_var)
+                || expr_has_loop_var_indexed(if_true, loop_var)
+                || expr_has_loop_var_indexed(if_false, loop_var)
+        }
+        Expr::Call { args, .. } => args.iter().any(|a| expr_has_loop_var_indexed(a, loop_var)),
+        Expr::DotAccess { object, .. } => expr_has_loop_var_indexed(object, loop_var),
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => elements
+            .iter()
+            .any(|e| expr_has_loop_var_indexed(e, loop_var)),
+        Expr::AnonComponent {
+            template_args,
+            signal_args,
+            ..
+        } => {
+            template_args
+                .iter()
+                .any(|a| expr_has_loop_var_indexed(a, loop_var))
+                || signal_args
+                    .iter()
+                    .any(|a| expr_has_loop_var_indexed(&a.value, loop_var))
+        }
+        Expr::Number { .. }
+        | Expr::HexNumber { .. }
+        | Expr::Ident { .. }
+        | Expr::Underscore { .. }
+        | Expr::Error { .. } => false,
+    }
+}
+
+fn expr_references_ident(expr: &Expr, name: &str) -> bool {
+    match expr {
+        Expr::Ident { name: n, .. } => n == name,
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_references_ident(lhs, name) || expr_references_ident(rhs, name)
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_references_ident(operand, name),
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_references_ident(condition, name)
+                || expr_references_ident(if_true, name)
+                || expr_references_ident(if_false, name)
+        }
+        Expr::Call { args, .. } => args.iter().any(|a| expr_references_ident(a, name)),
+        Expr::Index { object, index, .. } => {
+            expr_references_ident(object, name) || expr_references_ident(index, name)
+        }
+        Expr::DotAccess { object, .. } => expr_references_ident(object, name),
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter().any(|e| expr_references_ident(e, name))
+        }
+        Expr::AnonComponent {
+            template_args,
+            signal_args,
+            ..
+        } => {
+            template_args.iter().any(|a| expr_references_ident(a, name))
+                || signal_args
+                    .iter()
+                    .any(|a| expr_references_ident(&a.value, name))
+        }
+        Expr::Number { .. }
+        | Expr::HexNumber { .. }
+        | Expr::Underscore { .. }
+        | Expr::Error { .. } => false,
+    }
 }
 
 #[cfg(test)]
@@ -743,10 +989,11 @@ mod tests {
     }
 
     #[test]
-    fn classify_pure_signal_loop_is_none() {
-        // Num2Bits-style loop: signal assign + var mutation (lc1) but
-        // no branched signal ops → not MixedSignalVar. Also no
-        // component arrays and no known-array refs → None.
+    fn classify_num2bits_loop_is_indexed_assignment_loop() {
+        // Num2Bits-style loop: `out[i] <-- ...` is an indexed
+        // assignment whose target references the loop var `i`. The
+        // downstream Lysis Symbolic path cannot resolve `i` at
+        // instantiate time, so the loop must be unrolled here.
         let stmts = extract_template_body(
             r#"
             template T(n) {
@@ -768,7 +1015,39 @@ mod tests {
             None => panic!("expected a for loop"),
         };
         let env = LoweringEnv::new();
-        assert_eq!(classify_loop_body(&for_body, &env), None);
+        assert_eq!(
+            classify_loop_body(&for_body, &env, "i"),
+            Some(LoopLowering::IndexedAssignmentLoop),
+        );
+    }
+
+    #[test]
+    fn classify_noindex_var_only_loop_is_none() {
+        // Loop body has no array indexing on the loop var — stays
+        // as `CircuitNode::For`. Instantiate time still unrolls per
+        // iteration, but nothing needs the loop var as a const at
+        // emission time.
+        let stmts = extract_template_body(
+            r#"
+            template T(n) {
+                signal output s;
+                var sum = 0;
+                for (var i = 0; i < n; i++) {
+                    sum = sum + 1;
+                }
+                s <== sum;
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert_eq!(classify_loop_body(&for_body, &env, "i"), None);
     }
 
     #[test]
@@ -801,8 +1080,37 @@ mod tests {
         };
         let env = LoweringEnv::new();
         assert_eq!(
-            classify_loop_body(&for_body, &env),
+            classify_loop_body(&for_body, &env, "i"),
             Some(LoopLowering::MixedSignalVar),
+        );
+    }
+
+    #[test]
+    fn classify_sha256_padding_loop_is_indexed_assignment_loop() {
+        // Reproduces SHA-256 padding: `paddedIn[k] <-- 0` in a
+        // for-loop whose index depends on the loop var.
+        let stmts = extract_template_body(
+            r#"
+            template T(nBits, nBlocks) {
+                signal input in[nBits];
+                signal paddedIn[nBlocks * 512];
+                for (var k = nBits + 1; k < nBlocks * 512 - 64; k++) {
+                    paddedIn[k] <-- 0;
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert_eq!(
+            classify_loop_body(&for_body, &env, "k"),
+            Some(LoopLowering::IndexedAssignmentLoop),
         );
     }
 }

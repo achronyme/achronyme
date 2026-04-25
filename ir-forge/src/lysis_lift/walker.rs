@@ -54,8 +54,25 @@
 //! that defines a fresh value gets the next register, and the
 //! mapping persists for the whole program (no release). Frame size
 //! is the high water mark.
+//!
+//! ## Phase 1.5 — top-level template wrapping
+//!
+//! Earlier walker revisions emitted the entire body into the root
+//! frame. The Lysis bytecode caps a frame at 255 registers (RFC §5.1
+//! "dense bytecode" — frame_size is `u8`), so any program whose
+//! lowered SSA exceeds that width tripped `FrameOverflow` even though
+//! the underlying memory was nowhere near the limit. SHA-256(64) is
+//! the canonical case.
+//!
+//! Phase 1.5 fixes this by always wrapping the body in Template 0.
+//! The root body is the trivial sequence `InstantiateTemplate(0, [], [])`
+//! followed by `Halt`, and all real work happens inside the template's
+//! frame. Programs that fit in 255 regs see no behavioural change (the
+//! materialized `InstructionKind` stream is identical), and programs
+//! that don't will be split across multiple chained templates by the
+//! M2-M4 split machinery layered on top of this wrapping.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use lysis::bytecode::encoding::encode_opcode;
 use lysis::bytecode::Opcode;
@@ -66,6 +83,24 @@ use memory::{FieldBackend, FieldElement, FieldFamily};
 
 use crate::ExtendedInstruction;
 use ir_core::{Instruction, SsaVar, Visibility};
+
+/// Hard cap on the frame size (`u8` in RFC §5.1). The walker keeps
+/// each template strictly below this — see [`reg_cost_of_emit`] for
+/// the per-emit cost estimator that informs the split decision.
+const FRAME_CAP: u32 = 255;
+/// Margin of slack reserved on top of the cap so that the executor
+/// always has room for the worst-case Phase-1.5 emission (Decompose
+/// can allocate up to 255 slots in one go; a runaway single emit
+/// surfaces as a clean `FrameOverflow` error rather than a corrupt
+/// constraint stream).
+const FRAME_MARGIN: u32 = 4;
+
+/// Hard cap on the number of live SSA vars we forward as captures
+/// across a split. Matches RFC §5.1: `InstantiateTemplate.capture_regs`
+/// is length-prefixed by a `u8` (max 255), and the receiving frame
+/// only has 255 reg slots, of which we want most available for actual
+/// work in the new template body.
+const MAX_CAPTURES: usize = 64;
 
 /// Errors raised by [`Walker::lower`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -96,10 +131,13 @@ pub enum WalkError {
     NegativeLoopBound { start: i64, end: i64 },
     /// A `LoopUnroll` body exceeded the `u16` byte-length field.
     LoopBodyTooLong { bytes: u32 },
-    /// Internal invariant: a desugaring reached for the `one` constant
-    /// register before the pre-scan allocated it. This is a walker
-    /// bug — surface it rather than silently emitting a Trap.
-    OneConstNotInitialized,
+    /// A top-level split was triggered but the live set exceeded
+    /// [`MAX_CAPTURES`]. Forwarding more than 64 SSA vars across a
+    /// single split would defeat the point of the split (the new
+    /// template starts with 64 reserved capture regs already). The
+    /// fix is BTA + structural extraction (Phase 2 Gap 2), which
+    /// avoids the wide live set in the first place.
+    LiveSetTooLarge { count: usize, max: usize },
 }
 
 impl std::fmt::Display for WalkError {
@@ -125,8 +163,9 @@ impl std::fmt::Display for WalkError {
             Self::LoopBodyTooLong { bytes } => {
                 write!(f, "walker: LoopUnroll body length {bytes} exceeds u16 max")
             }
-            Self::OneConstNotInitialized => f.write_str(
-                "walker: desugaring referenced `one` register but pre-scan did not allocate it (walker bug)",
+            Self::LiveSetTooLarge { count, max } => write!(
+                f,
+                "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — Phase 2 BTA needed"
             ),
         }
     }
@@ -140,16 +179,52 @@ impl From<AllocError> for WalkError {
     }
 }
 
+/// One pending template body. Phase 1.5 always opens at least one
+/// (Template 0); Phase 2 split machinery will append more.
+struct TemplateBuf {
+    opcodes: Vec<Opcode>,
+    /// Frame size = high-water mark of the allocator at close time.
+    /// Stamped by `close_current_template`.
+    frame_size: u8,
+    /// Number of capture regs the template expects from its
+    /// `InstantiateTemplate` site. The executor fills regs `0..n_params`
+    /// of the callee frame with the caller's `capture_regs` before
+    /// running the body, so no `LoadCapture` opcodes are needed
+    /// inside the body itself — the captures are addressable directly
+    /// as regs `0..n_params`.
+    n_params: u8,
+}
+
+impl TemplateBuf {
+    fn new(n_params: u8) -> Self {
+        Self {
+            opcodes: Vec::new(),
+            frame_size: 0,
+            n_params,
+        }
+    }
+}
+
 /// Emits Lysis bytecode from an `ExtendedInstruction` stream.
 pub struct Walker<F: FieldBackend> {
+    /// Used exclusively for const-pool interning during the walk.
+    /// Opcodes are NOT pushed through the builder until `finalize()`.
     builder: ProgramBuilder<F>,
+    /// Per-template opcode buffers. `templates[0]` is Template 0,
+    /// always present and always the body the root frame instantiates.
+    /// Phase 2 split logic appends more.
+    templates: Vec<TemplateBuf>,
+    /// Index of the template the walker is currently emitting into.
+    current: usize,
+    /// One allocator per template — reset at split boundaries. Phase
+    /// 1.5 keeps a single template so the allocator never resets.
     allocator: RegAllocator,
+    /// SsaVar → RegId mapping for the **current** template's frame.
+    /// At a split boundary this is rebuilt for the new frame.
     ssa_to_reg: HashMap<SsaVar, RegId>,
-    /// Register holding the field element 1. Lazily allocated at the
-    /// start of [`Self::lower`] iff the body contains a desugaring that
-    /// references it (Not, Assert, IsNeq, IsLe, IsLeBounded). Emitting
-    /// at the top — outside every `LoopUnroll` — keeps the body's
-    /// pre-computed byte size correct.
+    /// Register holding the field element 1 in the **current** frame.
+    /// Lazily allocated when the body contains a desugaring that
+    /// references it (Not, Assert, IsNeq, IsLe, IsLeBounded).
     one_reg: Option<RegId>,
 }
 
@@ -157,32 +232,239 @@ impl<F: FieldBackend> Walker<F> {
     pub fn new(family: FieldFamily) -> Self {
         Self {
             builder: ProgramBuilder::new(family),
+            // Template 0 takes no captures from root.
+            templates: vec![TemplateBuf::new(0)],
+            current: 0,
             allocator: RegAllocator::new(),
             ssa_to_reg: HashMap::new(),
             one_reg: None,
         }
     }
 
-    /// Lower an entire body into a finished [`Program`]. Appends a
-    /// terminating `Halt` after the last emitted opcode.
+    /// Lower an entire body into a finished [`Program`]. The body is
+    /// emitted into Template 0; the program's root body is the trivial
+    /// `InstantiateTemplate(0, [], [])` + `Halt` pair. Before each
+    /// top-level emission the walker estimates the upcoming
+    /// instruction's reg cost (see [`reg_cost_of_extinst`]) and
+    /// chains a fresh template if it would push the current frame
+    /// past `FRAME_CAP - FRAME_MARGIN`, forwarding live SSA vars as
+    /// captures.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
-        if body_needs_one_const(body) {
-            let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
-            let reg = self.allocator.alloc()?;
-            self.builder.load_const(reg, idx);
-            self.one_reg = Some(reg);
+        // Lazy `one` loading: deferred to first desugaring that needs
+        // it, so wide single-instruction templates (Decompose, Or)
+        // don't pay the slot tax up-front.
+        for (i, inst) in body.iter().enumerate() {
+            // Pre-emit split decision. Skip the check at i == 0 —
+            // the allocator is at most at 1 (just the `one` const)
+            // so no instruction can overflow on its first emission.
+            if i > 0 {
+                let cost = reg_cost_of_extinst(inst);
+                let projected = self.allocator.next_slot().saturating_add(cost);
+                if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
+                    self.do_split(body, i)?;
+                }
+            }
+            self.emit(inst).map_err(|e| match e {
+                WalkError::Alloc(_) => {
+                    if std::env::var("LYSIS_WALKER_TRACE").is_ok() {
+                        eprintln!(
+                            "[walker] frame overflow at body idx {i}: {} (slot={}, cost_est={})",
+                            extinst_summary(inst),
+                            self.allocator.next_slot(),
+                            reg_cost_of_extinst(inst)
+                        );
+                    }
+                    e
+                }
+                other => other,
+            })?;
         }
-        for inst in body {
-            self.emit(inst)?;
-        }
-        self.builder.halt();
-        Ok(self.builder.finish())
+        self.finalize()
     }
 
-    /// Return the pre-allocated register holding `1`, or error if the
-    /// pre-scan missed it (walker-internal invariant violation).
-    fn one(&self) -> Result<RegId, WalkError> {
-        self.one_reg.ok_or(WalkError::OneConstNotInitialized)
+    /// Lazy accessor: returns the current frame's `one` register,
+    /// allocating + emitting `LoadConst` on first call. Called from
+    /// every desugaring that needs `one` (Not, Assert, IsNeq, IsLe,
+    /// IsLeBounded). The InterningSink dedupes the resulting `Const`
+    /// node across the whole program, so re-loading per template is
+    /// free at the IR level.
+    fn one(&mut self) -> Result<RegId, WalkError> {
+        if let Some(r) = self.one_reg {
+            return Ok(r);
+        }
+        let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
+        let reg = self.allocator.alloc()?;
+        self.push_op(Opcode::LoadConst { dst: reg, idx });
+        self.one_reg = Some(reg);
+        Ok(reg)
+    }
+
+    /// Push an opcode into the current template's body buffer.
+    fn push_op(&mut self, op: Opcode) {
+        self.templates[self.current].opcodes.push(op);
+    }
+
+    /// Chain a fresh template at a top-level boundary.
+    ///
+    /// Pre-conditions: `next_idx < body.len()` and the allocator is
+    /// at-or-past [`SPLIT_THRESHOLD`].
+    ///
+    /// Effects: appends `InstantiateTemplate(next_id, captures, [])`
+    /// to the current template's buffer, closes it, opens a new
+    /// template, binds each captured SSA var into the new frame's
+    /// reg `i` via `LoadCapture(i, i)`, and re-loads the `one` const
+    /// if any of the remaining instructions still need it.
+    fn do_split(
+        &mut self,
+        body: &[ExtendedInstruction<F>],
+        next_idx: usize,
+    ) -> Result<(), WalkError> {
+        // Live set: SSA vars defined in the current frame AND
+        // referenced by some instruction in `body[next_idx..]`. The
+        // `one` const is intentionally excluded — re-load is cheaper
+        // than capture-bind, and the InterningSink dedupes anyway.
+        let referenced = collect_referenced_ssa_vars(&body[next_idx..]);
+        let mut live: Vec<SsaVar> = self
+            .ssa_to_reg
+            .keys()
+            .copied()
+            .filter(|v| referenced.contains(v))
+            .collect();
+        // Deterministic order is load-bearing for proving-key
+        // stability — without this the HashMap iteration order would
+        // leak into capture_regs slot ids. SsaVar wraps `u32`; sort
+        // by it directly rather than threading `Ord` through ir-core.
+        live.sort_unstable_by_key(|v| v.0);
+
+        if live.len() > MAX_CAPTURES {
+            return Err(WalkError::LiveSetTooLarge {
+                count: live.len(),
+                max: MAX_CAPTURES,
+            });
+        }
+
+        let capture_regs: Vec<u8> = live.iter().map(|v| self.ssa_to_reg[v]).collect();
+        let next_template_id = self.templates.len() as u16;
+
+        // Tail of the outgoing template: chain the next one and
+        // close. `close_current_template` stamps frame_size and
+        // appends `Return`.
+        self.push_op(Opcode::InstantiateTemplate {
+            template_id: next_template_id,
+            capture_regs,
+            output_regs: Vec::new(),
+        });
+        self.close_current_template();
+
+        // Open the new template with a fresh frame state. The
+        // executor's `InstantiateTemplate` handler places the caller's
+        // `capture_regs[i]` value into the new frame's `reg i`
+        // *before* the body executes — see `lysis::execute::dispatch`
+        // for `InstantiateTemplate`. So the first `live.len()` regs
+        // are already bound to the captured SSA vars; we just record
+        // that mapping and start allocating fresh regs above them.
+        let n_params = live.len() as u8;
+        self.templates.push(TemplateBuf::new(n_params));
+        self.current = self.templates.len() - 1;
+        self.allocator = RegAllocator::new_after_captures(n_params);
+        let mut new_ssa_to_reg = HashMap::new();
+        for (i, var) in live.iter().enumerate() {
+            new_ssa_to_reg.insert(*var, i as RegId);
+        }
+        self.ssa_to_reg = new_ssa_to_reg;
+        self.one_reg = None;
+
+        // `one` is re-loaded lazily on first use in the new
+        // template — see `Walker::one`. This avoids the slot tax on
+        // wide single-instruction templates (Decompose, Or) whose
+        // body never references `one`.
+        Ok(())
+    }
+
+    /// Stamp the current allocator's high-water mark onto the current
+    /// template and append a terminating `Return`.
+    fn close_current_template(&mut self) {
+        let frame_size = self.allocator.frame_size();
+        let buf = &mut self.templates[self.current];
+        buf.frame_size = frame_size;
+        buf.opcodes.push(Opcode::Return);
+    }
+
+    /// Assemble the final Program. The body order is
+    /// `[DefineTemplate(i)]*  +  InstantiateTemplate(0, [], [])  +  Halt
+    /// +  [Template 0 body]  +  [Template 1 body]  +  ...`. Offsets
+    /// are stamped on each `DefineTemplate` so the executor can
+    /// resolve `body_offset` → instruction index.
+    fn finalize(mut self) -> Result<Program<F>, WalkError> {
+        self.close_current_template();
+
+        // Compute encoded byte sizes for each template body so we can
+        // stamp body_offset/body_len on the matching DefineTemplate.
+        let mut body_sizes: Vec<u32> = Vec::with_capacity(self.templates.len());
+        for buf in &self.templates {
+            let mut total: u32 = 0;
+            for op in &buf.opcodes {
+                let mut bytes = Vec::new();
+                encode_opcode(op, &mut bytes);
+                total = total.saturating_add(bytes.len() as u32);
+            }
+            body_sizes.push(total);
+        }
+
+        // Bytes for the root prefix:
+        //   N * sizeof(DefineTemplate) + sizeof(InstantiateTemplate(0, [], [])) + sizeof(Halt)
+        let define_template_bytes: u32 = {
+            let mut buf = Vec::new();
+            encode_opcode(
+                &Opcode::DefineTemplate {
+                    template_id: 0,
+                    frame_size: 0,
+                    n_params: 0,
+                    body_offset: 0,
+                    body_len: 0,
+                },
+                &mut buf,
+            );
+            buf.len() as u32
+        };
+        let instantiate_t0_bytes: u32 = {
+            let mut buf = Vec::new();
+            encode_opcode(
+                &Opcode::InstantiateTemplate {
+                    template_id: 0,
+                    capture_regs: Vec::new(),
+                    output_regs: Vec::new(),
+                },
+                &mut buf,
+            );
+            buf.len() as u32
+        };
+        let root_bytes: u32 = define_template_bytes
+            .saturating_mul(self.templates.len() as u32)
+            .saturating_add(instantiate_t0_bytes)
+            .saturating_add(1); // Halt = 1 byte
+
+        // Stamp DefineTemplate opcodes with computed offsets, then
+        // the root entry, then each template body.
+        let mut offset_cursor = root_bytes;
+        for (tid, (buf, &body_len)) in self.templates.iter().zip(body_sizes.iter()).enumerate() {
+            self.builder.define_template(
+                tid as u16,
+                buf.frame_size,
+                buf.n_params,
+                offset_cursor,
+                body_len,
+            );
+            offset_cursor = offset_cursor.saturating_add(body_len);
+        }
+        self.builder.instantiate_template(0, Vec::new(), Vec::new());
+        self.builder.halt();
+        for buf in self.templates.into_iter() {
+            for op in buf.opcodes {
+                self.builder.push_opcode(op);
+            }
+        }
+        Ok(self.builder.finish())
     }
 
     fn emit(&mut self, inst: &ExtendedInstruction<F>) -> Result<(), WalkError> {
@@ -205,7 +487,7 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Const { result, value } => {
                 let idx = self.builder.intern_field(*value) as u16;
                 let dst = self.allocator.alloc()?;
-                self.builder.load_const(dst, idx);
+                self.push_op(Opcode::LoadConst { dst, idx });
                 self.bind(*result, dst);
             }
             Instruction::Input {
@@ -215,7 +497,11 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let name_idx = self.builder.intern_string(name.clone()) as u16;
                 let dst = self.allocator.alloc()?;
-                self.builder.load_input(dst, name_idx, map_vis(*visibility));
+                self.push_op(Opcode::LoadInput {
+                    dst,
+                    name_idx,
+                    vis: map_vis(*visibility),
+                });
                 self.bind(*result, dst);
             }
 
@@ -223,19 +509,31 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Add { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_add(dst, l, r);
+                self.push_op(Opcode::EmitAdd {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::Sub { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, l, r);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::Mul { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_mul(dst, l, r);
+                self.push_op(Opcode::EmitMul {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             // Field division Div(x,y) = x * y^{-1} is witness-computed
@@ -259,7 +557,7 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Neg { result, operand } => {
                 let op = self.resolve(*operand)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_neg(dst, op);
+                self.push_op(Opcode::EmitNeg { dst, operand: op });
                 self.bind(*result, dst);
             }
 
@@ -270,24 +568,44 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let x = self.resolve(*operand)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, x);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: x,
+                });
                 self.bind(*result, dst);
             }
             Instruction::And { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_mul(dst, l, r);
+                self.push_op(Opcode::EmitMul {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::Or { result, lhs, rhs } => {
                 // x OR y = x + y - x*y (for booleans).
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let sum = self.allocator.alloc()?;
-                self.builder.emit_add(sum, l, r);
+                self.push_op(Opcode::EmitAdd {
+                    dst: sum,
+                    lhs: l,
+                    rhs: r,
+                });
                 let prod = self.allocator.alloc()?;
-                self.builder.emit_mul(prod, l, r);
+                self.push_op(Opcode::EmitMul {
+                    dst: prod,
+                    lhs: l,
+                    rhs: r,
+                });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, sum, prod);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: sum,
+                    rhs: prod,
+                });
                 self.bind(*result, dst);
             }
 
@@ -302,7 +620,12 @@ impl<F: FieldBackend> Walker<F> {
                 let t = self.resolve(*if_true)?;
                 let e = self.resolve(*if_false)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_mux(dst, c, t, e);
+                self.push_op(Opcode::EmitMux {
+                    dst,
+                    cond: c,
+                    then_v: t,
+                    else_v: e,
+                });
                 self.bind(*result, dst);
             }
 
@@ -310,13 +633,21 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::IsEq { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_is_eq(dst, l, r);
+                self.push_op(Opcode::EmitIsEq {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::IsLt { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_is_lt(dst, l, r);
+                self.push_op(Opcode::EmitIsLt {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsNeq(x,y) = 1 - IsEq(x,y).
@@ -324,9 +655,17 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let eq = self.allocator.alloc()?;
-                self.builder.emit_is_eq(eq, l, r);
+                self.push_op(Opcode::EmitIsEq {
+                    dst: eq,
+                    lhs: l,
+                    rhs: r,
+                });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, eq);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: eq,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsLe(x,y) = 1 - IsLt(y,x).
@@ -334,9 +673,17 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.builder.emit_is_lt(lt, r, l);
+                self.push_op(Opcode::EmitIsLt {
+                    dst: lt,
+                    lhs: r,
+                    rhs: l,
+                });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, lt);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: lt,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsLtBounded(x,y,bits) ignores `bits` in Phase 3;
@@ -348,7 +695,11 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_is_lt(dst, l, r);
+                self.push_op(Opcode::EmitIsLt {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsLeBounded(x,y,bits) = 1 - IsLt(y,x); same
@@ -359,9 +710,17 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.builder.emit_is_lt(lt, r, l);
+                self.push_op(Opcode::EmitIsLt {
+                    dst: lt,
+                    lhs: r,
+                    rhs: l,
+                });
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_sub(dst, one, lt);
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: one,
+                    rhs: lt,
+                });
                 self.bind(*result, dst);
             }
 
@@ -374,7 +733,10 @@ impl<F: FieldBackend> Walker<F> {
                 let l = self.resolve(*left)?;
                 let r = self.resolve(*right)?;
                 let dst = self.allocator.alloc()?;
-                self.builder.emit_poseidon_hash(dst, vec![l, r]);
+                self.push_op(Opcode::EmitPoseidonHash {
+                    dst,
+                    in_regs: vec![l, r],
+                });
                 self.bind(*result, dst);
             }
 
@@ -386,7 +748,7 @@ impl<F: FieldBackend> Walker<F> {
                 message: _,
             } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
-                self.builder.emit_assert_eq(l, r);
+                self.push_op(Opcode::EmitAssertEq { lhs: l, rhs: r });
             }
             Instruction::Assert {
                 result: _, operand, ..
@@ -394,7 +756,7 @@ impl<F: FieldBackend> Walker<F> {
                 // Desugar: assert operand == 1.
                 let one = self.one()?;
                 let op = self.resolve(*operand)?;
-                self.builder.emit_assert_eq(op, one);
+                self.push_op(Opcode::EmitAssertEq { lhs: op, rhs: one });
             }
             Instruction::RangeCheck {
                 result: _,
@@ -409,7 +771,10 @@ impl<F: FieldBackend> Walker<F> {
                     });
                 }
                 let op = self.resolve(*operand)?;
-                self.builder.emit_range_check(op, *bits as u8);
+                self.push_op(Opcode::EmitRangeCheck {
+                    var: op,
+                    max_bits: *bits as u8,
+                });
             }
             Instruction::Decompose {
                 result: _,
@@ -430,7 +795,11 @@ impl<F: FieldBackend> Walker<F> {
                 for _ in 1..*num_bits {
                     let _ = self.allocator.alloc()?;
                 }
-                self.builder.emit_decompose(base, op, *num_bits as u8);
+                self.push_op(Opcode::EmitDecompose {
+                    dst_arr: base,
+                    src: op,
+                    n_bits: *num_bits as u8,
+                });
                 // Bind each bit_result to its corresponding register.
                 for (i, br) in bit_results.iter().enumerate() {
                     self.bind(*br, base + i as RegId);
@@ -438,15 +807,60 @@ impl<F: FieldBackend> Walker<F> {
             }
 
             // ---------- integer div/mod ----------
-            // IntDiv / IntMod require a bounded-arithmetic opcode that
-            // the Lysis bytecode surface does not yet carry. Circom
-            // never emits these (signal arith is field-native), so
-            // Phase 3 punts them to Phase 4's opcode extension.
-            Instruction::IntDiv { .. } => {
-                return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" });
+            // Phase 1.5 promotes IntDiv/IntMod from "deferred to Phase
+            // 4" to first-class walker output: SHA-256(64) emits
+            // IntDiv from `int_div(...)` calls in `padBlocks`, and
+            // the HARD GATE can't close without it. The Lysis
+            // bytecode carries `EmitIntDiv` / `EmitIntMod` (codes
+            // 0x4D / 0x4E) with `max_bits: u8`; programs whose
+            // semantic max_bits exceeds 255 surface as
+            // `OperandOutOfRange` so callers learn the limit at
+            // walker time rather than as a silent constraint bug.
+            Instruction::IntDiv {
+                result,
+                lhs,
+                rhs,
+                max_bits,
+            } => {
+                if *max_bits > u32::from(u8::MAX) {
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "IntDiv.max_bits",
+                        limit: u32::from(u8::MAX),
+                        got: *max_bits,
+                    });
+                }
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.push_op(Opcode::EmitIntDiv {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                    max_bits: *max_bits as u8,
+                });
+                self.bind(*result, dst);
             }
-            Instruction::IntMod { .. } => {
-                return Err(WalkError::UnsupportedInstruction { kind: "IntMod" });
+            Instruction::IntMod {
+                result,
+                lhs,
+                rhs,
+                max_bits,
+            } => {
+                if *max_bits > u32::from(u8::MAX) {
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "IntMod.max_bits",
+                        limit: u32::from(u8::MAX),
+                        got: *max_bits,
+                    });
+                }
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.push_op(Opcode::EmitIntMod {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                    max_bits: *max_bits as u8,
+                });
+                self.bind(*result, dst);
             }
 
             // ---------- witness call ----------
@@ -471,7 +885,11 @@ impl<F: FieldBackend> Walker<F> {
                     out_regs.push(reg);
                     self.bind(*o, reg);
                 }
-                self.builder.emit_witness_call(blob_idx, in_regs, out_regs);
+                self.push_op(Opcode::EmitWitnessCall {
+                    bytecode_const_idx: blob_idx,
+                    in_regs,
+                    out_regs,
+                });
             }
         }
         Ok(())
@@ -490,22 +908,33 @@ impl<F: FieldBackend> Walker<F> {
         let start_u32 = start as u32;
         let end_u32 = end as u32;
 
+        // Eagerize `one` *before* the LoopUnroll opcode if any nested
+        // body instruction would need it. This keeps `body_byte_size`
+        // accurate (it doesn't model lazy LoadConst emission within
+        // the body) — the alternative would be a body-walker that
+        // predicts which iterations would trigger the lazy load.
+        if self.one_reg.is_none() && body_needs_one_const(body) {
+            let _ = self.one()?;
+        }
+
         let iter_reg = self.allocator.alloc()?;
         self.bind(iter_var, iter_reg);
 
         // Pre-compute the body's encoded byte length so the
-        // LoopUnroll opcode can carry it. We build a throw-away
-        // walker state that matches our current reg allocator
-        // exactly — this lets size calculation depend on the
-        // allocator's current offset (it doesn't today, but keeping
-        // the abstraction gives Phase 4 room).
+        // LoopUnroll opcode can carry it. The size depends only on
+        // opcode shape — independent of register allocation — so a
+        // free function over the ExtendedInstruction tree suffices.
         let body_len = body_byte_size(body)?;
         if body_len > u32::from(u16::MAX) {
             return Err(WalkError::LoopBodyTooLong { bytes: body_len });
         }
 
-        self.builder
-            .loop_unroll(iter_reg, start_u32, end_u32, body_len as u16);
+        self.push_op(Opcode::LoopUnroll {
+            iter_var: iter_reg,
+            start: start_u32,
+            end: end_u32,
+            body_len: body_len as u16,
+        });
 
         for inst in body {
             self.emit(inst)?;
@@ -701,16 +1130,40 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             out_regs: vec![0u8; outputs.len()],
         }),
 
-        // Div / IntDiv / IntMod are the only variants left — they all
-        // produce opcodes that the walker refuses above, so the size
-        // is never queried. Surface them with the same kind label the
-        // emit path uses so fuzz-style probes stay readable.
+        // Div is still walker-rejected; the inline-Artik plumbing
+        // for `x / y = x * y^{-1}` has no precedent in this walker
+        // and circom signal-arith never emits it. IntDiv / IntMod
+        // shipped in Phase 1.5 to unblock SHA-256.
         Instruction::Div { .. } => return Err(WalkError::UnsupportedInstruction { kind: "Div" }),
-        Instruction::IntDiv { .. } => {
-            return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" })
+        Instruction::IntDiv { max_bits, .. } => {
+            if *max_bits > u32::from(u8::MAX) {
+                return Err(WalkError::OperandOutOfRange {
+                    kind: "IntDiv.max_bits",
+                    limit: u32::from(u8::MAX),
+                    got: *max_bits,
+                });
+            }
+            bin(Opcode::EmitIntDiv {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+                max_bits: *max_bits as u8,
+            })
         }
-        Instruction::IntMod { .. } => {
-            return Err(WalkError::UnsupportedInstruction { kind: "IntMod" })
+        Instruction::IntMod { max_bits, .. } => {
+            if *max_bits > u32::from(u8::MAX) {
+                return Err(WalkError::OperandOutOfRange {
+                    kind: "IntMod.max_bits",
+                    limit: u32::from(u8::MAX),
+                    got: *max_bits,
+                });
+            }
+            bin(Opcode::EmitIntMod {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+                max_bits: *max_bits as u8,
+            })
         }
     })
 }
@@ -729,6 +1182,109 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
     })
 }
 
+/// Compact trace summary used by the `LYSIS_WALKER_TRACE`
+/// diagnostic. Returns a one-line description that surfaces the
+/// instruction kind plus the most cost-relevant operand width.
+fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
+    match inst {
+        ExtendedInstruction::Plain(i) => match i {
+            Instruction::Decompose { num_bits, .. } => format!("Decompose({num_bits})"),
+            Instruction::WitnessCall { outputs, .. } => {
+                format!("WitnessCall(out={})", outputs.len())
+            }
+            Instruction::Or { .. } => "Or".into(),
+            Instruction::IsNeq { .. } => "IsNeq".into(),
+            Instruction::IsLe { .. } => "IsLe".into(),
+            Instruction::IsLeBounded { .. } => "IsLeBounded".into(),
+            Instruction::IntDiv { max_bits, .. } => format!("IntDiv(max_bits={max_bits})"),
+            Instruction::IntMod { max_bits, .. } => format!("IntMod(max_bits={max_bits})"),
+            other => std::any::type_name_of_val(other).to_string(),
+        },
+        ExtendedInstruction::LoopUnroll {
+            start, end, body, ..
+        } => {
+            format!("LoopUnroll[{start}..{end}, body_len={}]", body.len())
+        }
+        ExtendedInstruction::TemplateCall { template_id, .. } => {
+            format!("TemplateCall({})", template_id.0)
+        }
+        ExtendedInstruction::TemplateBody { .. } => "TemplateBody".into(),
+    }
+}
+
+/// Estimate how many fresh registers an `ExtendedInstruction` would
+/// allocate if [`Walker::emit`] handled it under the current
+/// per-template allocator. Used by [`Walker::lower`] to decide
+/// whether to chain a new template *before* the next emission rather
+/// than letting an oversized single instruction blow past the frame
+/// cap.
+///
+/// The numbers must over-approximate, never under-approximate — an
+/// underestimate would let `emit_plain` overflow during the alloc
+/// loop with no graceful split. Conservative bounds:
+///
+/// - Most arithmetic ops cost 1 reg (the destination).
+/// - `Or` desugars to Add+Mul+Sub ⇒ 3 regs.
+/// - `IsNeq`/`IsLe`/`IsLeBounded` desugar to two ops ⇒ 2 regs.
+/// - `Decompose(num_bits)` allocates `num_bits` consecutive slots.
+/// - `WitnessCall` allocates one reg per output.
+/// - `LoopUnroll` body bodies are emitted *once* (regs shared across
+///   iterations); cost is the body's cost plus 1 (iter_var).
+/// - Side-effect-only ops (`AssertEq`, `Assert`, `RangeCheck`, plain
+///   `Input`) consume no destination — but `Input`/`Const` do (they
+///   bind the result to a fresh reg).
+fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
+    match inst {
+        ExtendedInstruction::Plain(i) => reg_cost_of_instruction(i),
+        ExtendedInstruction::LoopUnroll { body, .. } => {
+            // 1 for iter_var + sum of body costs (body emits once).
+            let mut total: u32 = 1;
+            for nested in body {
+                total = total.saturating_add(reg_cost_of_extinst(nested));
+            }
+            total
+        }
+        // TemplateCall / TemplateBody are walker-rejected before
+        // they'd contribute to a split decision.
+        ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => 0,
+    }
+}
+
+fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
+    match inst {
+        // Side-effect-only — no destination reg.
+        Instruction::AssertEq { .. }
+        | Instruction::Assert { .. }
+        | Instruction::RangeCheck { .. } => 0,
+
+        // Single-destination ops.
+        Instruction::Const { .. }
+        | Instruction::Input { .. }
+        | Instruction::Add { .. }
+        | Instruction::Sub { .. }
+        | Instruction::Mul { .. }
+        | Instruction::Div { .. }
+        | Instruction::Neg { .. }
+        | Instruction::Not { .. }
+        | Instruction::And { .. }
+        | Instruction::Mux { .. }
+        | Instruction::IsEq { .. }
+        | Instruction::IsLt { .. }
+        | Instruction::IsLtBounded { .. }
+        | Instruction::PoseidonHash { .. }
+        | Instruction::IntDiv { .. }
+        | Instruction::IntMod { .. } => 1,
+
+        // Multi-step desugarings.
+        Instruction::Or { .. } => 3,
+        Instruction::IsNeq { .. } | Instruction::IsLe { .. } | Instruction::IsLeBounded { .. } => 2,
+
+        // Variable-cost ops.
+        Instruction::Decompose { num_bits, .. } => *num_bits,
+        Instruction::WitnessCall { outputs, .. } => outputs.len() as u32,
+    }
+}
+
 fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
     matches!(
         inst,
@@ -738,6 +1294,99 @@ fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
             | Instruction::IsLe { .. }
             | Instruction::IsLeBounded { .. }
     )
+}
+
+/// Walk an `ExtendedInstruction` slice (recursing into LoopUnroll
+/// bodies) and collect every SSA var that appears as an *operand*
+/// — `result` slots are ignored because they are produced by the
+/// instruction, not consumed. Used by [`Walker::do_split`] to
+/// compute the live capture set at a top-level boundary.
+///
+/// Caps the set early once it grows past [`MAX_CAPTURES`]: the
+/// caller will reject anyway and continuing the scan is just work
+/// we'd throw away.
+fn collect_referenced_ssa_vars<F: FieldBackend>(
+    body: &[ExtendedInstruction<F>],
+) -> HashSet<SsaVar> {
+    let mut out = HashSet::new();
+    for inst in body {
+        collect_in_extinst(inst, &mut out);
+        if out.len() > MAX_CAPTURES {
+            // Don't waste cycles refining a set the caller will reject.
+            return out;
+        }
+    }
+    out
+}
+
+fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut HashSet<SsaVar>) {
+    match inst {
+        ExtendedInstruction::Plain(i) => collect_in_instruction(i, out),
+        ExtendedInstruction::LoopUnroll { body, .. } => {
+            for nested in body {
+                collect_in_extinst(nested, out);
+            }
+        }
+        // TemplateCall / TemplateBody are refused by the walker
+        // before split decisions are made; they should never appear
+        // in a stream where collect_referenced_ssa_vars runs.
+        ExtendedInstruction::TemplateCall { captures, .. } => {
+            for v in captures {
+                out.insert(*v);
+            }
+        }
+        ExtendedInstruction::TemplateBody { .. } => {}
+    }
+}
+
+fn collect_in_instruction<F: FieldBackend>(inst: &Instruction<F>, out: &mut HashSet<SsaVar>) {
+    match inst {
+        Instruction::Const { .. } | Instruction::Input { .. } => {}
+        Instruction::Add { lhs, rhs, .. }
+        | Instruction::Sub { lhs, rhs, .. }
+        | Instruction::Mul { lhs, rhs, .. }
+        | Instruction::Div { lhs, rhs, .. }
+        | Instruction::And { lhs, rhs, .. }
+        | Instruction::Or { lhs, rhs, .. }
+        | Instruction::IsEq { lhs, rhs, .. }
+        | Instruction::IsLt { lhs, rhs, .. }
+        | Instruction::IsNeq { lhs, rhs, .. }
+        | Instruction::IsLe { lhs, rhs, .. }
+        | Instruction::IsLtBounded { lhs, rhs, .. }
+        | Instruction::IsLeBounded { lhs, rhs, .. }
+        | Instruction::AssertEq { lhs, rhs, .. }
+        | Instruction::IntDiv { lhs, rhs, .. }
+        | Instruction::IntMod { lhs, rhs, .. } => {
+            out.insert(*lhs);
+            out.insert(*rhs);
+        }
+        Instruction::Neg { operand, .. }
+        | Instruction::Not { operand, .. }
+        | Instruction::Assert { operand, .. }
+        | Instruction::RangeCheck { operand, .. }
+        | Instruction::Decompose { operand, .. } => {
+            out.insert(*operand);
+        }
+        Instruction::Mux {
+            cond,
+            if_true,
+            if_false,
+            ..
+        } => {
+            out.insert(*cond);
+            out.insert(*if_true);
+            out.insert(*if_false);
+        }
+        Instruction::PoseidonHash { left, right, .. } => {
+            out.insert(*left);
+            out.insert(*right);
+        }
+        Instruction::WitnessCall { inputs, .. } => {
+            for v in inputs {
+                out.insert(*v);
+            }
+        }
+    }
 }
 
 #[cfg(test)]
@@ -1252,33 +1901,79 @@ mod tests {
     }
 
     #[test]
-    fn refuses_int_div_and_int_mod() {
-        let bodies = [
-            plain(Instruction::IntDiv {
+    fn lowers_int_div_and_int_mod() {
+        // Phase 1.5 promoted IntDiv/IntMod from "rejected" to walker
+        // output: SHA-256 needs them, so the bytecode now carries
+        // EmitIntDiv / EmitIntMod opcodes. Verify materialized stream
+        // contains both.
+        let body = vec![
+            plain(Instruction::Input {
                 result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IntDiv {
+                result: ssa(2),
                 lhs: ssa(0),
-                rhs: ssa(0),
+                rhs: ssa(1),
                 max_bits: 8,
             }),
             plain(Instruction::IntMod {
-                result: ssa(0),
+                result: ssa(3),
                 lhs: ssa(0),
-                rhs: ssa(0),
+                rhs: ssa(1),
                 max_bits: 8,
             }),
         ];
-        for body in &bodies {
-            let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-            let err = walker
-                .lower(std::slice::from_ref(body))
-                .expect_err("should refuse");
-            match err {
-                WalkError::UnsupportedInstruction { kind } => {
-                    assert!(kind == "IntDiv" || kind == "IntMod", "kind: {kind}");
-                }
-                other => panic!("unexpected error variant: {other:?}"),
+        let out = run(&body);
+        let divs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IntDiv { .. }))
+            .count();
+        let mods = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IntMod { .. }))
+            .count();
+        assert_eq!(divs, 1, "IntDiv survives the walker");
+        assert_eq!(mods, 1, "IntMod survives the walker");
+    }
+
+    #[test]
+    fn refuses_int_div_max_bits_overflow() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IntDiv {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+                max_bits: 300,
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker
+            .lower(&body)
+            .expect_err("max_bits > u8 should refuse");
+        assert!(matches!(
+            err,
+            WalkError::OperandOutOfRange {
+                kind: "IntDiv.max_bits",
+                ..
             }
-        }
+        ));
     }
 
     #[test]
@@ -1321,5 +2016,107 @@ mod tests {
             .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall { .. }))
             .count();
         assert_eq!(call_count, 1);
+    }
+
+    /// Build a body that allocates more than `SPLIT_THRESHOLD` regs in
+    /// the root frame so the walker is forced to chain a second
+    /// template. The chain must remain semantically equivalent: every
+    /// allocated wire is consumed by the final `AssertEq`, so split
+    /// boundaries that drop a live var would surface as
+    /// `UndefinedSsaVar`.
+    #[test]
+    fn split_fires_on_300_sequential_adds() {
+        // x = Input; acc_0 = x; acc_{k+1} = acc_k + x; assert acc_300 == y.
+        // 300 Adds → 301 reg allocations in root, comfortably past the
+        // 240-reg threshold.
+        let mut body = Vec::new();
+        body.push(plain(Instruction::Input {
+            result: ssa(0),
+            name: "y".into(),
+            visibility: IrVisibility::Public,
+        }));
+        body.push(plain(Instruction::Input {
+            result: ssa(1),
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        }));
+        for k in 0..300 {
+            body.push(plain(Instruction::Add {
+                result: ssa(2 + k),
+                lhs: ssa(1 + k),
+                rhs: ssa(1),
+            }));
+        }
+        body.push(plain(Instruction::AssertEq {
+            result: ssa(0xDEAD),
+            lhs: ssa(2 + 299),
+            rhs: ssa(0),
+            message: None,
+        }));
+
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+        // ≥ 2 templates means the split fired at least once.
+        assert!(
+            program.templates.len() >= 2,
+            "expected split to chain ≥2 templates, got {}",
+            program.templates.len()
+        );
+        // The split machinery never overflows the frame cap. Pre-emit
+        // cost prediction can land a body right at FRAME_CAP -
+        // FRAME_MARGIN, which for an Add (cost = 1) is slot 250.
+        for t in &program.templates {
+            assert!(
+                t.frame_size <= 251,
+                "template {} frame_size {} should stay near cap",
+                t.id,
+                t.frame_size
+            );
+        }
+        // Execute through InterningSink and confirm the materialized
+        // stream contains the AssertEq + 300 Adds (post-dedup the Adds
+        // collapse to far fewer, but the AssertEq must survive).
+        let mut sink = InterningSink::<Bn254Fr>::new();
+        execute(&program, &[], &LysisConfig::default(), &mut sink).expect("exec");
+        let out = sink.materialize();
+        let asserts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::AssertEq { .. }))
+            .count();
+        assert_eq!(asserts, 1, "AssertEq must survive across the split");
+        // The two Inputs (x, y) must also survive — they're side-effects.
+        let inputs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
+            .count();
+        assert_eq!(inputs, 2, "Inputs preserved across split");
+    }
+
+    /// Even when no split is needed (small program), the walker still
+    /// wraps the body in Template 0. Verify the template count is 1.
+    #[test]
+    fn small_program_uses_exactly_one_template() {
+        let body = vec![
+            plain(Instruction::Const {
+                result: ssa(0),
+                value: fe(7),
+            }),
+            plain(Instruction::Const {
+                result: ssa(1),
+                value: fe(3),
+            }),
+            plain(Instruction::Add {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+        assert_eq!(
+            program.templates.len(),
+            1,
+            "small body should fit in Template 0 with no chain"
+        );
     }
 }

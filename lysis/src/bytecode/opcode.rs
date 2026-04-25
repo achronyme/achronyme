@@ -169,6 +169,18 @@ pub enum Opcode {
         lhs: u8,
         rhs: u8,
     },
+    EmitIntDiv {
+        dst: u8,
+        lhs: u8,
+        rhs: u8,
+        max_bits: u8,
+    },
+    EmitIntMod {
+        dst: u8,
+        lhs: u8,
+        rhs: u8,
+        max_bits: u8,
+    },
 }
 
 /// Raw byte identifiers from RFC §4.3.
@@ -211,6 +223,8 @@ pub mod code {
     pub const EMIT_POSEIDON_HASH: u8 = 0x4A;
     pub const EMIT_IS_EQ: u8 = 0x4B;
     pub const EMIT_IS_LT: u8 = 0x4C;
+    pub const EMIT_INT_DIV: u8 = 0x4D;
+    pub const EMIT_INT_MOD: u8 = 0x4E;
 }
 
 impl Opcode {
@@ -247,6 +261,8 @@ impl Opcode {
             Self::EmitPoseidonHash { .. } => EMIT_POSEIDON_HASH,
             Self::EmitIsEq { .. } => EMIT_IS_EQ,
             Self::EmitIsLt { .. } => EMIT_IS_LT,
+            Self::EmitIntDiv { .. } => EMIT_INT_DIV,
+            Self::EmitIntMod { .. } => EMIT_INT_MOD,
         }
     }
 
@@ -283,6 +299,8 @@ impl Opcode {
             Self::EmitPoseidonHash { .. } => "EmitPoseidonHash",
             Self::EmitIsEq { .. } => "EmitIsEq",
             Self::EmitIsLt { .. } => "EmitIsLt",
+            Self::EmitIntDiv { .. } => "EmitIntDiv",
+            Self::EmitIntMod { .. } => "EmitIntMod",
         }
     }
 
@@ -304,6 +322,8 @@ impl Opcode {
                 | Self::EmitPoseidonHash { .. }
                 | Self::EmitIsEq { .. }
                 | Self::EmitIsLt { .. }
+                | Self::EmitIntDiv { .. }
+                | Self::EmitIntMod { .. }
         )
     }
 

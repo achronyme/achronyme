@@ -670,6 +670,40 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             frames[frame_idx].write(*dst, id);
             Ok(Step::Next)
         }
+
+        EmitIntDiv {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        } => {
+            let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
+            let id = sink.intern_pure(InstructionKind::IntDiv {
+                result: PLACEHOLDER_ID,
+                lhs: l,
+                rhs: r,
+                max_bits: u32::from(*max_bits),
+            });
+            frames[frame_idx].write(*dst, id);
+            Ok(Step::Next)
+        }
+
+        EmitIntMod {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        } => {
+            let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
+            let id = sink.intern_pure(InstructionKind::IntMod {
+                result: PLACEHOLDER_ID,
+                lhs: l,
+                rhs: r,
+                max_bits: u32::from(*max_bits),
+            });
+            frames[frame_idx].write(*dst, id);
+            Ok(Step::Next)
+        }
     }
 }
 
