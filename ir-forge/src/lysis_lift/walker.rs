@@ -453,10 +453,14 @@ impl<F: FieldBackend> Walker<F> {
                 WalkError::Alloc(_) => {
                     if std::env::var("LYSIS_WALKER_TRACE").is_ok() {
                         eprintln!(
-                            "[walker] frame overflow at body idx {i}: {} (slot={}, cost_est={})",
+                            "[walker] frame overflow at body idx {i}: {} (slot={}, cost_est={}, cold_loads={}, heap_size={}, reg_size={}, current_template={})",
                             extinst_summary(inst),
                             self.allocator.next_slot(),
-                            reg_cost_of_extinst(inst)
+                            reg_cost_of_extinst(inst),
+                            cold_load_cost(inst, &self.ssa_to_heap, &self.ssa_to_reg),
+                            self.ssa_to_heap.len(),
+                            self.ssa_to_reg.len(),
+                            self.current,
                         );
                     }
                     e
