@@ -337,6 +337,17 @@ pub struct Walker<F: FieldBackend> {
     /// `Opcode::InstantiateTemplate` must match the buffer index, so
     /// every `emit_template_call` translates through this map.
     template_id_map: HashMap<TemplateId, u16>,
+    /// Stack of currently-active per-iteration `iter_var`s, ordered
+    /// outermost → innermost. Pushed by `emit_loop_unroll_per_iter` on
+    /// entry, popped on exit. Used by `split_in_per_iter` to force-live
+    /// every enclosing loop's iter_var across mid-emit splits — without
+    /// this, an inner per-iter unroll's split would lose the outer
+    /// loop's iter_var binding from the post-split frame's `ssa_to_reg`,
+    /// and the outer loop's next-iteration restore would fail with
+    /// `UndefinedSsaVar`. Strictly more surgical than force-living all
+    /// `walker_const` keys: it pinpoints exactly the iter_vars that
+    /// must survive, not every compile-time-folded SsaVar.
+    enclosing_iter_vars: Vec<SsaVar>,
 }
 
 impl<F: FieldBackend> Walker<F> {
@@ -351,6 +362,7 @@ impl<F: FieldBackend> Walker<F> {
             one_reg: None,
             walker_const: HashMap::new(),
             template_id_map: HashMap::new(),
+            enclosing_iter_vars: Vec::new(),
         }
     }
 
@@ -473,23 +485,16 @@ impl<F: FieldBackend> Walker<F> {
     /// is computed against the **whole body** (not just `body[j..]`)
     /// because subsequent iterations re-emit `body[0..N]` from the
     /// post-split frame and would lose any outer SsaVar that
-    /// `body[0..j]` references but `body[j..N]` doesn't. `iter_var` is
-    /// always force-live so the per-iter literal binding survives.
-    /// Plus all `walker_const` keys are force-live so any **enclosing**
-    /// per-iter loop's `iter_var` (also tracked in walker_const) flows
-    /// through the boundary — without this, nested per-iter unrolls
-    /// where the inner loop triggers a split would lose the outer
-    /// iter_var binding from `ssa_to_reg`.
-    fn split_in_per_iter(
-        &mut self,
-        body: &[ExtendedInstruction<F>],
-        iter_var: SsaVar,
-    ) -> Result<(), WalkError> {
+    /// `body[0..j]` references but `body[j..N]` doesn't. Every entry
+    /// in `enclosing_iter_vars` is force-live so the current loop's
+    /// `iter_var` plus every outer enclosing loop's iter_var survive
+    /// the boundary — required so the next iteration's restore can
+    /// rebind iter_var literals, and required so an inner-triggered
+    /// split doesn't strand an outer loop's iter_var binding.
+    fn split_in_per_iter(&mut self, body: &[ExtendedInstruction<F>]) -> Result<(), WalkError> {
         let referenced = collect_referenced_ssa_vars(body);
-        let walker_const_keys: HashSet<SsaVar> = self.walker_const.keys().copied().collect();
-        let live = self.compute_live_set(|v| {
-            referenced.contains(v) || *v == iter_var || walker_const_keys.contains(v)
-        })?;
+        let enclosing: HashSet<SsaVar> = self.enclosing_iter_vars.iter().copied().collect();
+        let live = self.compute_live_set(|v| referenced.contains(v) || enclosing.contains(v))?;
         self.perform_split(&live)
     }
 
@@ -1583,7 +1588,16 @@ impl<F: FieldBackend> Walker<F> {
         // keep the rolled `LoopUnroll` opcode + InterningSink dedup —
         // Phase 1.5's value isn't sacrificed for the rest of the
         // program.
-        if body_has_symbolic_op(body) {
+        //
+        // Gap 4 follow-up: also fall back to per-iter unroll when the
+        // body is wide enough that a single rolled emission would
+        // exhaust the frame cap. Rolled emit allocs sequentially; a
+        // body needing >250 slots can't fit even in a fresh-after-split
+        // frame. Per-iter unroll engages mid-iter `split_in_per_iter`
+        // and chains chunks under cap. SHA-256(64)'s outer round loop
+        // (~1779 estimated regs in a single rolled emission) hits this
+        // path post-fallback.
+        if body_has_symbolic_op(body) || body_too_wide_for_rolled(body) {
             return self.emit_loop_unroll_per_iter(iter_var, start, end, body);
         }
 
@@ -1658,6 +1672,25 @@ impl<F: FieldBackend> Walker<F> {
             return Ok(());
         }
 
+        // Push iter_var onto the enclosing-loops stack so any nested
+        // per-iter unroll inside `body` will force-live this iter_var
+        // across its mid-emit splits. Pop after the inner work
+        // completes regardless of success/failure (no `?` between push
+        // and pop other than via the `_inner` helper, whose result we
+        // propagate after popping).
+        self.enclosing_iter_vars.push(iter_var);
+        let result = self.emit_loop_unroll_per_iter_inner(iter_var, start_u32, end_u32, body);
+        self.enclosing_iter_vars.pop();
+        result
+    }
+
+    fn emit_loop_unroll_per_iter_inner(
+        &mut self,
+        iter_var: SsaVar,
+        start_u32: u32,
+        end_u32: u32,
+        body: &[ExtendedInstruction<F>],
+    ) -> Result<(), WalkError> {
         if self.one_reg.is_none() && body_needs_one_const(body) {
             let _ = self.one()?;
         }
@@ -1707,7 +1740,7 @@ impl<F: FieldBackend> Walker<F> {
                     let cost = reg_cost_of_extinst(inst);
                     let projected = self.allocator.next_slot().saturating_add(cost);
                     if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
-                        self.split_in_per_iter(body, iter_var)?;
+                        self.split_in_per_iter(body)?;
                     }
                 }
                 self.emit(inst)?;
@@ -2023,6 +2056,32 @@ fn body_has_symbolic_op<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
     })
 }
 
+/// Returns `true` when emitting `body` as a single rolled
+/// `LoopUnroll` opcode would exceed the frame cap (≥ `FRAME_CAP -
+/// FRAME_MARGIN` slots in one body emission). Used to force the
+/// per-iter unroll path (`emit_loop_unroll_per_iter`) for loops
+/// whose bodies are too wide for the rolled form even when they
+/// don't carry symbolic ops. Per-iter unroll then chains the body
+/// across post-Gap-4 mid-iter splits, keeping each chunk under cap.
+///
+/// Threshold is `FRAME_CAP - FRAME_MARGIN`: a body whose estimated
+/// reg cost crosses that line would trigger `Alloc(FrameOverflow)`
+/// during a fresh-frame emit, since cost saturates against the cap.
+/// Sums recursively into nested LoopUnroll bodies so an outer rolled
+/// loop containing a wide inner LoopUnroll also takes the per-iter
+/// path. SHA-256(64)'s outer round loop trips this — body cost
+/// estimate ≈ 1779 regs for a single rolled emission.
+fn body_too_wide_for_rolled<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
+    let mut total: u32 = 0;
+    for inst in body {
+        total = total.saturating_add(reg_cost_of_extinst(inst));
+        if total.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
+            return true;
+        }
+    }
+    false
+}
+
 /// Best-effort `FieldElement → i64` conversion for walker-side
 /// const-prop. Returns `Some(v)` only when `value`'s canonical limbs
 /// fit in a non-negative `i64`. Negative values (stored as
@@ -2285,47 +2344,33 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
         // capture list (guaranteed by the lift), so the live-set scan
         // doesn't need to add them again here.
         ExtendedInstruction::TemplateBody { .. } => {}
-        // The variant references `index_var`, (for Let) `value_var`,
-        // and `array_slots`. All three are SSA vars defined in the
-        // enclosing scope (or synthesised lazily by the symbolic-effect
-        // emitter) and must be carried as captures across a split
-        // boundary. The original Phase 2 design omitted `array_slots`
-        // on the assumption that slots are emitted as a sibling
-        // `Plain(Input)` immediately before the LoopUnroll inside the
-        // same template — true for top-level splits, but mid-iter
-        // splits (Gap 4) operate inside the LoopUnroll body itself and
-        // can separate the read from the slot binding (especially when
-        // the synth-on-demand path materialises slots lazily). Always
-        // collecting them is conservative and safe.
+        // The variant references `index_var` and (for Let) `value_var`;
+        // both are SSA vars defined in the enclosing scope and must
+        // be carried as captures across any top-level split that
+        // happens to land between the LoopUnroll's parent template
+        // and the LoopUnroll itself. `array_slots` are NOT collected:
+        // top-level splits land at `body[next_idx..]` boundaries and
+        // the slots are sibling `Plain(Input)` emissions inside the
+        // same template, so the split never separates them from this
+        // effect. Mid-iter splits (`split_in_per_iter`) similarly
+        // don't need them — `emit_symbolic_array_read`'s
+        // synth-on-demand path lazily re-binds slots in the post-split
+        // template when their SsaVar is missing, so the live set stays
+        // small (load-bearing for SHA-256, where a single body has
+        // ~500 array_slot SsaVars and including them all would crash
+        // every top-level split with `LiveSetTooLarge`).
         ExtendedInstruction::SymbolicIndexedEffect {
-            array_slots,
             index_var,
             value_var,
             ..
         } => {
-            for v in array_slots {
-                out.insert(*v);
-            }
             out.insert(*index_var);
             if let Some(v) = value_var {
                 out.insert(*v);
             }
         }
-        // Read-side mirrors the write-side rationale: `array_slots`
-        // and `index_var` are enclosing-scope uses that must cross a
-        // split boundary. Slots may be lazily synthesised by
-        // `emit_symbolic_array_read`'s synth-on-demand path inside the
-        // LoopUnroll body; collecting them ensures those bindings flow
-        // through any mid-iter split. `result_var` is a definition
-        // produced by the read itself, so it isn't an operand.
-        ExtendedInstruction::SymbolicArrayRead {
-            array_slots,
-            index_var,
-            ..
-        } => {
-            for v in array_slots {
-                out.insert(*v);
-            }
+        // Read-side mirrors the write-side rationale; see above.
+        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
             out.insert(*index_var);
         }
         // Both `operand_var` and `shift_var` are enclosing-scope uses
