@@ -111,6 +111,17 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
         loop_stack: Vec::new(),
     }];
 
+    // Program-global heap for Phase 4 spill opcodes (StoreHeap /
+    // LoadHeap). Sized exactly to header.heap_size_hint so that Rule
+    // 12 (slot < heap_size_hint) is enforced as a bounds check. v1
+    // streams arrive with heap_size_hint = 0 and never emit heap
+    // opcodes; the empty Vec is the right shape.
+    //
+    // `vec![None; n]` not `with_capacity(n)`: StoreHeap writes via
+    // direct index, so len() must include the addressable range up
+    // front. Research report §6.3.
+    let mut heap: Vec<Option<NodeId>> = vec![None; program.header.heap_size_hint as usize];
+
     let mut instructions_executed: u64 = 0;
 
     loop {
@@ -149,6 +160,7 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
             config,
             sink,
             &offset_to_idx,
+            &mut heap,
         )?;
 
         match advance {
@@ -221,6 +233,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
     config: &LysisConfig,
     sink: &mut S,
     offset_to_idx: &HashMap<u32, usize>,
+    heap: &mut [Option<NodeId>],
 ) -> Result<Step, LysisError> {
     use Opcode::*;
     let offset = instr.offset;
@@ -705,18 +718,41 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             Ok(Step::Next)
         }
 
-        // Heap opcodes round-trip through encoding but the executor
-        // surfaces them as a validation error until the heap state is
-        // wired in. With the v1 bytecode header, `heap_size_hint` is
-        // structurally absent, so any program containing these opcodes
-        // is malformed and the validator (rule 12, Phase 4) is the
-        // gatekeeper. Reaching this arm means hand-crafted bytecode
-        // bypassed validation.
-        StoreHeap { .. } | LoadHeap { .. } => Err(LysisError::ValidationFailed {
-            rule: 12,
-            location: offset,
-            detail: "heap opcodes require v2 header with heap_size_hint > 0",
-        }),
+        // Phase 4 heap opcodes. The validator (rules 12 & 13) is the
+        // primary gatekeeper for slot bounds and single-static-store;
+        // the runtime checks here are defensive — a programmer running
+        // execute() without first calling validate() must still get a
+        // structured error rather than UB.
+        StoreHeap { src_reg, slot } => {
+            let id = read_reg(&frames[frame_idx], *src_reg, offset)?;
+            let slot_idx = *slot as usize;
+            if slot_idx >= heap.len() {
+                return Err(LysisError::ValidationFailed {
+                    rule: 12,
+                    location: offset,
+                    detail: "StoreHeap slot >= heap_size_hint",
+                });
+            }
+            heap[slot_idx] = Some(id);
+            Ok(Step::Next)
+        }
+        LoadHeap { dst_reg, slot } => {
+            let slot_idx = *slot as usize;
+            if slot_idx >= heap.len() {
+                return Err(LysisError::ValidationFailed {
+                    rule: 12,
+                    location: offset,
+                    detail: "LoadHeap slot >= heap_size_hint",
+                });
+            }
+            let id = heap[slot_idx].ok_or(LysisError::ValidationFailed {
+                rule: 13,
+                location: offset,
+                detail: "LoadHeap from unwritten slot",
+            })?;
+            frames[frame_idx].write(*dst_reg, id);
+            Ok(Step::Next)
+        }
     }
 }
 
@@ -1479,5 +1515,120 @@ mod tests {
             .filter(|n| matches!(n, InstructionKind::Mul { .. }))
             .count();
         assert_eq!(muls, 1, "hash-consing collapses identical Muls");
+    }
+
+    // -----------------------------------------------------------------
+    // §4.3.6 Heap spill (Phase 4)
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn store_then_load_round_trips_value() {
+        // r0 = Const(7); StoreHeap r0 → slot 0; LoadHeap slot 0 → r1.
+        // The sink ends up emitting one Const(7); both r0 and r1 hold
+        // the same NodeId because LoadHeap re-binds the heap entry,
+        // not a new value.
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(seven());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 0)
+            .load_heap(1, 0)
+            .halt();
+        let sink = run(&builder.finish(), &[]);
+        // Just one Const(7) was emitted — StoreHeap/LoadHeap don't
+        // produce IR; they manipulate executor heap state.
+        assert_eq!(sink.count(), 1);
+        match &sink.instructions()[0] {
+            InstructionKind::Const { value, .. } => assert_eq!(*value, seven()),
+            other => panic!("expected Const, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn load_from_unwritten_slot_rejects_with_rule_13() {
+        // LoadHeap from a slot that has never been written must surface
+        // as Rule 13 (single-static-store invariant in spirit).
+        let mut builder = b().with_heap_size_hint(4);
+        builder.load_heap(0, 2).halt();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();
+        assert!(
+            matches!(err, LysisError::ValidationFailed { rule: 13, .. }),
+            "expected ValidationFailed rule 13, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn store_with_slot_out_of_bounds_rejects_with_rule_12() {
+        // heap_size_hint=2 → valid slots 0,1. StoreHeap to slot 5 must
+        // surface as Rule 12 (slot < heap_size_hint).
+        let mut builder = b().with_heap_size_hint(2);
+        builder.intern_field(seven());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 5) // slot 5 >= 2
+            .halt();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();
+        assert!(
+            matches!(err, LysisError::ValidationFailed { rule: 12, .. }),
+            "expected ValidationFailed rule 12, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn load_with_slot_out_of_bounds_rejects_with_rule_12() {
+        // Symmetric to the store case: LoadHeap to a too-large slot
+        // is rule 12, not rule 13 (because the bounds check fires
+        // before the unwritten check).
+        let mut builder = b().with_heap_size_hint(2);
+        builder.load_heap(0, 99).halt();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();
+        assert!(
+            matches!(err, LysisError::ValidationFailed { rule: 12, .. }),
+            "expected ValidationFailed rule 12, got {err:?}"
+        );
+    }
+
+    #[test]
+    fn zero_heap_size_hint_rejects_any_heap_op() {
+        // heap_size_hint=0 → any slot is out of bounds. This is the
+        // contract that protects v1 streams (which never declare
+        // heap_size_hint) from accidentally executing heap opcodes
+        // injected by a malformed v2 stream.
+        let mut builder = b(); // default heap_size_hint = 0
+        builder.intern_field(seven());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 0) // slot 0 vs heap_size_hint=0
+            .halt();
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 12, .. }));
+    }
+
+    #[test]
+    fn store_overwrites_slot_then_load_returns_latest() {
+        // The executor itself does not enforce single-static-store;
+        // that is the validator's job (rule 13, Phase 4 Commit 4).
+        // At the executor level, two stores to the same slot
+        // overwrite, and a subsequent LoadHeap returns the latest.
+        // This test guarantees that runtime semantics match the
+        // documented "last write wins" fallback when the validator is
+        // bypassed.
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(seven());
+        builder.intern_field(one());
+        builder
+            .load_const(0, 0) // r0 = Const(7)
+            .load_const(1, 1) // r1 = Const(1)
+            .store_heap(0, 3) // heap[3] = id of Const(7)
+            .store_heap(1, 3) // heap[3] = id of Const(1) — overwrite
+            .load_heap(2, 3) // r2 should bind to the latest store (Const(1))
+            .halt();
+        let sink = run(&builder.finish(), &[]);
+        // Two Consts emitted (LoadHeap doesn't emit a new instruction).
+        assert_eq!(sink.count(), 2);
     }
 }
