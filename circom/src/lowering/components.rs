@@ -480,6 +480,11 @@ fn mangle_node(
             hint: mangle_expr(hint, prefix, param_subs),
             span: span.clone(),
         },
+        CircuitNode::WitnessArrayDecl { name, size, span } => CircuitNode::WitnessArrayDecl {
+            name: mangle_name(prefix, name),
+            size: size.clone(),
+            span: span.clone(),
+        },
         CircuitNode::LetIndexed {
             array,
             index,

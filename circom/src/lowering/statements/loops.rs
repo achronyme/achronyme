@@ -13,7 +13,7 @@ use crate::ast::{self, AssignOp, BinOp, CompoundOp, ElseBranch, Expr, PostfixOp,
 
 use super::super::compile_time::CompileTimeEnv;
 use super::super::context::LoweringContext;
-use super::super::env::LoweringEnv;
+use super::super::env::{Frontend, LoweringEnv};
 use super::super::error::LoweringError;
 use super::super::expressions::lower_expr;
 use super::super::utils::{const_eval_u64, BigVal};
@@ -743,6 +743,15 @@ pub(super) fn classify_loop_body(
         return Some(LoopLowering::KnownArrayRefs);
     }
     if body_has_loop_var_indexed_assignments(stmts, loop_var) {
+        // Gap 1 Stage 5: when targeting Lysis, the
+        // `SymbolicIndexedEffect` path (instantiate Stage 2 + walker
+        // Stage 3) carries loop-var-indexed signal writes through to
+        // bytecode without unrolling at lowering time. Keep the loop
+        // rolled and let `lower_for` emit a `CircuitNode::For`. Legacy
+        // R1CS compilation continues to unroll.
+        if env.frontend == Frontend::Lysis {
+            return None;
+        }
         return Some(LoopLowering::IndexedAssignmentLoop);
     }
     // Catch-all: any loop whose body emits signal work (constraints,
@@ -757,6 +766,13 @@ pub(super) fn classify_loop_body(
     // counters) remain as `CircuitNode::For` and still go through
     // the Symbolic fast path.
     if body_has_any_signal_ops(stmts) {
+        // Gap 1 Stage 5: same gate as the indexed branch above. Lysis
+        // wants the rolled `CircuitNode::For`; the walker handles
+        // signal-op bodies via `SymbolicIndexedEffect` + per-iter
+        // unrolling. Legacy keeps the catch-all unroll.
+        if env.frontend == Frontend::Lysis {
+            return None;
+        }
         return Some(LoopLowering::IndexedAssignmentLoop);
     }
     None

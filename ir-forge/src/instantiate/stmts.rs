@@ -178,6 +178,40 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     self.env.insert(name.clone(), InstEnvValue::Scalar(v));
                 }
             }
+            CircuitNode::WitnessArrayDecl { name, size, .. } => {
+                // Pre-allocate `size` witness wires for an internal
+                // signal array `signal X[size];` (no init). The Lysis
+                // frontend emits this so a downstream
+                // `SymbolicIndexedEffect` can snapshot the array's
+                // slot vec. Each slot becomes a witness `Input`
+                // instruction named `{name}_{i}`. Legacy R1CS
+                // compilation never reaches this — its lowering
+                // unrolls indexed assignments before the slots are
+                // needed.
+                let size = self.resolve_array_size(size)?;
+                let mut elem_vars = Vec::with_capacity(size);
+                for i in 0..size {
+                    let elem_name = format!("{name}_{i}");
+                    if let Some(&pub_var) = self.output_pub_vars.get(&elem_name) {
+                        // Public output array slot already pre-bound by
+                        // scaffold — reuse the wire so SymbolicIndexed
+                        // Effect AssertEqs land on the right channel.
+                        elem_vars.push(pub_var);
+                    } else {
+                        let v = self.fresh_var();
+                        self.set_name(v, elem_name.clone());
+                        self.push_inst(Instruction::Input {
+                            result: v,
+                            name: elem_name.clone(),
+                            visibility: Visibility::Witness,
+                        });
+                        self.env.insert(elem_name, InstEnvValue::Scalar(v));
+                        elem_vars.push(v);
+                    }
+                }
+                self.env
+                    .insert(name.clone(), InstEnvValue::Array(elem_vars));
+            }
             CircuitNode::LetIndexed {
                 array,
                 index,

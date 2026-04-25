@@ -194,6 +194,16 @@ fn validate_node(
         CircuitNode::Expr { expr, .. } => validate_expr(expr),
         CircuitNode::Decompose { value, .. } => validate_expr(value),
         CircuitNode::WitnessHint { hint, .. } => validate_expr(hint),
+        CircuitNode::WitnessArrayDecl { size, .. } => {
+            if let crate::types::ArraySize::Capture(name) = size {
+                if !capture_names.contains(name.as_str()) {
+                    return Err(format!(
+                        "invalid ProveIR: WitnessArrayDecl size references unknown capture `{name}`"
+                    ));
+                }
+            }
+            Ok(())
+        }
         CircuitNode::LetIndexed { index, value, .. } => {
             validate_expr(index)?;
             validate_expr(value)

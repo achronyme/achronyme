@@ -1844,15 +1844,18 @@ fn sha256_64_r1cs_probe() {
 ///   Lysis path and its post-optimize state. If the gate fails,
 ///   these give the first-look picture.
 ///
-/// **Ignored until C.2 lands** — the current Symbolic emission path
-/// in `emit_range_loop` fails on SHA-256's loop-var-dependent
-/// patterns (`w[i-offset]`, `in >> i`, `out[i] <-- ...`). The
-/// source-preserving `LoopUnroll` work-in-progress on
-/// `feat/lysis-symbolic-reemit` defers body emission to the Walker
-/// (per-iteration with concrete `i` + InterningSink hash-cons).
-/// See `.claude/plans/lysis-sha256-path.md` for the full plan.
+/// **Ignored — current blocker (Gap 1 Stage 5 partial)** — Stage 5
+/// landed the `Frontend::Lysis` toggle and `WitnessArrayDecl`
+/// pre-allocation, so the gate now passes the compile + paddedIn
+/// allocation phase that previously blocked at the `paddedIn` env
+/// missing. The next blocker is symbolic `ArrayIndex` reads
+/// (`in[k]` inside a `for k in 0..nBits { paddedIn[k] <== in[k]; }`):
+/// `Instantiator::emit_expr` requires a compile-time-constant index,
+/// which the Lysis loop var doesn't satisfy. The fix is the read-side
+/// counterpart to `SymbolicIndexedEffect` (a `SymbolicArrayRead`
+/// expression node + walker arm), tracked separately from this gate.
 #[test]
-#[ignore = "blocked on source-preserving LoopUnroll (C.2); see .claude/plans/lysis-sha256-path.md"]
+#[ignore = "blocked on symbolic ArrayIndex reads (Gap 1 follow-up); Stage 5 pre-alloc landed"]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
@@ -1871,8 +1874,15 @@ fn sha256_64_lysis_hard_gate() {
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result = circom::compile_file(&path, &lib_dirs)
-        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    // Gap 1 Stage 5: Lysis frontend keeps loop-var-indexed signal
+    // writes rolled inside `CircuitNode::For`, so the
+    // `SymbolicIndexedEffect` path can carry them through to
+    // walker-time per-iteration unfolding. Legacy `compile_file`
+    // would unroll at lowering and produce the 6.4 GB OOM the gate
+    // exists to prevent.
+    let compile_result =
+        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
+            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("  [compile]       {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();

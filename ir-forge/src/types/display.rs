@@ -156,6 +156,9 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
         CircuitNode::WitnessHint { name, hint, .. } => {
             writeln!(f, "{pad}{name} <-- {hint}")
         }
+        CircuitNode::WitnessArrayDecl { name, size, .. } => {
+            writeln!(f, "{pad}signal {name}[{size}]")
+        }
         CircuitNode::LetIndexed {
             array,
             index,

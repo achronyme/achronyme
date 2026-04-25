@@ -115,6 +115,12 @@ fn collect_capture_usage<'a>(
         CircuitNode::Expr { expr, .. } => collect_expr_captures(expr, circuit),
         CircuitNode::Decompose { value, .. } => collect_expr_captures(value, circuit),
         CircuitNode::WitnessHint { hint, .. } => collect_expr_captures(hint, circuit),
+        CircuitNode::WitnessArrayDecl { size, .. } => {
+            // Capture-sized arrays count as a structural reference.
+            if let ir_forge::types::ArraySize::Capture(name) = size {
+                structural.insert(name.as_str());
+            }
+        }
         CircuitNode::LetIndexed { index, value, .. } => {
             collect_expr_captures(index, circuit);
             collect_expr_captures(value, circuit);

@@ -19,7 +19,7 @@ mod wiring;
 use std::collections::{HashMap, HashSet};
 
 use diagnostics::SpanRange;
-use ir_forge::types::{CircuitExpr, CircuitNode};
+use ir_forge::types::{ArraySize, CircuitExpr, CircuitNode};
 
 use crate::ast::{self, AssignOp, ElseBranch, Expr, Stmt};
 
@@ -175,9 +175,34 @@ fn lower_stmt<'a>(
         }
 
         // Signal declarations without initialization — just register names.
-        Stmt::SignalDecl { declarations, .. } => {
+        Stmt::SignalDecl {
+            declarations, span, ..
+        } => {
             for decl in declarations {
                 env.locals.insert(decl.name.clone());
+                // Gap 1 Stage 5: when targeting Lysis and the signal
+                // has dimensions, pre-allocate the array slots in the
+                // ProveIR body so a downstream `SymbolicIndexedEffect`
+                // can snapshot `array_slots` at instantiate time.
+                // Legacy lowering doesn't need this — it unrolls
+                // indexed assignments at lowering and `ensure_array_
+                // slot` lazily fills the env.
+                if env.frontend == super::env::Frontend::Lysis && !decl.dimensions.is_empty() {
+                    if let Some(total) = total_dim_size(&decl.dimensions, ctx) {
+                        env.register_array(decl.name.clone(), total as usize);
+                        nodes.push(CircuitNode::WitnessArrayDecl {
+                            name: decl.name.clone(),
+                            size: ArraySize::Literal(total as usize),
+                            span: Some(diagnostics::SpanRange::from_span(span)),
+                        });
+                    }
+                    // If we couldn't const-resolve the size at lowering
+                    // time, the legacy fallback (loop-time unrolling)
+                    // still fires for any `arr[k] <== ...` assignments
+                    // — `classify_loop_body`'s indexed branch is
+                    // `Lysis`-gated only for cases where the array
+                    // is reachable here.
+                }
             }
         }
 
@@ -712,6 +737,21 @@ fn lower_expr_stmt(
         }
     }
     Ok(())
+}
+
+/// Const-eval an array's dimension expressions using the lowering
+/// context's `param_values`. Returns the total flat element count
+/// when every dimension resolves; `None` if any dimension references
+/// something not yet resolved (e.g., a runtime signal). Used by the
+/// Lysis-frontend `WitnessArrayDecl` emission to decide whether the
+/// internal signal array can be pre-allocated.
+fn total_dim_size(dims: &[crate::ast::Expr], ctx: &LoweringContext) -> Option<u64> {
+    let mut total: u64 = 1;
+    for d in dims {
+        let val = super::utils::const_eval_with_params(d, &ctx.param_values)?.to_u64()?;
+        total = total.checked_mul(val)?;
+    }
+    Some(total)
 }
 
 #[cfg(test)]
