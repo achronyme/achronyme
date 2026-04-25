@@ -72,7 +72,7 @@
 //! that don't will be split across multiple chained templates by the
 //! M2-M4 split machinery layered on top of this wrapping.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use lysis::bytecode::encoding::encode_opcode;
 use lysis::bytecode::Opcode;
@@ -83,6 +83,20 @@ use memory::{FieldBackend, FieldElement, FieldFamily};
 
 use crate::ExtendedInstruction;
 use ir_core::{Instruction, SsaVar, Visibility};
+
+/// Trigger a top-level split when the current frame has allocated
+/// this many registers. The 15-reg margin under the 255-reg cap covers
+/// the worst-case single-instruction allocation we see in practice
+/// (`Decompose(32)`, `Or` ⇒ 3 regs, etc.). Compile-time choice — see
+/// `.claude/plans/lysis-phase3c6-resumption.md` §3.2.
+const SPLIT_THRESHOLD: u32 = 240;
+
+/// Hard cap on the number of live SSA vars we forward as captures
+/// across a split. Matches RFC §5.1: `InstantiateTemplate.capture_regs`
+/// is length-prefixed by a `u8` (max 255), and the receiving frame
+/// only has 255 reg slots, of which we want most available for actual
+/// work in the new template body.
+const MAX_CAPTURES: usize = 64;
 
 /// Errors raised by [`Walker::lower`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -117,6 +131,13 @@ pub enum WalkError {
     /// register before the pre-scan allocated it. This is a walker
     /// bug — surface it rather than silently emitting a Trap.
     OneConstNotInitialized,
+    /// A top-level split was triggered but the live set exceeded
+    /// [`MAX_CAPTURES`]. Forwarding more than 64 SSA vars across a
+    /// single split would defeat the point of the split (the new
+    /// template starts with 64 reserved capture regs already). The
+    /// fix is BTA + structural extraction (Phase 2 Gap 2), which
+    /// avoids the wide live set in the first place.
+    LiveSetTooLarge { count: usize, max: usize },
 }
 
 impl std::fmt::Display for WalkError {
@@ -145,6 +166,10 @@ impl std::fmt::Display for WalkError {
             Self::OneConstNotInitialized => f.write_str(
                 "walker: desugaring referenced `one` register but pre-scan did not allocate it (walker bug)",
             ),
+            Self::LiveSetTooLarge { count, max } => write!(
+                f,
+                "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — Phase 2 BTA needed"
+            ),
         }
     }
 }
@@ -164,13 +189,21 @@ struct TemplateBuf {
     /// Frame size = high-water mark of the allocator at close time.
     /// Stamped by `close_current_template`.
     frame_size: u8,
+    /// Number of capture regs the template expects from its
+    /// `InstantiateTemplate` site. The executor fills regs `0..n_params`
+    /// of the callee frame with the caller's `capture_regs` before
+    /// running the body, so no `LoadCapture` opcodes are needed
+    /// inside the body itself — the captures are addressable directly
+    /// as regs `0..n_params`.
+    n_params: u8,
 }
 
 impl TemplateBuf {
-    fn new() -> Self {
+    fn new(n_params: u8) -> Self {
         Self {
             opcodes: Vec::new(),
             frame_size: 0,
+            n_params,
         }
     }
 }
@@ -202,7 +235,8 @@ impl<F: FieldBackend> Walker<F> {
     pub fn new(family: FieldFamily) -> Self {
         Self {
             builder: ProgramBuilder::new(family),
-            templates: vec![TemplateBuf::new()],
+            // Template 0 takes no captures from root.
+            templates: vec![TemplateBuf::new(0)],
             current: 0,
             allocator: RegAllocator::new(),
             ssa_to_reg: HashMap::new(),
@@ -212,23 +246,121 @@ impl<F: FieldBackend> Walker<F> {
 
     /// Lower an entire body into a finished [`Program`]. The body is
     /// emitted into Template 0; the program's root body is the trivial
-    /// `InstantiateTemplate(0, [], [])` + `Halt` pair.
+    /// `InstantiateTemplate(0, [], [])` + `Halt` pair. Whenever the
+    /// current frame's allocator passes [`SPLIT_THRESHOLD`] between
+    /// top-level instructions, the walker chains a fresh template
+    /// with the live SSA vars forwarded as captures.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
-        if body_needs_one_const(body) {
-            let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
-            let reg = self.allocator.alloc()?;
-            self.push_op(Opcode::LoadConst { dst: reg, idx: idx });
-            self.one_reg = Some(reg);
-        }
-        for inst in body {
+        self.ensure_one_loaded(body)?;
+        for (i, inst) in body.iter().enumerate() {
             self.emit(inst)?;
+            // Decide between top-level boundaries whether to chain a
+            // fresh template. `i + 1 < body.len()` skips the trailing
+            // boundary — the final emit closes the last template via
+            // `finalize`.
+            if i + 1 < body.len() && self.allocator.next_slot() >= SPLIT_THRESHOLD {
+                self.do_split(body, i + 1)?;
+            }
         }
         self.finalize()
+    }
+
+    /// Allocate (or reuse, on capture) the `one` register for the
+    /// current template if any remaining instruction in `body` needs
+    /// it. Used at lower-start and on every split where downstream
+    /// code still references `one`.
+    fn ensure_one_loaded(&mut self, body: &[ExtendedInstruction<F>]) -> Result<(), WalkError> {
+        if !body_needs_one_const(body) {
+            return Ok(());
+        }
+        let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
+        let reg = self.allocator.alloc()?;
+        self.push_op(Opcode::LoadConst { dst: reg, idx });
+        self.one_reg = Some(reg);
+        Ok(())
     }
 
     /// Push an opcode into the current template's body buffer.
     fn push_op(&mut self, op: Opcode) {
         self.templates[self.current].opcodes.push(op);
+    }
+
+    /// Chain a fresh template at a top-level boundary.
+    ///
+    /// Pre-conditions: `next_idx < body.len()` and the allocator is
+    /// at-or-past [`SPLIT_THRESHOLD`].
+    ///
+    /// Effects: appends `InstantiateTemplate(next_id, captures, [])`
+    /// to the current template's buffer, closes it, opens a new
+    /// template, binds each captured SSA var into the new frame's
+    /// reg `i` via `LoadCapture(i, i)`, and re-loads the `one` const
+    /// if any of the remaining instructions still need it.
+    fn do_split(
+        &mut self,
+        body: &[ExtendedInstruction<F>],
+        next_idx: usize,
+    ) -> Result<(), WalkError> {
+        // Live set: SSA vars defined in the current frame AND
+        // referenced by some instruction in `body[next_idx..]`. The
+        // `one` const is intentionally excluded — re-load is cheaper
+        // than capture-bind, and the InterningSink dedupes anyway.
+        let referenced = collect_referenced_ssa_vars(&body[next_idx..]);
+        let mut live: Vec<SsaVar> = self
+            .ssa_to_reg
+            .keys()
+            .copied()
+            .filter(|v| referenced.contains(v))
+            .collect();
+        // Deterministic order is load-bearing for proving-key
+        // stability — without this the HashMap iteration order would
+        // leak into capture_regs slot ids. SsaVar wraps `u32`; sort
+        // by it directly rather than threading `Ord` through ir-core.
+        live.sort_unstable_by_key(|v| v.0);
+
+        if live.len() > MAX_CAPTURES {
+            return Err(WalkError::LiveSetTooLarge {
+                count: live.len(),
+                max: MAX_CAPTURES,
+            });
+        }
+
+        let capture_regs: Vec<u8> = live.iter().map(|v| self.ssa_to_reg[v]).collect();
+        let next_template_id = self.templates.len() as u16;
+
+        // Tail of the outgoing template: chain the next one and
+        // close. `close_current_template` stamps frame_size and
+        // appends `Return`.
+        self.push_op(Opcode::InstantiateTemplate {
+            template_id: next_template_id,
+            capture_regs,
+            output_regs: Vec::new(),
+        });
+        self.close_current_template();
+
+        // Open the new template with a fresh frame state. The
+        // executor's `InstantiateTemplate` handler places the caller's
+        // `capture_regs[i]` value into the new frame's `reg i`
+        // *before* the body executes — see `lysis::execute::dispatch`
+        // for `InstantiateTemplate`. So the first `live.len()` regs
+        // are already bound to the captured SSA vars; we just record
+        // that mapping and start allocating fresh regs above them.
+        let n_params = live.len() as u8;
+        self.templates.push(TemplateBuf::new(n_params));
+        self.current = self.templates.len() - 1;
+        self.allocator = RegAllocator::new_after_captures(n_params);
+        let mut new_ssa_to_reg = HashMap::new();
+        for (i, var) in live.iter().enumerate() {
+            new_ssa_to_reg.insert(*var, i as RegId);
+        }
+        self.ssa_to_reg = new_ssa_to_reg;
+        self.one_reg = None;
+
+        // Re-load `one` if any remaining instruction needs it. The
+        // InterningSink dedupes Const values across the whole program,
+        // so the materialized stream is identical whether we re-load
+        // or capture-forward.
+        self.ensure_one_loaded(&body[next_idx..])?;
+        Ok(())
     }
 
     /// Stamp the current allocator's high-water mark onto the current
@@ -300,9 +432,15 @@ impl<F: FieldBackend> Walker<F> {
         let n_templates = self.templates.len();
         for tid in 0..n_templates {
             let frame_size = self.templates[tid].frame_size;
+            let n_params = self.templates[tid].n_params;
             let body_len = body_sizes[tid];
-            self.builder
-                .define_template(tid as u16, frame_size, 0, offset_cursor, body_len);
+            self.builder.define_template(
+                tid as u16,
+                frame_size,
+                n_params,
+                offset_cursor,
+                body_len,
+            );
             offset_cursor = offset_cursor.saturating_add(body_len);
         }
         self.builder.instantiate_template(0, Vec::new(), Vec::new());
@@ -917,6 +1055,102 @@ fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
     )
 }
 
+/// Walk an `ExtendedInstruction` slice (recursing into LoopUnroll
+/// bodies) and collect every SSA var that appears as an *operand*
+/// — `result` slots are ignored because they are produced by the
+/// instruction, not consumed. Used by [`Walker::do_split`] to
+/// compute the live capture set at a top-level boundary.
+///
+/// Caps the set early once it grows past [`MAX_CAPTURES`]: the
+/// caller will reject anyway and continuing the scan is just work
+/// we'd throw away.
+fn collect_referenced_ssa_vars<F: FieldBackend>(
+    body: &[ExtendedInstruction<F>],
+) -> HashSet<SsaVar> {
+    let mut out = HashSet::new();
+    for inst in body {
+        collect_in_extinst(inst, &mut out);
+        if out.len() > MAX_CAPTURES {
+            // Don't waste cycles refining a set the caller will reject.
+            return out;
+        }
+    }
+    out
+}
+
+fn collect_in_extinst<F: FieldBackend>(
+    inst: &ExtendedInstruction<F>,
+    out: &mut HashSet<SsaVar>,
+) {
+    match inst {
+        ExtendedInstruction::Plain(i) => collect_in_instruction(i, out),
+        ExtendedInstruction::LoopUnroll { body, .. } => {
+            for nested in body {
+                collect_in_extinst(nested, out);
+            }
+        }
+        // TemplateCall / TemplateBody are refused by the walker
+        // before split decisions are made; they should never appear
+        // in a stream where collect_referenced_ssa_vars runs.
+        ExtendedInstruction::TemplateCall { captures, .. } => {
+            for v in captures {
+                out.insert(*v);
+            }
+        }
+        ExtendedInstruction::TemplateBody { .. } => {}
+    }
+}
+
+fn collect_in_instruction<F: FieldBackend>(inst: &Instruction<F>, out: &mut HashSet<SsaVar>) {
+    match inst {
+        Instruction::Const { .. } | Instruction::Input { .. } => {}
+        Instruction::Add { lhs, rhs, .. }
+        | Instruction::Sub { lhs, rhs, .. }
+        | Instruction::Mul { lhs, rhs, .. }
+        | Instruction::Div { lhs, rhs, .. }
+        | Instruction::And { lhs, rhs, .. }
+        | Instruction::Or { lhs, rhs, .. }
+        | Instruction::IsEq { lhs, rhs, .. }
+        | Instruction::IsLt { lhs, rhs, .. }
+        | Instruction::IsNeq { lhs, rhs, .. }
+        | Instruction::IsLe { lhs, rhs, .. }
+        | Instruction::IsLtBounded { lhs, rhs, .. }
+        | Instruction::IsLeBounded { lhs, rhs, .. }
+        | Instruction::AssertEq { lhs, rhs, .. }
+        | Instruction::IntDiv { lhs, rhs, .. }
+        | Instruction::IntMod { lhs, rhs, .. } => {
+            out.insert(*lhs);
+            out.insert(*rhs);
+        }
+        Instruction::Neg { operand, .. }
+        | Instruction::Not { operand, .. }
+        | Instruction::Assert { operand, .. }
+        | Instruction::RangeCheck { operand, .. }
+        | Instruction::Decompose { operand, .. } => {
+            out.insert(*operand);
+        }
+        Instruction::Mux {
+            cond,
+            if_true,
+            if_false,
+            ..
+        } => {
+            out.insert(*cond);
+            out.insert(*if_true);
+            out.insert(*if_false);
+        }
+        Instruction::PoseidonHash { left, right, .. } => {
+            out.insert(*left);
+            out.insert(*right);
+        }
+        Instruction::WitnessCall { inputs, .. } => {
+            for v in inputs {
+                out.insert(*v);
+            }
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use lysis::{execute, InterningSink, LysisConfig};
@@ -1498,5 +1732,106 @@ mod tests {
             .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall { .. }))
             .count();
         assert_eq!(call_count, 1);
+    }
+
+    /// Build a body that allocates more than `SPLIT_THRESHOLD` regs in
+    /// the root frame so the walker is forced to chain a second
+    /// template. The chain must remain semantically equivalent: every
+    /// allocated wire is consumed by the final `AssertEq`, so split
+    /// boundaries that drop a live var would surface as
+    /// `UndefinedSsaVar`.
+    #[test]
+    fn split_fires_on_300_sequential_adds() {
+        // x = Input; acc_0 = x; acc_{k+1} = acc_k + x; assert acc_300 == y.
+        // 300 Adds → 301 reg allocations in root, comfortably past the
+        // 240-reg threshold.
+        let mut body = Vec::new();
+        body.push(plain(Instruction::Input {
+            result: ssa(0),
+            name: "y".into(),
+            visibility: IrVisibility::Public,
+        }));
+        body.push(plain(Instruction::Input {
+            result: ssa(1),
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        }));
+        for k in 0..300 {
+            body.push(plain(Instruction::Add {
+                result: ssa(2 + k),
+                lhs: ssa(1 + k),
+                rhs: ssa(1),
+            }));
+        }
+        body.push(plain(Instruction::AssertEq {
+            result: ssa(0xDEAD),
+            lhs: ssa(2 + 299),
+            rhs: ssa(0),
+            message: None,
+        }));
+
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+        // ≥ 2 templates means the split fired at least once.
+        assert!(
+            program.templates.len() >= 2,
+            "expected split to chain ≥2 templates, got {}",
+            program.templates.len()
+        );
+        // The split machinery never emits a frame above the threshold
+        // — every template should sit comfortably below the 255 cap.
+        for t in &program.templates {
+            assert!(
+                t.frame_size <= 245,
+                "template {} frame_size {} should stay near threshold",
+                t.id,
+                t.frame_size
+            );
+        }
+        // Execute through InterningSink and confirm the materialized
+        // stream contains the AssertEq + 300 Adds (post-dedup the Adds
+        // collapse to far fewer, but the AssertEq must survive).
+        let mut sink = InterningSink::<Bn254Fr>::new();
+        execute(&program, &[], &LysisConfig::default(), &mut sink).expect("exec");
+        let out = sink.materialize();
+        let asserts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::AssertEq { .. }))
+            .count();
+        assert_eq!(asserts, 1, "AssertEq must survive across the split");
+        // The two Inputs (x, y) must also survive — they're side-effects.
+        let inputs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
+            .count();
+        assert_eq!(inputs, 2, "Inputs preserved across split");
+    }
+
+    /// Even when no split is needed (small program), the walker still
+    /// wraps the body in Template 0. Verify the template count is 1.
+    #[test]
+    fn small_program_uses_exactly_one_template() {
+        let body = vec![
+            plain(Instruction::Const {
+                result: ssa(0),
+                value: fe(7),
+            }),
+            plain(Instruction::Const {
+                result: ssa(1),
+                value: fe(3),
+            }),
+            plain(Instruction::Add {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+        assert_eq!(
+            program.templates.len(),
+            1,
+            "small body should fit in Template 0 with no chain"
+        );
     }
 }
