@@ -82,6 +82,17 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         id: TemplateId,
         frame_size: u8,
         n_params: u8,
+        /// SSA vars (in capture-index order) that the body references
+        /// from the enclosing scope. The walker binds `captures[i]`
+        /// to register `i` of the template frame before emitting the
+        /// body, mirroring the executor's `InstantiateTemplate`
+        /// dispatch (which copies caller's `capture_regs[i]` into
+        /// callee's `regs[i]`). `captures.len()` must equal
+        /// `n_params`. Carried on the `TemplateBody` variant — not
+        /// inferred at walker time — because BTA's `OuterRef` set
+        /// already pinned the order at lift time, and re-deriving it
+        /// inside the walker would require a second OuterRef scan.
+        captures: Vec<SsaVar>,
         body: Vec<ExtendedInstruction<F>>,
     },
 
@@ -292,6 +303,7 @@ mod tests {
             id: TemplateId(7),
             frame_size: 16,
             n_params: 2,
+            captures: vec![ssa(50), ssa(51)],
             body,
         };
         assert!(!t.is_plain());

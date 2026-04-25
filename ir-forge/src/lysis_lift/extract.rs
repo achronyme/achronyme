@@ -33,10 +33,11 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
-use memory::FieldBackend;
+use memory::{FieldBackend, FieldElement};
 
+use super::bta::{classify_loop_unroll, BindingTime};
 use super::symbolic::{SlotId, SymbolicNode, SymbolicTree};
-use crate::TemplateId;
+use crate::{ExtendedInstruction, TemplateId};
 use ir_core::SsaVar;
 
 /// Maximum legal frame size — matches
@@ -258,13 +259,23 @@ impl<F: FieldBackend> TemplateRegistry<F> {
         pairs.into_iter()
     }
 
-    fn allocate_fresh(&mut self) -> Result<TemplateId, ExtractError> {
+    pub(super) fn allocate_fresh(&mut self) -> Result<TemplateId, ExtractError> {
         if self.next_id > u32::from(u16::MAX) {
             return Err(ExtractError::TemplateSpaceExhausted);
         }
         let id = TemplateId(self.next_id as u16);
         self.next_id += 1;
         Ok(id)
+    }
+
+    /// Insert a fully-built [`TemplateSpec`] keyed by its id.
+    /// `pub(super)` so the [`lift_uniform_loops`] helper can attach a
+    /// spec without going through [`extract_template`] — the lift's
+    /// `Option B` lowering keeps the iter_var local to the template
+    /// frame, so the synthesised spec carries an `OuterRef`-only
+    /// layout that doesn't match what `extract_template` would build.
+    pub(super) fn insert(&mut self, spec: TemplateSpec<F>) {
+        self.specs.insert(spec.id, spec);
     }
 }
 
@@ -288,6 +299,173 @@ pub fn extract_template<F: FieldBackend>(
     };
     registry.specs.insert(id, spec.clone());
     Ok(spec)
+}
+
+// =====================================================================
+// Gap 2 Stage 1 — bottom-up lift pass
+// =====================================================================
+//
+// Walks an `ExtendedInstruction` body and, for every `LoopUnroll`
+// classified as `BindingTime::Uniform` by BTA, replaces it with a
+// `TemplateBody` + `TemplateCall` pair. The lift uses **Option B**
+// semantics: the original `LoopUnroll` becomes the body of the new
+// template, so the loop runs *inside* the template's frame. Iter_var
+// stays local to the template; only outer-scope `SsaVar` references
+// (BTA's `OuterRef` skeleton nodes) become captures.
+//
+// Why Option B instead of Option A (one TemplateCall per iteration):
+//
+// - Each template gets its own 255-slot frame, so wide single
+//   instructions like `Decompose(254)` have room.
+// - Symbolic indexed reads/writes (Gap 1 + 1.5) keep working: the
+//   per-iteration walker materialisation runs *inside* the template
+//   frame, with `walker_const[iter_var]` populated by the local
+//   iter_var. No runtime-indexed memory ops needed.
+// - Multiple Uniform loops with identical skeletons can share a
+//   template body via Phase 4 dedup (today every lift gets a fresh
+//   id; Phase 4 will hash bytecode and merge matches).
+
+/// Walk `body` bottom-up; replace each Uniform `LoopUnroll` with a
+/// `TemplateBody` + `TemplateCall` pair allocated in `registry`. Loops
+/// classified `DataDependent` (or whose nested bodies fail to lift)
+/// stay verbatim. Pass-through for non-`LoopUnroll` instructions.
+///
+/// The closure used for BTA probe-value conversion is fixed to
+/// `from_u64(i.unsigned_abs())`. Negative loop bounds are filtered by
+/// `classify_loop_unroll` itself (returns `DataDependent` for any
+/// range with fewer than 2 valid iterations), so the conversion never
+/// sees a negative value in practice.
+pub fn lift_uniform_loops<F: FieldBackend>(
+    body: Vec<ExtendedInstruction<F>>,
+    registry: &mut TemplateRegistry<F>,
+) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
+    let mut out = Vec::with_capacity(body.len());
+    for inst in body {
+        out.extend(lift_one(inst, registry)?);
+    }
+    Ok(out)
+}
+
+fn lift_one<F: FieldBackend>(
+    inst: ExtendedInstruction<F>,
+    registry: &mut TemplateRegistry<F>,
+) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
+    match inst {
+        ExtendedInstruction::LoopUnroll {
+            iter_var,
+            start,
+            end,
+            body,
+        } => {
+            // Bottom-up: lift inner body first so nested Uniform loops
+            // become templates inside the outer body before the outer
+            // is itself classified.
+            let inner_lifted = lift_uniform_loops(body, registry)?;
+            let loop_unroll = ExtendedInstruction::LoopUnroll {
+                iter_var,
+                start,
+                end,
+                body: inner_lifted,
+            };
+
+            let details = classify_loop_unroll(&loop_unroll, |i| {
+                FieldElement::<F>::from_u64(i.unsigned_abs())
+            });
+
+            match details.binding_time {
+                BindingTime::Uniform {
+                    skeleton,
+                    captures: _slot_caps,
+                } => Ok(lift_uniform_to_template(loop_unroll, skeleton, registry)?),
+                BindingTime::DataDependent => Ok(vec![loop_unroll]),
+            }
+        }
+        // Non-loop instructions pass through unchanged. Nested
+        // LoopUnrolls inside `LoopUnroll.body` are handled by the
+        // recursive `lift_uniform_loops` call above; loops inside
+        // `TemplateBody.body` are reached when the Walker emits the
+        // template body (it calls `lift_uniform_loops` on the body
+        // before emission via Stage 4 wiring). Here, leave alone.
+        other => Ok(vec![other]),
+    }
+}
+
+/// Build the (`TemplateBody`, `TemplateCall`) pair for one Uniform
+/// `LoopUnroll`. The skeleton's `OuterRef` SsaVars become the
+/// template's captures (in first-appearance order); slot captures
+/// (i.e. iter_var positions) are dropped because the loop runs
+/// internally so iter_var is allocated locally by the LoopUnroll arm
+/// of `Walker::emit`.
+fn lift_uniform_to_template<F: FieldBackend>(
+    loop_unroll: ExtendedInstruction<F>,
+    skeleton: SymbolicTree<F>,
+    registry: &mut TemplateRegistry<F>,
+) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
+    // OuterRef captures only — slots map to the (internal) iter_var.
+    let mut outer_refs: Vec<SsaVar> = Vec::new();
+    let mut seen: HashSet<SsaVar> = HashSet::new();
+    for node in &skeleton.nodes {
+        if let SymbolicNode::OuterRef(v) = node {
+            if seen.insert(*v) {
+                outer_refs.push(*v);
+            }
+        }
+    }
+    let n_params = u8::try_from(outer_refs.len()).map_err(|_| ExtractError::FrameOverflow {
+        requested: outer_refs.len() as u32,
+    })?;
+
+    // Conservative `frame_size` budget: skeleton's producing-node
+    // count + n_params from an OuterRef-only layout. The Walker's
+    // own LoopUnroll arm allocates the actual iter_var slot at
+    // emission time inside the template frame — that consumes one
+    // additional slot, so reserve it here. This is over-approximate
+    // (live-set frame sizing is Phase 4) but tight enough that
+    // SHA-256-shaped bodies fit within `MAX_FRAME_SIZE = 255`.
+    let layout = CaptureLayout {
+        entries: outer_refs
+            .iter()
+            .copied()
+            .map(CaptureKind::OuterRef)
+            .collect(),
+    };
+    let producing_plus_params = compute_frame_size(&skeleton, &layout)?;
+    // +1 for iter_var allocated locally inside the template.
+    let frame_total = u32::from(producing_plus_params).saturating_add(1);
+    if frame_total > MAX_FRAME_SIZE {
+        return Err(ExtractError::FrameOverflow {
+            requested: frame_total,
+        });
+    }
+    let frame_size = frame_total as u8;
+
+    let template_id = registry.allocate_fresh()?;
+
+    // Stash a spec so downstream tooling (diagnostics, future dedup,
+    // tests) can introspect what was lifted. The walker reads the
+    // template body from the IR stream's `TemplateBody` node, not
+    // from this spec.
+    registry.insert(TemplateSpec {
+        id: template_id,
+        frame_size,
+        layout,
+        skeleton,
+    });
+
+    Ok(vec![
+        ExtendedInstruction::TemplateBody {
+            id: template_id,
+            frame_size,
+            n_params,
+            captures: outer_refs.clone(),
+            body: vec![loop_unroll],
+        },
+        ExtendedInstruction::TemplateCall {
+            template_id,
+            captures: outer_refs,
+            outputs: vec![],
+        },
+    ])
 }
 
 #[cfg(test)]
@@ -516,6 +694,209 @@ mod tests {
             CaptureKind::Slot(SlotId(0))
         ));
         assert!(matches!(spec.layout.entries[1], CaptureKind::OuterRef(v) if v == ssa(99)));
+    }
+
+    // -----------------------------------------------------------------
+    // lift_uniform_loops
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn lift_pass_through_for_non_loop_instructions() {
+        // Plain instructions stay unchanged; no template allocated.
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![
+            Instruction::Const {
+                result: ssa(0),
+                value: fe(7),
+            }
+            .into(),
+            Instruction::Add {
+                result: ssa(1),
+                lhs: ssa(0),
+                rhs: ssa(0),
+            }
+            .into(),
+        ];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body.clone(), &mut reg).unwrap();
+        assert_eq!(lifted.len(), 2);
+        assert!(matches!(lifted[0], ExtendedInstruction::Plain(_)));
+        assert!(matches!(lifted[1], ExtendedInstruction::Plain(_)));
+        assert!(reg.is_empty());
+    }
+
+    #[test]
+    fn lift_simple_uniform_loop_produces_template_pair() {
+        // for i in 0..3 { v = i * outer_ref }. Body uses iter_var
+        // (slot capture) + outer_ref (OuterRef capture). Lift should
+        // produce ONE TemplateBody (containing the LoopUnroll) and
+        // ONE TemplateCall whose captures = [outer_ref].
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::LoopUnroll {
+            iter_var: ssa(0),
+            start: 0,
+            end: 3,
+            body: vec![Instruction::Mul {
+                result: ssa(1),
+                lhs: ssa(0),  // iter_var
+                rhs: ssa(99), // outer ref
+            }
+            .into()],
+        }];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+
+        assert_eq!(lifted.len(), 2, "expected TemplateBody + TemplateCall");
+        let (id_in_body, body_inner) = match &lifted[0] {
+            ExtendedInstruction::TemplateBody {
+                id,
+                n_params,
+                captures,
+                body,
+                ..
+            } => {
+                assert_eq!(*n_params, 1, "one OuterRef capture");
+                assert_eq!(captures, &vec![ssa(99)]);
+                assert_eq!(body.len(), 1, "body wraps the original LoopUnroll");
+                assert!(matches!(body[0], ExtendedInstruction::LoopUnroll { .. }));
+                (*id, body)
+            }
+            other => panic!("expected TemplateBody, got {other:?}"),
+        };
+        match &lifted[1] {
+            ExtendedInstruction::TemplateCall {
+                template_id,
+                captures,
+                outputs,
+            } => {
+                assert_eq!(*template_id, id_in_body);
+                assert_eq!(captures, &vec![ssa(99)]);
+                assert!(outputs.is_empty());
+            }
+            other => panic!("expected TemplateCall, got {other:?}"),
+        }
+
+        assert_eq!(reg.len(), 1);
+        let spec = reg.get(id_in_body).expect("spec stored");
+        assert_eq!(spec.n_params(), 1);
+        // Don't tighten frame_size assertion — the budget depends on
+        // skeleton's producing-node count + iter_var slot, which is a
+        // conservative over-approximation by design.
+        assert!(spec.frame_size >= 1);
+
+        // Sanity: the template body's wrapped LoopUnroll preserved
+        // its iter_var and bounds.
+        match &body_inner[0] {
+            ExtendedInstruction::LoopUnroll {
+                iter_var,
+                start,
+                end,
+                ..
+            } => {
+                assert_eq!(*iter_var, ssa(0));
+                assert_eq!(*start, 0);
+                assert_eq!(*end, 3);
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn lift_single_iteration_loop_stays_as_unroll() {
+        // BTA short-circuits `iterations < 2` to `DataDependent`
+        // (bta.rs Phase 3 v1.1). A `0..1` loop therefore never gets a
+        // template; it stays inline as a LoopUnroll. Verifies the
+        // DataDependent branch of the lift dispatch.
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::LoopUnroll {
+            iter_var: ssa(0),
+            start: 0,
+            end: 1,
+            body: vec![Instruction::Mul {
+                result: ssa(1),
+                lhs: ssa(0),
+                rhs: ssa(99),
+            }
+            .into()],
+        }];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+
+        assert!(reg.is_empty(), "no template allocated for DataDependent");
+        assert_eq!(lifted.len(), 1);
+        assert!(matches!(lifted[0], ExtendedInstruction::LoopUnroll { .. }));
+    }
+
+    #[test]
+    fn lift_recurses_into_nested_loops_bottom_up() {
+        // Outer loop wraps an inner loop whose body references its
+        // own iter_var. After lift, the inner becomes a template,
+        // and the outer sees a TemplateCall in its body — outer's
+        // classification then runs against that.
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::LoopUnroll {
+            iter_var: ssa(0),
+            start: 0,
+            end: 4,
+            body: vec![ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(1),
+                start: 0,
+                end: 3,
+                body: vec![Instruction::Mul {
+                    result: ssa(2),
+                    lhs: ssa(1), // inner iter_var
+                    rhs: ssa(1), // inner iter_var
+                }
+                .into()],
+            }],
+        }];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+
+        // Inner produced one template; outer may have produced
+        // another depending on how its inner lifts.
+        assert!(!reg.is_empty(), "at least the inner uniform lifted");
+        assert!(!lifted.is_empty());
+    }
+
+    #[test]
+    fn lift_independent_loops_get_distinct_template_ids() {
+        // Two sibling Uniform loops should produce two TemplateBodies
+        // with different ids. (Phase 3 has no dedup; Phase 4 will hash
+        // skeletons and merge structurally identical ones.)
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(0),
+                start: 0,
+                end: 3,
+                body: vec![Instruction::Mul {
+                    result: ssa(1),
+                    lhs: ssa(0),
+                    rhs: ssa(99),
+                }
+                .into()],
+            },
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 3,
+                body: vec![Instruction::Mul {
+                    result: ssa(3),
+                    lhs: ssa(2),
+                    rhs: ssa(99),
+                }
+                .into()],
+            },
+        ];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+        assert_eq!(lifted.len(), 4, "two TemplateBody + two TemplateCall pairs");
+        assert_eq!(reg.len(), 2, "two distinct template ids");
+        let ids: Vec<TemplateId> = lifted
+            .iter()
+            .filter_map(|inst| match inst {
+                ExtendedInstruction::TemplateBody { id, .. } => Some(*id),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(ids.len(), 2);
+        assert_ne!(ids[0], ids[1]);
     }
 
     #[test]
