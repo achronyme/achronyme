@@ -439,7 +439,12 @@ impl<F: FieldBackend> Walker<F> {
             // so no instruction can overflow on its first emission.
             if i > 0 {
                 let cost = reg_cost_of_extinst(inst);
-                let projected = self.allocator.next_slot().saturating_add(cost);
+                let cold_loads = cold_load_cost(inst, &self.ssa_to_heap, &self.ssa_to_reg);
+                let projected = self
+                    .allocator
+                    .next_slot()
+                    .saturating_add(cost)
+                    .saturating_add(cold_loads);
                 if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
                     self.do_split(&body, i)?;
                 }
@@ -1851,7 +1856,12 @@ impl<F: FieldBackend> Walker<F> {
             for (j, inst) in body.iter().enumerate() {
                 if j > 0 {
                     let cost = reg_cost_of_extinst(inst);
-                    let projected = self.allocator.next_slot().saturating_add(cost);
+                    let cold_loads = cold_load_cost(inst, &self.ssa_to_heap, &self.ssa_to_reg);
+                    let projected = self
+                        .allocator
+                        .next_slot()
+                        .saturating_add(cost)
+                        .saturating_add(cold_loads);
                     if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
                         self.split_in_per_iter(body)?;
                     }
@@ -2387,6 +2397,39 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
         // over-approximation.
         ExtendedInstruction::SymbolicShift { num_bits, .. } => num_bits.saturating_add(1),
     }
+}
+
+/// Count the operand SsaVars that will trigger a `LoadHeap` emit
+/// plus a fresh reg alloc inside [`Walker::resolve`] when this
+/// instruction is emitted. Each cold operand costs 1 reg on top of
+/// the instruction's own [`reg_cost_of_extinst`] (Phase 4 follow-up).
+///
+/// Without this count, the split-trigger underestimates: a single
+/// emit can pull 3 cold operands and a result, costing 4 regs while
+/// `reg_cost_of_extinst` reports 1. That mismatch is what surfaced
+/// SHA-256(64)'s `FrameOverflow { requested: 255 }` after the first
+/// 9 splits succeeded (research report §7.7 + Phase 4 follow-up).
+///
+/// "Cold" means: in `ssa_to_heap` (was spilled at some prior split)
+/// and not in `ssa_to_reg` (not currently materialised in the frame).
+/// A var that is in *both* maps was already lazy-loaded in this
+/// template body and the reg slot is reused; it does not re-allocate.
+#[allow(clippy::doc_lazy_continuation)] // false positive: docstring is fresh, not continuing the previous fn's bullet list
+fn cold_load_cost<F: FieldBackend>(
+    inst: &ExtendedInstruction<F>,
+    ssa_to_heap: &HashMap<SsaVar, u16>,
+    ssa_to_reg: &HashMap<SsaVar, RegId>,
+) -> u32 {
+    if ssa_to_heap.is_empty() {
+        // Fast path: no spilled vars exist program-wide yet, so no
+        // operand can be cold. Shortcut for the corpus baseline.
+        return 0;
+    }
+    let mut refs = HashSet::new();
+    collect_in_extinst(inst, &mut refs);
+    refs.iter()
+        .filter(|v| ssa_to_heap.contains_key(v) && !ssa_to_reg.contains_key(v))
+        .count() as u32
 }
 
 fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
