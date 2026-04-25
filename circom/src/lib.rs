@@ -399,7 +399,26 @@ fn compile_program_with_warnings_and_frontend(
         lowering::template::lower_template_with_frontend(template, Some(main), program, frontend)
             .map_err(CircomError::LoweringError)?;
 
-    // 5. Bit-width inference rewriter — tightens `num_bits` /
+    // 5. Extract capture values from main component template args.
+    //    Done BEFORE the bit-width pass so they can feed the
+    //    inference context — a `Capture(name)` operand to a Shift
+    //    whose value is, e.g., 64 should infer as `Exact(7)` instead
+    //    of falling back to `Field` (254). Without this, even one
+    //    such shift produces a `SymbolicShift(num_bits=254)` (cost
+    //    255) that on its own exceeds the Lysis frame cap.
+    let mut capture_values = HashMap::new();
+    let mut capture_field_consts: HashMap<String, ir_forge::types::FieldConst> = HashMap::new();
+    for (i, param) in template.params.iter().enumerate() {
+        if let Some(arg_expr) = main.template_args.get(i) {
+            if let Some(val) = lowering::utils::const_eval_u64(arg_expr) {
+                capture_values.insert(param.clone(), val);
+                capture_field_consts
+                    .insert(param.clone(), ir_forge::types::FieldConst::from_u64(val));
+            }
+        }
+    }
+
+    // 6. Bit-width inference rewriter — tightens `num_bits` /
     //    `max_bits` fields where the operand's actual range is
     //    provably narrower than the conservative
     //    `DEFAULT_MAX_BITS = 254` default. Sound: only ever
@@ -422,21 +441,11 @@ fn compile_program_with_warnings_and_frontend(
         );
     }
     let inference_ctx = lowering::bit_width::InferenceCtx {
-        param_values: None,
+        param_values: Some(&capture_field_consts),
         known_constants: None,
         signal_widths: Some(&signal_widths),
     };
     lowering::bit_width::rewrite_num_bits_in_prove_ir(&mut lower_result.prove_ir, &inference_ctx);
-
-    // 6. Extract capture values from main component template args
-    let mut capture_values = HashMap::new();
-    for (i, param) in template.params.iter().enumerate() {
-        if let Some(arg_expr) = main.template_args.get(i) {
-            if let Some(val) = lowering::utils::const_eval_u64(arg_expr) {
-                capture_values.insert(param.clone(), val);
-            }
-        }
-    }
 
     Ok(CircomCompileResult {
         prove_ir: lower_result.prove_ir,
