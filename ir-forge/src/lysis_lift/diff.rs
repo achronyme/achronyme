@@ -165,6 +165,20 @@ fn nodes_equal<F: FieldBackend>(
             },
         ) => ta == tb && ca == cb && na == nb,
         (N::NestedLoop, N::NestedLoop) => true,
+        (
+            N::IndexedEffect {
+                kind: ka,
+                array_anchor: aa,
+                index_operand: ia,
+                value_operand: vva,
+            },
+            N::IndexedEffect {
+                kind: kb,
+                array_anchor: ab,
+                index_operand: ib,
+                value_operand: vvb,
+            },
+        ) => ka == kb && aa == ab && ia == ib && vva == vvb,
         // Different variants → structural.
         _ => false,
     }
