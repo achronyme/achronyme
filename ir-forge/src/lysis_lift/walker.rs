@@ -84,12 +84,16 @@ use memory::{FieldBackend, FieldElement, FieldFamily};
 use crate::ExtendedInstruction;
 use ir_core::{Instruction, SsaVar, Visibility};
 
-/// Trigger a top-level split when the current frame has allocated
-/// this many registers. The 15-reg margin under the 255-reg cap covers
-/// the worst-case single-instruction allocation we see in practice
-/// (`Decompose(32)`, `Or` ⇒ 3 regs, etc.). Compile-time choice — see
-/// `.claude/plans/lysis-phase3c6-resumption.md` §3.2.
-const SPLIT_THRESHOLD: u32 = 240;
+/// Hard cap on the frame size (`u8` in RFC §5.1). The walker keeps
+/// each template strictly below this — see [`reg_cost_of_emit`] for
+/// the per-emit cost estimator that informs the split decision.
+const FRAME_CAP: u32 = 255;
+/// Margin of slack reserved on top of the cap so that the executor
+/// always has room for the worst-case Phase-1.5 emission (Decompose
+/// can allocate up to 255 slots in one go; a runaway single emit
+/// surfaces as a clean `FrameOverflow` error rather than a corrupt
+/// constraint stream).
+const FRAME_MARGIN: u32 = 4;
 
 /// Hard cap on the number of live SSA vars we forward as captures
 /// across a split. Matches RFC §5.1: `InstantiateTemplate.capture_regs`
@@ -127,10 +131,6 @@ pub enum WalkError {
     NegativeLoopBound { start: i64, end: i64 },
     /// A `LoopUnroll` body exceeded the `u16` byte-length field.
     LoopBodyTooLong { bytes: u32 },
-    /// Internal invariant: a desugaring reached for the `one` constant
-    /// register before the pre-scan allocated it. This is a walker
-    /// bug — surface it rather than silently emitting a Trap.
-    OneConstNotInitialized,
     /// A top-level split was triggered but the live set exceeded
     /// [`MAX_CAPTURES`]. Forwarding more than 64 SSA vars across a
     /// single split would defeat the point of the split (the new
@@ -163,9 +163,6 @@ impl std::fmt::Display for WalkError {
             Self::LoopBodyTooLong { bytes } => {
                 write!(f, "walker: LoopUnroll body length {bytes} exceeds u16 max")
             }
-            Self::OneConstNotInitialized => f.write_str(
-                "walker: desugaring referenced `one` register but pre-scan did not allocate it (walker bug)",
-            ),
             Self::LiveSetTooLarge { count, max } => write!(
                 f,
                 "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — Phase 2 BTA needed"
@@ -246,38 +243,60 @@ impl<F: FieldBackend> Walker<F> {
 
     /// Lower an entire body into a finished [`Program`]. The body is
     /// emitted into Template 0; the program's root body is the trivial
-    /// `InstantiateTemplate(0, [], [])` + `Halt` pair. Whenever the
-    /// current frame's allocator passes [`SPLIT_THRESHOLD`] between
-    /// top-level instructions, the walker chains a fresh template
-    /// with the live SSA vars forwarded as captures.
+    /// `InstantiateTemplate(0, [], [])` + `Halt` pair. Before each
+    /// top-level emission the walker estimates the upcoming
+    /// instruction's reg cost (see [`reg_cost_of_extinst`]) and
+    /// chains a fresh template if it would push the current frame
+    /// past `FRAME_CAP - FRAME_MARGIN`, forwarding live SSA vars as
+    /// captures.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
-        self.ensure_one_loaded(body)?;
+        // Lazy `one` loading: deferred to first desugaring that needs
+        // it, so wide single-instruction templates (Decompose, Or)
+        // don't pay the slot tax up-front.
         for (i, inst) in body.iter().enumerate() {
-            self.emit(inst)?;
-            // Decide between top-level boundaries whether to chain a
-            // fresh template. `i + 1 < body.len()` skips the trailing
-            // boundary — the final emit closes the last template via
-            // `finalize`.
-            if i + 1 < body.len() && self.allocator.next_slot() >= SPLIT_THRESHOLD {
-                self.do_split(body, i + 1)?;
+            // Pre-emit split decision. Skip the check at i == 0 —
+            // the allocator is at most at 1 (just the `one` const)
+            // so no instruction can overflow on its first emission.
+            if i > 0 {
+                let cost = reg_cost_of_extinst(inst);
+                let projected = self.allocator.next_slot().saturating_add(cost);
+                if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
+                    self.do_split(body, i)?;
+                }
             }
+            self.emit(inst).map_err(|e| match e {
+                WalkError::Alloc(_) => {
+                    if std::env::var("LYSIS_WALKER_TRACE").is_ok() {
+                        eprintln!(
+                            "[walker] frame overflow at body idx {i}: {} (slot={}, cost_est={})",
+                            extinst_summary(inst),
+                            self.allocator.next_slot(),
+                            reg_cost_of_extinst(inst)
+                        );
+                    }
+                    e
+                }
+                other => other,
+            })?;
         }
         self.finalize()
     }
 
-    /// Allocate (or reuse, on capture) the `one` register for the
-    /// current template if any remaining instruction in `body` needs
-    /// it. Used at lower-start and on every split where downstream
-    /// code still references `one`.
-    fn ensure_one_loaded(&mut self, body: &[ExtendedInstruction<F>]) -> Result<(), WalkError> {
-        if !body_needs_one_const(body) {
-            return Ok(());
+    /// Lazy accessor: returns the current frame's `one` register,
+    /// allocating + emitting `LoadConst` on first call. Called from
+    /// every desugaring that needs `one` (Not, Assert, IsNeq, IsLe,
+    /// IsLeBounded). The InterningSink dedupes the resulting `Const`
+    /// node across the whole program, so re-loading per template is
+    /// free at the IR level.
+    fn one(&mut self) -> Result<RegId, WalkError> {
+        if let Some(r) = self.one_reg {
+            return Ok(r);
         }
         let idx = self.builder.intern_field(FieldElement::<F>::one()) as u16;
         let reg = self.allocator.alloc()?;
         self.push_op(Opcode::LoadConst { dst: reg, idx });
         self.one_reg = Some(reg);
-        Ok(())
+        Ok(reg)
     }
 
     /// Push an opcode into the current template's body buffer.
@@ -355,11 +374,10 @@ impl<F: FieldBackend> Walker<F> {
         self.ssa_to_reg = new_ssa_to_reg;
         self.one_reg = None;
 
-        // Re-load `one` if any remaining instruction needs it. The
-        // InterningSink dedupes Const values across the whole program,
-        // so the materialized stream is identical whether we re-load
-        // or capture-forward.
-        self.ensure_one_loaded(&body[next_idx..])?;
+        // `one` is re-loaded lazily on first use in the new
+        // template — see `Walker::one`. This avoids the slot tax on
+        // wide single-instruction templates (Decompose, Or) whose
+        // body never references `one`.
         Ok(())
     }
 
@@ -451,12 +469,6 @@ impl<F: FieldBackend> Walker<F> {
             }
         }
         Ok(self.builder.finish())
-    }
-
-    /// Return the pre-allocated register holding `1`, or error if the
-    /// pre-scan missed it (walker-internal invariant violation).
-    fn one(&self) -> Result<RegId, WalkError> {
-        self.one_reg.ok_or(WalkError::OneConstNotInitialized)
     }
 
     fn emit(&mut self, inst: &ExtendedInstruction<F>) -> Result<(), WalkError> {
@@ -747,15 +759,60 @@ impl<F: FieldBackend> Walker<F> {
             }
 
             // ---------- integer div/mod ----------
-            // IntDiv / IntMod require a bounded-arithmetic opcode that
-            // the Lysis bytecode surface does not yet carry. Circom
-            // never emits these (signal arith is field-native), so
-            // Phase 3 punts them to Phase 4's opcode extension.
-            Instruction::IntDiv { .. } => {
-                return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" });
+            // Phase 1.5 promotes IntDiv/IntMod from "deferred to Phase
+            // 4" to first-class walker output: SHA-256(64) emits
+            // IntDiv from `int_div(...)` calls in `padBlocks`, and
+            // the HARD GATE can't close without it. The Lysis
+            // bytecode carries `EmitIntDiv` / `EmitIntMod` (codes
+            // 0x4D / 0x4E) with `max_bits: u8`; programs whose
+            // semantic max_bits exceeds 255 surface as
+            // `OperandOutOfRange` so callers learn the limit at
+            // walker time rather than as a silent constraint bug.
+            Instruction::IntDiv {
+                result,
+                lhs,
+                rhs,
+                max_bits,
+            } => {
+                if *max_bits > u32::from(u8::MAX) {
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "IntDiv.max_bits",
+                        limit: u32::from(u8::MAX),
+                        got: *max_bits,
+                    });
+                }
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.push_op(Opcode::EmitIntDiv {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                    max_bits: *max_bits as u8,
+                });
+                self.bind(*result, dst);
             }
-            Instruction::IntMod { .. } => {
-                return Err(WalkError::UnsupportedInstruction { kind: "IntMod" });
+            Instruction::IntMod {
+                result,
+                lhs,
+                rhs,
+                max_bits,
+            } => {
+                if *max_bits > u32::from(u8::MAX) {
+                    return Err(WalkError::OperandOutOfRange {
+                        kind: "IntMod.max_bits",
+                        limit: u32::from(u8::MAX),
+                        got: *max_bits,
+                    });
+                }
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.push_op(Opcode::EmitIntMod {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                    max_bits: *max_bits as u8,
+                });
+                self.bind(*result, dst);
             }
 
             // ---------- witness call ----------
@@ -802,6 +859,15 @@ impl<F: FieldBackend> Walker<F> {
         }
         let start_u32 = start as u32;
         let end_u32 = end as u32;
+
+        // Eagerize `one` *before* the LoopUnroll opcode if any nested
+        // body instruction would need it. This keeps `body_byte_size`
+        // accurate (it doesn't model lazy LoadConst emission within
+        // the body) — the alternative would be a body-walker that
+        // predicts which iterations would trigger the lazy load.
+        if self.one_reg.is_none() && body_needs_one_const(body) {
+            let _ = self.one()?;
+        }
 
         let iter_reg = self.allocator.alloc()?;
         self.bind(iter_var, iter_reg);
@@ -1016,16 +1082,40 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             out_regs: vec![0u8; outputs.len()],
         }),
 
-        // Div / IntDiv / IntMod are the only variants left — they all
-        // produce opcodes that the walker refuses above, so the size
-        // is never queried. Surface them with the same kind label the
-        // emit path uses so fuzz-style probes stay readable.
+        // Div is still walker-rejected; the inline-Artik plumbing
+        // for `x / y = x * y^{-1}` has no precedent in this walker
+        // and circom signal-arith never emits it. IntDiv / IntMod
+        // shipped in Phase 1.5 to unblock SHA-256.
         Instruction::Div { .. } => return Err(WalkError::UnsupportedInstruction { kind: "Div" }),
-        Instruction::IntDiv { .. } => {
-            return Err(WalkError::UnsupportedInstruction { kind: "IntDiv" })
+        Instruction::IntDiv { max_bits, .. } => {
+            if *max_bits > u32::from(u8::MAX) {
+                return Err(WalkError::OperandOutOfRange {
+                    kind: "IntDiv.max_bits",
+                    limit: u32::from(u8::MAX),
+                    got: *max_bits,
+                });
+            }
+            bin(Opcode::EmitIntDiv {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+                max_bits: *max_bits as u8,
+            })
         }
-        Instruction::IntMod { .. } => {
-            return Err(WalkError::UnsupportedInstruction { kind: "IntMod" })
+        Instruction::IntMod { max_bits, .. } => {
+            if *max_bits > u32::from(u8::MAX) {
+                return Err(WalkError::OperandOutOfRange {
+                    kind: "IntMod.max_bits",
+                    limit: u32::from(u8::MAX),
+                    got: *max_bits,
+                });
+            }
+            bin(Opcode::EmitIntMod {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+                max_bits: *max_bits as u8,
+            })
         }
     })
 }
@@ -1042,6 +1132,107 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
             false
         }
     })
+}
+
+/// Compact trace summary used by the `LYSIS_WALKER_TRACE`
+/// diagnostic. Returns a one-line description that surfaces the
+/// instruction kind plus the most cost-relevant operand width.
+fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
+    match inst {
+        ExtendedInstruction::Plain(i) => match i {
+            Instruction::Decompose { num_bits, .. } => format!("Decompose({num_bits})"),
+            Instruction::WitnessCall { outputs, .. } => {
+                format!("WitnessCall(out={})", outputs.len())
+            }
+            Instruction::Or { .. } => "Or".into(),
+            Instruction::IsNeq { .. } => "IsNeq".into(),
+            Instruction::IsLe { .. } => "IsLe".into(),
+            Instruction::IsLeBounded { .. } => "IsLeBounded".into(),
+            Instruction::IntDiv { max_bits, .. } => format!("IntDiv(max_bits={max_bits})"),
+            Instruction::IntMod { max_bits, .. } => format!("IntMod(max_bits={max_bits})"),
+            other => format!("{}", std::any::type_name_of_val(other)),
+        },
+        ExtendedInstruction::LoopUnroll { start, end, body, .. } => {
+            format!("LoopUnroll[{start}..{end}, body_len={}]", body.len())
+        }
+        ExtendedInstruction::TemplateCall { template_id, .. } => {
+            format!("TemplateCall({})", template_id.0)
+        }
+        ExtendedInstruction::TemplateBody { .. } => "TemplateBody".into(),
+    }
+}
+
+/// Estimate how many fresh registers an `ExtendedInstruction` would
+/// allocate if [`Walker::emit`] handled it under the current
+/// per-template allocator. Used by [`Walker::lower`] to decide
+/// whether to chain a new template *before* the next emission rather
+/// than letting an oversized single instruction blow past the frame
+/// cap.
+///
+/// The numbers must over-approximate, never under-approximate — an
+/// underestimate would let `emit_plain` overflow during the alloc
+/// loop with no graceful split. Conservative bounds:
+///
+/// - Most arithmetic ops cost 1 reg (the destination).
+/// - `Or` desugars to Add+Mul+Sub ⇒ 3 regs.
+/// - `IsNeq`/`IsLe`/`IsLeBounded` desugar to two ops ⇒ 2 regs.
+/// - `Decompose(num_bits)` allocates `num_bits` consecutive slots.
+/// - `WitnessCall` allocates one reg per output.
+/// - `LoopUnroll` body bodies are emitted *once* (regs shared across
+///   iterations); cost is the body's cost plus 1 (iter_var).
+/// - Side-effect-only ops (`AssertEq`, `Assert`, `RangeCheck`, plain
+///   `Input`) consume no destination — but `Input`/`Const` do (they
+///   bind the result to a fresh reg).
+fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
+    match inst {
+        ExtendedInstruction::Plain(i) => reg_cost_of_instruction(i),
+        ExtendedInstruction::LoopUnroll { body, .. } => {
+            // 1 for iter_var + sum of body costs (body emits once).
+            let mut total: u32 = 1;
+            for nested in body {
+                total = total.saturating_add(reg_cost_of_extinst(nested));
+            }
+            total
+        }
+        // TemplateCall / TemplateBody are walker-rejected before
+        // they'd contribute to a split decision.
+        ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => 0,
+    }
+}
+
+fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
+    match inst {
+        // Side-effect-only — no destination reg.
+        Instruction::AssertEq { .. }
+        | Instruction::Assert { .. }
+        | Instruction::RangeCheck { .. } => 0,
+
+        // Single-destination ops.
+        Instruction::Const { .. }
+        | Instruction::Input { .. }
+        | Instruction::Add { .. }
+        | Instruction::Sub { .. }
+        | Instruction::Mul { .. }
+        | Instruction::Div { .. }
+        | Instruction::Neg { .. }
+        | Instruction::Not { .. }
+        | Instruction::And { .. }
+        | Instruction::Mux { .. }
+        | Instruction::IsEq { .. }
+        | Instruction::IsLt { .. }
+        | Instruction::IsLtBounded { .. }
+        | Instruction::PoseidonHash { .. }
+        | Instruction::IntDiv { .. }
+        | Instruction::IntMod { .. } => 1,
+
+        // Multi-step desugarings.
+        Instruction::Or { .. } => 3,
+        Instruction::IsNeq { .. } | Instruction::IsLe { .. } | Instruction::IsLeBounded { .. } => 2,
+
+        // Variable-cost ops.
+        Instruction::Decompose { num_bits, .. } => *num_bits,
+        Instruction::WitnessCall { outputs, .. } => outputs.len() as u32,
+    }
 }
 
 fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
@@ -1663,33 +1854,77 @@ mod tests {
     }
 
     #[test]
-    fn refuses_int_div_and_int_mod() {
-        let bodies = [
-            plain(Instruction::IntDiv {
+    fn lowers_int_div_and_int_mod() {
+        // Phase 1.5 promoted IntDiv/IntMod from "rejected" to walker
+        // output: SHA-256 needs them, so the bytecode now carries
+        // EmitIntDiv / EmitIntMod opcodes. Verify materialized stream
+        // contains both.
+        let body = vec![
+            plain(Instruction::Input {
                 result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IntDiv {
+                result: ssa(2),
                 lhs: ssa(0),
-                rhs: ssa(0),
+                rhs: ssa(1),
                 max_bits: 8,
             }),
             plain(Instruction::IntMod {
-                result: ssa(0),
+                result: ssa(3),
                 lhs: ssa(0),
-                rhs: ssa(0),
+                rhs: ssa(1),
                 max_bits: 8,
             }),
         ];
-        for body in &bodies {
-            let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-            let err = walker
-                .lower(std::slice::from_ref(body))
-                .expect_err("should refuse");
-            match err {
-                WalkError::UnsupportedInstruction { kind } => {
-                    assert!(kind == "IntDiv" || kind == "IntMod", "kind: {kind}");
-                }
-                other => panic!("unexpected error variant: {other:?}"),
+        let out = run(&body);
+        let divs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IntDiv { .. }))
+            .count();
+        let mods = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::IntMod { .. }))
+            .count();
+        assert_eq!(divs, 1, "IntDiv survives the walker");
+        assert_eq!(mods, 1, "IntMod survives the walker");
+    }
+
+    #[test]
+    fn refuses_int_div_max_bits_overflow() {
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::IntDiv {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+                max_bits: 300,
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("max_bits > u8 should refuse");
+        assert!(matches!(
+            err,
+            WalkError::OperandOutOfRange {
+                kind: "IntDiv.max_bits",
+                ..
             }
-        }
+        ));
     }
 
     #[test]
@@ -1778,12 +2013,13 @@ mod tests {
             "expected split to chain ≥2 templates, got {}",
             program.templates.len()
         );
-        // The split machinery never emits a frame above the threshold
-        // — every template should sit comfortably below the 255 cap.
+        // The split machinery never overflows the frame cap. Pre-emit
+        // cost prediction can land a body right at FRAME_CAP -
+        // FRAME_MARGIN, which for an Add (cost = 1) is slot 250.
         for t in &program.templates {
             assert!(
-                t.frame_size <= 245,
-                "template {} frame_size {} should stay near threshold",
+                t.frame_size <= 251,
+                "template {} frame_size {} should stay near cap",
                 t.id,
                 t.frame_size
             );

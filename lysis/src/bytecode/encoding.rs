@@ -198,6 +198,23 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
             buf.push(in_regs.len() as u8);
             buf.extend_from_slice(in_regs);
         }
+        Opcode::EmitIntDiv {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        }
+        | Opcode::EmitIntMod {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        } => {
+            buf.push(*dst);
+            buf.push(*lhs);
+            buf.push(*rhs);
+            buf.push(*max_bits);
+        }
     }
 }
 
@@ -509,6 +526,27 @@ fn decode_opcode_at(
             let dst = read_u8(bytes, pos)?;
             let in_regs = read_length_prefixed_regs(bytes, pos)?;
             Ok(Opcode::EmitPoseidonHash { dst, in_regs })
+        }
+        c @ (code::EMIT_INT_DIV | code::EMIT_INT_MOD) => {
+            let dst = read_u8(bytes, pos)?;
+            let lhs = read_u8(bytes, pos)?;
+            let rhs = read_u8(bytes, pos)?;
+            let max_bits = read_u8(bytes, pos)?;
+            Ok(match c {
+                code::EMIT_INT_DIV => Opcode::EmitIntDiv {
+                    dst,
+                    lhs,
+                    rhs,
+                    max_bits,
+                },
+                code::EMIT_INT_MOD => Opcode::EmitIntMod {
+                    dst,
+                    lhs,
+                    rhs,
+                    max_bits,
+                },
+                _ => unreachable!("match guard covers only these 2"),
+            })
         }
         other => Err(LysisError::UnknownOpcode {
             code: other,

@@ -220,6 +220,12 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
             v.extend_from_slice(in_regs);
             v
         }
+        Opcode::EmitIntDiv {
+            dst, lhs, rhs, ..
+        }
+        | Opcode::EmitIntMod {
+            dst, lhs, rhs, ..
+        } => vec![*dst, *lhs, *rhs],
     }
 }
 
@@ -398,6 +404,9 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
         Opcode::EmitRangeCheck { var, .. } => vec![*var],
         Opcode::EmitWitnessCall { in_regs, .. } => in_regs.clone(),
         Opcode::EmitPoseidonHash { in_regs, .. } => in_regs.clone(),
+        Opcode::EmitIntDiv { lhs, rhs, .. } | Opcode::EmitIntMod { lhs, rhs, .. } => {
+            vec![*lhs, *rhs]
+        }
         _ => Vec::new(),
     }
 }
@@ -415,7 +424,9 @@ fn writes_of(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitMux { dst, .. }
         | Opcode::EmitPoseidonHash { dst, .. }
         | Opcode::EmitIsEq { dst, .. }
-        | Opcode::EmitIsLt { dst, .. } => vec![*dst],
+        | Opcode::EmitIsLt { dst, .. }
+        | Opcode::EmitIntDiv { dst, .. }
+        | Opcode::EmitIntMod { dst, .. } => vec![*dst],
         Opcode::LoopUnroll { iter_var, .. }
         | Opcode::LoopRolled { iter_var, .. }
         | Opcode::LoopRange { iter_var, .. } => vec![*iter_var],
