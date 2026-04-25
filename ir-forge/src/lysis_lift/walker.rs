@@ -2522,19 +2522,22 @@ fn partition_live_set<F: FieldBackend>(
 /// instruction, not consumed. Used by [`Walker::do_split`] to
 /// compute the live capture set at a top-level boundary.
 ///
-/// Caps the set early once it grows past [`MAX_CAPTURES`]: the
-/// caller will reject anyway and continuing the scan is just work
-/// we'd throw away.
+/// Returns the FULL referenced set; never early-returns. The
+/// previous early-return at `MAX_CAPTURES` was unsound: when a body
+/// referenced more than `MAX_CAPTURES` distinct vars, vars that
+/// happened to first appear after the cap were silently dropped from
+/// the set. `compute_live_set` then filtered `ssa_to_reg` against an
+/// incomplete set, dropping live vars from the post-split frame and
+/// surfacing later as `UndefinedSsaVar` at the unbound consumer
+/// (canonical case: SHA-256(64), where ~250 vars span any do_split).
+/// Scanning the full body is O(N); the caller decides whether the
+/// result fits via `compute_live_set`.
 fn collect_referenced_ssa_vars<F: FieldBackend>(
     body: &[ExtendedInstruction<F>],
 ) -> HashSet<SsaVar> {
     let mut out = HashSet::new();
     for inst in body {
         collect_in_extinst(inst, &mut out);
-        if out.len() > MAX_CAPTURES {
-            // Don't waste cycles refining a set the caller will reject.
-            return out;
-        }
     }
     out
 }
