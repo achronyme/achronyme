@@ -478,6 +478,7 @@ impl<F: FieldBackend> Walker<F> {
         // than capture-bind, and the InterningSink dedupes anyway.
         let referenced = collect_referenced_ssa_vars(&body[next_idx..]);
         let live = self.compute_live_set(|v| referenced.contains(v))?;
+        dump_live_set_trace("top_level", live.len(), body.len() - next_idx, self.current);
         self.perform_split(&live)
     }
 
@@ -495,12 +496,20 @@ impl<F: FieldBackend> Walker<F> {
         let referenced = collect_referenced_ssa_vars(body);
         let enclosing: HashSet<SsaVar> = self.enclosing_iter_vars.iter().copied().collect();
         let live = self.compute_live_set(|v| referenced.contains(v) || enclosing.contains(v))?;
+        dump_live_set_trace("mid_iter", live.len(), body.len(), self.current);
         self.perform_split(&live)
     }
 
     /// Build the deterministic, capped live set for a split. Filters
     /// `ssa_to_reg` keys by `predicate`, sorts by `SsaVar.0`, and
     /// rejects sets larger than [`MAX_CAPTURES`].
+    ///
+    /// **Tracing**: when `LYSIS_DUMP_LIVESET=1` is set in the
+    /// environment, every accept *and* reject path emits one stderr
+    /// line that the caller (`do_split` / `split_in_per_iter`)
+    /// supplements with a `kind=` tag. Pipe through
+    /// `grep '\[walker\] live_set' | sort | uniq -c` to build a
+    /// per-corpus histogram; see `dump_live_set_trace` below.
     fn compute_live_set(
         &self,
         predicate: impl Fn(&SsaVar) -> bool,
@@ -517,6 +526,13 @@ impl<F: FieldBackend> Walker<F> {
         // by it directly rather than threading `Ord` through ir-core.
         live.sort_unstable_by_key(|v| v.0);
         if live.len() > MAX_CAPTURES {
+            if std::env::var("LYSIS_DUMP_LIVESET").is_ok() {
+                eprintln!(
+                    "[walker] live_set kind=rejected live={} cap={}",
+                    live.len(),
+                    MAX_CAPTURES
+                );
+            }
             return Err(WalkError::LiveSetTooLarge {
                 count: live.len(),
                 max: MAX_CAPTURES,
@@ -2297,6 +2313,31 @@ fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
             | Instruction::IsLe { .. }
             | Instruction::IsLeBounded { .. }
     )
+}
+
+/// Env-gated tracer for [`Walker::compute_live_set`] outcomes.
+///
+/// Set `LYSIS_DUMP_LIVESET=1` to emit one stderr line per accepted
+/// split (rejected splits trace inside `compute_live_set` itself,
+/// since they short-circuit before the caller sees the live count).
+/// The output format is stable and grep-friendly:
+///
+/// ```text
+/// [walker] live_set kind=top_level live=12 body=24 template=3
+/// [walker] live_set kind=mid_iter  live=7  body=18 template=5
+/// [walker] live_set kind=rejected  live=250 cap=64
+/// ```
+///
+/// Intended for the Phase 4 research corpus pass: pipe a test run's
+/// stderr through `grep '\[walker\] live_set' | awk '{print $3}' |
+/// sort | uniq -c` to build the histogram referenced in
+/// `.claude/plans/lysis-phase4-research-report.md` §2.7.1.
+fn dump_live_set_trace(kind: &str, live_count: usize, body_len: usize, template_id: usize) {
+    if std::env::var("LYSIS_DUMP_LIVESET").is_ok() {
+        eprintln!(
+            "[walker] live_set kind={kind} live={live_count} body={body_len} template={template_id}"
+        );
+    }
 }
 
 /// Walk an `ExtendedInstruction` slice (recursing into LoopUnroll
