@@ -354,14 +354,31 @@ fn check_forward_dataflow<F: FieldBackend>(program: &Program<F>) -> Result<(), L
     }
 
     // Per-template-body initialized-register tracking. Key = template
-    // id, or `None` for the top-level body.
+    // id, or `None` for the top-level body. When a template body
+    // first appears, its `n_params` capture registers (0..n_params)
+    // are pre-initialized — the executor's `InstantiateTemplate`
+    // handler populates them from the caller's `capture_regs` slice
+    // before the body runs. The validator must mirror that contract;
+    // otherwise any read from a capture-reg surfaces as a false
+    // `UninitializedRegister` rule-9 violation. This matters most
+    // post-Phase-4, when the walker emits hundreds of split-driven
+    // templates whose first opcodes typically read from captures.
     let mut init: HashMap<Option<u16>, HashSet<u8>> = HashMap::new();
     init.insert(None, HashSet::new());
 
     for instr in &program.body {
         let host = hosting_template(program, instr.offset);
-        // Entering a fresh template body clears the initialized set.
-        let set = init.entry(host).or_default();
+        let set = init.entry(host).or_insert_with(|| {
+            let mut s = HashSet::new();
+            if let Some(template_id) = host {
+                if let Some(t) = program.templates.iter().find(|t| t.id == template_id) {
+                    for i in 0..t.n_params {
+                        s.insert(i);
+                    }
+                }
+            }
+            s
+        });
 
         let reads = reads_of(&instr.opcode);
         let writes = writes_of(&instr.opcode);
@@ -415,6 +432,13 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
         Opcode::EmitAssertEq { lhs, rhs } => vec![*lhs, *rhs],
         Opcode::EmitRangeCheck { var, .. } => vec![*var],
         Opcode::EmitWitnessCall { in_regs, .. } => in_regs.clone(),
+        Opcode::EmitWitnessCallHeap { inputs, .. } => inputs
+            .iter()
+            .filter_map(|src| match src {
+                crate::bytecode::opcode::InputSrc::Reg(r) => Some(*r),
+                crate::bytecode::opcode::InputSrc::Slot(_) => None,
+            })
+            .collect(),
         Opcode::EmitPoseidonHash { in_regs, .. } => in_regs.clone(),
         Opcode::EmitIntDiv { lhs, rhs, .. } | Opcode::EmitIntMod { lhs, rhs, .. } => {
             vec![*lhs, *rhs]
