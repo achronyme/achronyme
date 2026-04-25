@@ -167,13 +167,6 @@ pub enum WalkError {
     /// array slot beyond `array_slots.len()`. Bug at lowering or
     /// instantiation, not something the walker can fix.
     SymbolicArrayReadIndexOutOfRange { idx: i64, len: usize },
-    /// `SymbolicArrayRead` resolved its slot to an `SsaVar` that has
-    /// no register binding. Read-side cannot synthesise a witness
-    /// wire on demand the way `SymbolicIndexedEffect` does — a read
-    /// of an unbound slot means upstream forgot to pre-emit the
-    /// declaring `Plain(Input)` or `WitnessArrayDecl`. Surfaces the
-    /// missing slot index for diagnosis.
-    SymbolicArrayReadUnboundSlot { idx: usize, slot: SsaVar },
     /// A `SymbolicShift` reached the walker but its `shift_var`
     /// could not be const-folded to a non-negative integer at walker
     /// time. Same surface limitation as
@@ -248,10 +241,6 @@ impl std::fmt::Display for WalkError {
             Self::SymbolicArrayReadIndexOutOfRange { idx, len } => write!(
                 f,
                 "walker: SymbolicArrayRead resolved to index {idx} but array has {len} slots"
-            ),
-            Self::SymbolicArrayReadUnboundSlot { idx, slot } => write!(
-                f,
-                "walker: SymbolicArrayRead slot at index {idx} (SsaVar {slot}) has no register binding — upstream pre-emission missed this slot"
             ),
             Self::SymbolicShiftNotEmittable => f.write_str(
                 "walker: SymbolicShift amount could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
@@ -678,12 +667,25 @@ impl<F: FieldBackend> Walker<F> {
     }
 
     /// Resolve a `SymbolicArrayRead` at walker time. Mirrors
-    /// [`Self::emit_symbolic_indexed_effect`] but without an `EmitAssertEq`
-    /// or `LoadInput` — the read is a pure symbolic alias: rebind
-    /// `result_var` to whichever register `array_slots[idx]` already
-    /// occupies and let downstream uses see the slot's wire directly.
+    /// [`Self::emit_symbolic_indexed_effect`]: const-fold the index,
+    /// pick the slot, rebind `result_var` to the slot's register.
     /// Requires `walker_const[index_var]` populated; the per-iteration
     /// walker is the only producer in Phase 2.
+    ///
+    /// If the slot has no register binding yet, synthesise a witness
+    /// wire on demand — same pattern the write-side uses. This handles
+    /// internal-signal arrays whose `WitnessArrayDecl` couldn't fire at
+    /// lowering time (parametrized dims like `paddedIn[nBlocks*512]`
+    /// in SHA-256 where `nBlocks` depends on the template parameter
+    /// `nBits` and `total_dim_size` returns `None` at lowering). The
+    /// subsequent write — emitted via `emit_symbolic_indexed_effect` or
+    /// any const-indexed `Plain(AssertEq)` to the same `slot_var` —
+    /// hits the cache, reuses the synthesised reg, and emits the
+    /// constraint that closes the witness. Read-before-write is sound
+    /// in this regime because every internal signal is eventually
+    /// constrained by some write (otherwise the program would have
+    /// no defining equation for the slot, which the constraint check
+    /// would catch downstream).
     fn emit_symbolic_array_read(
         &mut self,
         result_var: SsaVar,
@@ -704,16 +706,25 @@ impl<F: FieldBackend> Walker<F> {
         let idx = idx_signed as usize;
         let slot_var = array_slots[idx];
 
-        // Read-side cannot synthesise on demand: an unbound slot is an
-        // upstream pre-emission bug (the declaring `Plain(Input)` or
-        // `WitnessArrayDecl` should have run before this read). Surface
-        // the missing slot for diagnosis rather than miscompiling.
-        let slot_reg = self.ssa_to_reg.get(&slot_var).copied().ok_or(
-            WalkError::SymbolicArrayReadUnboundSlot {
-                idx,
-                slot: slot_var,
-            },
-        )?;
+        let slot_reg = match self.ssa_to_reg.get(&slot_var).copied() {
+            Some(r) => r,
+            None => {
+                // Mirror `emit_symbolic_indexed_effect`'s on-demand
+                // synthesis. The slot becomes a witness `LoadInput`
+                // here; whichever side emits the matching write later
+                // reuses this binding and emits the constraint.
+                let name = format!("__lysis_sym_slot_{}", slot_var.0);
+                let name_idx = self.builder.intern_string(name) as u16;
+                let reg = self.allocator.alloc()?;
+                self.push_op(Opcode::LoadInput {
+                    dst: reg,
+                    name_idx,
+                    vis: lysis::Visibility::Witness,
+                });
+                self.bind(slot_var, reg);
+                reg
+            }
+        };
         self.bind(result_var, slot_reg);
         Ok(())
     }
@@ -2791,28 +2802,40 @@ mod tests {
     }
 
     #[test]
-    fn rejects_symbolic_array_read_when_slot_unbound() {
-        // array_slots contains an SsaVar that was never produced —
-        // missing pre-emission upstream. Read-side cannot synthesise
-        // (unlike write-side which auto-binds a witness wire). Expect
-        // the dedicated UnboundSlot error.
+    fn synthesises_witness_when_symbolic_array_read_slot_unbound() {
+        // array_slots contains an SsaVar that was never pre-emitted —
+        // the read-side now mirrors `emit_symbolic_indexed_effect` and
+        // synthesises a witness `LoadInput` on demand. The output
+        // stream materialises one Input for the slot and the read
+        // result aliases it.
         let body = vec![ExtendedInstruction::LoopUnroll {
             iter_var: ssa(0),
             start: 0,
             end: 1,
             body: vec![ExtendedInstruction::SymbolicArrayRead {
                 result_var: ssa(1),
-                // ssa(99) is never bound by any earlier instruction.
+                // ssa(99) is never bound by any earlier instruction;
+                // the read-side now synthesises it as a witness wire.
                 array_slots: vec![ssa(99)],
                 index_var: ssa(0),
                 span: None,
             }],
         }];
-        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
+        let out = run(&body);
+
+        // One synthesised Input (`__lysis_sym_slot_99`).
+        let inputs: Vec<&str> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::Input { name, .. } => Some(name.as_str()),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(inputs.len(), 1, "one synthesised slot input");
         assert!(
-            matches!(err, WalkError::SymbolicArrayReadUnboundSlot { idx: 0, .. }),
-            "got {err:?}"
+            inputs[0].starts_with("__lysis_sym_slot_"),
+            "synth name prefix: got {:?}",
+            inputs[0]
         );
     }
 
