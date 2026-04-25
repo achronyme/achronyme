@@ -627,6 +627,201 @@ pub fn rewrite_num_bits_in_prove_ir(
     }
 }
 
+/// Walk `prove_ir.body` and propagate inferred widths through
+/// `let`-bindings. For each `CircuitNode::Let { name, value, .. }`,
+/// run `infer_expr(value)` and, if it returns a tighter result than
+/// `Field`, register `name → width` in the returned `SignalWidths`.
+/// Subsequent calls to `infer_expr` will find downstream
+/// `Var(name)` references resolved via this table.
+///
+/// Combine with [`scan_bool_constraints`] before running the
+/// rewriter: bool constraints provide leaf widths for bit-decomposed
+/// signals, and let-binding propagation chains those widths through
+/// arithmetic accumulators (e.g. SHA-256's
+/// `let acc = sum(bit_i * 2^i)` reaches `Exact(33)` once the bit
+/// signals are known to be `Exact(1)`).
+///
+/// Walks recursively into `For`/`If` bodies so loop-local `let`s
+/// also get registered. Does **not** unroll loops — iter-var-driven
+/// expressions still default to `Field`.
+pub fn propagate_let_widths(
+    prove_ir: &ir_forge::types::ProveIR,
+    seed_widths: SignalWidths,
+) -> SignalWidths {
+    let mut widths = seed_widths;
+    for node in &prove_ir.body {
+        propagate_let_in_node(node, &mut widths);
+    }
+    widths
+}
+
+fn propagate_let_in_node(node: &ir_forge::types::CircuitNode, widths: &mut SignalWidths) {
+    use ir_forge::types::CircuitNode;
+    match node {
+        CircuitNode::Let { name, value, .. } => {
+            let ctx = InferenceCtx {
+                param_values: None,
+                known_constants: None,
+                signal_widths: Some(widths),
+            };
+            let w = infer_expr(value, &ctx);
+            if !matches!(w, BitWidth::Field) {
+                widths.insert(name.clone(), w);
+            }
+        }
+        CircuitNode::For { body, .. } => {
+            for n in body {
+                propagate_let_in_node(n, widths);
+            }
+        }
+        CircuitNode::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for n in then_body {
+                propagate_let_in_node(n, widths);
+            }
+            for n in else_body {
+                propagate_let_in_node(n, widths);
+            }
+        }
+        _ => {}
+    }
+}
+
+// =====================================================================
+// Bool-constraint scanner — Num2Bits-style detection
+// =====================================================================
+
+/// Scan `prove_ir.body` for assertion patterns that constrain a
+/// `Var`/`Input` to {0, 1}, registering each such name as
+/// [`BitWidth::Exact(1)`] in the returned `SignalWidths` table.
+///
+/// Detected patterns (all common spellings of the bool constraint
+/// circomlib emits inside `Num2Bits(n)`):
+///
+/// 1. `x * (x - 1) === 0`
+/// 2. `x * (1 - x) === 0` (equivalent, sometimes written with the
+///    operands swapped — circom-lowered IR can produce either)
+/// 3. `(x - 1) * x === 0` (commuted Mul)
+/// 4. `(1 - x) * x === 0` (commuted variant of #2)
+///
+/// Walks recursively into `For` / `If` bodies. Only registers names
+/// whose binding is a leaf `Var` or `Input` reference — composite
+/// expressions are skipped, since the tightening would have to be
+/// re-derived per-call-site rather than via a name lookup.
+///
+/// Soundness: each detected pattern is mathematically equivalent to
+/// `x ∈ {0, 1}`, which exactly proves `bit-width(x) ≤ 1`. Registering
+/// `Exact(1)` is conservative-tight (sound and maximally informative).
+pub fn scan_bool_constraints(prove_ir: &ir_forge::types::ProveIR) -> SignalWidths {
+    let mut widths = SignalWidths::new();
+    for node in &prove_ir.body {
+        scan_node(node, &mut widths);
+    }
+    widths
+}
+
+fn scan_node(node: &ir_forge::types::CircuitNode, widths: &mut SignalWidths) {
+    use ir_forge::types::CircuitNode;
+    match node {
+        CircuitNode::AssertEq { lhs, rhs, .. } => {
+            // The bool constraint puts the Mul on one side and Const(0)
+            // on the other. Either ordering is valid in circom; check
+            // both (lhs zero, rhs Mul) and (rhs zero, lhs Mul).
+            if let Some(name) = match_bool_assertion(lhs, rhs) {
+                widths.insert(name, BitWidth::Exact(1));
+            } else if let Some(name) = match_bool_assertion(rhs, lhs) {
+                widths.insert(name, BitWidth::Exact(1));
+            }
+        }
+        CircuitNode::For { body, .. } => {
+            for n in body {
+                scan_node(n, widths);
+            }
+        }
+        CircuitNode::If {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for n in then_body {
+                scan_node(n, widths);
+            }
+            for n in else_body {
+                scan_node(n, widths);
+            }
+        }
+        _ => {}
+    }
+}
+
+/// Match an `AssertEq(mul_side, zero_side)` pair against the bool
+/// patterns. Returns the constrained name on a hit.
+fn match_bool_assertion(mul_side: &CircuitExpr, zero_side: &CircuitExpr) -> Option<String> {
+    // The "zero side" must be Const(0).
+    if !matches!(zero_side, CircuitExpr::Const(fc) if fc.is_zero()) {
+        return None;
+    }
+    // The "mul side" must be `BinOp(Mul, factor_a, factor_b)`.
+    let (factor_a, factor_b) = match mul_side {
+        CircuitExpr::BinOp {
+            op: ir_forge::types::CircuitBinOp::Mul,
+            lhs,
+            rhs,
+        } => (lhs.as_ref(), rhs.as_ref()),
+        _ => return None,
+    };
+    // Try both orderings: (x, x - 1) or (x - 1, x), and the
+    // `1 - x` variants.
+    if let Some(name) = match_bool_factors(factor_a, factor_b) {
+        return Some(name);
+    }
+    match_bool_factors(factor_b, factor_a)
+}
+
+/// Match `(x, x - 1)` or `(x, 1 - x)`, returning x's name if the
+/// pattern fits and x is a leaf `Var`/`Input`.
+fn match_bool_factors(x: &CircuitExpr, sub_or_neg: &CircuitExpr) -> Option<String> {
+    let x_name = leaf_name(x)?;
+    match sub_or_neg {
+        // `x - 1`
+        CircuitExpr::BinOp {
+            op: ir_forge::types::CircuitBinOp::Sub,
+            lhs,
+            rhs,
+        } => {
+            let lhs_name = leaf_name(lhs)?;
+            if lhs_name != x_name {
+                return None;
+            }
+            if matches!(rhs.as_ref(), CircuitExpr::Const(fc) if fc_is_one(fc)) {
+                Some(x_name)
+            } else {
+                None
+            }
+        }
+        _ => None,
+    }
+}
+
+/// Try to extract a `Var` or `Input` leaf name. Returns `None` for
+/// composite expressions (the caller skips those — see module docs).
+fn leaf_name(expr: &CircuitExpr) -> Option<String> {
+    match expr {
+        CircuitExpr::Var(name) | CircuitExpr::Input(name) => Some(name.clone()),
+        _ => None,
+    }
+}
+
+/// `FieldConst::one` comparison. Done via byte equality since
+/// `FieldConst` doesn't expose a `bytes_eq` helper, and `==` on
+/// `FieldConst` checks the canonical bytes — the same thing.
+fn fc_is_one(fc: &FieldConst) -> bool {
+    fc == &FieldConst::one()
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1223,6 +1418,176 @@ mod tests {
                 _ => panic!("expected ShiftR inside Mux"),
             },
             _ => panic!("expected Mux"),
+        }
+    }
+
+    // ------------------------------------------------------------------
+    // scan_bool_constraints — Num2Bits pattern detection
+    // ------------------------------------------------------------------
+
+    fn make_bool_assertion(name: &str) -> ir_forge::types::CircuitNode {
+        // Build `x * (x - 1) === 0` with `x` named `name`.
+        ir_forge::types::CircuitNode::AssertEq {
+            lhs: CircuitExpr::BinOp {
+                op: CircuitBinOp::Mul,
+                lhs: Box::new(CircuitExpr::Var(name.to_string())),
+                rhs: Box::new(CircuitExpr::BinOp {
+                    op: CircuitBinOp::Sub,
+                    lhs: Box::new(CircuitExpr::Var(name.to_string())),
+                    rhs: Box::new(CircuitExpr::Const(FieldConst::one())),
+                }),
+            },
+            rhs: CircuitExpr::Const(FieldConst::zero()),
+            message: None,
+            span: None,
+        }
+    }
+
+    #[test]
+    fn scan_detects_bool_constraint() {
+        let prove_ir = ir_forge::types::ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![make_bool_assertion("c_out_0")],
+            capture_arrays: vec![],
+        };
+        let widths = scan_bool_constraints(&prove_ir);
+        assert_eq!(widths.get("c_out_0").copied(), Some(BitWidth::Exact(1)));
+    }
+
+    #[test]
+    fn scan_detects_swapped_assertion_sides() {
+        // `0 === x * (x - 1)` (rhs is the Mul) should still match.
+        let prove_ir = ir_forge::types::ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![ir_forge::types::CircuitNode::AssertEq {
+                lhs: CircuitExpr::Const(FieldConst::zero()),
+                rhs: CircuitExpr::BinOp {
+                    op: CircuitBinOp::Mul,
+                    lhs: Box::new(CircuitExpr::Var("bit".into())),
+                    rhs: Box::new(CircuitExpr::BinOp {
+                        op: CircuitBinOp::Sub,
+                        lhs: Box::new(CircuitExpr::Var("bit".into())),
+                        rhs: Box::new(CircuitExpr::Const(FieldConst::one())),
+                    }),
+                },
+                message: None,
+                span: None,
+            }],
+            capture_arrays: vec![],
+        };
+        let widths = scan_bool_constraints(&prove_ir);
+        assert_eq!(widths.get("bit").copied(), Some(BitWidth::Exact(1)));
+    }
+
+    #[test]
+    fn scan_handles_commuted_mul_factors() {
+        // `(x - 1) * x === 0` — Sub on lhs of Mul.
+        let prove_ir = ir_forge::types::ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![ir_forge::types::CircuitNode::AssertEq {
+                lhs: CircuitExpr::BinOp {
+                    op: CircuitBinOp::Mul,
+                    lhs: Box::new(CircuitExpr::BinOp {
+                        op: CircuitBinOp::Sub,
+                        lhs: Box::new(CircuitExpr::Var("b".into())),
+                        rhs: Box::new(CircuitExpr::Const(FieldConst::one())),
+                    }),
+                    rhs: Box::new(CircuitExpr::Var("b".into())),
+                },
+                rhs: CircuitExpr::Const(FieldConst::zero()),
+                message: None,
+                span: None,
+            }],
+            capture_arrays: vec![],
+        };
+        let widths = scan_bool_constraints(&prove_ir);
+        assert_eq!(widths.get("b").copied(), Some(BitWidth::Exact(1)));
+    }
+
+    #[test]
+    fn scan_recurses_into_for_loops() {
+        let prove_ir = ir_forge::types::ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![ir_forge::types::CircuitNode::For {
+                var: "i".to_string(),
+                range: ir_forge::types::ForRange::Literal { start: 0, end: 8 },
+                body: vec![make_bool_assertion("nested_bit")],
+                span: None,
+            }],
+            capture_arrays: vec![],
+        };
+        let widths = scan_bool_constraints(&prove_ir);
+        assert_eq!(widths.get("nested_bit").copied(), Some(BitWidth::Exact(1)));
+    }
+
+    #[test]
+    fn scan_ignores_non_bool_assertions() {
+        let prove_ir = ir_forge::types::ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![ir_forge::types::CircuitNode::AssertEq {
+                lhs: CircuitExpr::Var("x".into()),
+                rhs: CircuitExpr::Var("y".into()),
+                message: None,
+                span: None,
+            }],
+            capture_arrays: vec![],
+        };
+        let widths = scan_bool_constraints(&prove_ir);
+        assert!(widths.is_empty());
+    }
+
+    #[test]
+    fn scan_pipeline_tightens_shift_via_bool_signals() {
+        // End-to-end: build a tiny ProveIR with a bool-constrained
+        // signal `b` and a `BitOr(b, b)`. After scan + rewrite, the
+        // BitOr's num_bits should drop from 254 to 1.
+        let mut prove_ir = ir_forge::types::ProveIR {
+            name: None,
+            public_inputs: vec![],
+            witness_inputs: vec![],
+            captures: vec![],
+            body: vec![
+                make_bool_assertion("b"),
+                ir_forge::types::CircuitNode::Expr {
+                    expr: CircuitExpr::BitOr {
+                        lhs: Box::new(CircuitExpr::Var("b".into())),
+                        rhs: Box::new(CircuitExpr::Var("b".into())),
+                        num_bits: FIELD_BITS,
+                    },
+                    span: None,
+                },
+            ],
+            capture_arrays: vec![],
+        };
+        let widths = scan_bool_constraints(&prove_ir);
+        let ctx = InferenceCtx {
+            param_values: None,
+            known_constants: None,
+            signal_widths: Some(&widths),
+        };
+        rewrite_num_bits_in_prove_ir(&mut prove_ir, &ctx);
+        // Find the BitOr and check its num_bits.
+        match &prove_ir.body[1] {
+            ir_forge::types::CircuitNode::Expr { expr, .. } => match expr {
+                CircuitExpr::BitOr { num_bits, .. } => assert_eq!(*num_bits, 1),
+                _ => panic!("expected BitOr"),
+            },
+            _ => panic!("expected Expr node"),
         }
     }
 

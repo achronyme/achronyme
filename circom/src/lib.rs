@@ -403,11 +403,29 @@ fn compile_program_with_warnings_and_frontend(
     //    `max_bits` fields where the operand's actual range is
     //    provably narrower than the conservative
     //    `DEFAULT_MAX_BITS = 254` default. Sound: only ever
-    //    decreases. With empty side-tables, catches literal-driven
-    //    and arithmetic-propagation cases. Stage 2C will populate
-    //    `signal_widths` from constraint context to unblock
-    //    `Num2Bits`-shaped circuits like SHA-256.
-    let inference_ctx = lowering::bit_width::InferenceCtx::default();
+    //    decreases.
+    //
+    //    Stage 2C: scan the IR for Num2Bits-style bool constraints
+    //    (`x * (x - 1) === 0`) and register the constrained signals
+    //    as `Exact(1)` in a `SignalWidths` side-table. The rewriter
+    //    consults this table when resolving `Input`/`Var` operands,
+    //    enabling tight bit-width derivation for SHA-256-shaped
+    //    circuits whose accumulator widths chain through the bit
+    //    signals.
+    let bool_widths = lowering::bit_width::scan_bool_constraints(&lower_result.prove_ir);
+    let signal_widths =
+        lowering::bit_width::propagate_let_widths(&lower_result.prove_ir, bool_widths);
+    if std::env::var("BITWIDTH_TRACE").is_ok() {
+        eprintln!(
+            "[bitwidth] scan + let-propagation populated {} signal widths",
+            signal_widths.len()
+        );
+    }
+    let inference_ctx = lowering::bit_width::InferenceCtx {
+        param_values: None,
+        known_constants: None,
+        signal_widths: Some(&signal_widths),
+    };
     lowering::bit_width::rewrite_num_bits_in_prove_ir(&mut lower_result.prove_ir, &inference_ctx);
 
     // 6. Extract capture values from main component template args
