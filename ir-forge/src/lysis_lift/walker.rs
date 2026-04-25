@@ -116,6 +116,21 @@ const MAX_CAPTURES: usize = u16::MAX as usize;
 /// scratch allocations in the new frame. See research report §6.4.
 const MAX_CAPTURES_HOT: usize = 48;
 
+/// Phase 4 follow-up — switch threshold between
+/// `Opcode::EmitWitnessCall` (classic, register outputs) and
+/// `Opcode::EmitWitnessCallHeap` (heap outputs). When a `WitnessCall`
+/// produces more than this many outputs, the walker emits the heap
+/// variant because the classic path would need `outputs.len()` fresh
+/// regs and exceed `FRAME_CAP = 255` structurally — a single
+/// instruction whose own cost is greater than the cap can't fit in
+/// any frame, no matter how much split logic is layered on top.
+///
+/// Threshold rationale: SHA-256 emits `WitnessCall(out=256)`; this
+/// constant catches that case while leaving headroom (200) for
+/// witness calls with moderate output counts to still use the
+/// classic path (which avoids a heap-slot per output).
+const MAX_WITNESS_OUTPUTS_INLINE: usize = 200;
+
 /// Errors raised by [`Walker::lower`].
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum WalkError {
@@ -1660,10 +1675,23 @@ impl<F: FieldBackend> Walker<F> {
 
             // ---------- witness call ----------
             // Intern the Artik bytecode blob, resolve input regs,
-            // allocate fresh output regs, and emit. The reg-allocator
-            // scheme is bump-forward: each output takes the next slot
-            // so they stay contiguous, which is what EmitWitnessCall's
-            // encoding expects (see `lysis::program::execute`).
+            // allocate fresh output destinations, and emit.
+            //
+            // Two emit paths based on output count (Phase 4 follow-up):
+            //
+            //  - **Classic** (`EmitWitnessCall`): outputs ≤
+            //    `MAX_WITNESS_OUTPUTS_INLINE`. Each output gets a
+            //    fresh contiguous register; reg-allocator is
+            //    bump-forward.
+            //
+            //  - **Heap** (`EmitWitnessCallHeap`): outputs >
+            //    `MAX_WITNESS_OUTPUTS_INLINE`. The classic path can't
+            //    fit because a single instruction's reg cost would
+            //    exceed `FRAME_CAP = 255` structurally. Outputs go to
+            //    fresh heap slots instead; downstream reads
+            //    materialise via `LoadHeap` through `Walker::resolve`'s
+            //    lazy-reload path. Canonical case: SHA-256's 256-bit
+            //    output hash (256 outputs).
             Instruction::WitnessCall {
                 outputs,
                 inputs,
@@ -1674,17 +1702,37 @@ impl<F: FieldBackend> Walker<F> {
                     .iter()
                     .map(|v| self.resolve(*v))
                     .collect::<Result<_, _>>()?;
-                let mut out_regs: Vec<RegId> = Vec::with_capacity(outputs.len());
-                for o in outputs {
-                    let reg = self.allocator.alloc()?;
-                    out_regs.push(reg);
-                    self.bind(*o, reg);
+
+                if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
+                    // Heap-output path. Each output binds to a fresh
+                    // heap slot, never to a register. `resolve()`
+                    // pulls them via LoadHeap on first use.
+                    let mut out_slots: Vec<u16> = Vec::with_capacity(outputs.len());
+                    for o in outputs {
+                        let slot = self.heap_alloc;
+                        self.heap_alloc = self.heap_alloc.saturating_add(1);
+                        self.ssa_to_heap.insert(*o, slot);
+                        out_slots.push(slot);
+                    }
+                    self.push_op(Opcode::EmitWitnessCallHeap {
+                        bytecode_const_idx: blob_idx,
+                        in_regs,
+                        out_slots,
+                    });
+                } else {
+                    // Classic register-output path.
+                    let mut out_regs: Vec<RegId> = Vec::with_capacity(outputs.len());
+                    for o in outputs {
+                        let reg = self.allocator.alloc()?;
+                        out_regs.push(reg);
+                        self.bind(*o, reg);
+                    }
+                    self.push_op(Opcode::EmitWitnessCall {
+                        bytecode_const_idx: blob_idx,
+                        in_regs,
+                        out_regs,
+                    });
                 }
-                self.push_op(Opcode::EmitWitnessCall {
-                    bytecode_const_idx: blob_idx,
-                    in_regs,
-                    out_regs,
-                });
             }
         }
         Ok(())
@@ -2467,7 +2515,18 @@ fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
 
         // Variable-cost ops.
         Instruction::Decompose { num_bits, .. } => *num_bits,
-        Instruction::WitnessCall { outputs, .. } => outputs.len() as u32,
+        Instruction::WitnessCall { outputs, .. } => {
+            // Outputs above the threshold land in heap slots, not
+            // regs (Phase 4 follow-up). The cost estimator must
+            // mirror the walker's emit-time branch: heap-output
+            // variant is `cost = 0` for the frame, classic variant is
+            // `cost = outputs.len()`.
+            if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
+                0
+            } else {
+                outputs.len() as u32
+            }
+        }
     }
 }
 
@@ -4080,6 +4139,112 @@ mod tests {
             .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall { .. }))
             .count();
         assert_eq!(call_count, 1);
+    }
+
+    #[test]
+    fn witness_call_under_threshold_emits_classic_variant() {
+        // 200 outputs is exactly at the threshold; classic path
+        // because `outputs.len() > MAX_WITNESS_OUTPUTS_INLINE` is
+        // false when outputs.len() == 200.
+        let outputs: Vec<SsaVar> = (0..200u32).map(ssa).collect();
+        let body = vec![plain(Instruction::WitnessCall {
+            outputs,
+            inputs: vec![],
+            program_bytes: vec![0xFF],
+        })];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+
+        let classic_count = program
+            .body
+            .iter()
+            .filter(|i| matches!(i.opcode, lysis::Opcode::EmitWitnessCall { .. }))
+            .count();
+        let heap_count = program
+            .body
+            .iter()
+            .filter(|i| matches!(i.opcode, lysis::Opcode::EmitWitnessCallHeap { .. }))
+            .count();
+        assert_eq!(classic_count, 1);
+        assert_eq!(heap_count, 0);
+        assert_eq!(
+            program.header.heap_size_hint, 0,
+            "classic variant should not allocate heap slots"
+        );
+    }
+
+    #[test]
+    fn witness_call_over_threshold_emits_heap_variant() {
+        // 256 outputs (canonical SHA-256 case): walker must switch
+        // to the heap-output variant because classic would need 256
+        // fresh regs and overflow `FRAME_CAP = 255`.
+        let outputs: Vec<SsaVar> = (0..256u32).map(ssa).collect();
+        let body = vec![plain(Instruction::WitnessCall {
+            outputs,
+            inputs: vec![],
+            program_bytes: vec![0xFF],
+        })];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+
+        let classic_count = program
+            .body
+            .iter()
+            .filter(|i| matches!(i.opcode, lysis::Opcode::EmitWitnessCall { .. }))
+            .count();
+        let heap_calls: Vec<&lysis::Opcode> = program
+            .body
+            .iter()
+            .map(|i| &i.opcode)
+            .filter(|op| matches!(op, lysis::Opcode::EmitWitnessCallHeap { .. }))
+            .collect();
+        assert_eq!(classic_count, 0);
+        assert_eq!(heap_calls.len(), 1);
+        if let lysis::Opcode::EmitWitnessCallHeap { out_slots, .. } = heap_calls[0] {
+            assert_eq!(
+                out_slots.len(),
+                256,
+                "256 outputs land in 256 distinct slots"
+            );
+        }
+        assert_eq!(
+            program.header.heap_size_hint, 256,
+            "heap_size_hint reflects allocated slots"
+        );
+    }
+
+    #[test]
+    fn witness_call_heap_outputs_lazy_load_via_resolve_on_first_use() {
+        // After the heap-variant call, an instruction that consumes
+        // an output must trigger a `LoadHeap` emit through resolve().
+        let outputs: Vec<SsaVar> = (0..256u32).map(ssa).collect();
+        let body = vec![
+            plain(Instruction::WitnessCall {
+                outputs,
+                inputs: vec![],
+                program_bytes: vec![0xFF],
+            }),
+            // Reference output ssa(0) — should LoadHeap from slot 0
+            // and then AssertEq it against itself (a trivial use).
+            plain(Instruction::AssertEq {
+                result: ssa(1000),
+                lhs: ssa(0),
+                rhs: ssa(0),
+                message: None,
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+
+        let load_heap_count = program
+            .body
+            .iter()
+            .filter(|i| matches!(i.opcode, lysis::Opcode::LoadHeap { .. }))
+            .count();
+        assert!(
+            load_heap_count >= 1,
+            "expected at least one LoadHeap for ssa(0), got {load_heap_count}"
+        );
     }
 
     /// Build a body that allocates more than `SPLIT_THRESHOLD` regs in
