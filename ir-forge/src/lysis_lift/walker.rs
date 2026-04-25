@@ -768,13 +768,12 @@ impl<F: FieldBackend> Walker<F> {
         // the body so a recursive TemplateCall referencing this id
         // (e.g. self-recursive templates, though Phase 3 lift never
         // emits them) resolves correctly.
-        let walker_idx = u16::try_from(self.templates.len()).map_err(|_| {
-            WalkError::OperandOutOfRange {
+        let walker_idx =
+            u16::try_from(self.templates.len()).map_err(|_| WalkError::OperandOutOfRange {
                 kind: "templates",
                 limit: u32::from(u16::MAX),
                 got: self.templates.len() as u32,
-            }
-        })?;
+            })?;
         self.template_id_map.insert(id, walker_idx);
         self.templates.push(TemplateBuf::new(n_params));
         self.current = self.templates.len() - 1;

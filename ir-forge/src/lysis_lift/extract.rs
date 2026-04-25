@@ -376,11 +376,7 @@ fn lift_one<F: FieldBackend>(
                 BindingTime::Uniform {
                     skeleton,
                     captures: _slot_caps,
-                } => Ok(lift_uniform_to_template(
-                    loop_unroll,
-                    skeleton,
-                    registry,
-                )?),
+                } => Ok(lift_uniform_to_template(loop_unroll, skeleton, registry)?),
                 BindingTime::DataDependent => Ok(vec![loop_unroll]),
             }
         }
