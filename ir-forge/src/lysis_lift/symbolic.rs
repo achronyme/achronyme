@@ -159,6 +159,22 @@ pub enum SymbolicNode<F: FieldBackend> {
         index_operand: NodeIdx,
         value_operand: Option<NodeIdx>,
     },
+    /// A symbolic-index read produced by Gap 1.5
+    /// [`ExtendedInstruction::SymbolicArrayRead`] — the structural
+    /// counterpart of [`Self::IndexedEffect`] on the read side. Two
+    /// probes targeting the same array with the same body shape
+    /// produce identical `ArrayRead` nodes; the only divergence sits
+    /// inside the `index_operand` chain (a slot-tagged `Const` from
+    /// the probe binding), so `structural_diff` classifies
+    /// `OnlyConstants` and BTA marks the enclosing loop `Uniform`.
+    ///
+    /// `array_anchor` carries the resolved slot wires (`NodeIdx` per
+    /// element) — two probes reading from different arrays therefore
+    /// diverge structurally.
+    ArrayRead {
+        array_anchor: SmallVec<[NodeIdx; 4]>,
+        index_operand: NodeIdx,
+    },
 }
 
 impl<F: FieldBackend> SymbolicNode<F> {
@@ -349,6 +365,29 @@ fn emit_one<F: FieldBackend>(
                 index_operand,
                 value_operand,
             });
+            tree.body_order.push(idx);
+        }
+        ExtendedInstruction::SymbolicArrayRead {
+            result_var,
+            array_slots,
+            index_var,
+            span: _,
+        } => {
+            let array_anchor: SmallVec<[NodeIdx; 4]> = array_slots
+                .iter()
+                .map(|v| resolve_operand(*v, tree, ssa_to_idx))
+                .collect();
+            let index_operand = resolve_operand(*index_var, tree, ssa_to_idx);
+            let idx = tree.push(SymbolicNode::ArrayRead {
+                array_anchor,
+                index_operand,
+            });
+            // Bind result_var to the ArrayRead node so downstream
+            // uses inside the same body (within the same probe walk)
+            // resolve to a stable NodeIdx — both probes produce the
+            // same NodeIdx at the same body position, and
+            // `nodes_equal` matches them as structurally equal.
+            ssa_to_idx.insert(*result_var, idx);
             tree.body_order.push(idx);
         }
     }
@@ -979,6 +1018,119 @@ mod tests {
         let b = symbolic_emit(&body, &[(ssa(0), fe(5))]);
         assert_eq!(a.body_order, b.body_order);
         assert_eq!(a.body_order.len(), 3);
+    }
+
+    #[test]
+    fn symbolic_array_read_emits_array_read_node_and_binds_result() {
+        // SymbolicArrayRead in a body where iter_var is bound — the
+        // probe drives a slot-tagged Const, the read becomes an
+        // ArrayRead node, and result_var binds to the same NodeIdx so
+        // a downstream use within the body resolves to the read.
+        use crate::ExtendedInstruction;
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![
+            ExtendedInstruction::SymbolicArrayRead {
+                result_var: ssa(10),
+                array_slots: vec![ssa(20), ssa(21)],
+                index_var: ssa(0),
+                span: None,
+            },
+            // Downstream use of result_var (ssa(10)) — should resolve
+            // to the ArrayRead's NodeIdx via ssa_to_idx.
+            Instruction::Add {
+                result: ssa(11),
+                lhs: ssa(10),
+                rhs: ssa(10),
+            }
+            .into(),
+        ];
+        let t = symbolic_emit(&body, &[(ssa(0), fe(0))]);
+
+        // Locate the ArrayRead node.
+        let read_idx = t
+            .nodes
+            .iter()
+            .position(|n| matches!(n, SymbolicNode::ArrayRead { .. }))
+            .expect("ArrayRead node missing");
+        match &t.nodes[read_idx] {
+            SymbolicNode::ArrayRead {
+                array_anchor,
+                index_operand: _,
+            } => {
+                assert_eq!(
+                    array_anchor.len(),
+                    2,
+                    "array_anchor carries one NodeIdx per slot"
+                );
+            }
+            _ => unreachable!(),
+        }
+
+        // The downstream Add node's operands should both point at the
+        // ArrayRead node — confirming result_var was bound there.
+        let add_node = t
+            .nodes
+            .iter()
+            .find(|n| {
+                matches!(
+                    n,
+                    SymbolicNode::Op {
+                        tag: OpTag::Add,
+                        ..
+                    }
+                )
+            })
+            .expect("Add node missing");
+        match add_node {
+            SymbolicNode::Op {
+                tag: OpTag::Add,
+                operands,
+            } => {
+                assert_eq!(
+                    operands.as_slice(),
+                    &[read_idx as NodeIdx, read_idx as NodeIdx]
+                );
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    #[test]
+    fn symbolic_array_read_two_probes_match_only_in_index_slot() {
+        // Same body, two probe values for iter_var — both produce
+        // ArrayRead at the same body position with identical
+        // array_anchor; only the index_operand chain's slot value
+        // differs. (Mirror of the indexed-effect test in diff.rs.)
+        use crate::ExtendedInstruction;
+        let body: Vec<ExtendedInstruction<Bn254Fr>> =
+            vec![ExtendedInstruction::SymbolicArrayRead {
+                result_var: ssa(10),
+                array_slots: vec![ssa(20), ssa(21), ssa(22)],
+                index_var: ssa(0),
+                span: None,
+            }];
+        let a = symbolic_emit(&body, &[(ssa(0), fe(0))]);
+        let b = symbolic_emit(&body, &[(ssa(0), fe(2))]);
+
+        assert_eq!(a.nodes.len(), b.nodes.len());
+        assert_eq!(a.body_order, b.body_order);
+        // The slot-tagged Const at index 0 differs in value, identical
+        // slot id.
+        match (&a.nodes[0], &b.nodes[0]) {
+            (
+                SymbolicNode::Const {
+                    value: va,
+                    from_slot: Some(sa),
+                },
+                SymbolicNode::Const {
+                    value: vb,
+                    from_slot: Some(sb),
+                },
+            ) => {
+                assert_eq!(sa, sb);
+                assert_ne!(va, vb);
+            }
+            _ => panic!("slot 0 must be slot-tagged Const"),
+        }
     }
 
     #[test]

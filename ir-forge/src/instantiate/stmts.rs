@@ -846,7 +846,7 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
 
     /// Snapshot the `Vec<SsaVar>` of slot wires for a declared array.
     /// Returns an error if `array` is missing or bound to a scalar.
-    fn snapshot_array_slots(&self, array: &str) -> Result<Vec<SsaVar>, ProveIrError> {
+    pub(super) fn snapshot_array_slots(&self, array: &str) -> Result<Vec<SsaVar>, ProveIrError> {
         match self.env.get(array) {
             Some(InstEnvValue::Array(elems)) => Ok(elems.clone()),
             Some(InstEnvValue::Scalar(_)) => Err(ProveIrError::UnsupportedOperation {

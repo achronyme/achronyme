@@ -179,6 +179,16 @@ fn nodes_equal<F: FieldBackend>(
                 value_operand: vvb,
             },
         ) => ka == kb && aa == ab && ia == ib && vva == vvb,
+        (
+            N::ArrayRead {
+                array_anchor: aa,
+                index_operand: ia,
+            },
+            N::ArrayRead {
+                array_anchor: ab,
+                index_operand: ib,
+            },
+        ) => aa == ab && ia == ib,
         // Different variants → structural.
         _ => false,
     }

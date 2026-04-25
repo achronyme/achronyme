@@ -156,6 +156,23 @@ pub enum WalkError {
     /// — the instantiator promised a value side it didn't supply.
     /// Should be impossible if Stage 2 is wired correctly.
     SymbolicIndexedEffectMissingValue,
+    /// A `SymbolicArrayRead` reached the walker but its `index_var`
+    /// could not be const-folded to a literal `usize`. Same surface
+    /// limitation as [`Self::SymbolicIndexedEffectNotEmittable`] — the
+    /// walker's const-prop only sees Add/Sub/Mul/Neg over loop-iter
+    /// constants. (Gap 1.5 Stage 3.)
+    SymbolicArrayReadNotEmittable,
+    /// `SymbolicArrayRead.index_var` const-folded but pointed at an
+    /// array slot beyond `array_slots.len()`. Bug at lowering or
+    /// instantiation, not something the walker can fix.
+    SymbolicArrayReadIndexOutOfRange { idx: i64, len: usize },
+    /// `SymbolicArrayRead` resolved its slot to an `SsaVar` that has
+    /// no register binding. Read-side cannot synthesise a witness
+    /// wire on demand the way `SymbolicIndexedEffect` does — a read
+    /// of an unbound slot means upstream forgot to pre-emit the
+    /// declaring `Plain(Input)` or `WitnessArrayDecl`. Surfaces the
+    /// missing slot index for diagnosis.
+    SymbolicArrayReadUnboundSlot { idx: usize, slot: SsaVar },
 }
 
 impl std::fmt::Display for WalkError {
@@ -194,6 +211,17 @@ impl std::fmt::Display for WalkError {
             ),
             Self::SymbolicIndexedEffectMissingValue => f.write_str(
                 "walker: SymbolicIndexedEffect kind=Let but value_var=None — instantiator bug",
+            ),
+            Self::SymbolicArrayReadNotEmittable => f.write_str(
+                "walker: SymbolicArrayRead index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+            ),
+            Self::SymbolicArrayReadIndexOutOfRange { idx, len } => write!(
+                f,
+                "walker: SymbolicArrayRead resolved to index {idx} but array has {len} slots"
+            ),
+            Self::SymbolicArrayReadUnboundSlot { idx, slot } => write!(
+                f,
+                "walker: SymbolicArrayRead slot at index {idx} (SsaVar {slot}) has no register binding — upstream pre-emission missed this slot"
             ),
         }
     }
@@ -531,7 +559,54 @@ impl<F: FieldBackend> Walker<F> {
                 value_var,
                 span: _,
             } => self.emit_symbolic_indexed_effect(*kind, array_slots, *index_var, *value_var),
+            ExtendedInstruction::SymbolicArrayRead {
+                result_var,
+                array_slots,
+                index_var,
+                span: _,
+            } => self.emit_symbolic_array_read(*result_var, array_slots, *index_var),
         }
+    }
+
+    /// Resolve a `SymbolicArrayRead` at walker time. Mirrors
+    /// [`Self::emit_symbolic_indexed_effect`] but without an `EmitAssertEq`
+    /// or `LoadInput` — the read is a pure symbolic alias: rebind
+    /// `result_var` to whichever register `array_slots[idx]` already
+    /// occupies and let downstream uses see the slot's wire directly.
+    /// Requires `walker_const[index_var]` populated; the per-iteration
+    /// walker is the only producer in Phase 2.
+    fn emit_symbolic_array_read(
+        &mut self,
+        result_var: SsaVar,
+        array_slots: &[SsaVar],
+        index_var: SsaVar,
+    ) -> Result<(), WalkError> {
+        let idx_signed = self
+            .walker_const
+            .get(&index_var)
+            .copied()
+            .ok_or(WalkError::SymbolicArrayReadNotEmittable)?;
+        if idx_signed < 0 || (idx_signed as usize) >= array_slots.len() {
+            return Err(WalkError::SymbolicArrayReadIndexOutOfRange {
+                idx: idx_signed,
+                len: array_slots.len(),
+            });
+        }
+        let idx = idx_signed as usize;
+        let slot_var = array_slots[idx];
+
+        // Read-side cannot synthesise on demand: an unbound slot is an
+        // upstream pre-emission bug (the declaring `Plain(Input)` or
+        // `WitnessArrayDecl` should have run before this read). Surface
+        // the missing slot for diagnosis rather than miscompiling.
+        let slot_reg = self.ssa_to_reg.get(&slot_var).copied().ok_or(
+            WalkError::SymbolicArrayReadUnboundSlot {
+                idx,
+                slot: slot_var,
+            },
+        )?;
+        self.bind(result_var, slot_reg);
+        Ok(())
     }
 
     /// Resolve a `SymbolicIndexedEffect` at walker time. Requires
@@ -1057,16 +1132,16 @@ impl<F: FieldBackend> Walker<F> {
             return Err(WalkError::NegativeLoopBound { start, end });
         }
 
-        // Gap 1 Stage 3: when the body (recursively, through nested
-        // LoopUnrolls) contains a `SymbolicIndexedEffect`, the runtime
-        // `LoopUnroll` opcode can't carry it — the symbolic-index
-        // resolution needs a literal `iter_var = i` on every
-        // iteration. Per-iter unroll the body at walker time, threading
-        // walker-side const-prop into the SymbolicIndexedEffect arm.
-        // Loops without indexed effects keep the rolled `LoopUnroll`
-        // opcode + InterningSink dedup — Phase 1.5's value isn't
-        // sacrificed for the rest of the program.
-        if body_has_symbolic_indexed_effect(body) {
+        // Gap 1/1.5 Stage 3: when the body (recursively, through
+        // nested LoopUnrolls) contains a `SymbolicIndexedEffect` or
+        // `SymbolicArrayRead`, the runtime `LoopUnroll` opcode can't
+        // carry either — both need a literal `iter_var = i` on every
+        // iteration so the walker can const-fold the index. Per-iter
+        // unroll the body at walker time. Loops without symbolic ops
+        // keep the rolled `LoopUnroll` opcode + InterningSink dedup —
+        // Phase 1.5's value isn't sacrificed for the rest of the
+        // program.
+        if body_has_symbolic_op(body) {
             return self.emit_loop_unroll_per_iter(iter_var, start, end, body);
         }
 
@@ -1226,6 +1301,12 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
         // surfaces only when test fixtures construct it directly.
         ExtendedInstruction::SymbolicIndexedEffect { .. } => {
             Err(WalkError::SymbolicIndexedEffectNotEmittable)
+        }
+        // Read-side per-iteration alias — Stage 3 of Gap 1.5 will
+        // replace this with the unfolding cost (zero opcodes; size 0)
+        // once the per-iter walker rebinds slot regs.
+        ExtendedInstruction::SymbolicArrayRead { .. } => {
+            Err(WalkError::SymbolicArrayReadNotEmittable)
         }
     }
 }
@@ -1406,15 +1487,18 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
 }
 
 /// `true` iff `body` (recursively, including nested `LoopUnroll`
-/// bodies) contains at least one `SymbolicIndexedEffect`. Drives the
-/// per-iteration unrolling decision in `emit_loop_unroll`. Stops at
-/// the first hit — short-circuits via `iter::any`.
-fn body_has_symbolic_indexed_effect<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
+/// bodies) contains at least one symbolic-index op — either a
+/// `SymbolicIndexedEffect` (write) or a `SymbolicArrayRead` (read).
+/// Drives the per-iteration unrolling decision in `emit_loop_unroll`:
+/// the rolled runtime `LoopUnroll` opcode can't symbolic-resolve an
+/// index against a literal `iter_var`, so any loop that contains
+/// either op gets per-iter walker materialisation. Stops at the
+/// first hit — short-circuits via `iter::any`.
+fn body_has_symbolic_op<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
     body.iter().any(|inst| match inst {
-        ExtendedInstruction::SymbolicIndexedEffect { .. } => true,
-        ExtendedInstruction::LoopUnroll { body: nested, .. } => {
-            body_has_symbolic_indexed_effect(nested)
-        }
+        ExtendedInstruction::SymbolicIndexedEffect { .. }
+        | ExtendedInstruction::SymbolicArrayRead { .. } => true,
+        ExtendedInstruction::LoopUnroll { body: nested, .. } => body_has_symbolic_op(nested),
         ExtendedInstruction::Plain(_)
         | ExtendedInstruction::TemplateCall { .. }
         | ExtendedInstruction::TemplateBody { .. } => false,
@@ -1451,6 +1535,9 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
         // safe (the variant only reaches a frame whose other
         // instructions already drove the answer).
         ExtendedInstruction::SymbolicIndexedEffect { .. } => false,
+        // Read-side never desugars through `one` — the walker rebinds
+        // an existing slot reg with no extra ops.
+        ExtendedInstruction::SymbolicArrayRead { .. } => false,
     })
 }
 
@@ -1490,6 +1577,19 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
             format!(
                 "SymbolicIndexedEffect({:?}, slots={}, idx_var={})",
                 kind,
+                array_slots.len(),
+                index_var
+            )
+        }
+        ExtendedInstruction::SymbolicArrayRead {
+            result_var,
+            array_slots,
+            index_var,
+            ..
+        } => {
+            format!(
+                "SymbolicArrayRead(result={}, slots={}, idx_var={})",
+                result_var,
                 array_slots.len(),
                 index_var
             )
@@ -1541,6 +1641,10 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
         // over-approximates and prevents a wide indexed effect from
         // overflowing pre-emit.
         ExtendedInstruction::SymbolicIndexedEffect { .. } => 2,
+        // Read-side allocates no fresh reg — the walker rebinds
+        // `result_var` to the slot's already-bound register. Cost 0
+        // is exact, not over-approximated.
+        ExtendedInstruction::SymbolicArrayRead { .. } => 0,
     }
 }
 
@@ -1644,6 +1748,16 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
             if let Some(v) = value_var {
                 out.insert(*v);
             }
+        }
+        // Read-side mirrors the write-side rationale: `index_var` is
+        // an enclosing-scope use that must cross a split boundary.
+        // `array_slots` are NOT collected — slots come from a sibling
+        // pre-Plain(Input) emission inside the same template, so a
+        // split between the LoopUnroll and its parent never separates
+        // them from this read. `result_var` is a definition produced
+        // by the read itself, so it isn't an operand.
+        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
+            out.insert(*index_var);
         }
     }
 }
@@ -2033,6 +2147,223 @@ mod tests {
         let err = walker.lower(&body).expect_err("should refuse");
         assert!(
             matches!(err, WalkError::SymbolicIndexedEffectNotEmittable),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn unfolds_symbolic_array_read_per_iteration() {
+        // Outer body pre-emits 3 slot Inputs + a sink-target Input.
+        // Inside `for i in 0..3 { sink := arr[i] }` the read binds
+        // result_var to slot_i's reg per iteration; the trailing
+        // AssertEq materialises one constraint per iteration with
+        // rhs pointing at the iteration-specific slot.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "slot_a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "slot_b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(2),
+                name: "slot_c".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(3),
+                name: "sink_target".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(4),
+                start: 0,
+                end: 3,
+                body: vec![
+                    ExtendedInstruction::SymbolicArrayRead {
+                        result_var: ssa(5),
+                        array_slots: vec![ssa(0), ssa(1), ssa(2)],
+                        index_var: ssa(4),
+                        span: None,
+                    },
+                    plain(Instruction::AssertEq {
+                        result: ssa(6),
+                        lhs: ssa(3),
+                        rhs: ssa(5),
+                        message: None,
+                    }),
+                ],
+            },
+        ];
+        let out = run(&body);
+
+        // 4 named Inputs preserved.
+        let inputs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
+            .count();
+        assert_eq!(inputs, 4);
+
+        // 3 AssertEqs (one per iteration). Each rhs picks up a
+        // different slot's reg because result_var rebinds per-iter.
+        let asserts: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::AssertEq { lhs, rhs, .. } => Some((*lhs, *rhs)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asserts.len(), 3, "3 AssertEqs");
+        let lhs_set: std::collections::HashSet<_> = asserts.iter().map(|(l, _)| *l).collect();
+        assert_eq!(lhs_set.len(), 1, "all 3 lhs share the sink_target reg");
+        let rhs_set: std::collections::HashSet<_> = asserts.iter().map(|(_, r)| *r).collect();
+        assert_eq!(
+            rhs_set.len(),
+            3,
+            "3 distinct slot rhs (rebind per iteration)"
+        );
+    }
+
+    #[test]
+    fn unfolds_symbolic_array_read_with_affine_index() {
+        // Body: for i in 0..3 { sink := arr[i + 2] }. Index is computed
+        // inside the body via Const(2) + Add; walker_const tracks the
+        // fold and the read picks slots 2..=4.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "s0".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "s1".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(2),
+                name: "s2".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(3),
+                name: "s3".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(4),
+                name: "s4".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(5),
+                name: "sink_target".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(6),
+                start: 0,
+                end: 3,
+                body: vec![
+                    plain(Instruction::Const {
+                        result: ssa(7),
+                        value: fe(2),
+                    }),
+                    plain(Instruction::Add {
+                        result: ssa(8),
+                        lhs: ssa(6),
+                        rhs: ssa(7),
+                    }),
+                    ExtendedInstruction::SymbolicArrayRead {
+                        result_var: ssa(9),
+                        array_slots: vec![ssa(0), ssa(1), ssa(2), ssa(3), ssa(4)],
+                        index_var: ssa(8),
+                        span: None,
+                    },
+                    plain(Instruction::AssertEq {
+                        result: ssa(10),
+                        lhs: ssa(5),
+                        rhs: ssa(9),
+                        message: None,
+                    }),
+                ],
+            },
+        ];
+        let out = run(&body);
+
+        let asserts: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::AssertEq { lhs, rhs, .. } => Some((*lhs, *rhs)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asserts.len(), 3, "3 AssertEqs");
+        let rhs_set: std::collections::HashSet<_> = asserts.iter().map(|(_, r)| *r).collect();
+        assert_eq!(rhs_set.len(), 3, "3 distinct slots picked (i+2 for i=0..3)");
+    }
+
+    #[test]
+    fn rejects_symbolic_array_read_when_index_not_const_foldable() {
+        // Index_var depends on a runtime Input (not a loop-iter
+        // const) — walker can't resolve. Expect the dedicated error.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "slot".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "runtime_idx".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(2),
+                start: 0,
+                end: 1,
+                body: vec![ExtendedInstruction::SymbolicArrayRead {
+                    result_var: ssa(3),
+                    array_slots: vec![ssa(0)],
+                    index_var: ssa(1),
+                    span: None,
+                }],
+            },
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert!(
+            matches!(err, WalkError::SymbolicArrayReadNotEmittable),
+            "got {err:?}"
+        );
+    }
+
+    #[test]
+    fn rejects_symbolic_array_read_when_slot_unbound() {
+        // array_slots contains an SsaVar that was never produced —
+        // missing pre-emission upstream. Read-side cannot synthesise
+        // (unlike write-side which auto-binds a witness wire). Expect
+        // the dedicated UnboundSlot error.
+        let body = vec![ExtendedInstruction::LoopUnroll {
+            iter_var: ssa(0),
+            start: 0,
+            end: 1,
+            body: vec![ExtendedInstruction::SymbolicArrayRead {
+                result_var: ssa(1),
+                // ssa(99) is never bound by any earlier instruction.
+                array_slots: vec![ssa(99)],
+                index_var: ssa(0),
+                span: None,
+            }],
+        }];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert!(
+            matches!(err, WalkError::SymbolicArrayReadUnboundSlot { idx: 0, .. }),
             "got {err:?}"
         );
     }

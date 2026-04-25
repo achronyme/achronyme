@@ -1844,18 +1844,25 @@ fn sha256_64_r1cs_probe() {
 ///   Lysis path and its post-optimize state. If the gate fails,
 ///   these give the first-look picture.
 ///
-/// **Ignored — current blocker (Gap 1 Stage 5 partial)** — Stage 5
-/// landed the `Frontend::Lysis` toggle and `WitnessArrayDecl`
-/// pre-allocation, so the gate now passes the compile + paddedIn
-/// allocation phase that previously blocked at the `paddedIn` env
-/// missing. The next blocker is symbolic `ArrayIndex` reads
-/// (`in[k]` inside a `for k in 0..nBits { paddedIn[k] <== in[k]; }`):
-/// `Instantiator::emit_expr` requires a compile-time-constant index,
-/// which the Lysis loop var doesn't satisfy. The fix is the read-side
-/// counterpart to `SymbolicIndexedEffect` (a `SymbolicArrayRead`
-/// expression node + walker arm), tracked separately from this gate.
+/// **Ignored — current blocker (Gap 1.5 closed, Gap 2 + shift fix
+/// pending)** — Gap 1 Stage 5 landed `Frontend::Lysis` +
+/// `WitnessArrayDecl` pre-allocation. Gap 1.5 (the read-side mirror
+/// of `SymbolicIndexedEffect`) added `SymbolicArrayRead` so
+/// `paddedIn[k] <== in[k]` and friends instantiate without
+/// const-folding the index. The gate now passes the entire compile
+/// phase and reaches `instantiate_lysis`; the new blocker is in
+/// `Instantiator::emit_expr` for `CircuitExpr::ShiftR`/`ShiftL`,
+/// which still requires a compile-time constant shift amount even
+/// though the `shift` field accepts `CircuitExpr`. With Lysis
+/// rolling loops, shifts whose amount references a loop var (or any
+/// non-const SsaVar derived from one) reach `resolve_const_u32` and
+/// fail with "shift right amount must be a compile-time constant".
+/// Beyond that, the next expected blocker is `Decompose(254)` in
+/// `Num2Bits_strict` — both are Gap 2 territory (BTA + structural
+/// extraction so wide single instructions get their own template
+/// frames).
 #[test]
-#[ignore = "blocked on symbolic ArrayIndex reads (Gap 1 follow-up); Stage 5 pre-alloc landed"]
+#[ignore = "Gap 1.5 closed; new blocker is symbolic shift amount in Sigma/sigma helpers (Gap 2)"]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
