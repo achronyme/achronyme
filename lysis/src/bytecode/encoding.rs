@@ -23,7 +23,7 @@
 
 use memory::field::FieldBackend;
 
-use crate::bytecode::opcode::{code, Opcode};
+use crate::bytecode::opcode::{code, InputSrc, Opcode, INPUT_SRC_REG, INPUT_SRC_SLOT};
 use crate::bytecode::ConstPool;
 use crate::error::LysisError;
 use crate::header::LysisHeader;
@@ -224,18 +224,31 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
             buf.extend_from_slice(&slot.to_le_bytes());
         }
         // EmitWitnessCallHeap is the heap-output twin of
-        // EmitWitnessCall. Inputs are length-prefixed by `u8` (same
-        // as classic), but outputs are u16 slots length-prefixed by
-        // `u16` because the whole point is to support output counts
-        // > 255 (canonical: SHA-256's 256-bit hash).
+        // EmitWitnessCall. Inputs and outputs both length-prefixed
+        // by `u16` (so the design supports up to 65535 of each, well
+        // above the SHA-256 ~700-input + 256-output worst case).
+        // Each input is tagged Reg(u8) or Slot(u16) so the executor
+        // can read it from a frame register or a heap slot without
+        // an intermediate LoadHeap emit.
         Opcode::EmitWitnessCallHeap {
             bytecode_const_idx,
-            in_regs,
+            inputs,
             out_slots,
         } => {
             buf.extend_from_slice(&bytecode_const_idx.to_le_bytes());
-            buf.push(in_regs.len() as u8);
-            buf.extend_from_slice(in_regs);
+            buf.extend_from_slice(&(inputs.len() as u16).to_le_bytes());
+            for input in inputs {
+                match input {
+                    InputSrc::Reg(reg) => {
+                        buf.push(INPUT_SRC_REG);
+                        buf.push(*reg);
+                    }
+                    InputSrc::Slot(slot) => {
+                        buf.push(INPUT_SRC_SLOT);
+                        buf.extend_from_slice(&slot.to_le_bytes());
+                    }
+                }
+            }
             buf.extend_from_slice(&(out_slots.len() as u16).to_le_bytes());
             for slot in out_slots {
                 buf.extend_from_slice(&slot.to_le_bytes());
@@ -589,7 +602,23 @@ fn decode_opcode_at(
         }
         code::EMIT_WITNESS_CALL_HEAP => {
             let bytecode_const_idx = read_u16(bytes, pos)?;
-            let in_regs = read_length_prefixed_regs(bytes, pos)?;
+            let n_in = read_u16(bytes, pos)? as usize;
+            let mut inputs = Vec::with_capacity(n_in);
+            for _ in 0..n_in {
+                let tag = read_u8(bytes, pos)?;
+                let src = match tag {
+                    INPUT_SRC_REG => InputSrc::Reg(read_u8(bytes, pos)?),
+                    INPUT_SRC_SLOT => InputSrc::Slot(read_u16(bytes, pos)?),
+                    _ => {
+                        return Err(LysisError::ValidationFailed {
+                            rule: 4,
+                            location: instr_offset,
+                            detail: "EmitWitnessCallHeap input source has unknown tag",
+                        });
+                    }
+                };
+                inputs.push(src);
+            }
             let n_out = read_u16(bytes, pos)? as usize;
             let mut out_slots = Vec::with_capacity(n_out);
             for _ in 0..n_out {
@@ -597,7 +626,7 @@ fn decode_opcode_at(
             }
             Ok(Opcode::EmitWitnessCallHeap {
                 bytecode_const_idx,
-                in_regs,
+                inputs,
                 out_slots,
             })
         }
@@ -746,36 +775,38 @@ mod tests {
 
     #[test]
     fn roundtrip_emit_witness_call_heap() {
-        // Smoke + boundary: empty inputs/outputs, single, and a
-        // 256-output case (the SHA-256 hash motivating WitnessCallHeap).
+        // Smoke + boundary: empty inputs/outputs, mixed Reg/Slot
+        // inputs, and a 256-output case (the SHA-256 hash motivating
+        // WitnessCallHeap).
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0,
-            in_regs: vec![],
+            inputs: vec![],
             out_slots: vec![],
         });
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 42,
-            in_regs: vec![1, 2, 3],
+            inputs: vec![InputSrc::Reg(1), InputSrc::Slot(2), InputSrc::Reg(3)],
             out_slots: vec![100, 101, 102],
         });
         let big_outputs: Vec<u16> = (0u16..256).collect();
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0xCAFE,
-            in_regs: vec![1, 2],
+            inputs: vec![InputSrc::Reg(1), InputSrc::Reg(2)],
             out_slots: big_outputs,
         });
     }
 
     #[test]
-    fn emit_witness_call_heap_handles_u16_output_count() {
-        // Wire format invariant: the output-count field is u16, so
-        // 256+ outputs round-trip cleanly. (`EmitWitnessCall`'s
-        // u8-prefix tops at 255 — that's why the heap variant exists.)
-        let big: Vec<u16> = (0u16..1024).collect();
+    fn emit_witness_call_heap_handles_u16_input_and_output_counts() {
+        // Wire format invariant: input and output count fields are
+        // both u16 — the design supports up to 65535 of each, well
+        // above any expected workload.
+        let big_inputs: Vec<InputSrc> = (0u16..1024).map(InputSrc::Slot).collect();
+        let big_outputs: Vec<u16> = (0u16..1024).collect();
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 1,
-            in_regs: vec![],
-            out_slots: big,
+            inputs: big_inputs,
+            out_slots: big_outputs,
         });
     }
 

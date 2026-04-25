@@ -1698,15 +1698,35 @@ impl<F: FieldBackend> Walker<F> {
                 program_bytes,
             } => {
                 let blob_idx = self.builder.intern_artik_bytecode(program_bytes.clone()) as u16;
-                let in_regs: Vec<RegId> = inputs
-                    .iter()
-                    .map(|v| self.resolve(*v))
-                    .collect::<Result<_, _>>()?;
 
                 if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
-                    // Heap-output path. Each output binds to a fresh
-                    // heap slot, never to a register. `resolve()`
-                    // pulls them via LoadHeap on first use.
+                    // Heap-output path: classify each input into
+                    // `InputSrc::Reg(reg)` (already in `ssa_to_reg`,
+                    // hot) or `InputSrc::Slot(slot)` (already in
+                    // `ssa_to_heap`, cold). NO `LoadHeap` is emitted
+                    // for cold inputs — the executor reads them
+                    // directly from `heap[slot]`. This is what makes
+                    // SHA-256-class circuits compilable: an Artik
+                    // call with 700+ inputs and 256 outputs would
+                    // otherwise need 700 LoadHeap + 256 fresh regs,
+                    // overflowing the 255 frame cap on a single
+                    // instruction.
+                    let mut classified_inputs: Vec<lysis::InputSrc> =
+                        Vec::with_capacity(inputs.len());
+                    for v in inputs {
+                        if let Some(&reg) = self.ssa_to_reg.get(v) {
+                            classified_inputs.push(lysis::InputSrc::Reg(reg));
+                        } else if let Some(&slot) = self.ssa_to_heap.get(v) {
+                            classified_inputs.push(lysis::InputSrc::Slot(slot));
+                        } else {
+                            return Err(WalkError::UndefinedSsaVar(*v));
+                        }
+                    }
+                    // Each output binds to a fresh heap slot,
+                    // recorded in `ssa_to_heap`. Downstream consumers
+                    // pull via `Walker::resolve` lazy-reload (LoadHeap
+                    // emit) or, if they're another WitnessCallHeap,
+                    // directly through this same Slot classification.
                     let mut out_slots: Vec<u16> = Vec::with_capacity(outputs.len());
                     for o in outputs {
                         let slot = self.heap_alloc;
@@ -1716,11 +1736,17 @@ impl<F: FieldBackend> Walker<F> {
                     }
                     self.push_op(Opcode::EmitWitnessCallHeap {
                         bytecode_const_idx: blob_idx,
-                        in_regs,
+                        inputs: classified_inputs,
                         out_slots,
                     });
                 } else {
-                    // Classic register-output path.
+                    // Classic register-output path: resolve every
+                    // input into a frame reg (LoadHeap emitted for
+                    // cold inputs via `resolve`).
+                    let in_regs: Vec<RegId> = inputs
+                        .iter()
+                        .map(|v| self.resolve(*v))
+                        .collect::<Result<_, _>>()?;
                     let mut out_regs: Vec<RegId> = Vec::with_capacity(outputs.len());
                     for o in outputs {
                         let reg = self.allocator.alloc()?;
@@ -2476,6 +2502,17 @@ fn cold_load_cost<F: FieldBackend>(
         // Fast path: no spilled vars exist program-wide yet, so no
         // operand can be cold. Shortcut for the corpus baseline.
         return 0;
+    }
+    // Phase 4 follow-up: heap-output `WitnessCall` reads its inputs
+    // directly from heap slots via `InputSrc::Slot` — no `LoadHeap`
+    // is emitted for cold inputs, so cold operands cost 0 frame regs.
+    // Mirror the walker's emit-time branch in `emit_plain` so the
+    // split-trigger doesn't over-estimate and fragment the program
+    // unnecessarily.
+    if let ExtendedInstruction::Plain(Instruction::WitnessCall { outputs, .. }) = inst {
+        if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
+            return 0;
+        }
     }
     let mut refs = HashSet::new();
     collect_in_extinst(inst, &mut refs);

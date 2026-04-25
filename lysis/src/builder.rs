@@ -342,20 +342,22 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         self.push(Opcode::LoadHeap { dst_reg, slot })
     }
 
-    /// Emit an `EmitWitnessCallHeap { bytecode_const_idx, in_regs,
-    /// out_slots }` opcode (Phase 4 follow-up). Outputs land in heap
-    /// slots; subsequent `LoadHeap` opcodes materialise them into
-    /// registers as needed. Used when the Artik program produces
-    /// more outputs than fit alongside hot captures in a u8 frame.
+    /// Emit an `EmitWitnessCallHeap { bytecode_const_idx, inputs,
+    /// out_slots }` opcode (Phase 4 follow-up). Inputs may come from
+    /// regs (`InputSrc::Reg`) or heap slots (`InputSrc::Slot`);
+    /// outputs always land in heap slots. Used when the Artik
+    /// program produces more outputs than fit alongside hot captures
+    /// in a u8 frame, or when too many inputs are heap-resident to
+    /// materialise into regs without overflowing the cap.
     pub fn emit_witness_call_heap(
         &mut self,
         bytecode_const_idx: u16,
-        in_regs: Vec<u8>,
+        inputs: Vec<crate::bytecode::opcode::InputSrc>,
         out_slots: Vec<u16>,
     ) -> &mut Self {
         self.push(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx,
-            in_regs,
+            inputs,
             out_slots,
         })
     }

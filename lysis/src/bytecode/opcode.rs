@@ -213,19 +213,44 @@ pub enum Opcode {
     // output bits, where `EmitWitnessCall` would need 256 fresh
     // registers and exceed the `FRAME_CAP = 255` cap structurally).
     //
-    // Outputs land directly in heap slots (`u16` indices, length-
-    // prefixed by `u16`) instead of register slots (`u8` indices,
-    // length-prefixed by `u8`). Subsequent opcodes that read an
-    // output materialise it via `LoadHeap` through the walker's
-    // lazy-reload path. Inputs still live in regs since input count
-    // is bounded by what the program can compute upstream.
+    // Both **inputs** and **outputs** can live in heap slots, not
+    // just outputs. Each input is `InputSrc::Reg(u8)` (read from a
+    // frame register, classic path) or `InputSrc::Slot(u16)` (read
+    // directly from a heap slot, bypassing the LoadHeap + alloc
+    // dance entirely). Outputs always land in heap slots. This
+    // matters for SHA-256-class circuits where a single
+    // `WitnessCall` may have hundreds of cold inputs — emitting one
+    // `LoadHeap` per cold input would overflow the frame just as
+    // structurally as emitting outputs to regs would.
     // -----------------------------------------------------------------
     EmitWitnessCallHeap {
         bytecode_const_idx: u16,
-        in_regs: Vec<u8>,
+        inputs: Vec<InputSrc>,
         out_slots: Vec<u16>,
     },
 }
+
+/// Per-input source descriptor for [`Opcode::EmitWitnessCallHeap`].
+///
+/// Each input position in an Artik program comes from either a
+/// frame register (hot path, classic) or a heap slot (cold path,
+/// no `LoadHeap` needed because the executor reads `heap[slot]`
+/// directly). Order is preserved across the wire so the Artik
+/// runtime sees its inputs in the original IR order.
+///
+/// Wire format per element: `1 byte tag + 1-or-2 byte payload`.
+/// - `Reg(u8)`: tag `0x00`, payload 1 byte → 2 bytes total.
+/// - `Slot(u16)`: tag `0x01`, payload 2 bytes LE → 3 bytes total.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum InputSrc {
+    Reg(u8),
+    Slot(u16),
+}
+
+/// Wire-format tag for [`InputSrc::Reg`].
+pub const INPUT_SRC_REG: u8 = 0x00;
+/// Wire-format tag for [`InputSrc::Slot`].
+pub const INPUT_SRC_SLOT: u8 = 0x01;
 
 /// Raw byte identifiers from RFC §4.3.
 pub mod code {
@@ -501,7 +526,7 @@ mod tests {
         // not consider any register written by this instruction.
         assert!(!Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0,
-            in_regs: vec![],
+            inputs: vec![],
             out_slots: vec![],
         }
         .writes_register());
@@ -511,7 +536,7 @@ mod tests {
     fn emit_witness_call_heap_falls_through() {
         assert!(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0,
-            in_regs: vec![],
+            inputs: vec![],
             out_slots: vec![],
         }
         .falls_through());

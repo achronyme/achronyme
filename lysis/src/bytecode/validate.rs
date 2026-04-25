@@ -229,9 +229,15 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         }
         Opcode::StoreHeap { src_reg, .. } => vec![*src_reg],
         Opcode::LoadHeap { dst_reg, .. } => vec![*dst_reg],
-        // Outputs go to heap slots, not registers, so only inputs
-        // contribute to register-bounds checks.
-        Opcode::EmitWitnessCallHeap { in_regs, .. } => in_regs.clone(),
+        // Outputs go to heap slots; inputs are mixed reg/slot.
+        // Only `Reg(_)` inputs contribute to register-bounds checks.
+        Opcode::EmitWitnessCallHeap { inputs, .. } => inputs
+            .iter()
+            .filter_map(|src| match src {
+                crate::bytecode::opcode::InputSrc::Reg(r) => Some(*r),
+                crate::bytecode::opcode::InputSrc::Slot(_) => None,
+            })
+            .collect(),
     }
 }
 
@@ -600,7 +606,21 @@ fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), L
                     });
                 }
             }
-            Opcode::EmitWitnessCallHeap { out_slots, .. } => {
+            Opcode::EmitWitnessCallHeap {
+                inputs, out_slots, ..
+            } => {
+                for src in inputs {
+                    if let crate::bytecode::opcode::InputSrc::Slot(slot) = src {
+                        if *slot >= cap {
+                            return Err(LysisError::ValidationFailed {
+                                rule: 12,
+                                location: instr.offset,
+                                detail:
+                                    "EmitWitnessCallHeap input Slot exceeds header heap_size_hint",
+                            });
+                        }
+                    }
+                }
                 for slot in out_slots {
                     if *slot >= cap {
                         return Err(LysisError::ValidationFailed {
@@ -694,11 +714,28 @@ fn check_heap_single_static_store<F: FieldBackend>(program: &Program<F>) -> Resu
                     });
                 }
             }
-            Opcode::EmitWitnessCallHeap { out_slots, .. } => {
-                // Each output slot is written exactly once. Treat the
-                // whole vector as a batch StoreHeap: every slot must
-                // be Unwritten beforehand and all transition to
-                // Written afterwards.
+            Opcode::EmitWitnessCallHeap {
+                inputs, out_slots, ..
+            } => {
+                // Read-side inputs (Slot variant): each slot must be
+                // Written. Same contract as LoadHeap.
+                for src in inputs {
+                    if let crate::bytecode::opcode::InputSrc::Slot(slot) = src {
+                        let s = *slot as usize;
+                        if s >= state.len() {
+                            continue;
+                        }
+                        if state[s] != HeapSlotState::Written {
+                            return Err(LysisError::ValidationFailed {
+                                rule: 13,
+                                location: instr.offset,
+                                detail: "EmitWitnessCallHeap reads from unwritten input Slot",
+                            });
+                        }
+                    }
+                }
+                // Write-side outputs: each slot must be Unwritten,
+                // transitions to Written.
                 for slot in out_slots {
                     let s = *slot as usize;
                     if s >= state.len() {
