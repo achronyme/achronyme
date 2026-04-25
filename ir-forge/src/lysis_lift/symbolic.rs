@@ -32,7 +32,7 @@ use std::collections::HashMap;
 use memory::{FieldBackend, FieldElement};
 use smallvec::SmallVec;
 
-use crate::extended::IndexedEffectKind;
+use crate::extended::{IndexedEffectKind, ShiftDirection};
 use crate::{ExtendedInstruction, TemplateId};
 use ir_core::{Instruction, SsaVar, Visibility};
 
@@ -174,6 +174,26 @@ pub enum SymbolicNode<F: FieldBackend> {
     ArrayRead {
         array_anchor: SmallVec<[NodeIdx; 4]>,
         index_operand: NodeIdx,
+    },
+    /// A symbolic-amount shift produced by Gap 3
+    /// [`ExtendedInstruction::SymbolicShift`]. The
+    /// `operand_anchor` points at the resolved value-being-shifted
+    /// (typically an `OuterRef`); `shift_operand` points at the
+    /// shift amount (typically a slot-tagged `Const` that picks up
+    /// the iter_var across probes). `num_bits` and `direction` are
+    /// part of the structural fingerprint — two probes that disagree
+    /// on either diverge unconditionally.
+    ///
+    /// Two probes targeting the same operand + width + direction
+    /// produce identical `Shift` nodes; the only divergence sits
+    /// inside the `shift_operand` chain (a slot-tagged `Const` from
+    /// the probe binding), so `structural_diff` classifies
+    /// `OnlyConstants` and BTA marks the enclosing loop `Uniform`.
+    Shift {
+        operand_anchor: NodeIdx,
+        shift_operand: NodeIdx,
+        num_bits: u32,
+        direction: ShiftDirection,
     },
 }
 
@@ -394,27 +414,24 @@ fn emit_one<F: FieldBackend>(
             result_var,
             operand_var,
             shift_var,
+            num_bits,
+            direction,
             ..
         } => {
-            // Stage 1 (Gap 3) — pull `operand_var` and `shift_var`
-            // through `resolve_operand` so the lift's `OuterRef` /
-            // slot-tagged-Const accounting sees them. Without this,
-            // the symbolic tree would be opaque (`NestedLoop`-only)
-            // and the lift's capture scan would miss `operand_var`,
-            // leaving it unbound when the per-iter walker emits the
-            // shift expansion. `result_var` binds to the sentinel
-            // node so downstream AssertEq operands resolve to a
-            // stable NodeIdx instead of synthesising an `OuterRef`
-            // (which would corrupt the capture set).
-            //
-            // Stage 4 will replace the `NestedLoop` sentinel with a
-            // dedicated `SymbolicNode::Shift { operand_anchor,
-            // shift_operand, num_bits, direction }` so two probes
-            // classify equal under `structural_diff` even when
-            // shift-amount slots diverge.
-            let _operand_anchor = resolve_operand(*operand_var, tree, ssa_to_idx);
-            let _shift_operand = resolve_operand(*shift_var, tree, ssa_to_idx);
-            let idx = tree.push(SymbolicNode::NestedLoop);
+            let operand_anchor = resolve_operand(*operand_var, tree, ssa_to_idx);
+            let shift_operand = resolve_operand(*shift_var, tree, ssa_to_idx);
+            let idx = tree.push(SymbolicNode::Shift {
+                operand_anchor,
+                shift_operand,
+                num_bits: *num_bits,
+                direction: *direction,
+            });
+            // Bind result_var to the Shift node so downstream uses
+            // inside the same body (within the same probe walk)
+            // resolve to a stable NodeIdx. Two probes produce the
+            // same NodeIdx at the same body position, and
+            // `nodes_equal`'s `Shift` arm matches them as
+            // structurally equal modulo slot divergence.
             ssa_to_idx.insert(*result_var, idx);
             tree.body_order.push(idx);
         }
