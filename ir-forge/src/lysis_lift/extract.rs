@@ -376,7 +376,31 @@ fn lift_one<F: FieldBackend>(
                 BindingTime::Uniform {
                     skeleton,
                     captures: _slot_caps,
-                } => Ok(lift_uniform_to_template(loop_unroll, skeleton, registry)?),
+                } => {
+                    // Clone before the move — if the lift overflows the
+                    // frame budget we fall back to the original loop.
+                    let fallback = loop_unroll.clone();
+                    match lift_uniform_to_template(loop_unroll, skeleton, registry) {
+                        Ok(lifted) => Ok(lifted),
+                        // Graceful degradation: a Uniform body whose
+                        // symbolic skeleton would need more than
+                        // `MAX_FRAME_SIZE = 255` producing slots can't
+                        // fit one template frame (RFC §5.1's u8 cap on
+                        // `InstantiateTemplate.frame_size`). Rather
+                        // than erroring out the whole compile — which
+                        // for SHA-256-class circuits would block at
+                        // the first oversized Σ helper — keep the
+                        // loop inline as if it had classified
+                        // `DataDependent`. The walker's per-iter
+                        // unroll path handles wide bodies via the
+                        // top-level `do_split` mechanism (Phase 1.5).
+                        // Other lift errors (e.g.
+                        // `TemplateSpaceExhausted`) are real failures
+                        // and propagate.
+                        Err(ExtractError::FrameOverflow { .. }) => Ok(vec![fallback]),
+                        Err(other) => Err(other),
+                    }
+                }
                 BindingTime::DataDependent => Ok(vec![loop_unroll]),
             }
         }
@@ -822,6 +846,57 @@ mod tests {
         assert!(reg.is_empty(), "no template allocated for DataDependent");
         assert_eq!(lifted.len(), 1);
         assert!(matches!(lifted[0], ExtendedInstruction::LoopUnroll { .. }));
+    }
+
+    #[test]
+    fn lift_falls_back_to_inline_when_body_exceeds_frame_cap() {
+        // Construct a Uniform loop whose body's symbolic skeleton
+        // would need more than `MAX_FRAME_SIZE = 255` producing
+        // slots — `lift_uniform_to_template` returns `FrameOverflow`,
+        // and `lift_one` must catch it and keep the loop inline as
+        // if it had classified `DataDependent`. Other lift errors
+        // still propagate.
+        //
+        // 260 sequential Add instructions all producing fresh SSA
+        // vars from the iter_var give a skeleton with 260 producing
+        // Add nodes, comfortably over the cap.
+        const N_ADDS: u32 = 260;
+        let mut inner_body: Vec<ExtendedInstruction<Bn254Fr>> = Vec::with_capacity(N_ADDS as usize);
+        for k in 0..N_ADDS {
+            inner_body.push(
+                Instruction::Add {
+                    result: ssa(100 + k),
+                    lhs: ssa(0),  // iter_var (slot capture)
+                    rhs: ssa(99), // outer ref capture
+                }
+                .into(),
+            );
+        }
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::LoopUnroll {
+            iter_var: ssa(0),
+            start: 0,
+            end: 3,
+            body: inner_body,
+        }];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+
+        assert!(reg.is_empty(), "no template allocated when lift overflows");
+        assert_eq!(lifted.len(), 1, "single inline LoopUnroll fallback");
+        match &lifted[0] {
+            ExtendedInstruction::LoopUnroll {
+                iter_var,
+                start,
+                end,
+                body,
+            } => {
+                assert_eq!(*iter_var, ssa(0));
+                assert_eq!(*start, 0);
+                assert_eq!(*end, 3);
+                assert_eq!(body.len(), N_ADDS as usize);
+            }
+            other => panic!("expected fallback LoopUnroll, got {other:?}"),
+        }
     }
 
     #[test]
