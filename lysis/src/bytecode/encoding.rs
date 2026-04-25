@@ -26,7 +26,7 @@ use memory::field::FieldBackend;
 use crate::bytecode::opcode::{code, Opcode};
 use crate::bytecode::ConstPool;
 use crate::error::LysisError;
-use crate::header::{LysisHeader, HEADER_SIZE};
+use crate::header::LysisHeader;
 use crate::intern::Visibility;
 use crate::program::{Instr, Program, Template};
 
@@ -215,6 +215,14 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
             buf.push(*rhs);
             buf.push(*max_bits);
         }
+        // StoreHeap.src_reg and LoadHeap.dst_reg are distinct fields
+        // semantically (one reads a reg, one writes one) but identical
+        // on the wire — both are `u8 reg + u16 slot`. The shared
+        // pattern keeps the encoder honest about that.
+        Opcode::StoreHeap { src_reg: reg, slot } | Opcode::LoadHeap { dst_reg: reg, slot } => {
+            buf.push(*reg);
+            buf.extend_from_slice(&slot.to_le_bytes());
+        }
     }
 }
 
@@ -230,13 +238,16 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
 pub fn decode<F: FieldBackend>(bytes: &[u8]) -> Result<Program<F>, LysisError> {
     let header = LysisHeader::decode(bytes)?;
 
-    if bytes.len() < HEADER_SIZE {
+    // Header validates its own length internally, but the slice we
+    // consume here has version-dependent size (16 for v1, 18 for v2).
+    let header_size = header.size_in_bytes();
+    if bytes.len() < header_size {
         return Err(LysisError::UnexpectedEof {
-            needed: HEADER_SIZE,
+            needed: header_size,
             remaining: bytes.len(),
         });
     }
-    let after_header = &bytes[HEADER_SIZE..];
+    let after_header = &bytes[header_size..];
     let (const_pool, pool_used) =
         ConstPool::<F>::decode(after_header, header.const_pool_len, header.family)?;
 
@@ -548,6 +559,16 @@ fn decode_opcode_at(
                 _ => unreachable!("match guard covers only these 2"),
             })
         }
+        code::STORE_HEAP => {
+            let src_reg = read_u8(bytes, pos)?;
+            let slot = read_u16(bytes, pos)?;
+            Ok(Opcode::StoreHeap { src_reg, slot })
+        }
+        code::LOAD_HEAP => {
+            let dst_reg = read_u8(bytes, pos)?;
+            let slot = read_u16(bytes, pos)?;
+            Ok(Opcode::LoadHeap { dst_reg, slot })
+        }
         other => Err(LysisError::UnknownOpcode {
             code: other,
             at_offset: instr_offset,
@@ -711,6 +732,104 @@ mod tests {
             var: 13,
             max_bits: 64,
         });
+    }
+
+    #[test]
+    fn roundtrip_heap_ops() {
+        // Sample edge cases for the u16 slot field: zero, mid-range,
+        // and the maximum so a regression on slot width (e.g.,
+        // accidental u8 truncation) trips the test.
+        roundtrip_opcode(Opcode::StoreHeap {
+            src_reg: 0,
+            slot: 0,
+        });
+        roundtrip_opcode(Opcode::StoreHeap {
+            src_reg: 17,
+            slot: 4096,
+        });
+        roundtrip_opcode(Opcode::StoreHeap {
+            src_reg: 255,
+            slot: u16::MAX,
+        });
+        roundtrip_opcode(Opcode::LoadHeap {
+            dst_reg: 0,
+            slot: 0,
+        });
+        roundtrip_opcode(Opcode::LoadHeap {
+            dst_reg: 42,
+            slot: 12345,
+        });
+        roundtrip_opcode(Opcode::LoadHeap {
+            dst_reg: 255,
+            slot: u16::MAX,
+        });
+    }
+
+    #[test]
+    fn heap_ops_emit_4_bytes() {
+        // Wire-format invariant from research report §2.2: each heap
+        // op is `u8 opcode + u8 reg + u16 slot = 4 bytes`. A change
+        // in this number is an ABI break.
+        let mut buf = Vec::new();
+        encode_opcode(
+            &Opcode::StoreHeap {
+                src_reg: 7,
+                slot: 0xDEAD,
+            },
+            &mut buf,
+        );
+        assert_eq!(buf.len(), 4, "StoreHeap must encode to exactly 4 bytes");
+        let mut buf = Vec::new();
+        encode_opcode(
+            &Opcode::LoadHeap {
+                dst_reg: 7,
+                slot: 0xBEEF,
+            },
+            &mut buf,
+        );
+        assert_eq!(buf.len(), 4, "LoadHeap must encode to exactly 4 bytes");
+    }
+
+    #[test]
+    fn heap_ops_round_trip_through_full_decode_body() {
+        // The decoder's `decode_body` path must accept heap ops
+        // alongside other opcodes. This is the integration check that
+        // pairs with `roundtrip_heap_ops` (which goes through the
+        // single-opcode helper).
+        let mut buf = Vec::new();
+        encode_opcode(
+            &Opcode::StoreHeap {
+                src_reg: 3,
+                slot: 100,
+            },
+            &mut buf,
+        );
+        encode_opcode(&Opcode::Halt, &mut buf);
+        encode_opcode(
+            &Opcode::LoadHeap {
+                dst_reg: 4,
+                slot: 100,
+            },
+            &mut buf,
+        );
+        encode_opcode(&Opcode::Return, &mut buf);
+        let (body, templates) = decode_body(&buf).unwrap();
+        assert!(templates.is_empty());
+        assert_eq!(body.len(), 4);
+        assert_eq!(
+            body[0].opcode,
+            Opcode::StoreHeap {
+                src_reg: 3,
+                slot: 100,
+            }
+        );
+        assert_eq!(
+            body[2].opcode,
+            Opcode::LoadHeap {
+                dst_reg: 4,
+                slot: 100
+            }
+        );
     }
 
     #[test]

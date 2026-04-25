@@ -1845,12 +1845,14 @@ fn sha256_64_r1cs_probe() {
 ///   these give the first-look picture.
 ///
 /// **Ignored — IR-Instantiator blockers closed (Gaps 1/1.5/2/3),
-/// new blockers are Lysis-architecture-level**. Gap 3 (`SymbolicShift`)
-/// closes the last symbolic-loop emit gap: shifts whose amount is
-/// the loop iter var no longer fail at `resolve_const_u32`, and Σ
-/// helpers (Sigma0/Sigma1/sigma0/sigma1) classify Uniform under BTA.
+/// walker-level live-set blockers closed (Gap 4 + Phase 4), only
+/// remaining blocker is circom-lowering perf**. Gap 3
+/// (`SymbolicShift`) closes the last symbolic-loop emit gap: shifts
+/// whose amount is the loop iter var no longer fail at
+/// `resolve_const_u32`, and Σ helpers (Sigma0/Sigma1/sigma0/sigma1)
+/// classify Uniform under BTA.
 ///
-/// **Architectural blockers post-Gap-3 (status as of 2026-04-25):**
+/// **Architectural blockers post-Phase-4 (status as of 2026-04-25):**
 ///
 ///   1. **Lifted template frame overflow** — *closed*
 ///      (`9828dcbe` + `f42f3ce0`). `lift_uniform_loops` would
@@ -1860,14 +1862,33 @@ fn sha256_64_r1cs_probe() {
 ///      inside `emit_loop_unroll_per_iter` (`f42f3ce0`, Gap 4) lets
 ///      the wide single-iteration body chain across multiple ≤255-
 ///      slot frames without losing the per-iter `iter_var` literal.
-///   2. **Compile time** — *open*. `[compile]` ≈ 250s before
+///   2. **Live-set > 64 captures** — *closed* (Phase 4, branch
+///      `feat/lysis-phase4-heap`). The walker no longer fails with
+///      `LiveSetTooLarge { count: 250 }`; live sets > 48 split into
+///      hot captures (≤ 48) + cold spills (heap-resident, lazy-
+///      reloaded on first use). See research report
+///      `.claude/plans/lysis-phase4-research-report.md` for the full
+///      contract; the `lysis/tests/heap_synthetic.rs` 250-slot
+///      fixture validates the heap path end-to-end without going
+///      through this gate.
+///   3. **Compile time** — *open*. `[compile]` ≈ 250s before
 ///      `instantiate_lysis` even starts. Source: circom lowering of
 ///      circomlib's full SHA-256, not a Lysis issue. See
 ///      `.claude/plans/circom-lowering-perf.md`. While this dominates
 ///      wall clock, it doesn't represent a correctness regression —
 ///      the gate stays ignored until the lowering perf work lands.
+///   4. **Lazy-reload-without-recycling frame growth** — *open,
+///      v1.1*. Phase 4 v1 caps the post-split frame at hot captures
+///      plus the count of distinct cold vars materialised in the
+///      body (research report §6.4 + §7.7). For SHA-256(64) we
+///      estimate this count at 30–50 per template — comfortable.
+///      If the gate eventually surfaces a
+///      `WalkError::Alloc(FrameOverflow)` instead of executing, the
+///      next escalation is scratch-reg recycling (v1.1). The
+///      placeholder test `ir-forge/tests/walker_adversarial.rs`
+///      documents the v1→v1.1 transition.
 #[test]
-#[ignore = "Gap 4 closed walker frame-overflow gap; remaining blocker is 250s circom-lowering compile (separate work)"]
+#[ignore = "Phase 4 heap path closes the walker live-set blocker (LiveSetTooLarge { count: 250 }); remaining blocker is the unrelated 250 s circom-lowering compile, tracked separately in .claude/plans/circom-lowering-perf.md. Gate stays ignored until that perf work lands."]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};

@@ -35,6 +35,7 @@ pub struct ProgramBuilder<F: FieldBackend = Bn254Fr> {
     body: Vec<Instr>,
     templates: Vec<Template>,
     body_len_bytes: u32,
+    heap_size_hint: u16,
 }
 
 impl<F: FieldBackend> ProgramBuilder<F> {
@@ -49,6 +50,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
             body: Vec::new(),
             templates: Vec::new(),
             body_len_bytes: 0,
+            heap_size_hint: 0,
         }
     }
 
@@ -56,6 +58,22 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     pub fn with_flags(mut self, flags: u8) -> Self {
         self.flags = flags;
         self
+    }
+
+    /// Set the heap size hint emitted in the v2 header. The executor
+    /// pre-sizes its `heap` vector to this value, so a program that
+    /// emits `StoreHeap { slot }` opcodes must declare a hint
+    /// `> max_slot`.
+    pub fn with_heap_size_hint(mut self, hint: u16) -> Self {
+        self.heap_size_hint = hint;
+        self
+    }
+
+    /// Mutable setter form of [`Self::with_heap_size_hint`]. Used by
+    /// callers that own the builder by `&mut` rather than value (e.g.
+    /// the walker's `finalize()` path).
+    pub fn set_heap_size_hint(&mut self, hint: u16) {
+        self.heap_size_hint = hint;
     }
 
     /// Number of instructions pushed so far.
@@ -311,6 +329,19 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         })
     }
 
+    /// Emit a `StoreHeap { src_reg, slot }` opcode (Phase 4 §6.2).
+    /// The receiving program must declare `heap_size_hint > slot` —
+    /// see [`Self::with_heap_size_hint`].
+    pub fn store_heap(&mut self, src_reg: u8, slot: u16) -> &mut Self {
+        self.push(Opcode::StoreHeap { src_reg, slot })
+    }
+
+    /// Emit a `LoadHeap { dst_reg, slot }` opcode (Phase 4 §6.2).
+    /// Pairs with a prior `StoreHeap` to the same slot.
+    pub fn load_heap(&mut self, dst_reg: u8, slot: u16) -> &mut Self {
+        self.push(Opcode::LoadHeap { dst_reg, slot })
+    }
+
     pub fn emit_int_mod(&mut self, dst: u8, lhs: u8, rhs: u8, max_bits: u8) -> &mut Self {
         self.push(Opcode::EmitIntMod {
             dst,
@@ -363,7 +394,8 @@ impl<F: FieldBackend> ProgramBuilder<F> {
             self.flags,
             self.const_pool.len() as u32,
             self.body_len_bytes,
-        );
+        )
+        .with_heap_size_hint(self.heap_size_hint);
         Program {
             header,
             const_pool: self.const_pool,

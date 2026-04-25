@@ -1,4 +1,4 @@
-//! `Opcode` — the 29 instructions Lysis understands, exactly matching
+//! `Opcode` — the 33 instructions Lysis understands, exactly matching
 //! the table in RFC §4.3.
 //!
 //! Each variant carries its operands inline so that after a successful
@@ -26,7 +26,7 @@
 
 use crate::intern::Visibility;
 
-/// All 29 Lysis opcodes, grouped per RFC §4.3 section.
+/// All 33 Lysis opcodes, grouped per RFC §4.3 section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     // -----------------------------------------------------------------
@@ -181,6 +181,27 @@ pub enum Opcode {
         rhs: u8,
         max_bits: u8,
     },
+
+    // -----------------------------------------------------------------
+    // §4.3.6 Heap spill (Phase 4) — captures-overflow escape valve.
+    //
+    // Both opcodes operate on a program-global heap (RFC §4.3.6 +
+    // research report §6.2). `slot` is u16 → up to 65 535 distinct
+    // entries; the `heap_size_hint` field on the v2 bytecode header
+    // sizes the executor's heap vector at load time. The walker emits
+    // these only when a split's live set exceeds `MAX_CAPTURES_HOT`
+    // (Phase 4 §6.4); programs that fit in 64 captures emit zero
+    // heap opcodes and decode identically against v1 readers minus
+    // the version byte.
+    // -----------------------------------------------------------------
+    StoreHeap {
+        src_reg: u8,
+        slot: u16,
+    },
+    LoadHeap {
+        dst_reg: u8,
+        slot: u16,
+    },
 }
 
 /// Raw byte identifiers from RFC §4.3.
@@ -225,6 +246,10 @@ pub mod code {
     pub const EMIT_IS_LT: u8 = 0x4C;
     pub const EMIT_INT_DIV: u8 = 0x4D;
     pub const EMIT_INT_MOD: u8 = 0x4E;
+
+    // §4.3.6 (Phase 4 — heap spill)
+    pub const STORE_HEAP: u8 = 0x50;
+    pub const LOAD_HEAP: u8 = 0x51;
 }
 
 impl Opcode {
@@ -263,6 +288,8 @@ impl Opcode {
             Self::EmitIsLt { .. } => EMIT_IS_LT,
             Self::EmitIntDiv { .. } => EMIT_INT_DIV,
             Self::EmitIntMod { .. } => EMIT_INT_MOD,
+            Self::StoreHeap { .. } => STORE_HEAP,
+            Self::LoadHeap { .. } => LOAD_HEAP,
         }
     }
 
@@ -301,6 +328,8 @@ impl Opcode {
             Self::EmitIsLt { .. } => "EmitIsLt",
             Self::EmitIntDiv { .. } => "EmitIntDiv",
             Self::EmitIntMod { .. } => "EmitIntMod",
+            Self::StoreHeap { .. } => "StoreHeap",
+            Self::LoadHeap { .. } => "LoadHeap",
         }
     }
 
@@ -324,6 +353,7 @@ impl Opcode {
                 | Self::EmitIsLt { .. }
                 | Self::EmitIntDiv { .. }
                 | Self::EmitIntMod { .. }
+                | Self::LoadHeap { .. }
         )
     }
 
@@ -391,7 +421,7 @@ mod tests {
     }
 
     #[test]
-    fn all_29_codes_are_unique() {
+    fn all_33_codes_are_unique() {
         let all = [
             code::LOAD_CAPTURE,
             code::LOAD_CONST,
@@ -422,12 +452,55 @@ mod tests {
             code::EMIT_POSEIDON_HASH,
             code::EMIT_IS_EQ,
             code::EMIT_IS_LT,
+            code::EMIT_INT_DIV,
+            code::EMIT_INT_MOD,
+            code::STORE_HEAP,
+            code::LOAD_HEAP,
         ];
-        assert_eq!(all.len(), 29, "RFC §4.3 lists 29 opcodes");
+        assert_eq!(all.len(), 33, "RFC §4.3 lists 33 opcodes");
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
         sorted.dedup();
-        assert_eq!(sorted.len(), 29, "opcode bytes must be unique");
+        assert_eq!(sorted.len(), 33, "opcode bytes must be unique");
+    }
+
+    #[test]
+    fn store_heap_does_not_write_register() {
+        // StoreHeap is a *side effect* on the program-global heap; it
+        // does not produce a register-resident value. The validator's
+        // uninitialized-register check (rule 9) must not consider its
+        // src_reg to be a destination.
+        assert!(!Opcode::StoreHeap {
+            src_reg: 0,
+            slot: 0
+        }
+        .writes_register());
+    }
+
+    #[test]
+    fn load_heap_writes_register() {
+        // LoadHeap materialises a heap entry into a fresh register;
+        // post-execute, dst_reg is initialized.
+        assert!(Opcode::LoadHeap {
+            dst_reg: 0,
+            slot: 0
+        }
+        .writes_register());
+    }
+
+    #[test]
+    fn heap_opcodes_fall_through() {
+        // Neither heap op terminates control flow.
+        assert!(Opcode::StoreHeap {
+            src_reg: 0,
+            slot: 0
+        }
+        .falls_through());
+        assert!(Opcode::LoadHeap {
+            dst_reg: 0,
+            slot: 0
+        }
+        .falls_through());
     }
 
     #[test]

@@ -35,7 +35,8 @@ pub use config::LysisConfig;
 pub use error::LysisError;
 pub use execute::{execute, expected_family, Frame, InterningSink, IrSink, StubSink};
 pub use header::{
-    LysisHeader, FLAGS_DEFINED_MASK, FLAG_HAS_WITNESS_CALLS, HEADER_SIZE, MAGIC, VERSION,
+    LysisHeader, FLAGS_DEFINED_MASK, FLAG_HAS_WITNESS_CALLS, HEADER_SIZE, HEADER_SIZE_V1,
+    HEADER_SIZE_V2, MAGIC, VERSION, VERSION_V1,
 };
 pub use intern::{
     EffectId, InstructionKind, NodeId, NodeIdGen, NodeInterner, NodeKey, SideEffect, SpanList,

@@ -23,6 +23,8 @@
 //! |  9 | [`check_forward_dataflow`] (linear-only; skipped when jumps present, flagged for Phase 2) |
 //! | 10 | [`check_reachable_return`] |
 //! | 11 | [`check_call_graph`] |
+//! | 12 | [`check_heap_slot_bounds`] (Phase 4 — slot < heap_size_hint) |
+//! | 13 | [`check_heap_single_static_store`] (Phase 4 — at most one StoreHeap per slot) |
 //!
 //! Rules 1, 3 are enforced before this module even gets a chance to
 //! look at the program, so there is nothing here for them. Rule 5
@@ -80,6 +82,8 @@ pub fn validate<F: FieldBackend>(
     check_forward_dataflow(program)?;
     check_reachable_return(program)?;
     check_call_graph(program, config)?;
+    check_heap_slot_bounds(program)?;
+    check_heap_single_static_store(program)?;
     Ok(())
 }
 
@@ -223,6 +227,8 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         Opcode::EmitIntDiv { dst, lhs, rhs, .. } | Opcode::EmitIntMod { dst, lhs, rhs, .. } => {
             vec![*dst, *lhs, *rhs]
         }
+        Opcode::StoreHeap { src_reg, .. } => vec![*src_reg],
+        Opcode::LoadHeap { dst_reg, .. } => vec![*dst_reg],
     }
 }
 
@@ -574,10 +580,115 @@ fn dfs_longest(
     Ok(best)
 }
 
+// ---------------------------------------------------------------------
+// Rule 12 — heap slot < heap_size_hint (Phase 4 §6.3).
+// ---------------------------------------------------------------------
+
+fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), LysisError> {
+    let cap = program.header.heap_size_hint;
+    for instr in &program.body {
+        let slot = match &instr.opcode {
+            Opcode::StoreHeap { slot, .. } | Opcode::LoadHeap { slot, .. } => *slot,
+            _ => continue,
+        };
+        if slot >= cap {
+            return Err(LysisError::ValidationFailed {
+                rule: 12,
+                location: instr.offset,
+                detail: "heap slot exceeds header heap_size_hint",
+            });
+        }
+    }
+    Ok(())
+}
+
+// ---------------------------------------------------------------------
+// Rule 13 — single-static-store invariant (Phase 4 §7.3).
+//
+// Every heap slot is written exactly once before any read. The
+// SlotState lattice is binary in v1: `Unwritten → Written`. v1.1 will
+// add a `Sealed` state once `FreeHeap` is wired (research report
+// §7.3) — keeping the enum binary in v1 simplifies the validator
+// and avoids a "dead state" landmine for future readers.
+//
+// Soundness of this forward linear scan depends on the **walker
+// emission-position invariant** (§6.4):
+//
+//  1. The walker emits zero `Jump` / `JumpIf` opcodes (zero matches
+//     in `ir-forge/src/lysis_lift/walker.rs`).
+//  2. `StoreHeap` is emitted only in straight-line template prologue
+//     position, never inside an inline `LoopUnroll` body or under a
+//     conditional branch (which the walker never produces in v1).
+//
+// Together these mean "earlier in the byte stream" implies
+// "dominates in execution order"; a forward linear scan over the
+// body is path-safe by construction. **A future Phase 3 walker
+// change that introduces real conditional branches around
+// `StoreHeap` requires this validator to be upgraded to a CFG-based
+// dominance check** — v2 future work, not v1.
+//
+// Slots that end the program in state `Unwritten` are legal: the
+// walker may legitimately reserve a slot via lookahead and then
+// have the using path pruned by const-folding. Rejection only fires
+// on illegal *transitions*, never on the absence of transitions.
+// ---------------------------------------------------------------------
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum HeapSlotState {
+    Unwritten,
+    Written,
+}
+
+fn check_heap_single_static_store<F: FieldBackend>(program: &Program<F>) -> Result<(), LysisError> {
+    let cap = program.header.heap_size_hint as usize;
+    if cap == 0 {
+        // No heap declared. Rule 12 has already rejected any heap
+        // opcode whose slot is outside this empty range, so a
+        // surviving program at this point has zero heap opcodes.
+        // Skip the allocation entirely.
+        return Ok(());
+    }
+    let mut state = vec![HeapSlotState::Unwritten; cap];
+    for instr in &program.body {
+        match &instr.opcode {
+            Opcode::StoreHeap { slot, .. } => {
+                let s = *slot as usize;
+                // Rule 12 already bounded this; defensive guard.
+                if s >= state.len() {
+                    continue;
+                }
+                if state[s] == HeapSlotState::Written {
+                    return Err(LysisError::ValidationFailed {
+                        rule: 13,
+                        location: instr.offset,
+                        detail: "double StoreHeap to the same slot",
+                    });
+                }
+                state[s] = HeapSlotState::Written;
+            }
+            Opcode::LoadHeap { slot, .. } => {
+                let s = *slot as usize;
+                if s >= state.len() {
+                    continue;
+                }
+                if state[s] != HeapSlotState::Written {
+                    return Err(LysisError::ValidationFailed {
+                        rule: 13,
+                        location: instr.offset,
+                        detail: "LoadHeap from unwritten slot",
+                    });
+                }
+            }
+            _ => {}
+        }
+    }
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
-    use memory::field::Bn254Fr;
+    use memory::field::{Bn254Fr, FieldElement};
     use memory::FieldFamily;
 
     use crate::builder::ProgramBuilder;
@@ -847,5 +958,162 @@ mod tests {
             .emit_range_check(4, 1)
             .halt();
         validate(&builder.finish(), &default_config()).unwrap();
+    }
+
+    // -----------------------------------------------------------------
+    // Rule 12 — heap slot < heap_size_hint
+    // -----------------------------------------------------------------
+
+    fn one_const() -> FieldElement<Bn254Fr> {
+        FieldElement::<Bn254Fr>::from_canonical([1, 0, 0, 0])
+    }
+
+    #[test]
+    fn rule12_heap_size_zero_rejects_any_heap_op() {
+        // No heap declared → any slot is out of bounds.
+        let mut builder = b();
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 0) // slot 0 vs cap 0
+            .halt();
+        let err = check_heap_slot_bounds(&builder.finish()).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 12, .. }));
+    }
+
+    #[test]
+    fn rule12_store_oob_rejects() {
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 4) // slot 4 vs cap 4 → out of bounds
+            .halt();
+        let err = check_heap_slot_bounds(&builder.finish()).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 12, .. }));
+    }
+
+    #[test]
+    fn rule12_load_oob_rejects() {
+        let mut builder = b().with_heap_size_hint(2);
+        builder.load_heap(0, 99).halt();
+        let err = check_heap_slot_bounds(&builder.finish()).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 12, .. }));
+    }
+
+    #[test]
+    fn rule12_in_bounds_passes() {
+        let mut builder = b().with_heap_size_hint(8);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 7) // top-of-range still valid
+            .halt();
+        check_heap_slot_bounds(&builder.finish()).unwrap();
+    }
+
+    // -----------------------------------------------------------------
+    // Rule 13 — single-static-store
+    // -----------------------------------------------------------------
+
+    #[test]
+    fn rule13_load_before_store_rejects() {
+        let mut builder = b().with_heap_size_hint(4);
+        builder.load_heap(0, 1).halt();
+        let err = check_heap_single_static_store(&builder.finish()).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 13, .. }));
+    }
+
+    #[test]
+    fn rule13_double_store_same_slot_rejects() {
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 2)
+            .store_heap(0, 2) // second store to slot 2 → reject
+            .halt();
+        let err = check_heap_single_static_store(&builder.finish()).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 13, .. }));
+    }
+
+    #[test]
+    fn rule13_store_then_load_passes() {
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 2)
+            .load_heap(1, 2)
+            .halt();
+        check_heap_single_static_store(&builder.finish()).unwrap();
+    }
+
+    #[test]
+    fn rule13_stores_to_different_slots_pass() {
+        let mut builder = b().with_heap_size_hint(8);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 1)
+            .store_heap(0, 3)
+            .store_heap(0, 7)
+            .load_heap(1, 1)
+            .load_heap(2, 3)
+            .load_heap(3, 7)
+            .halt();
+        check_heap_single_static_store(&builder.finish()).unwrap();
+    }
+
+    #[test]
+    fn rule13_unwritten_slot_at_end_is_legal() {
+        // Slots that end the program in `Unwritten` are legal — the
+        // walker may reserve a slot via lookahead and then have the
+        // using path pruned. Validator only catches illegal
+        // *transitions*.
+        let mut builder = b().with_heap_size_hint(8);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 0)
+            .load_heap(1, 0)
+            .halt(); // slots 1..7 never touched — fine
+        check_heap_single_static_store(&builder.finish()).unwrap();
+    }
+
+    #[test]
+    fn rule13_passes_when_no_heap_declared() {
+        // heap_size_hint = 0 → no heap → no rule 13 to check (and the
+        // function short-circuits on the cap == 0 fast path).
+        let mut builder = b();
+        builder.intern_field(one_const());
+        builder.load_const(0, 0).halt();
+        check_heap_single_static_store(&builder.finish()).unwrap();
+    }
+
+    #[test]
+    fn full_validate_accepts_well_formed_heap_program() {
+        // Smoke that `validate()` itself wires both rules in.
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 1)
+            .load_heap(2, 1)
+            .halt();
+        validate(&builder.finish(), &default_config()).unwrap();
+    }
+
+    #[test]
+    fn full_validate_rejects_double_store_via_rule_13() {
+        let mut builder = b().with_heap_size_hint(4);
+        builder.intern_field(one_const());
+        builder
+            .load_const(0, 0)
+            .store_heap(0, 1)
+            .store_heap(0, 1)
+            .halt();
+        let err = validate(&builder.finish(), &default_config()).unwrap_err();
+        assert!(matches!(err, LysisError::ValidationFailed { rule: 13, .. }));
     }
 }
