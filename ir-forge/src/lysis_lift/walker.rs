@@ -81,6 +81,7 @@ use lysis::program::Program;
 use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
 
+use crate::extended::IndexedEffectKind;
 use crate::ExtendedInstruction;
 use ir_core::{Instruction, SsaVar, Visibility};
 
@@ -138,15 +139,23 @@ pub enum WalkError {
     /// fix is BTA + structural extraction (Phase 2 Gap 2), which
     /// avoids the wide live set in the first place.
     LiveSetTooLarge { count: usize, max: usize },
-    /// Phase 2 Gap 1 scaffolding: a `SymbolicIndexedEffect` reached
-    /// the walker. Stage 1 of Gap 1 only adds the variant and
-    /// propagates it through match sites; the per-iteration unfolding
-    /// (resolve `index_var` to a literal `usize`, look up
-    /// `array_slots[idx]`, synthesize the equivalent `Plain` ops)
-    /// lands in Stage 3. Until then any path that emits this variant
-    /// surfaces here with a clear "not yet emittable" message rather
-    /// than producing wrong R1CS.
+    /// A `SymbolicIndexedEffect` reached the walker but its
+    /// `index_var` could not be const-folded to a literal `usize` at
+    /// walker time. Gap 1 Stage 3 const-folds Add/Sub/Mul/Neg over
+    /// loop-iter constants; anything outside that surface (Decompose
+    /// indices, runtime witness reads) needs Phase 4 memory-op
+    /// support and is rejected here rather than miscompiled.
     SymbolicIndexedEffectNotEmittable,
+    /// `SymbolicIndexedEffect.index_var` const-folded but pointed at
+    /// an array slot beyond the resolved `array_slots.len()`. The
+    /// instantiate-time snapshot fixed the array width; an out-of-
+    /// range index (negative or ≥ width) is a logic bug at lowering
+    /// or instantiation, not something the walker can fix.
+    SymbolicIndexedEffectIndexOutOfRange { idx: i64, len: usize },
+    /// `SymbolicIndexedEffect.kind == Let` but `value_var` is `None`
+    /// — the instantiator promised a value side it didn't supply.
+    /// Should be impossible if Stage 2 is wired correctly.
+    SymbolicIndexedEffectMissingValue,
 }
 
 impl std::fmt::Display for WalkError {
@@ -177,7 +186,14 @@ impl std::fmt::Display for WalkError {
                 "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — Phase 2 BTA needed"
             ),
             Self::SymbolicIndexedEffectNotEmittable => f.write_str(
-                "walker: SymbolicIndexedEffect reached the bytecode emitter — Gap 1 Stage 3 (per-iteration unfolding) not yet implemented",
+                "walker: SymbolicIndexedEffect index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+            ),
+            Self::SymbolicIndexedEffectIndexOutOfRange { idx, len } => write!(
+                f,
+                "walker: SymbolicIndexedEffect resolved to index {idx} but array has {len} slots"
+            ),
+            Self::SymbolicIndexedEffectMissingValue => f.write_str(
+                "walker: SymbolicIndexedEffect kind=Let but value_var=None — instantiator bug",
             ),
         }
     }
@@ -238,6 +254,15 @@ pub struct Walker<F: FieldBackend> {
     /// Lazily allocated when the body contains a desugaring that
     /// references it (Not, Assert, IsNeq, IsLe, IsLeBounded).
     one_reg: Option<RegId>,
+    /// Walker-side constant-propagation map. Tracks SsaVars whose
+    /// runtime value is statically known to fit in `i64` — populated
+    /// by `Plain(Const)` and `Plain(Add/Sub/Mul/Neg/IntDiv/IntMod)`
+    /// when all operands are themselves walker-const. Drained by
+    /// `SymbolicIndexedEffect` to resolve the indexed write to a
+    /// literal slot at walker time. Per-iteration unrolling is the
+    /// only producer of "iter_var = literal" entries; outside that
+    /// path the map only sees source-level constants.
+    walker_const: HashMap<SsaVar, i64>,
 }
 
 impl<F: FieldBackend> Walker<F> {
@@ -250,6 +275,7 @@ impl<F: FieldBackend> Walker<F> {
             allocator: RegAllocator::new(),
             ssa_to_reg: HashMap::new(),
             one_reg: None,
+            walker_const: HashMap::new(),
         }
     }
 
@@ -385,6 +411,13 @@ impl<F: FieldBackend> Walker<F> {
         }
         self.ssa_to_reg = new_ssa_to_reg;
         self.one_reg = None;
+        // walker_const doesn't survive a template boundary — it would
+        // require forwarding compile-time-known SsaVars through
+        // capture_regs as a separate metadata channel, which Phase 1.5
+        // doesn't model. Per-iter unrolling stays inside one template
+        // body so this only matters if a top-level split fires
+        // mid-body, which the pre-emit cost predictor avoids.
+        self.walker_const.clear();
 
         // `one` is re-loaded lazily on first use in the new
         // template — see `Walker::one`. This avoids the slot tax on
@@ -491,17 +524,81 @@ impl<F: FieldBackend> Walker<F> {
             ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
                 Err(WalkError::TemplateNotSupported)
             }
-            // TODO Gap 1 Stage 3: implement per-iteration unfolding inside
-            // emit_loop_unroll. The walker is ALWAYS inside a LoopUnroll
-            // body when this variant appears; the iter_var is bound to
-            // a per-iteration RegId, and the executor const-folds
-            // index_var to a literal usize. We then look up
-            // array_slots[idx] and synthesize a `Plain` op (AssertEq
-            // for Let, Input for WitnessHint).
-            ExtendedInstruction::SymbolicIndexedEffect { .. } => {
-                Err(WalkError::SymbolicIndexedEffectNotEmittable)
+            ExtendedInstruction::SymbolicIndexedEffect {
+                kind,
+                array_slots,
+                index_var,
+                value_var,
+                span: _,
+            } => self.emit_symbolic_indexed_effect(*kind, array_slots, *index_var, *value_var),
+        }
+    }
+
+    /// Resolve a `SymbolicIndexedEffect` at walker time. Requires
+    /// `walker_const[index_var]` populated — Stage 3's per-iteration
+    /// loop unroll is the only producer in Phase 2.
+    fn emit_symbolic_indexed_effect(
+        &mut self,
+        kind: IndexedEffectKind,
+        array_slots: &[SsaVar],
+        index_var: SsaVar,
+        value_var: Option<SsaVar>,
+    ) -> Result<(), WalkError> {
+        let idx_signed = self
+            .walker_const
+            .get(&index_var)
+            .copied()
+            .ok_or(WalkError::SymbolicIndexedEffectNotEmittable)?;
+        if idx_signed < 0 || (idx_signed as usize) >= array_slots.len() {
+            return Err(WalkError::SymbolicIndexedEffectIndexOutOfRange {
+                idx: idx_signed,
+                len: array_slots.len(),
+            });
+        }
+        let idx = idx_signed as usize;
+        let target_var = array_slots[idx];
+
+        // Resolve or synthesize the slot's reg. Internal-signal
+        // arrays leave their slots as un-emitted placeholders at
+        // instantiate time (see `instantiate/stmts.rs::emit_let_
+        // indexed_const`'s lazy-binding behaviour); the symbolic
+        // path can't rely on a prior `Plain(Input)` having bound
+        // them. Synthesize a witness wire on demand.
+        let target_reg = match self.ssa_to_reg.get(&target_var).copied() {
+            Some(r) => r,
+            None => {
+                let name = format!("__lysis_sym_slot_{}", target_var.0);
+                let name_idx = self.builder.intern_string(name) as u16;
+                let reg = self.allocator.alloc()?;
+                self.push_op(Opcode::LoadInput {
+                    dst: reg,
+                    name_idx,
+                    vis: lysis::Visibility::Witness,
+                });
+                self.bind(target_var, reg);
+                reg
+            }
+        };
+
+        match kind {
+            IndexedEffectKind::Let => {
+                let value = value_var.ok_or(WalkError::SymbolicIndexedEffectMissingValue)?;
+                let value_reg = self.resolve(value)?;
+                self.push_op(Opcode::EmitAssertEq {
+                    lhs: target_reg,
+                    rhs: value_reg,
+                });
+            }
+            IndexedEffectKind::WitnessHint => {
+                // `target_reg` was either already bound (output array,
+                // pre-emitted via Plain(Input)) or just synthesised
+                // above as a witness wire. Either way the slot is now
+                // live in the frame; no extra constraint to add — the
+                // const-index `WitnessHintIndexed` path likewise just
+                // declares the wire and stops.
             }
         }
+        Ok(())
     }
 
     fn emit_plain(&mut self, inst: &Instruction<F>) -> Result<(), WalkError> {
@@ -511,6 +608,9 @@ impl<F: FieldBackend> Walker<F> {
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::LoadConst { dst, idx });
                 self.bind(*result, dst);
+                if let Some(v) = field_to_i64(value) {
+                    self.walker_const.insert(*result, v);
+                }
             }
             Instruction::Input {
                 result,
@@ -537,6 +637,14 @@ impl<F: FieldBackend> Walker<F> {
                     rhs: r,
                 });
                 self.bind(*result, dst);
+                if let (Some(a), Some(b)) = (
+                    self.walker_const.get(lhs).copied(),
+                    self.walker_const.get(rhs).copied(),
+                ) {
+                    if let Some(s) = a.checked_add(b) {
+                        self.walker_const.insert(*result, s);
+                    }
+                }
             }
             Instruction::Sub { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
@@ -547,6 +655,14 @@ impl<F: FieldBackend> Walker<F> {
                     rhs: r,
                 });
                 self.bind(*result, dst);
+                if let (Some(a), Some(b)) = (
+                    self.walker_const.get(lhs).copied(),
+                    self.walker_const.get(rhs).copied(),
+                ) {
+                    if let Some(s) = a.checked_sub(b) {
+                        self.walker_const.insert(*result, s);
+                    }
+                }
             }
             Instruction::Mul { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
@@ -557,6 +673,14 @@ impl<F: FieldBackend> Walker<F> {
                     rhs: r,
                 });
                 self.bind(*result, dst);
+                if let (Some(a), Some(b)) = (
+                    self.walker_const.get(lhs).copied(),
+                    self.walker_const.get(rhs).copied(),
+                ) {
+                    if let Some(s) = a.checked_mul(b) {
+                        self.walker_const.insert(*result, s);
+                    }
+                }
             }
             // Field division Div(x,y) = x * y^{-1} is witness-computed
             // (inverse via WitnessCall) + one range-check constraint
@@ -581,6 +705,11 @@ impl<F: FieldBackend> Walker<F> {
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::EmitNeg { dst, operand: op });
                 self.bind(*result, dst);
+                if let Some(v) = self.walker_const.get(operand).copied() {
+                    if let Some(n) = v.checked_neg() {
+                        self.walker_const.insert(*result, n);
+                    }
+                }
             }
 
             // ---------- boolean / logic — desugared to arithmetic.
@@ -927,6 +1056,20 @@ impl<F: FieldBackend> Walker<F> {
         if start < 0 || end < 0 {
             return Err(WalkError::NegativeLoopBound { start, end });
         }
+
+        // Gap 1 Stage 3: when the body (recursively, through nested
+        // LoopUnrolls) contains a `SymbolicIndexedEffect`, the runtime
+        // `LoopUnroll` opcode can't carry it — the symbolic-index
+        // resolution needs a literal `iter_var = i` on every
+        // iteration. Per-iter unroll the body at walker time, threading
+        // walker-side const-prop into the SymbolicIndexedEffect arm.
+        // Loops without indexed effects keep the rolled `LoopUnroll`
+        // opcode + InterningSink dedup — Phase 1.5's value isn't
+        // sacrificed for the rest of the program.
+        if body_has_symbolic_indexed_effect(body) {
+            return self.emit_loop_unroll_per_iter(iter_var, start, end, body);
+        }
+
         let start_u32 = start as u32;
         let end_u32 = end as u32;
 
@@ -961,6 +1104,71 @@ impl<F: FieldBackend> Walker<F> {
         for inst in body {
             self.emit(inst)?;
         }
+        Ok(())
+    }
+
+    /// Per-iteration walker materialisation for a `LoopUnroll` whose
+    /// body contains a `SymbolicIndexedEffect`. Emits N flat
+    /// per-iteration body sequences instead of one rolled
+    /// `LoopUnroll` opcode, threading `walker_const[iter_var] = i` so
+    /// the SymbolicIndexedEffect arm resolves to a literal slot.
+    ///
+    /// Allocator + ssa_to_reg state is checkpointed before the
+    /// iterations and restored before each one, so body-internal
+    /// regs get reused across iterations rather than ballooning past
+    /// the 255-slot frame cap.
+    fn emit_loop_unroll_per_iter(
+        &mut self,
+        iter_var: SsaVar,
+        start: i64,
+        end: i64,
+        body: &[ExtendedInstruction<F>],
+    ) -> Result<(), WalkError> {
+        let start_u32 = start as u32;
+        let end_u32 = end as u32;
+        if start_u32 >= end_u32 {
+            return Ok(());
+        }
+
+        if self.one_reg.is_none() && body_needs_one_const(body) {
+            let _ = self.one()?;
+        }
+
+        // Allocate iter_var's reg ONCE for the whole per-iter loop.
+        let iter_reg = self.allocator.alloc()?;
+        self.bind(iter_var, iter_reg);
+
+        // Snapshot pre-body state. The HashMap clones are O(n) per
+        // iteration but n is small in practice (body-local SsaVars
+        // only); per-iter walker scope is meant for loops the InterningSink
+        // wouldn't have helped on anyway.
+        let pre_body_alloc_ckpt = self.allocator.checkpoint();
+        let pre_body_bindings = self.ssa_to_reg.clone();
+        let pre_body_walker_const = self.walker_const.clone();
+
+        for i in start_u32..end_u32 {
+            self.allocator.restore_to(pre_body_alloc_ckpt);
+            self.ssa_to_reg = pre_body_bindings.clone();
+            self.bind(iter_var, iter_reg);
+            self.walker_const = pre_body_walker_const.clone();
+            self.walker_const.insert(iter_var, i64::from(i));
+
+            // Set iter_reg to Const(i) at runtime via LoadConst.
+            let const_idx =
+                self.builder
+                    .intern_field(FieldElement::<F>::from_u64(u64::from(i))) as u16;
+            self.push_op(Opcode::LoadConst {
+                dst: iter_reg,
+                idx: const_idx,
+            });
+
+            for inst in body {
+                self.emit(inst)?;
+            }
+        }
+
+        // Don't leak per-iter walker_const entries past the loop.
+        self.walker_const = pre_body_walker_const;
         Ok(())
     }
 
@@ -1195,6 +1403,35 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             })
         }
     })
+}
+
+/// `true` iff `body` (recursively, including nested `LoopUnroll`
+/// bodies) contains at least one `SymbolicIndexedEffect`. Drives the
+/// per-iteration unrolling decision in `emit_loop_unroll`. Stops at
+/// the first hit — short-circuits via `iter::any`.
+fn body_has_symbolic_indexed_effect<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
+    body.iter().any(|inst| match inst {
+        ExtendedInstruction::SymbolicIndexedEffect { .. } => true,
+        ExtendedInstruction::LoopUnroll { body: nested, .. } => {
+            body_has_symbolic_indexed_effect(nested)
+        }
+        ExtendedInstruction::Plain(_)
+        | ExtendedInstruction::TemplateCall { .. }
+        | ExtendedInstruction::TemplateBody { .. } => false,
+    })
+}
+
+/// Best-effort `FieldElement → i64` conversion for walker-side
+/// const-prop. Returns `Some(v)` only when `value`'s canonical limbs
+/// fit in a non-negative `i64`. Negative values (stored as
+/// `field_modulus - x`) are not recovered — they wouldn't fit anyway
+/// and indices are non-negative by construction.
+fn field_to_i64<F: FieldBackend>(value: &FieldElement<F>) -> Option<i64> {
+    let limbs = value.to_canonical();
+    if limbs[1] != 0 || limbs[2] != 0 || limbs[3] != 0 {
+        return None;
+    }
+    i64::try_from(limbs[0]).ok()
 }
 
 /// Returns `true` iff the body (recursively) contains at least one
@@ -1604,6 +1841,200 @@ mod tests {
             .count();
         assert_eq!(consts, 3, "one Const per iteration (iter_var)");
         assert_eq!(muls, 3, "three Muls, one per iteration");
+    }
+
+    #[test]
+    fn unfolds_symbolic_indexed_effect_per_iteration() {
+        // Outer body sets up the slot wires + value source via real
+        // Plain(Input) ops so the walker has them in `ssa_to_reg`
+        // when the LoopUnroll body runs (mirrors the public-output
+        // array case where slots are pre-emitted by scaffold).
+        // SymbolicIndexedEffect(Let, [v_a, v_b, v_c], iter_var,
+        // value_var) inside `for i in 0..3` should unroll into 3
+        // AssertEqs, one per slot.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "slot_a".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "slot_b".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(2),
+                name: "slot_c".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(3),
+                name: "value".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(4),
+                start: 0,
+                end: 3,
+                body: vec![ExtendedInstruction::SymbolicIndexedEffect {
+                    kind: IndexedEffectKind::Let,
+                    array_slots: vec![ssa(0), ssa(1), ssa(2)],
+                    index_var: ssa(4),
+                    value_var: Some(ssa(3)),
+                    span: None,
+                }],
+            },
+        ];
+        let out = run(&body);
+
+        // Inputs: 4 distinct names, all preserved.
+        let inputs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
+            .count();
+        assert_eq!(inputs, 4, "4 named Inputs");
+
+        // Consts: 3 distinct iter values (0, 1, 2). The InterningSink
+        // dedupes equal values, but here all three are distinct.
+        let consts = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Const { .. }))
+            .count();
+        assert_eq!(consts, 3, "one Const per iteration");
+
+        // AssertEqs: 3 (one per iteration), never dedupe (side-effect).
+        let asserts: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::AssertEq { lhs, rhs, .. } => Some((*lhs, *rhs)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asserts.len(), 3, "3 AssertEqs");
+        // Each AssertEq's lhs should be the slot wire (Input result),
+        // each rhs should be the value Input. Distinct lhs → 3 unique.
+        let lhs_set: std::collections::HashSet<_> = asserts.iter().map(|(l, _)| *l).collect();
+        assert_eq!(lhs_set.len(), 3, "3 distinct slot lhs");
+        let rhs_set: std::collections::HashSet<_> = asserts.iter().map(|(_, r)| *r).collect();
+        assert_eq!(rhs_set.len(), 1, "all 3 rhs point at the same value Input");
+    }
+
+    #[test]
+    fn unfolds_symbolic_indexed_effect_with_affine_index() {
+        // Body: for i in 0..3 { array[i + 2] := value }
+        // The index `i + 2` is computed inside the body via a Const(2)
+        // + Add op; walker_const must pick it up so the slot resolves
+        // to array_slots[2..=4]. Pre-allocate 5 slots to host idx 2..4.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "s0".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "s1".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(2),
+                name: "s2".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(3),
+                name: "s3".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(4),
+                name: "s4".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(5),
+                name: "value".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(6),
+                start: 0,
+                end: 3,
+                body: vec![
+                    plain(Instruction::Const {
+                        result: ssa(7),
+                        value: fe(2),
+                    }),
+                    plain(Instruction::Add {
+                        result: ssa(8),
+                        lhs: ssa(6),
+                        rhs: ssa(7),
+                    }),
+                    ExtendedInstruction::SymbolicIndexedEffect {
+                        kind: IndexedEffectKind::Let,
+                        array_slots: vec![ssa(0), ssa(1), ssa(2), ssa(3), ssa(4)],
+                        index_var: ssa(8),
+                        value_var: Some(ssa(5)),
+                        span: None,
+                    },
+                ],
+            },
+        ];
+        let out = run(&body);
+
+        // 3 AssertEqs, lhs picking up slot 2, 3, 4 (i + 2 for i in 0..3).
+        let asserts: Vec<_> = out
+            .iter()
+            .filter_map(|i| match i {
+                lysis::InstructionKind::AssertEq { lhs, rhs, .. } => Some((*lhs, *rhs)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(asserts.len(), 3, "3 AssertEqs");
+        let lhs_set: std::collections::HashSet<_> = asserts.iter().map(|(l, _)| *l).collect();
+        assert_eq!(lhs_set.len(), 3, "3 distinct slots picked (i+2 for i=0..3)");
+    }
+
+    #[test]
+    fn rejects_symbolic_indexed_effect_when_index_not_const_foldable() {
+        // Index_var depends on an Input (runtime), not a loop-iter
+        // const → walker can't resolve. Expect the dedicated error.
+        let body = vec![
+            plain(Instruction::Input {
+                result: ssa(0),
+                name: "slot".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(1),
+                name: "runtime_idx".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            plain(Instruction::Input {
+                result: ssa(2),
+                name: "value".into(),
+                visibility: IrVisibility::Witness,
+            }),
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(3),
+                start: 0,
+                end: 1,
+                body: vec![ExtendedInstruction::SymbolicIndexedEffect {
+                    kind: IndexedEffectKind::Let,
+                    array_slots: vec![ssa(0)],
+                    index_var: ssa(1),
+                    value_var: Some(ssa(2)),
+                    span: None,
+                }],
+            },
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let err = walker.lower(&body).expect_err("should refuse");
+        assert!(
+            matches!(err, WalkError::SymbolicIndexedEffectNotEmittable),
+            "got {err:?}"
+        );
     }
 
     #[test]

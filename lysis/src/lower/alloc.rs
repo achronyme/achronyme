@@ -151,6 +151,36 @@ impl RegAllocator {
     pub fn next_slot(&self) -> u32 {
         self.next
     }
+
+    /// Snapshot the current bump counter so a later
+    /// [`Self::restore_to`] can rewind back to this point. The
+    /// high-water mark (`max_used`) is *not* part of the snapshot —
+    /// it keeps tracking the peak across rewinds, so the final
+    /// [`Self::frame_size`] reports the true maximum the body ever
+    /// needed even if intermediate scopes restored.
+    ///
+    /// Used by Gap 1 Stage 3's per-iteration walker unrolling: each
+    /// iteration restores to the pre-body checkpoint, re-emits with
+    /// fresh bindings, and lets the same body-internal slots be
+    /// reused across iterations rather than ballooning the frame
+    /// past the 255-slot cap.
+    pub fn checkpoint(&self) -> u32 {
+        self.next
+    }
+
+    /// Restore the bump counter to a [`Self::checkpoint`] result.
+    /// Callers must ensure no live binding still references a slot
+    /// being rolled back — restoring is conceptually equivalent to a
+    /// bulk [`Self::release`] on every reg above `checkpoint`.
+    pub fn restore_to(&mut self, checkpoint: u32) {
+        debug_assert!(
+            checkpoint <= self.next,
+            "restore_to: checkpoint {checkpoint} ahead of next {}",
+            self.next
+        );
+        self.next = checkpoint;
+        // Intentionally leave max_used alone — see method docs.
+    }
 }
 
 #[cfg(test)]
@@ -225,6 +255,27 @@ mod tests {
         a.reset();
         assert_eq!(a.alloc().unwrap(), 0);
         assert_eq!(a.frame_size(), 1);
+    }
+
+    #[test]
+    fn checkpoint_and_restore_keep_max_used() {
+        let mut a = RegAllocator::new();
+        let _ = a.alloc().unwrap(); // r0
+        let _ = a.alloc().unwrap(); // r1
+        let ckpt = a.checkpoint();
+        let _ = a.alloc().unwrap(); // r2
+        let _ = a.alloc().unwrap(); // r3
+        assert_eq!(a.next_slot(), 4);
+        assert_eq!(a.frame_size(), 4);
+
+        // Restore — bump counter goes back, max_used stays at peak.
+        a.restore_to(ckpt);
+        assert_eq!(a.next_slot(), 2);
+        assert_eq!(a.frame_size(), 4, "max_used preserved across restore");
+
+        // Subsequent allocation reuses the rolled-back slots.
+        assert_eq!(a.alloc().unwrap(), 2);
+        assert_eq!(a.frame_size(), 4);
     }
 
     #[test]
