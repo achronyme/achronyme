@@ -514,13 +514,23 @@ impl<F: FieldBackend> Walker<F> {
         }
         self.ssa_to_reg = new_ssa_to_reg;
         self.one_reg = None;
-        // walker_const doesn't survive a template boundary — it would
-        // require forwarding compile-time-known SsaVars through
-        // capture_regs as a separate metadata channel, which Phase 1.5
-        // doesn't model. Per-iter unrolling stays inside one template
-        // body so this only matters if a top-level split fires
-        // mid-body, which the pre-emit cost predictor avoids.
-        self.walker_const.clear();
+        // Forward `walker_const` entries for the live capture set. The
+        // map is `SsaVar → i64` — values, not regs — so a captured
+        // SsaVar's compile-time constant remains valid in the new
+        // template even though its reg binding changed. Entries for
+        // SsaVars that aren't in `live` are dropped: their bindings
+        // disappeared, and walker_const is just a hint, so dropping is
+        // sound. This forwarding is load-bearing for mid-iter splits
+        // inside `emit_loop_unroll_per_iter` — the per-iter
+        // `walker_const[iter_var] = i` literal must survive across the
+        // boundary so that `body[j..]`'s SymbolicShift / SymbolicArrayRead
+        // / SymbolicIndexedEffect arms still const-fold.
+        let prior_walker_const = std::mem::take(&mut self.walker_const);
+        for var in &live {
+            if let Some(val) = prior_walker_const.get(var) {
+                self.walker_const.insert(*var, *val);
+            }
+        }
 
         // `one` is re-loaded lazily on first use in the new
         // template — see `Walker::one`. This avoids the slot tax on
@@ -2180,29 +2190,47 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
         // capture list (guaranteed by the lift), so the live-set scan
         // doesn't need to add them again here.
         ExtendedInstruction::TemplateBody { .. } => {}
-        // The variant references `index_var` and (for Let) `value_var`;
-        // both are SSA vars defined in the enclosing scope and must
-        // be carried as captures across any top-level split that
-        // happens to land between the LoopUnroll's parent template
-        // and the LoopUnroll itself.
+        // The variant references `index_var`, (for Let) `value_var`,
+        // and `array_slots`. All three are SSA vars defined in the
+        // enclosing scope (or synthesised lazily by the symbolic-effect
+        // emitter) and must be carried as captures across a split
+        // boundary. The original Phase 2 design omitted `array_slots`
+        // on the assumption that slots are emitted as a sibling
+        // `Plain(Input)` immediately before the LoopUnroll inside the
+        // same template — true for top-level splits, but mid-iter
+        // splits (Gap 4) operate inside the LoopUnroll body itself and
+        // can separate the read from the slot binding (especially when
+        // the synth-on-demand path materialises slots lazily). Always
+        // collecting them is conservative and safe.
         ExtendedInstruction::SymbolicIndexedEffect {
+            array_slots,
             index_var,
             value_var,
             ..
         } => {
+            for v in array_slots {
+                out.insert(*v);
+            }
             out.insert(*index_var);
             if let Some(v) = value_var {
                 out.insert(*v);
             }
         }
-        // Read-side mirrors the write-side rationale: `index_var` is
-        // an enclosing-scope use that must cross a split boundary.
-        // `array_slots` are NOT collected — slots come from a sibling
-        // pre-Plain(Input) emission inside the same template, so a
-        // split between the LoopUnroll and its parent never separates
-        // them from this read. `result_var` is a definition produced
-        // by the read itself, so it isn't an operand.
-        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
+        // Read-side mirrors the write-side rationale: `array_slots`
+        // and `index_var` are enclosing-scope uses that must cross a
+        // split boundary. Slots may be lazily synthesised by
+        // `emit_symbolic_array_read`'s synth-on-demand path inside the
+        // LoopUnroll body; collecting them ensures those bindings flow
+        // through any mid-iter split. `result_var` is a definition
+        // produced by the read itself, so it isn't an operand.
+        ExtendedInstruction::SymbolicArrayRead {
+            array_slots,
+            index_var,
+            ..
+        } => {
+            for v in array_slots {
+                out.insert(*v);
+            }
             out.insert(*index_var);
         }
         // Both `operand_var` and `shift_var` are enclosing-scope uses
