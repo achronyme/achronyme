@@ -312,6 +312,17 @@ fn emit_one<F: FieldBackend>(
             let idx = tree.push(SymbolicNode::NestedLoop);
             tree.body_order.push(idx);
         }
+        // TODO Gap 1 Stage 4: emit a dedicated `SymbolicNode::IndexedEffect`
+        // (kind, array, index_operand, value_operand) so two probe
+        // walks of the same indexed write classify equal under
+        // structural_diff. Until Stage 4 ships, fall through to the
+        // NestedLoop sentinel — BTA classifies the enclosing loop as
+        // DataDependent, blocking template extraction. Conservative
+        // and correct (no wrong R1CS, just no Gap-2 unlock).
+        ExtendedInstruction::SymbolicIndexedEffect { .. } => {
+            let idx = tree.push(SymbolicNode::NestedLoop);
+            tree.body_order.push(idx);
+        }
     }
 }
 

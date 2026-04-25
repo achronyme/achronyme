@@ -138,6 +138,15 @@ pub enum WalkError {
     /// fix is BTA + structural extraction (Phase 2 Gap 2), which
     /// avoids the wide live set in the first place.
     LiveSetTooLarge { count: usize, max: usize },
+    /// Phase 2 Gap 1 scaffolding: a `SymbolicIndexedEffect` reached
+    /// the walker. Stage 1 of Gap 1 only adds the variant and
+    /// propagates it through match sites; the per-iteration unfolding
+    /// (resolve `index_var` to a literal `usize`, look up
+    /// `array_slots[idx]`, synthesize the equivalent `Plain` ops)
+    /// lands in Stage 3. Until then any path that emits this variant
+    /// surfaces here with a clear "not yet emittable" message rather
+    /// than producing wrong R1CS.
+    SymbolicIndexedEffectNotEmittable,
 }
 
 impl std::fmt::Display for WalkError {
@@ -166,6 +175,9 @@ impl std::fmt::Display for WalkError {
             Self::LiveSetTooLarge { count, max } => write!(
                 f,
                 "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — Phase 2 BTA needed"
+            ),
+            Self::SymbolicIndexedEffectNotEmittable => f.write_str(
+                "walker: SymbolicIndexedEffect reached the bytecode emitter — Gap 1 Stage 3 (per-iteration unfolding) not yet implemented",
             ),
         }
     }
@@ -478,6 +490,16 @@ impl<F: FieldBackend> Walker<F> {
             } => self.emit_loop_unroll(*iter_var, *start, *end, body),
             ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
                 Err(WalkError::TemplateNotSupported)
+            }
+            // TODO Gap 1 Stage 3: implement per-iteration unfolding inside
+            // emit_loop_unroll. The walker is ALWAYS inside a LoopUnroll
+            // body when this variant appears; the iter_var is bound to
+            // a per-iteration RegId, and the executor const-folds
+            // index_var to a literal usize. We then look up
+            // array_slots[idx] and synthesize a `Plain` op (AssertEq
+            // for Let, Input for WitnessHint).
+            ExtendedInstruction::SymbolicIndexedEffect { .. } => {
+                Err(WalkError::SymbolicIndexedEffectNotEmittable)
             }
         }
     }
@@ -990,6 +1012,13 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
         ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
             Err(WalkError::TemplateNotSupported)
         }
+        // TODO Gap 1 Stage 3: replace with the synthesized per-
+        // iteration cost. Until the unfolding is implemented the
+        // variant cannot reach this path through normal flow — it
+        // surfaces only when test fixtures construct it directly.
+        ExtendedInstruction::SymbolicIndexedEffect { .. } => {
+            Err(WalkError::SymbolicIndexedEffectNotEmittable)
+        }
     }
 }
 
@@ -1179,6 +1208,12 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
         ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => {
             false
         }
+        // The variant doesn't desugar through `one` directly. Stage 3
+        // unfolds it into a `Plain(Instruction)` whose `instruction_
+        // needs_one` is what actually matters; until then `false` is
+        // safe (the variant only reaches a frame whose other
+        // instructions already drove the answer).
+        ExtendedInstruction::SymbolicIndexedEffect { .. } => false,
     })
 }
 
@@ -1209,6 +1244,19 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
             format!("TemplateCall({})", template_id.0)
         }
         ExtendedInstruction::TemplateBody { .. } => "TemplateBody".into(),
+        ExtendedInstruction::SymbolicIndexedEffect {
+            kind,
+            array_slots,
+            index_var,
+            ..
+        } => {
+            format!(
+                "SymbolicIndexedEffect({:?}, slots={}, idx_var={})",
+                kind,
+                array_slots.len(),
+                index_var
+            )
+        }
     }
 }
 
@@ -1247,6 +1295,15 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
         // TemplateCall / TemplateBody are walker-rejected before
         // they'd contribute to a split decision.
         ExtendedInstruction::TemplateCall { .. } | ExtendedInstruction::TemplateBody { .. } => 0,
+        // Stage 3 will materialize one synthesized scalar op per
+        // iteration of the enclosing LoopUnroll. The body emits
+        // ONCE in bytecode (regs shared across iterations), so the
+        // per-iteration alloc count is what matters: 1 for the dst
+        // wire (the array element binding) plus 0-1 for an Input
+        // (WitnessHint kind only). Use 2 as a safe upper bound — it
+        // over-approximates and prevents a wide indexed effect from
+        // overflowing pre-emit.
+        ExtendedInstruction::SymbolicIndexedEffect { .. } => 2,
     }
 }
 
@@ -1336,6 +1393,21 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
             }
         }
         ExtendedInstruction::TemplateBody { .. } => {}
+        // The variant references `index_var` and (for Let) `value_var`;
+        // both are SSA vars defined in the enclosing scope and must
+        // be carried as captures across any top-level split that
+        // happens to land between the LoopUnroll's parent template
+        // and the LoopUnroll itself.
+        ExtendedInstruction::SymbolicIndexedEffect {
+            index_var,
+            value_var,
+            ..
+        } => {
+            out.insert(*index_var);
+            if let Some(v) = value_var {
+                out.insert(*v);
+            }
+        }
     }
 }
 

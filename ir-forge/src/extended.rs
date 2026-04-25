@@ -36,6 +36,7 @@
 //! [`ExtendedInstruction::Plain`] and the `From<Instruction<F>>`
 //! conversion in the companion commit.
 
+use diagnostics::SpanRange;
 use ir_core::{Instruction, SsaVar};
 use memory::{Bn254Fr, FieldBackend};
 
@@ -109,6 +110,64 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         end: i64,
         body: Vec<ExtendedInstruction<F>>,
     },
+
+    /// A side-effect (signal write or witness hint) at an array slot
+    /// whose index is an SSA-symbolic expression — i.e. depends on
+    /// the enclosing `LoopUnroll`'s `iter_var` rather than a
+    /// compile-time constant.
+    ///
+    /// **Phase 2 Gap 1.** Pre-Gap-1, every `paddedIn[i] <-- 0` /
+    /// `out[i] <-- ...` in a circom loop was force-unrolled at the
+    /// circom lowering layer (see
+    /// `circom/src/lowering/statements/loops.rs::LoopLowering::IndexedAssignmentLoop`).
+    /// That made the IR stream balloon to N inline copies of every
+    /// loop body. With `SymbolicIndexedEffect`, the IR keeps the
+    /// loop rolled inside a `LoopUnroll`, BTA can probe-classify it
+    /// as `Uniform`, and Gap 2's structural extraction lifts the body
+    /// to a single `TemplateBody`.
+    ///
+    /// # Field semantics
+    ///
+    /// - `kind` — `Let` for signal-assignment writes
+    ///   (`arr[i] <-- expr`); `WitnessHint` for the
+    ///   `<-- expr` shape that becomes a witness `Input` rather than
+    ///   a constraint.
+    /// - `array_slots` — pre-resolved list of element SSA vars (the
+    ///   instantiate-time materialization of the array's elements,
+    ///   e.g. `[paddedIn_0, paddedIn_1, ..., paddedIn_N-1]`).
+    ///   Walker indexes into this with the const-folded index at
+    ///   per-iteration unfolding time. Carrying the list directly
+    ///   avoids round-tripping through the instantiate-time `env`,
+    ///   which is gone by walker time.
+    /// - `index_var` — SSA var holding the index expression. At BTA
+    ///   probe time, two probes resolve this to different slot-
+    ///   tagged Const nodes. At walker unfolding time, the executor
+    ///   const-folds it into a literal `usize` so the array element
+    ///   resolves uniquely per iteration.
+    /// - `value_var` — for `Let`, the SSA var holding the value to
+    ///   write. `None` for `WitnessHint` (the witness is a fresh
+    ///   `Input` named `array_<index>`).
+    /// - `span` — optional source span; passes through diagnostic
+    ///   reporting.
+    SymbolicIndexedEffect {
+        kind: IndexedEffectKind,
+        array_slots: Vec<SsaVar>,
+        index_var: SsaVar,
+        value_var: Option<SsaVar>,
+        span: Option<SpanRange>,
+    },
+}
+
+/// Discriminator for [`ExtendedInstruction::SymbolicIndexedEffect`].
+///
+/// `Let` — `arr[i] <-- expr` writes a value into the array slot,
+/// emitting a constraint that the slot equals the value.
+/// `WitnessHint` — `arr[i] <-- expr` in witness-only context emits
+/// a fresh `Input(Witness, "arr_{i}")`; the value is resolved later.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+pub enum IndexedEffectKind {
+    Let,
+    WitnessHint,
 }
 
 impl<F: FieldBackend> ExtendedInstruction<F> {
@@ -241,6 +300,65 @@ mod tests {
     #[test]
     fn template_id_displays_with_t_prefix() {
         assert_eq!(format!("{}", TemplateId(42)), "T42");
+    }
+
+    #[test]
+    fn symbolic_indexed_effect_let_carries_resolved_array_slots() {
+        let effect = ExtendedInstruction::<Bn254Fr>::SymbolicIndexedEffect {
+            kind: IndexedEffectKind::Let,
+            array_slots: vec![ssa(10), ssa(11), ssa(12), ssa(13)],
+            index_var: ssa(20),
+            value_var: Some(ssa(30)),
+            span: None,
+        };
+        assert!(!effect.is_plain());
+        assert!(effect.as_plain().is_none());
+        match effect {
+            ExtendedInstruction::SymbolicIndexedEffect {
+                kind,
+                array_slots,
+                index_var,
+                value_var,
+                ..
+            } => {
+                assert_eq!(kind, IndexedEffectKind::Let);
+                assert_eq!(array_slots.len(), 4);
+                assert_eq!(index_var, ssa(20));
+                assert_eq!(value_var, Some(ssa(30)));
+            }
+            _ => panic!("expected SymbolicIndexedEffect"),
+        }
+    }
+
+    #[test]
+    fn symbolic_indexed_effect_witness_hint_omits_value() {
+        let effect = ExtendedInstruction::<Bn254Fr>::SymbolicIndexedEffect {
+            kind: IndexedEffectKind::WitnessHint,
+            array_slots: vec![ssa(0), ssa(1)],
+            index_var: ssa(5),
+            value_var: None,
+            span: None,
+        };
+        match effect {
+            ExtendedInstruction::SymbolicIndexedEffect {
+                kind, value_var, ..
+            } => {
+                assert_eq!(kind, IndexedEffectKind::WitnessHint);
+                assert!(value_var.is_none());
+            }
+            _ => panic!("expected SymbolicIndexedEffect"),
+        }
+    }
+
+    #[test]
+    fn indexed_effect_kind_distinguishes_let_from_witness_hint() {
+        // Sanity check: the discriminator stays a small Copy enum so
+        // it can be embedded in match arms without lifetime gymnastics.
+        let a = IndexedEffectKind::Let;
+        let b = IndexedEffectKind::WitnessHint;
+        assert_ne!(a, b);
+        let c = a; // Copy
+        assert_eq!(a, c);
     }
 
     #[test]
