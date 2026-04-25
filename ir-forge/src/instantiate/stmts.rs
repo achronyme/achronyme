@@ -15,6 +15,7 @@ use memory::{FieldBackend, FieldElement};
 use super::utils::{fe_to_u64, fe_to_usize};
 use super::{InstEnvValue, Instantiator, LoopUnrollMode, MAX_INSTANTIATE_ITERATIONS};
 use crate::error::ProveIrError;
+use crate::extended::IndexedEffectKind;
 use crate::types::*;
 use ir_core::{Instruction, SsaVar, Visibility};
 
@@ -183,70 +184,73 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 value,
                 ..
             } => {
-                // Try evaluating the index as a constant expression first
-                // (handles linearized multi-dim indices like i*2+j after loop unroll)
-                let idx = if let Ok(fe) = self.eval_const_expr(index) {
-                    fe_to_usize(&fe, array)?
+                // Const-index fast path: linearized indices like
+                // `i*2+j` after loop unroll fold here, plus literal
+                // `arr[3]`. Resolves before any IR emission so the
+                // const-index handlers below stay byte-identical.
+                if let Ok(fe) = self.eval_const_expr(index) {
+                    let idx = fe_to_usize(&fe, array)?;
+                    self.emit_let_indexed_const(array, idx, value)?;
                 } else {
+                    // Symbolic index. Two paths split by sink mode:
+                    //   - Symbolic (ExtendedSink): emit a structured
+                    //     SymbolicIndexedEffect carrying the resolved
+                    //     `array_slots` snapshot for the walker to
+                    //     materialise per iteration.
+                    //   - PerIteration (LegacySink): preserve the
+                    //     existing UnsupportedOperation error — the
+                    //     legacy R1CS path can't carry symbolic
+                    //     indices and circom-side
+                    //     `IndexedAssignmentLoop` lowering already
+                    //     unrolled them at lowering time.
                     let idx_var = self.emit_expr(index)?;
-                    self.extract_const_index(idx_var).ok_or_else(|| {
-                        ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "indexed assignment into `{array}` requires a compile-time constant index"
-                            ),
-                            span: None,
+                    match self.sink.loop_unroll_mode() {
+                        LoopUnrollMode::Symbolic => {
+                            self.emit_let_indexed_symbolic(array, idx_var, value)?;
                         }
-                    })?
-                };
-                let elem_name = format!("{array}_{idx}");
-
-                // Output signals: constrain the public wire to the expression
-                if let Some(&pub_var) = self.output_pub_vars.get(&elem_name) {
-                    let v = self.emit_expr(value)?;
-                    let result = self.fresh_var();
-                    self.push_inst(Instruction::AssertEq {
-                        result,
-                        lhs: pub_var,
-                        rhs: v,
-                        message: None,
-                    });
-                    // env keeps pointing to pub_var (not shadowed)
-                } else {
-                    let v = self.emit_expr(value)?;
-                    self.set_name(v, elem_name.clone());
-                    self.env.insert(elem_name, InstEnvValue::Scalar(v));
-                    self.ensure_array_slot(array, idx, v);
+                        LoopUnrollMode::PerIteration => {
+                            // LegacySink path: try the SsaVar
+                            // const-fold once for back-compat with
+                            // multi-dim linearised indices that don't
+                            // fold via `eval_const_expr`. If still no
+                            // const, surface the historical error.
+                            if let Some(idx) = self.extract_const_index(idx_var) {
+                                self.emit_let_indexed_const(array, idx, value)?;
+                            } else {
+                                return Err(ProveIrError::UnsupportedOperation {
+                                    description: format!(
+                                        "indexed assignment into `{array}` requires a compile-time constant index"
+                                    ),
+                                    span: None,
+                                });
+                            }
+                        }
+                    }
                 }
             }
             CircuitNode::WitnessHintIndexed { array, index, .. } => {
-                let idx = if let Ok(fe) = self.eval_const_expr(index) {
-                    fe_to_usize(&fe, array)?
+                if let Ok(fe) = self.eval_const_expr(index) {
+                    let idx = fe_to_usize(&fe, array)?;
+                    self.emit_witness_hint_indexed_const(array, idx)?;
                 } else {
                     let idx_var = self.emit_expr(index)?;
-                    self.extract_const_index(idx_var).ok_or_else(|| {
-                        ProveIrError::UnsupportedOperation {
-                            description: format!(
-                                "indexed witness hint into `{array}` requires a compile-time constant index"
-                            ),
-                            span: None,
+                    match self.sink.loop_unroll_mode() {
+                        LoopUnrollMode::Symbolic => {
+                            self.emit_witness_hint_indexed_symbolic(array, idx_var)?;
                         }
-                    })?
-                };
-                let elem_name = format!("{array}_{idx}");
-
-                // Output signals: the public wire already exists; skip duplicate
-                if self.output_pub_vars.contains_key(&elem_name) {
-                    // env already has the public wire — nothing to do.
-                } else {
-                    let v = self.fresh_var();
-                    self.set_name(v, elem_name.clone());
-                    self.push_inst(Instruction::Input {
-                        result: v,
-                        name: elem_name.clone(),
-                        visibility: Visibility::Witness,
-                    });
-                    self.env.insert(elem_name, InstEnvValue::Scalar(v));
-                    self.ensure_array_slot(array, idx, v);
+                        LoopUnrollMode::PerIteration => {
+                            if let Some(idx) = self.extract_const_index(idx_var) {
+                                self.emit_witness_hint_indexed_const(array, idx)?;
+                            } else {
+                                return Err(ProveIrError::UnsupportedOperation {
+                                    description: format!(
+                                        "indexed witness hint into `{array}` requires a compile-time constant index"
+                                    ),
+                                    span: None,
+                                });
+                            }
+                        }
+                    }
                 }
             }
             CircuitNode::WitnessCall {
@@ -697,5 +701,132 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             }
         }
         result
+    }
+
+    // ----------------------------------------------------------------
+    // Indexed-write helpers (Gap 1 Stage 2).
+    //
+    // The `LetIndexed` / `WitnessHintIndexed` handlers split into two
+    // paths: const-index (existing semantics, byte-identical to the
+    // pre-Gap 1 pipeline) and symbolic-index (new path, ExtendedSink
+    // only). The helpers below are the const-index implementation
+    // factored out so both paths share it.
+    // ----------------------------------------------------------------
+
+    /// Const-index `LetIndexed` handler. Mirrors the pre-Gap 1
+    /// behaviour byte-for-byte: outputs go through AssertEq against
+    /// the public wire; non-outputs lazily allocate the slot and
+    /// shadow the env entry.
+    fn emit_let_indexed_const(
+        &mut self,
+        array: &str,
+        idx: usize,
+        value: &CircuitExpr,
+    ) -> Result<(), ProveIrError> {
+        let elem_name = format!("{array}_{idx}");
+
+        if let Some(&pub_var) = self.output_pub_vars.get(&elem_name) {
+            let v = self.emit_expr(value)?;
+            let result = self.fresh_var();
+            self.push_inst(Instruction::AssertEq {
+                result,
+                lhs: pub_var,
+                rhs: v,
+                message: None,
+            });
+        } else {
+            let v = self.emit_expr(value)?;
+            self.set_name(v, elem_name.clone());
+            self.env.insert(elem_name, InstEnvValue::Scalar(v));
+            self.ensure_array_slot(array, idx, v);
+        }
+        Ok(())
+    }
+
+    /// Const-index `WitnessHintIndexed` handler.
+    fn emit_witness_hint_indexed_const(
+        &mut self,
+        array: &str,
+        idx: usize,
+    ) -> Result<(), ProveIrError> {
+        let elem_name = format!("{array}_{idx}");
+        if self.output_pub_vars.contains_key(&elem_name) {
+            // env already has the public wire — nothing to do.
+        } else {
+            let v = self.fresh_var();
+            self.set_name(v, elem_name.clone());
+            self.push_inst(Instruction::Input {
+                result: v,
+                name: elem_name.clone(),
+                visibility: Visibility::Witness,
+            });
+            self.env.insert(elem_name, InstEnvValue::Scalar(v));
+            self.ensure_array_slot(array, idx, v);
+        }
+        Ok(())
+    }
+
+    /// Symbolic-index `LetIndexed` — emits one
+    /// [`ExtendedInstruction::SymbolicIndexedEffect`] carrying the
+    /// resolved `array_slots` snapshot for the walker. Requires the
+    /// surrounding `array` to be declared (so its slots are
+    /// pre-allocated in env); errors if the array doesn't exist or
+    /// is a scalar.
+    fn emit_let_indexed_symbolic(
+        &mut self,
+        array: &str,
+        index_var: SsaVar,
+        value: &CircuitExpr,
+    ) -> Result<(), ProveIrError> {
+        let array_slots = self.snapshot_array_slots(array)?;
+        let value_var = self.emit_expr(value)?;
+        let span = self.current_span.clone();
+        self.sink.push_symbolic_indexed_effect(
+            IndexedEffectKind::Let,
+            array_slots,
+            index_var,
+            Some(value_var),
+            span,
+        );
+        Ok(())
+    }
+
+    /// Symbolic-index `WitnessHintIndexed`. Same shape as
+    /// [`emit_let_indexed_symbolic`] but with no value side.
+    fn emit_witness_hint_indexed_symbolic(
+        &mut self,
+        array: &str,
+        index_var: SsaVar,
+    ) -> Result<(), ProveIrError> {
+        let array_slots = self.snapshot_array_slots(array)?;
+        let span = self.current_span.clone();
+        self.sink.push_symbolic_indexed_effect(
+            IndexedEffectKind::WitnessHint,
+            array_slots,
+            index_var,
+            None,
+            span,
+        );
+        Ok(())
+    }
+
+    /// Snapshot the `Vec<SsaVar>` of slot wires for a declared array.
+    /// Returns an error if `array` is missing or bound to a scalar.
+    fn snapshot_array_slots(&self, array: &str) -> Result<Vec<SsaVar>, ProveIrError> {
+        match self.env.get(array) {
+            Some(InstEnvValue::Array(elems)) => Ok(elems.clone()),
+            Some(InstEnvValue::Scalar(_)) => Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "symbolic indexed write into `{array}` but `{array}` is a scalar"
+                ),
+                span: None,
+            }),
+            None => Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "symbolic indexed write into `{array}` but the array is not declared in this scope"
+                ),
+                span: None,
+            }),
+        }
     }
 }
