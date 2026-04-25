@@ -26,7 +26,7 @@ use memory::field::FieldBackend;
 use crate::bytecode::opcode::{code, Opcode};
 use crate::bytecode::ConstPool;
 use crate::error::LysisError;
-use crate::header::{LysisHeader, HEADER_SIZE};
+use crate::header::LysisHeader;
 use crate::intern::Visibility;
 use crate::program::{Instr, Program, Template};
 
@@ -238,13 +238,16 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
 pub fn decode<F: FieldBackend>(bytes: &[u8]) -> Result<Program<F>, LysisError> {
     let header = LysisHeader::decode(bytes)?;
 
-    if bytes.len() < HEADER_SIZE {
+    // Header validates its own length internally, but the slice we
+    // consume here has version-dependent size (16 for v1, 18 for v2).
+    let header_size = header.size_in_bytes();
+    if bytes.len() < header_size {
         return Err(LysisError::UnexpectedEof {
-            needed: HEADER_SIZE,
+            needed: header_size,
             remaining: bytes.len(),
         });
     }
-    let after_header = &bytes[HEADER_SIZE..];
+    let after_header = &bytes[header_size..];
     let (const_pool, pool_used) =
         ConstPool::<F>::decode(after_header, header.const_pool_len, header.family)?;
 
