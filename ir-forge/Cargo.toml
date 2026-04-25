@@ -35,3 +35,5 @@ test-support = []
 # via `ir`/`zkc`'s dev-deps; this entry restores per-package test
 # coverage.
 ir-forge = { path = ".", features = ["test-support"] }
+# Phase 4 — heap-spill walker proptests. Same version as zkc + akronc.
+proptest = "1"

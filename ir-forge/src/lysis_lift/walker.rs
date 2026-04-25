@@ -97,12 +97,24 @@ const FRAME_CAP: u32 = 255;
 /// constraint stream).
 const FRAME_MARGIN: u32 = 4;
 
-/// Hard cap on the number of live SSA vars we forward as captures
-/// across a split. Matches RFC §5.1: `InstantiateTemplate.capture_regs`
-/// is length-prefixed by a `u8` (max 255), and the receiving frame
-/// only has 255 reg slots, of which we want most available for actual
-/// work in the new template body.
-const MAX_CAPTURES: usize = 64;
+/// Hard cap on the total live-set size handled by a single
+/// `compute_live_set` call, including spilled cold vars. Anything
+/// beyond this is a structural overflow (~MB-scale program); the
+/// walker errors out cleanly with `LiveSetTooLarge`. The 64-cap
+/// inherited from Phase 3.B was the *capture* limit; in Phase 4 it
+/// is the *hot-partition* limit instead — see [`MAX_CAPTURES_HOT`].
+/// Total live sets up to ~65535 fit naturally because heap slots
+/// are u16-indexed.
+const MAX_CAPTURES: usize = u16::MAX as usize;
+
+/// Phase 4 hot-partition budget. The first `MAX_CAPTURES_HOT`
+/// live SSA vars (sorted by *first-use* in the upcoming body window,
+/// not by `SsaVar.0`) are passed as `capture_regs`; the remainder
+/// are spilled to the program-global heap and reloaded lazily on
+/// first use in the callee body. Setting this lower than
+/// `FRAME_CAP - FRAME_MARGIN` reserves headroom for emit-time
+/// scratch allocations in the new frame. See research report §6.4.
+const MAX_CAPTURES_HOT: usize = 48;
 
 /// Errors raised by [`Walker::lower`].
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -348,6 +360,19 @@ pub struct Walker<F: FieldBackend> {
     /// `walker_const` keys: it pinpoints exactly the iter_vars that
     /// must survive, not every compile-time-folded SsaVar.
     enclosing_iter_vars: Vec<SsaVar>,
+    /// Phase 4 — bump allocator for heap slots. Program-global
+    /// (never reset between templates). Each `StoreHeap` emission
+    /// claims the next free slot id and increments this counter.
+    /// `finalize()` writes the final value into the v2 header's
+    /// `heap_size_hint` field so the executor pre-sizes its heap.
+    heap_alloc: u16,
+    /// Phase 4 — `SsaVar` → heap slot for vars that were spilled at
+    /// any prior split. Persists across template boundaries (unlike
+    /// `ssa_to_reg`, which is wiped at every `perform_split`). A var
+    /// is in this map iff it was emitted as `StoreHeap` somewhere in
+    /// the program; subsequent uses produce one `LoadHeap` per
+    /// template body that references it.
+    ssa_to_heap: HashMap<SsaVar, u16>,
 }
 
 impl<F: FieldBackend> Walker<F> {
@@ -363,6 +388,8 @@ impl<F: FieldBackend> Walker<F> {
             walker_const: HashMap::new(),
             template_id_map: HashMap::new(),
             enclosing_iter_vars: Vec::new(),
+            heap_alloc: 0,
+            ssa_to_heap: HashMap::new(),
         }
     }
 
@@ -479,7 +506,13 @@ impl<F: FieldBackend> Walker<F> {
         let referenced = collect_referenced_ssa_vars(&body[next_idx..]);
         let live = self.compute_live_set(|v| referenced.contains(v))?;
         dump_live_set_trace("top_level", live.len(), body.len() - next_idx, self.current);
-        self.perform_split(&live)
+        // Partition by first-use ordering in the upcoming body.
+        // Phase 4 §6.4: the first MAX_CAPTURES_HOT (≤ 48) referenced
+        // earliest stay as captures; the rest spill to the heap and
+        // reload lazily on first use.
+        let upcoming = &body[next_idx..];
+        let (hot, cold) = partition_live_set(&live, upcoming, &HashSet::new());
+        self.perform_split(&hot, &cold)
     }
 
     /// Mid-emit split inside `emit_loop_unroll_per_iter`. The live set
@@ -497,12 +530,22 @@ impl<F: FieldBackend> Walker<F> {
         let enclosing: HashSet<SsaVar> = self.enclosing_iter_vars.iter().copied().collect();
         let live = self.compute_live_set(|v| referenced.contains(v) || enclosing.contains(v))?;
         dump_live_set_trace("mid_iter", live.len(), body.len(), self.current);
-        self.perform_split(&live)
+        // Mid-iter splits force-include enclosing iter vars in `hot`
+        // regardless of first-use ordering — outer loops' iter_vars
+        // must survive every inner split cheaply, and the inner
+        // loop's iter_var binding is also load-bearing for the next
+        // iteration's restore (Gap 4 invariant).
+        let (hot, cold) = partition_live_set(&live, body, &enclosing);
+        self.perform_split(&hot, &cold)
     }
 
-    /// Build the deterministic, capped live set for a split. Filters
-    /// `ssa_to_reg` keys by `predicate`, sorts by `SsaVar.0`, and
-    /// rejects sets larger than [`MAX_CAPTURES`].
+    /// Build the deterministic live set for a split. Filters
+    /// `ssa_to_reg` keys by `predicate`, sorts by `SsaVar.0` for
+    /// proving-key stability, and rejects sets larger than
+    /// [`MAX_CAPTURES`] (= `u16::MAX`, the absolute heap-slot ceiling).
+    /// Sets in the `(MAX_CAPTURES_HOT, MAX_CAPTURES]` range are
+    /// accepted and partitioned by `partition_live_set` into a
+    /// hot capture set + a cold spill set.
     ///
     /// **Tracing**: when `LYSIS_DUMP_LIVESET=1` is set in the
     /// environment, every accept *and* reject path emits one stderr
@@ -543,12 +586,31 @@ impl<F: FieldBackend> Walker<F> {
 
     /// Common post-live-set machinery shared by [`Self::do_split`]
     /// (Phase 1.5 top-level) and [`Self::split_in_per_iter`] (Gap 4
-    /// mid-iter). Emits the chaining `InstantiateTemplate`, closes the
-    /// current template, opens a fresh one with `live` as captures,
-    /// rebinds each captured SsaVar to its new frame slot, and
-    /// forwards `walker_const` entries for the captures.
-    fn perform_split(&mut self, live: &[SsaVar]) -> Result<(), WalkError> {
-        let capture_regs: Vec<u8> = live.iter().map(|v| self.ssa_to_reg[v]).collect();
+    /// mid-iter).
+    ///
+    /// Phase 4 spill discipline (research report §6.4):
+    ///
+    ///  1. **Spill cold vars first** — for every cold var not already
+    ///     in `ssa_to_heap`, allocate a slot via `heap_alloc`, emit
+    ///     `StoreHeap { src_reg, slot }` into the *outgoing* template
+    ///     buffer, and record the slot in `ssa_to_heap` so future
+    ///     splits forward the same slot id rather than re-storing.
+    ///  2. **Chain via captures** — emit the `InstantiateTemplate`
+    ///     opcode passing only the *hot* vars as captures.
+    ///  3. **Open the new template** — fresh allocator, `ssa_to_reg`
+    ///     rebuilt with hot vars at their post-instantiate reg slots.
+    ///     Cold vars are NOT in `ssa_to_reg`; they reload lazily
+    ///     through [`Self::resolve`] on first use in the new body.
+    fn perform_split(&mut self, hot: &[SsaVar], cold: &[SsaVar]) -> Result<(), WalkError> {
+        // Step 1: spill cold vars. Order is deterministic by SsaVar.0
+        // (cold is sorted because partition_live_set returns slices of
+        // the sorted live set).
+        for var in cold {
+            self.spill_cold_var(*var);
+        }
+
+        // Step 2: build capture_regs for the hot partition only.
+        let capture_regs: Vec<u8> = hot.iter().map(|v| self.ssa_to_reg[v]).collect();
         let next_template_id = self.templates.len() as u16;
 
         // Tail of the outgoing template: chain the next one and
@@ -568,29 +630,27 @@ impl<F: FieldBackend> Walker<F> {
         // for `InstantiateTemplate`. So the first `live.len()` regs
         // are already bound to the captured SSA vars; we just record
         // that mapping and start allocating fresh regs above them.
-        let n_params = live.len() as u8;
+        let n_params = hot.len() as u8;
         self.templates.push(TemplateBuf::new(n_params));
         self.current = self.templates.len() - 1;
         self.allocator = RegAllocator::new_after_captures(n_params);
         let mut new_ssa_to_reg = HashMap::new();
-        for (i, var) in live.iter().enumerate() {
+        for (i, var) in hot.iter().enumerate() {
             new_ssa_to_reg.insert(*var, i as RegId);
         }
         self.ssa_to_reg = new_ssa_to_reg;
         self.one_reg = None;
-        // Forward `walker_const` entries for the live capture set. The
-        // map is `SsaVar → i64` — values, not regs — so a captured
-        // SsaVar's compile-time constant remains valid in the new
-        // template even though its reg binding changed. Entries for
-        // SsaVars that aren't in `live` are dropped: their bindings
-        // disappeared, and walker_const is just a hint, so dropping is
-        // sound. This forwarding is load-bearing for mid-iter splits
-        // inside `emit_loop_unroll_per_iter` — the per-iter
-        // `walker_const[iter_var] = i` literal must survive across the
-        // boundary so that `body[j..]`'s SymbolicShift / SymbolicArrayRead
-        // / SymbolicIndexedEffect arms still const-fold.
+        // Forward `walker_const` entries for the hot + cold sets. The
+        // map is `SsaVar → i64` — values, not regs — so a SsaVar's
+        // compile-time constant remains valid in the new template
+        // even though its reg binding changed (or, for cold vars, has
+        // not been materialised yet). Forwarding cold-var consts
+        // matters because a later `emit_*` may resolve a cold var via
+        // `resolve()` (lazy LoadHeap) and then ask `walker_const` for
+        // its literal — without forwarding the const map, post-split
+        // const-folding would silently regress for spilled vars.
         let prior_walker_const = std::mem::take(&mut self.walker_const);
-        for var in live {
+        for var in hot.iter().chain(cold.iter()) {
             if let Some(val) = prior_walker_const.get(var) {
                 self.walker_const.insert(*var, *val);
             }
@@ -601,6 +661,29 @@ impl<F: FieldBackend> Walker<F> {
         // wide single-instruction templates (Decompose, Or) whose
         // body never references `one`.
         Ok(())
+    }
+
+    /// Phase 4 — spill a cold var to the program-global heap. Idempotent
+    /// per `SsaVar`: if the var was already spilled at an earlier
+    /// split (`ssa_to_heap.contains_key(&var)`), no new `StoreHeap` is
+    /// emitted. This enforces the **single-static-store invariant**
+    /// (research report §6.4 + validator rule 13) at the walker
+    /// level, before the validator catches it.
+    ///
+    /// Pre-condition: `ssa_to_reg[&var]` is bound — the caller (which
+    /// is always `perform_split`) has just computed the live set
+    /// against `ssa_to_reg.keys()`, so every var in `cold` is by
+    /// definition in `ssa_to_reg`.
+    fn spill_cold_var(&mut self, var: SsaVar) {
+        if self.ssa_to_heap.contains_key(&var) {
+            // Already spilled at an earlier split — re-use the slot.
+            return;
+        }
+        let slot = self.heap_alloc;
+        self.heap_alloc = self.heap_alloc.saturating_add(1);
+        let src_reg = self.ssa_to_reg[&var];
+        self.push_op(Opcode::StoreHeap { src_reg, slot });
+        self.ssa_to_heap.insert(var, slot);
     }
 
     /// Stamp the current allocator's high-water mark onto the current
@@ -686,6 +769,9 @@ impl<F: FieldBackend> Walker<F> {
                 self.builder.push_opcode(op);
             }
         }
+        // Phase 4: stamp the heap size hint so the executor pre-sizes
+        // its heap to fit every slot allocated by `spill_cold_var`.
+        self.builder.set_heap_size_hint(self.heap_alloc);
         Ok(self.builder.finish())
     }
 
@@ -1790,15 +1876,38 @@ impl<F: FieldBackend> Walker<F> {
         Ok(())
     }
 
-    fn bin(&self, lhs: SsaVar, rhs: SsaVar) -> Result<(RegId, RegId), WalkError> {
-        Ok((self.resolve(lhs)?, self.resolve(rhs)?))
+    fn bin(&mut self, lhs: SsaVar, rhs: SsaVar) -> Result<(RegId, RegId), WalkError> {
+        // Resolve sequentially — `self.resolve` may mutate state to
+        // emit a `LoadHeap` for a spilled var, so a side-effect-free
+        // map().collect() over both is unsound.
+        let l = self.resolve(lhs)?;
+        let r = self.resolve(rhs)?;
+        Ok((l, r))
     }
 
-    fn resolve(&self, var: SsaVar) -> Result<RegId, WalkError> {
-        self.ssa_to_reg
-            .get(&var)
-            .copied()
-            .ok_or(WalkError::UndefinedSsaVar(var))
+    /// Resolve a `SsaVar` to the reg it currently lives in. Hot path:
+    /// `ssa_to_reg.get(&var)` returns `Some`. Phase 4 cold path: when
+    /// a split spilled this var to the heap (`ssa_to_heap.contains(&var)`)
+    /// but the new template hasn't yet materialised it, emit a
+    /// `LoadHeap` into a fresh reg, cache the (var, reg) binding so
+    /// subsequent uses inside the same template body see it as hot,
+    /// and return the fresh reg.
+    ///
+    /// This is the ONLY place lazy-reload is implemented — every
+    /// emission site that resolves an operand SsaVar goes through
+    /// here (or through `bin` / `bin3` / direct callers), so spilled
+    /// vars are rebound transparently without per-site changes.
+    fn resolve(&mut self, var: SsaVar) -> Result<RegId, WalkError> {
+        if let Some(&reg) = self.ssa_to_reg.get(&var) {
+            return Ok(reg);
+        }
+        if let Some(&slot) = self.ssa_to_heap.get(&var) {
+            let dst_reg = self.allocator.alloc()?;
+            self.push_op(Opcode::LoadHeap { dst_reg, slot });
+            self.ssa_to_reg.insert(var, dst_reg);
+            return Ok(dst_reg);
+        }
+        Err(WalkError::UndefinedSsaVar(var))
     }
 
     fn bind(&mut self, var: SsaVar, reg: RegId) {
@@ -2338,6 +2447,73 @@ fn dump_live_set_trace(kind: &str, live_count: usize, body_len: usize, template_
             "[walker] live_set kind={kind} live={live_count} body={body_len} template={template_id}"
         );
     }
+}
+
+/// Phase 4 — partition a sorted live set into (hot, cold) by
+/// **first-use index** in the upcoming body window. Vars referenced
+/// earliest in the body are hot (passed as captures); vars referenced
+/// later (or never within the scanned window) are cold (spilled to
+/// the heap, reloaded lazily).
+///
+/// `force_hot` collects vars that must ride in the hot partition
+/// regardless of first-use ordering — for `split_in_per_iter`, the
+/// enclosing loop's iter_vars (Gap 4 invariant: outer iter_var must
+/// survive every inner split cheaply, since the next-iteration
+/// restore re-binds it from `ssa_to_reg`).
+///
+/// Tie-break: vars with equal first-use index sort by `SsaVar.0`
+/// (the input order). This keeps capture slot ids deterministic
+/// across runs even when many vars first appear in the same opcode.
+///
+/// Time complexity: O(scan_window + live.len() * log(live.len())).
+/// Caller bounds the scan window at ≤ 256 instructions to keep this
+/// O(N).
+fn partition_live_set<F: FieldBackend>(
+    live: &[SsaVar],
+    upcoming_body: &[ExtendedInstruction<F>],
+    force_hot: &HashSet<SsaVar>,
+) -> (Vec<SsaVar>, Vec<SsaVar>) {
+    // Scan window: bound at 256 to amortise O(N) over the whole
+    // walker pass. SHA-256(64) round bodies are well under 256
+    // instructions; for circuits with longer prologues the cap means
+    // we under-promote a few late-referenced hot vars to cold, which
+    // costs one LoadHeap each (≤ 1ms in the SHA-256 measurement).
+    const SCAN_WINDOW: usize = 256;
+    let scan = &upcoming_body[..upcoming_body.len().min(SCAN_WINDOW)];
+
+    // Build first-use index. usize::MAX = "never seen in window".
+    let mut first_use: HashMap<SsaVar, usize> = HashMap::with_capacity(live.len());
+    let mut referenced_in_inst = HashSet::new();
+    for (i, inst) in scan.iter().enumerate() {
+        referenced_in_inst.clear();
+        collect_in_extinst(inst, &mut referenced_in_inst);
+        for v in &referenced_in_inst {
+            first_use.entry(*v).or_insert(i);
+        }
+    }
+
+    // Sort the live set by (force_hot first, then first_use, then SsaVar.0).
+    // `force_hot` is collapsed to first_use=0 to push them to the front.
+    let mut sorted = live.to_vec();
+    sorted.sort_by_key(|v| {
+        let key0 = if force_hot.contains(v) { 0 } else { 1 };
+        let key1 = first_use.get(v).copied().unwrap_or(usize::MAX);
+        (key0, key1, v.0)
+    });
+
+    let cap = MAX_CAPTURES_HOT.min(sorted.len());
+    let cold = sorted.split_off(cap);
+    let mut hot = sorted;
+    // hot must come back sorted by SsaVar.0 to match the existing
+    // capture-slot stability contract (compute_live_set sorts that
+    // way before partition; perform_split assigns slot i = hot[i]).
+    // The first-use ordering above is just for selection; once we've
+    // picked `cap` hot vars, re-sort them by SsaVar.0 so capture
+    // slots are deterministic.
+    hot.sort_unstable_by_key(|v| v.0);
+    let mut cold = cold;
+    cold.sort_unstable_by_key(|v| v.0);
+    (hot, cold)
 }
 
 /// Walk an `ExtendedInstruction` slice (recursing into LoopUnroll
@@ -4070,5 +4246,134 @@ mod tests {
             1,
             "small body should fit in Template 0 with no chain"
         );
+    }
+
+    // ---------------------------------------------------------------
+    // Phase 4 — partition_live_set unit tests + heap-emission smoke.
+    // ---------------------------------------------------------------
+
+    #[test]
+    fn partition_under_hot_cap_all_hot() {
+        let live: Vec<SsaVar> = (0..10).map(ssa).collect();
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![];
+        let force = HashSet::new();
+        let (hot, cold) = partition_live_set(&live, &body, &force);
+        assert_eq!(hot.len(), 10);
+        assert!(cold.is_empty());
+    }
+
+    #[test]
+    fn partition_above_hot_cap_splits_at_max_captures_hot() {
+        let live: Vec<SsaVar> = (0..60).map(ssa).collect();
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![];
+        let force = HashSet::new();
+        let (hot, cold) = partition_live_set(&live, &body, &force);
+        assert_eq!(hot.len(), MAX_CAPTURES_HOT);
+        assert_eq!(cold.len(), 60 - MAX_CAPTURES_HOT);
+    }
+
+    #[test]
+    fn partition_first_use_drives_hot_selection() {
+        // 100 live vars; only ssa(50)..=ssa(97) are referenced in the
+        // upcoming body window (in ascending order). Those 48
+        // referenced-earliest become hot; the rest (0..50, 98, 99) cold.
+        let live: Vec<SsaVar> = (0..100).map(ssa).collect();
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = (50u32..=97u32)
+            .map(|i| {
+                plain(Instruction::Add {
+                    result: ssa(1000 + i),
+                    lhs: ssa(i),
+                    rhs: ssa(i),
+                })
+            })
+            .collect();
+        let force = HashSet::new();
+        let (hot, cold) = partition_live_set(&live, &body, &force);
+        assert_eq!(hot.len(), MAX_CAPTURES_HOT);
+        let hot_set: HashSet<SsaVar> = hot.iter().copied().collect();
+        for i in 50u32..=97 {
+            assert!(hot_set.contains(&ssa(i)), "ssa({i}) should be hot");
+        }
+        // ssa(0..49) + ssa(98) + ssa(99) → all cold (52 items)
+        assert_eq!(cold.len(), 100 - MAX_CAPTURES_HOT);
+    }
+
+    #[test]
+    fn partition_force_hot_overrides_first_use() {
+        // ssa(99) has first_use = MAX (not in body) but is force_hot.
+        let mut live: Vec<SsaVar> = (0..50).map(ssa).collect();
+        live.push(ssa(99));
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = (0u32..50)
+            .map(|i| {
+                plain(Instruction::Add {
+                    result: ssa(1000 + i),
+                    lhs: ssa(i),
+                    rhs: ssa(i),
+                })
+            })
+            .collect();
+        let mut force = HashSet::new();
+        force.insert(ssa(99));
+        let (hot, cold) = partition_live_set(&live, &body, &force);
+        assert!(
+            hot.contains(&ssa(99)),
+            "force_hot must override first-use ordering"
+        );
+        assert_eq!(hot.len(), MAX_CAPTURES_HOT);
+        // 51 total - 48 hot = 3 cold
+        assert_eq!(cold.len(), 51 - MAX_CAPTURES_HOT);
+    }
+
+    #[test]
+    fn partition_outputs_sorted_by_ssa_var_id() {
+        // The capture-slot stability contract requires hot/cold both
+        // be sorted by SsaVar.0; the first-use selection happens
+        // internally but does not leak into the output ordering.
+        let live: Vec<SsaVar> = (0..60).map(ssa).collect();
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![];
+        let force = HashSet::new();
+        let (hot, cold) = partition_live_set(&live, &body, &force);
+        for w in hot.windows(2) {
+            assert!(w[0].0 < w[1].0, "hot must be sorted by SsaVar.0");
+        }
+        for w in cold.windows(2) {
+            assert!(w[0].0 < w[1].0, "cold must be sorted by SsaVar.0");
+        }
+    }
+
+    #[test]
+    fn small_body_emits_no_heap_ops() {
+        // Sanity: a program that fits in MAX_CAPTURES_HOT ought to
+        // emit zero heap opcodes and leave heap_size_hint at 0. This
+        // is the "no regression for the existing corpus" gate.
+        let body = vec![
+            plain(Instruction::Const {
+                result: ssa(0),
+                value: fe(7),
+            }),
+            plain(Instruction::Const {
+                result: ssa(1),
+                value: fe(3),
+            }),
+            plain(Instruction::Add {
+                result: ssa(2),
+                lhs: ssa(0),
+                rhs: ssa(1),
+            }),
+        ];
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker.lower(&body).expect("lower");
+        assert_eq!(program.header.heap_size_hint, 0);
+        let heap_ops = program
+            .body
+            .iter()
+            .filter(|i| {
+                matches!(
+                    i.opcode,
+                    lysis::Opcode::StoreHeap { .. } | lysis::Opcode::LoadHeap { .. }
+                )
+            })
+            .count();
+        assert_eq!(heap_ops, 0);
     }
 }

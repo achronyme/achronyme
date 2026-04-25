@@ -1059,6 +1059,7 @@ dependencies = [
  "lysis",
  "lysis-types",
  "memory",
+ "proptest",
  "resolve",
  "serde",
  "smallvec",

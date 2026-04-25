@@ -69,6 +69,13 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         self
     }
 
+    /// Mutable setter form of [`Self::with_heap_size_hint`]. Used by
+    /// callers that own the builder by `&mut` rather than value (e.g.
+    /// the walker's `finalize()` path).
+    pub fn set_heap_size_hint(&mut self, hint: u16) {
+        self.heap_size_hint = hint;
+    }
+
     /// Number of instructions pushed so far.
     pub fn instr_count(&self) -> usize {
         self.body.len()
