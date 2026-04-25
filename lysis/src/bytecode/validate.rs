@@ -220,12 +220,9 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
             v.extend_from_slice(in_regs);
             v
         }
-        Opcode::EmitIntDiv {
-            dst, lhs, rhs, ..
+        Opcode::EmitIntDiv { dst, lhs, rhs, .. } | Opcode::EmitIntMod { dst, lhs, rhs, .. } => {
+            vec![*dst, *lhs, *rhs]
         }
-        | Opcode::EmitIntMod {
-            dst, lhs, rhs, ..
-        } => vec![*dst, *lhs, *rhs],
     }
 }
 

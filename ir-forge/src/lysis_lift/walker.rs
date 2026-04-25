@@ -64,10 +64,10 @@
 //! the underlying memory was nowhere near the limit. SHA-256(64) is
 //! the canonical case.
 //!
-//! Phase 1.5 fixes this by **always wrapping the body in Template 0**:
-//! the root body is the trivial sequence `InstantiateTemplate(0, [], [])`
-//! + `Halt`, and all real work happens inside the template's frame.
-//! Programs that fit in 255 regs see no behavioural change (the
+//! Phase 1.5 fixes this by always wrapping the body in Template 0.
+//! The root body is the trivial sequence `InstantiateTemplate(0, [], [])`
+//! followed by `Halt`, and all real work happens inside the template's
+//! frame. Programs that fit in 255 regs see no behavioural change (the
 //! materialized `InstructionKind` stream is identical), and programs
 //! that don't will be split across multiple chained templates by the
 //! M2-M4 split machinery layered on top of this wrapping.
@@ -390,11 +390,11 @@ impl<F: FieldBackend> Walker<F> {
         buf.opcodes.push(Opcode::Return);
     }
 
-    /// Assemble the final Program: the body order is
-    ///   [DefineTemplate(i)]*  +  InstantiateTemplate(0, [], [])  +  Halt
-    ///   +  [Template 0 body]  +  [Template 1 body]  +  ...
-    /// Offsets are stamped on each `DefineTemplate` so the executor
-    /// can resolve `body_offset` → instruction index.
+    /// Assemble the final Program. The body order is
+    /// `[DefineTemplate(i)]*  +  InstantiateTemplate(0, [], [])  +  Halt
+    /// +  [Template 0 body]  +  [Template 1 body]  +  ...`. Offsets
+    /// are stamped on each `DefineTemplate` so the executor can
+    /// resolve `body_offset` → instruction index.
     fn finalize(mut self) -> Result<Program<F>, WalkError> {
         self.close_current_template();
 
@@ -447,15 +447,11 @@ impl<F: FieldBackend> Walker<F> {
         // Stamp DefineTemplate opcodes with computed offsets, then
         // the root entry, then each template body.
         let mut offset_cursor = root_bytes;
-        let n_templates = self.templates.len();
-        for tid in 0..n_templates {
-            let frame_size = self.templates[tid].frame_size;
-            let n_params = self.templates[tid].n_params;
-            let body_len = body_sizes[tid];
+        for (tid, (buf, &body_len)) in self.templates.iter().zip(body_sizes.iter()).enumerate() {
             self.builder.define_template(
                 tid as u16,
-                frame_size,
-                n_params,
+                buf.frame_size,
+                buf.n_params,
                 offset_cursor,
                 body_len,
             );
@@ -513,19 +509,31 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::Add { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitAdd { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitAdd {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::Sub { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitSub { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::Mul { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitMul { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitMul {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             // Field division Div(x,y) = x * y^{-1} is witness-computed
@@ -570,18 +578,34 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::And { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitMul { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitMul {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::Or { result, lhs, rhs } => {
                 // x OR y = x + y - x*y (for booleans).
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let sum = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitAdd { dst: sum, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitAdd {
+                    dst: sum,
+                    lhs: l,
+                    rhs: r,
+                });
                 let prod = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitMul { dst: prod, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitMul {
+                    dst: prod,
+                    lhs: l,
+                    rhs: r,
+                });
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitSub { dst, lhs: sum, rhs: prod });
+                self.push_op(Opcode::EmitSub {
+                    dst,
+                    lhs: sum,
+                    rhs: prod,
+                });
                 self.bind(*result, dst);
             }
 
@@ -609,13 +633,21 @@ impl<F: FieldBackend> Walker<F> {
             Instruction::IsEq { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsEq { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitIsEq {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             Instruction::IsLt { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsLt { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitIsLt {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsNeq(x,y) = 1 - IsEq(x,y).
@@ -623,7 +655,11 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let eq = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsEq { dst: eq, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitIsEq {
+                    dst: eq,
+                    lhs: l,
+                    rhs: r,
+                });
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::EmitSub {
                     dst,
@@ -637,7 +673,11 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsLt { dst: lt, lhs: r, rhs: l });
+                self.push_op(Opcode::EmitIsLt {
+                    dst: lt,
+                    lhs: r,
+                    rhs: l,
+                });
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::EmitSub {
                     dst,
@@ -655,7 +695,11 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsLt { dst, lhs: l, rhs: r });
+                self.push_op(Opcode::EmitIsLt {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
                 self.bind(*result, dst);
             }
             // Desugar: IsLeBounded(x,y,bits) = 1 - IsLt(y,x); same
@@ -666,7 +710,11 @@ impl<F: FieldBackend> Walker<F> {
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsLt { dst: lt, lhs: r, rhs: l });
+                self.push_op(Opcode::EmitIsLt {
+                    dst: lt,
+                    lhs: r,
+                    rhs: l,
+                });
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::EmitSub {
                     dst,
@@ -1150,9 +1198,11 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
             Instruction::IsLeBounded { .. } => "IsLeBounded".into(),
             Instruction::IntDiv { max_bits, .. } => format!("IntDiv(max_bits={max_bits})"),
             Instruction::IntMod { max_bits, .. } => format!("IntMod(max_bits={max_bits})"),
-            other => format!("{}", std::any::type_name_of_val(other)),
+            other => std::any::type_name_of_val(other).to_string(),
         },
-        ExtendedInstruction::LoopUnroll { start, end, body, .. } => {
+        ExtendedInstruction::LoopUnroll {
+            start, end, body, ..
+        } => {
             format!("LoopUnroll[{start}..{end}, body_len={}]", body.len())
         }
         ExtendedInstruction::TemplateCall { template_id, .. } => {
@@ -1269,10 +1319,7 @@ fn collect_referenced_ssa_vars<F: FieldBackend>(
     out
 }
 
-fn collect_in_extinst<F: FieldBackend>(
-    inst: &ExtendedInstruction<F>,
-    out: &mut HashSet<SsaVar>,
-) {
+fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut HashSet<SsaVar>) {
     match inst {
         ExtendedInstruction::Plain(i) => collect_in_instruction(i, out),
         ExtendedInstruction::LoopUnroll { body, .. } => {
@@ -1917,7 +1964,9 @@ mod tests {
             }),
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("max_bits > u8 should refuse");
+        let err = walker
+            .lower(&body)
+            .expect_err("max_bits > u8 should refuse");
         assert!(matches!(
             err,
             WalkError::OperandOutOfRange {
