@@ -640,21 +640,32 @@ impl<F: FieldBackend> Walker<F> {
         }
         self.ssa_to_reg = new_ssa_to_reg;
         self.one_reg = None;
-        // Forward `walker_const` entries for the hot + cold sets. The
-        // map is `SsaVar → i64` — values, not regs — so a SsaVar's
-        // compile-time constant remains valid in the new template
-        // even though its reg binding changed (or, for cold vars, has
-        // not been materialised yet). Forwarding cold-var consts
-        // matters because a later `emit_*` may resolve a cold var via
-        // `resolve()` (lazy LoadHeap) and then ask `walker_const` for
-        // its literal — without forwarding the const map, post-split
-        // const-folding would silently regress for spilled vars.
-        let prior_walker_const = std::mem::take(&mut self.walker_const);
-        for var in hot.iter().chain(cold.iter()) {
-            if let Some(val) = prior_walker_const.get(var) {
-                self.walker_const.insert(*var, *val);
-            }
-        }
+        // Forward `walker_const` *unfiltered* across the split.
+        //
+        // Earlier revisions filtered this map by the live set
+        // (`hot ∪ cold`), reasoning that "walker_const is just a
+        // hint, dropping is sound." That reasoning is **wrong**:
+        // `walker_const` is load-bearing for the
+        // `SymbolicIndexedEffect` / `SymbolicArrayRead` /
+        // `SymbolicShift` emit paths, which look up an `index_var`
+        // / `shift_var` literal at walker time. A var's literal can
+        // be in `walker_const` *without* being in `ssa_to_reg`
+        // (typical case: a loop iter var that const-folded without
+        // ever materialising as a reg), so it never enters the live
+        // set, never gets forwarded, and post-split emission panics
+        // with `SymbolicIndexedEffectNotEmittable`.
+        //
+        // SHA-256(64) is the canonical witness: 4 top-level splits
+        // succeed (Phase 4 heap path works), then a downstream
+        // `SymbolicIndexedEffect` whose `index_var` was a folded
+        // literal trips the assertion in `emit_symbolic_indexed_effect`
+        // because the new template's `walker_const` is empty.
+        //
+        // The map is lookup-only and never produces side-effects, so
+        // forwarding stale entries is harmless: nobody asks for a
+        // var that the new template doesn't reference. Memory cost
+        // is bounded by the total number of compile-time-folded vars
+        // across the program — small in practice.
 
         // `one` is re-loaded lazily on first use in the new
         // template — see `Walker::one`. This avoids the slot tax on
