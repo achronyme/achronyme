@@ -30,7 +30,7 @@ pub mod lower;
 pub mod program;
 
 pub use builder::ProgramBuilder;
-pub use bytecode::{decode, encode, ConstPool, ConstPoolEntry, Opcode};
+pub use bytecode::{decode, encode, ConstPool, ConstPoolEntry, InputSrc, Opcode};
 pub use config::LysisConfig;
 pub use error::LysisError;
 pub use execute::{execute, expected_family, Frame, InterningSink, IrSink, StubSink};

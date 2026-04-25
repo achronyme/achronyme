@@ -755,13 +755,14 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         }
 
         // Heap-output WitnessCall (Phase 4 follow-up). Mirrors
-        // `EmitWitnessCall` but writes outputs to heap[slot] instead
-        // of frame.regs[reg]. Used when output count exceeds the
-        // u8 reg cap. The downstream LoadHeap path materialises
-        // outputs into regs on first use.
+        // `EmitWitnessCall` but reads inputs from regs OR heap slots
+        // (per `InputSrc` tag) and writes outputs to heap[slot]
+        // instead of frame.regs[reg]. Used when input or output
+        // counts exceed the u8 reg cap (canonical: SHA-256 with
+        // 700+ cold inputs and 256 outputs).
         EmitWitnessCallHeap {
             bytecode_const_idx,
-            in_regs,
+            inputs,
             out_slots,
         } => {
             let entry = program.const_pool.get(*bytecode_const_idx as usize).ok_or(
@@ -781,14 +782,36 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     });
                 }
             };
-            let inputs: Vec<NodeId> = in_regs
+            // Read inputs in order. Reg sources go through read_reg
+            // (same as classic), Slot sources read heap[slot]
+            // directly — no LoadHeap emit, no register allocation.
+            let resolved_inputs: Vec<NodeId> = inputs
                 .iter()
-                .map(|r| read_reg(&frames[frame_idx], *r, offset))
+                .map(|src| match src {
+                    crate::bytecode::opcode::InputSrc::Reg(r) => {
+                        read_reg(&frames[frame_idx], *r, offset)
+                    }
+                    crate::bytecode::opcode::InputSrc::Slot(slot) => {
+                        let slot_idx = *slot as usize;
+                        if slot_idx >= heap.len() {
+                            return Err(LysisError::ValidationFailed {
+                                rule: 12,
+                                location: offset,
+                                detail: "EmitWitnessCallHeap input Slot >= heap_size_hint",
+                            });
+                        }
+                        heap[slot_idx].ok_or(LysisError::ValidationFailed {
+                            rule: 13,
+                            location: offset,
+                            detail: "EmitWitnessCallHeap reads from unwritten input Slot",
+                        })
+                    }
+                })
                 .collect::<Result<_, _>>()?;
             let outputs: Vec<NodeId> = (0..out_slots.len()).map(|_| sink.fresh_id()).collect();
             sink.emit_effect(InstructionKind::WitnessCall {
                 outputs: outputs.clone(),
-                inputs,
+                inputs: resolved_inputs,
                 program_bytes: blob,
             });
             for (slot, id) in out_slots.iter().zip(outputs.iter()) {
@@ -1694,6 +1717,7 @@ mod tests {
         // sink saw exactly one WitnessCall + the two LoadConsts that
         // populated the inputs.
         let mut builder = b().with_heap_size_hint(8);
+        use crate::bytecode::opcode::InputSrc;
         builder.intern_field(seven());
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
@@ -1701,7 +1725,7 @@ mod tests {
             .load_const(1, 0)
             .emit_witness_call_heap(
                 blob_idx as u16,
-                vec![0, 1],       // in_regs
+                vec![InputSrc::Reg(0), InputSrc::Reg(1)],
                 vec![0, 1, 2, 3], // out_slots
             )
             .load_heap(5, 0)

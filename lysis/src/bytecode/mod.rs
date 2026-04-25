@@ -18,5 +18,5 @@ pub mod validate;
 
 pub use const_pool::{ConstPool, ConstPoolEntry};
 pub use encoding::{decode, encode, encode_opcode};
-pub use opcode::{code, Opcode};
+pub use opcode::{code, InputSrc, Opcode};
 pub use validate::validate;
