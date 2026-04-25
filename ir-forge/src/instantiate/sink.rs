@@ -163,6 +163,29 @@ pub(crate) trait InstrSink<F: FieldBackend> {
             "push_symbolic_indexed_effect called on a sink whose loop_unroll_mode is PerIteration"
         );
     }
+
+    /// Push a [`ExtendedInstruction::SymbolicArrayRead`] into the
+    /// active scope. The caller must have already minted `result_var`
+    /// via [`Self::fresh_var`] and resolved `index_var` from the
+    /// index expression. `array_slots` is the pre-resolved list of
+    /// element SSA wires (mirrors
+    /// [`Self::push_symbolic_indexed_effect`]). The walker (Gap 1.5
+    /// Stage 3) will rebind `result_var` to `array_slots[idx]`'s
+    /// register per iteration, so no `Plain(Instruction)` is emitted
+    /// alongside.
+    ///
+    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    fn push_symbolic_array_read(
+        &mut self,
+        _result_var: SsaVar,
+        _array_slots: Vec<SsaVar>,
+        _index_var: SsaVar,
+        _span: Option<SpanRange>,
+    ) {
+        unreachable!(
+            "push_symbolic_array_read called on a sink whose loop_unroll_mode is PerIteration"
+        );
+    }
 }
 
 // ---------------------------------------------------------------------
@@ -343,6 +366,21 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
             array_slots,
             index_var,
             value_var,
+            span,
+        });
+    }
+
+    fn push_symbolic_array_read(
+        &mut self,
+        result_var: SsaVar,
+        array_slots: Vec<SsaVar>,
+        index_var: SsaVar,
+        span: Option<SpanRange>,
+    ) {
+        self.push_into_active(ExtendedInstruction::SymbolicArrayRead {
+            result_var,
+            array_slots,
+            index_var,
             span,
         });
     }
@@ -610,6 +648,45 @@ mod tests {
                         assert_eq!(*vv, Some(value_var));
                     }
                     other => panic!("expected SymbolicIndexedEffect, got {other:?}"),
+                }
+            }
+            other => panic!("expected LoopUnroll, got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn extended_sink_pushes_symbolic_array_read() {
+        // Mirror of the write-side test: simulate `emit_array_index_
+        // symbolic` inside a symbolic loop body.
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        let mut sink = ExtendedSink::new(&mut body, &mut metadata);
+
+        let iter_var = sink.fresh_var();
+        let slot0 = sink.fresh_var();
+        let slot1 = sink.fresh_var();
+        let result_var = sink.fresh_var();
+
+        sink.begin_symbolic_loop();
+        sink.push_symbolic_array_read(result_var, vec![slot0, slot1], iter_var, None);
+        sink.finish_symbolic_loop(iter_var, 0, 2);
+
+        assert_eq!(body.len(), 1, "one outer LoopUnroll");
+        match &body[0] {
+            ExtendedInstruction::LoopUnroll { body: inner, .. } => {
+                assert_eq!(inner.len(), 1);
+                match &inner[0] {
+                    ExtendedInstruction::SymbolicArrayRead {
+                        result_var: rv,
+                        array_slots,
+                        index_var,
+                        ..
+                    } => {
+                        assert_eq!(*rv, result_var);
+                        assert_eq!(array_slots, &vec![slot0, slot1]);
+                        assert_eq!(*index_var, iter_var);
+                    }
+                    other => panic!("expected SymbolicArrayRead, got {other:?}"),
                 }
             }
             other => panic!("expected LoopUnroll, got {other:?}"),
