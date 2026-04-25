@@ -174,6 +174,19 @@ pub enum WalkError {
     /// declaring `Plain(Input)` or `WitnessArrayDecl`. Surfaces the
     /// missing slot index for diagnosis.
     SymbolicArrayReadUnboundSlot { idx: usize, slot: SsaVar },
+    /// A `SymbolicShift` reached the walker but its `shift_var`
+    /// could not be const-folded to a non-negative integer at walker
+    /// time. Same surface limitation as
+    /// [`Self::SymbolicArrayReadNotEmittable`] — the walker's
+    /// const-prop only sees Add/Sub/Mul/Neg over loop-iter
+    /// constants. (Gap 3 Stage 3.)
+    SymbolicShiftNotEmittable,
+    /// `SymbolicShift.shift_var` const-folded but to a negative
+    /// integer. The legacy `emit_shift_right`/`emit_shift_left`
+    /// path uses a `u32` shift amount so negatives are a logic bug
+    /// at lowering or instantiation, not something the walker can
+    /// fix.
+    SymbolicShiftNegativeAmount { shift: i64 },
     /// `TemplateBody.captures.len()` did not match the declared
     /// `n_params`. The lift always sets them equal; a mismatch is a
     /// pipeline corruption. (Gap 2.)
@@ -239,6 +252,13 @@ impl std::fmt::Display for WalkError {
             Self::SymbolicArrayReadUnboundSlot { idx, slot } => write!(
                 f,
                 "walker: SymbolicArrayRead slot at index {idx} (SsaVar {slot}) has no register binding — upstream pre-emission missed this slot"
+            ),
+            Self::SymbolicShiftNotEmittable => f.write_str(
+                "walker: SymbolicShift amount could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+            ),
+            Self::SymbolicShiftNegativeAmount { shift } => write!(
+                f,
+                "walker: SymbolicShift resolved to negative shift amount {shift} — shift amounts must be non-negative"
             ),
             Self::TemplateCapturesMismatch { n_params, captures_len } => write!(
                 f,
@@ -640,6 +660,11 @@ impl<F: FieldBackend> Walker<F> {
                 index_var,
                 span: _,
             } => self.emit_symbolic_array_read(*result_var, array_slots, *index_var),
+            // Stage 3 of Gap 3 replaces this with a per-iteration
+            // resolver mirroring `emit_symbolic_indexed_effect`. Until
+            // then the variant only reaches `emit` when test fixtures
+            // construct it directly — flag and reject.
+            ExtendedInstruction::SymbolicShift { .. } => Err(WalkError::SymbolicShiftNotEmittable),
         }
     }
 
@@ -1527,6 +1552,12 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
         ExtendedInstruction::SymbolicArrayRead { .. } => {
             Err(WalkError::SymbolicArrayReadNotEmittable)
         }
+        // TODO Gap 3 Stage 3: replace with the synthesised per-
+        // iteration cost (one EmitDecompose plus the recompose chain
+        // of Const/Mul/Add opcodes for the resolved shift amount).
+        // Until the unfolding is implemented the variant cannot
+        // reach this path through normal flow.
+        ExtendedInstruction::SymbolicShift { .. } => Err(WalkError::SymbolicShiftNotEmittable),
     }
 }
 
@@ -1716,7 +1747,8 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
 fn body_has_symbolic_op<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> bool {
     body.iter().any(|inst| match inst {
         ExtendedInstruction::SymbolicIndexedEffect { .. }
-        | ExtendedInstruction::SymbolicArrayRead { .. } => true,
+        | ExtendedInstruction::SymbolicArrayRead { .. }
+        | ExtendedInstruction::SymbolicShift { .. } => true,
         ExtendedInstruction::LoopUnroll { body: nested, .. } => body_has_symbolic_op(nested),
         ExtendedInstruction::Plain(_)
         | ExtendedInstruction::TemplateCall { .. }
@@ -1757,6 +1789,9 @@ fn body_needs_one_const<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
         // Read-side never desugars through `one` — the walker rebinds
         // an existing slot reg with no extra ops.
         ExtendedInstruction::SymbolicArrayRead { .. } => false,
+        // Shift desugars to Decompose + Const/Mul/Add — none of those
+        // touch the `one` register either.
+        ExtendedInstruction::SymbolicShift { .. } => false,
     })
 }
 
@@ -1813,6 +1848,19 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
                 index_var
             )
         }
+        ExtendedInstruction::SymbolicShift {
+            result_var,
+            operand_var,
+            shift_var,
+            num_bits,
+            direction,
+            ..
+        } => {
+            format!(
+                "SymbolicShift({:?}, result={}, op={}, shift_var={}, num_bits={})",
+                direction, result_var, operand_var, shift_var, num_bits
+            )
+        }
     }
 }
 
@@ -1867,6 +1915,15 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
         // `result_var` to the slot's already-bound register. Cost 0
         // is exact, not over-approximated.
         ExtendedInstruction::SymbolicArrayRead { .. } => 0,
+        // Stage 3 emits a Decompose + recompose chain per iteration.
+        // The Decompose allocates `num_bits` consecutive slots; the
+        // recompose chain accumulates into one further reg. Mirror
+        // `Instruction::Decompose`'s cost (which also returns
+        // `num_bits`) plus one for the accumulator. The body emits
+        // ONCE inside the per-iter walker loop (regs shared across
+        // iterations), so this is the exact alloc count, not an
+        // over-approximation.
+        ExtendedInstruction::SymbolicShift { num_bits, .. } => num_bits.saturating_add(1),
     }
 }
 
@@ -1985,6 +2042,19 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
         // by the read itself, so it isn't an operand.
         ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
             out.insert(*index_var);
+        }
+        // Both `operand_var` and `shift_var` are enclosing-scope uses
+        // that must cross any top-level split between the LoopUnroll's
+        // parent template and the LoopUnroll itself. `result_var` is
+        // a definition produced by the shift expansion, so it isn't
+        // an operand.
+        ExtendedInstruction::SymbolicShift {
+            operand_var,
+            shift_var,
+            ..
+        } => {
+            out.insert(*operand_var);
+            out.insert(*shift_var);
         }
     }
 }

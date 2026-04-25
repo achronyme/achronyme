@@ -390,6 +390,15 @@ fn emit_one<F: FieldBackend>(
             ssa_to_idx.insert(*result_var, idx);
             tree.body_order.push(idx);
         }
+        ExtendedInstruction::SymbolicShift { .. } => {
+            // Stage 1 (Gap 3) conservative classification: fall
+            // through to the `NestedLoop` sentinel so the enclosing
+            // loop classifies `DataDependent` until Stage 4 introduces
+            // a dedicated `SymbolicNode::Shift` that allows two probes
+            // to differ structurally only in the shift-amount slot.
+            let idx = tree.push(SymbolicNode::NestedLoop);
+            tree.body_order.push(idx);
+        }
     }
 }
 
