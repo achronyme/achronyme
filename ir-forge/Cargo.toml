@@ -24,3 +24,14 @@ smallvec = "1"
 
 [features]
 test-support = []
+
+[dev-dependencies]
+# Self-reference activates `test-support` when ir-forge's own
+# integration tests compile under `cargo test -p ir-forge`. Without
+# this, `tests/types_roundtrip.rs` and `tests/instantiate.rs` can't
+# resolve `ir_forge::test_utils` because `cfg(test)` doesn't propagate
+# from an integration-test crate to its dependency. Workspace-level
+# `cargo test --workspace` already activates the feature transitively
+# via `ir`/`zkc`'s dev-deps; this entry restores per-package test
+# coverage.
+ir-forge = { path = ".", features = ["test-support"] }
