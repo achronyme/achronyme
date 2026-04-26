@@ -2977,10 +2977,8 @@ fn r1cs_optimization_benchmark() {
         // witness fixup keeps using the O1 substitution map below.
         let tp = std::time::Instant::now();
         let mut sparse_constraints = pre_opt_constraints;
-        let (_subs, sparse_stats) = constraints::r1cs_optimize::optimize_o2_sparse(
-            &mut sparse_constraints,
-            num_pub_inputs,
-        );
+        let (_subs, sparse_stats) =
+            constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
         let after_o2_s = sparse_stats.constraints_after;
         let t_r1cs_o2_sparse = tp.elapsed();
 

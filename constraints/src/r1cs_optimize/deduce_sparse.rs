@@ -11,24 +11,13 @@
 //! 1. O1 fixpoint (`optimize_linear`) -- shared with the dense path.
 //! 2. Decompose multi-term A/B into auxiliary wires -- shared with the
 //!    dense path (`deduce::decompose_for_deduce_tracked`).
-//! 3. Sparse DEDUCE:
-//!    a. Expand each constraint into (quadratic monomial map, linear
-//!       residual) -- shared with the dense path
-//!       (`deduce::expand_constraint_product`).
-//!    b. Build a Union-Find: two constraints are linked iff they share
-//!       at least one quadratic monomial. The connected components
-//!       partition the constraint set into independent sub-systems --
-//!       a row outside cluster `C` has zeros in every column of `C`,
-//!       so eliminating within `C` cannot interact with rows outside.
-//!    c. For each cluster with size <= `MAX_CLUSTER_SIZE`, run reduced
-//!       row-echelon Gaussian elimination over `BTreeMap<col_idx, FE>`
-//!       sparse rows. Rows whose quadratic part vanishes after
-//!       reduction contribute deduced linear constraints.
-//!    d. Larger clusters are skipped: full-rank reduction without
-//!       Markowitz pivoting / fill-in management costs roughly
-//!       O(k_c^2 . avg_row_density) and is not worthwhile in the
-//!       conservative quick path. Skipping is safe -- the cluster's
-//!       quadratic constraints stay in the system unchanged.
+//! 3. Sparse DEDUCE: expand each constraint into a (monomial map,
+//!    linear residual) pair, Union-Find by shared monomial, then
+//!    reduced row-echelon Gaussian elimination on each connected
+//!    component using `BTreeMap`-row representation. Components above
+//!    `MAX_CLUSTER_SIZE` are skipped (their quadratic constraints stay
+//!    in the system unchanged) -- full-rank reduction without
+//!    Markowitz pivoting / fill-in management is out of scope.
 //! 4. Add deduced constraints; re-run O1 (with aux wires protected,
 //!    then a cleanup O1 that eliminates them) -- shared with the dense
 //!    path.
@@ -42,7 +31,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 
 use memory::{FieldBackend, FieldElement};
 
-use super::deduce::{Monomial, expand_constraint_product, optimize_o2_with_deducer};
+use super::deduce::{expand_constraint_product, optimize_o2_with_deducer, Monomial};
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::{Constraint, LinearCombination};
 
@@ -62,6 +51,11 @@ const MAX_CLUSTER_SIZE: usize = 350;
 /// `BTreeMap` (rather than `HashMap`) gives deterministic iteration
 /// order which makes cross-run reproducibility cheap to enforce.
 type SparseRow<F> = BTreeMap<usize, FieldElement<F>>;
+
+/// Per-constraint expansion: the quadratic monomial coefficients +
+/// the linear residual `(A x B linear terms) - C`. Shared input shape
+/// for clustering and per-cluster solving.
+type ExpandedConstraint<F> = (HashMap<Monomial, FieldElement<F>>, LinearCombination<F>);
 
 /// Vec-backed disjoint-set union with path compression + union by rank.
 struct UnionFind {
@@ -120,7 +114,7 @@ impl UnionFind {
 /// sorted by their smallest member, so the output is deterministic
 /// across runs (independent of `HashMap` iteration order).
 fn cluster_constraints_by_monomial<F: FieldBackend>(
-    expanded: &[(HashMap<Monomial, FieldElement<F>>, LinearCombination<F>)],
+    expanded: &[ExpandedConstraint<F>],
 ) -> Vec<Vec<usize>> {
     let n = expanded.len();
     let mut uf = UnionFind::new(n);
@@ -166,7 +160,7 @@ fn cluster_constraints_by_monomial<F: FieldBackend>(
 /// vanished during reduction.
 fn solve_cluster_sparse<F: FieldBackend>(
     cluster: &[usize],
-    expanded: &[(HashMap<Monomial, FieldElement<F>>, LinearCombination<F>)],
+    expanded: &[ExpandedConstraint<F>],
 ) -> Vec<LinearCombination<F>> {
     if cluster.is_empty() {
         return vec![];
@@ -185,11 +179,8 @@ fn solve_cluster_sparse<F: FieldBackend>(
         }
     }
     monos.sort();
-    let mono_idx: HashMap<Monomial, usize> = monos
-        .iter()
-        .enumerate()
-        .map(|(i, &m)| (m, i))
-        .collect();
+    let mono_idx: HashMap<Monomial, usize> =
+        monos.iter().enumerate().map(|(i, &m)| (m, i)).collect();
     let q = monos.len();
 
     if q == 0 {

@@ -339,11 +339,7 @@ pub fn optimize_o2<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
-    optimize_o2_with_deducer(
-        constraints,
-        num_pub_inputs,
-        deduce_linear_from_quadratic,
-    )
+    optimize_o2_with_deducer(constraints, num_pub_inputs, deduce_linear_from_quadratic)
 }
 
 /// Generic O2 outer loop: parameterised over the linear-deduction routine

@@ -678,8 +678,8 @@ fn sparse_matches_dense_on_boolean_decomposition() {
         }
         // Each bit b: b * (1 - b) = 0
         for &b in &bits {
-            let one_minus_b =
-                LinearCombination::from_variable(Variable::ONE) - LinearCombination::from_variable(b);
+            let one_minus_b = LinearCombination::from_variable(Variable::ONE)
+                - LinearCombination::from_variable(b);
             cs.enforce(make_lc_var(b), one_minus_b, LinearCombination::zero());
         }
         cs
@@ -711,7 +711,10 @@ fn sparse_o2_no_op_on_linear_system() {
     let a = cs.alloc_witness();
     let b = cs.alloc_witness();
     let c = cs.alloc_witness();
-    cs.enforce_equal(make_lc_var::<memory::Bn254Fr>(a) + make_lc_var(b), make_lc_var(c));
+    cs.enforce_equal(
+        make_lc_var::<memory::Bn254Fr>(a) + make_lc_var(b),
+        make_lc_var(c),
+    );
 
     let mut constraints = cs.constraints().to_vec();
     let (subs, stats) = optimize_o2_sparse(&mut constraints, cs.num_pub_inputs());
@@ -774,6 +777,10 @@ fn sparse_skips_oversized_cluster() {
         let av = c.a.evaluate(&witness).unwrap();
         let bv = c.b.evaluate(&witness).unwrap();
         let cv = c.c.evaluate(&witness).unwrap();
-        assert_eq!(av.mul(&bv), cv, "skipped cluster: witness must still satisfy");
+        assert_eq!(
+            av.mul(&bv),
+            cv,
+            "skipped cluster: witness must still satisfy"
+        );
     }
 }
