@@ -339,6 +339,30 @@ pub fn optimize_o2<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
+    optimize_o2_with_deducer(
+        constraints,
+        num_pub_inputs,
+        deduce_linear_from_quadratic,
+    )
+}
+
+/// Generic O2 outer loop: parameterised over the linear-deduction routine
+/// run on the post-decompose constraint set.
+///
+/// `optimize_o2` plugs in the dense `deduce_linear_from_quadratic`. The
+/// sparse path (sibling `deduce_sparse` module) plugs in a clustered
+/// HashMap-row variant. The wrapping O1-fixpoint, decompose, protected
+/// O1, cleanup O1, aux-wire bookkeeping, rollback, and stats accumulation
+/// are identical across both paths and live here.
+pub(super) fn optimize_o2_with_deducer<F, D>(
+    constraints: &mut Vec<Constraint<F>>,
+    num_pub_inputs: usize,
+    deducer: D,
+) -> (SubstitutionMap<F>, R1CSOptimizeResult)
+where
+    F: FieldBackend,
+    D: Fn(&[Constraint<F>]) -> Vec<LinearCombination<F>>,
+{
     let constraints_before = constraints.len();
 
     // Phase 1: O1 fixpoint (standard linear elimination)
@@ -355,7 +379,7 @@ pub fn optimize_o2<F: FieldBackend>(
     // 1. Decompose multi-term A/B in quadratic constraints into auxiliary wires
     // 2. DEDUCE finds linear constraints from the simplified monomials
     // 3. O1 runs with auxiliary wires PROTECTED (so DEDUCE structure is preserved)
-    //    → this only eliminates variables from deduced + existing constraints
+    //    -> this only eliminates variables from deduced + existing constraints
     // 4. Second O1 run WITHOUT protection eliminates auxiliary wires
     // 5. Repeat until no improvement
     for _outer in 0..50 {
@@ -369,7 +393,7 @@ pub fn optimize_o2<F: FieldBackend>(
             // Capture definitions before decomposition modifies constraints
             let pre_count = constraints.len();
             decompose_for_deduce_tracked(constraints, &mut aux_wire_indices);
-            // Extract definitions from new linear constraints: 1 × (LC - w) = 0 → w = LC
+            // Extract definitions from new linear constraints: 1 x (LC - w) = 0 -> w = LC
             for c in &constraints[pre_count..] {
                 let b = c.b.simplify();
                 // Find the aux wire term (negative coefficient, index in aux_wire_indices)
@@ -394,7 +418,7 @@ pub fn optimize_o2<F: FieldBackend>(
         }
 
         // Step 2: DEDUCE on decomposed system
-        let deduced = deduce_linear_from_quadratic(constraints);
+        let deduced = deducer(constraints);
 
         if deduced.is_empty() {
             *constraints = saved;
@@ -410,7 +434,7 @@ pub fn optimize_o2<F: FieldBackend>(
             });
         }
 
-        // Step 3: O1 with auxiliary wires PROTECTED — processes deductions
+        // Step 3: O1 with auxiliary wires PROTECTED -- processes deductions
         // without destroying the decomposition wire structure
         let (new_subs, stats) =
             optimize_linear_with_protected(constraints, num_pub_inputs, &aux_wire_indices);
@@ -426,7 +450,7 @@ pub fn optimize_o2<F: FieldBackend>(
         }
         all_subs.extend(new_subs);
 
-        // Step 4: O1 WITHOUT protection — eliminates auxiliary wires
+        // Step 4: O1 WITHOUT protection -- eliminates auxiliary wires
         let (cleanup_subs, cleanup_stats) = optimize_linear(constraints, num_pub_inputs);
 
         total_vars_eliminated += cleanup_stats.variables_eliminated;
@@ -452,7 +476,7 @@ pub fn optimize_o2<F: FieldBackend>(
         all_subs.retain(|k, _| !aux_wire_indices.contains(k));
 
         if constraints.len() >= count_before {
-            // No improvement — revert
+            // No improvement -- revert
             *constraints = saved;
             break;
         }
