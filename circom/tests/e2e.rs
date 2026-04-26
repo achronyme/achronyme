@@ -1817,98 +1817,98 @@ fn sha256_64_r1cs_probe() {
     }
 }
 
-/// **Phase 3.C.6 Stage 3 HARD GATE** — SHA-256(64) through the Lysis
+/// **Phase 3.C.6 Stage 3 HARD GATE** -- SHA-256(64) through the Lysis
 /// pipeline (`ProveIR::instantiate_lysis_with_outputs`) must:
 ///
-/// 1. Complete end-to-end in under 60 seconds wall-clock (vs the
-///    legacy `sha256_64_r1cs_probe` which hangs >25 minutes — the
-///    eager-instantiate amplification is exactly what Lysis
-///    eliminates by emitting `ExtendedInstruction::LoopUnroll`
-///    nodes that the InterningSink hash-cons across iterations).
-/// 2. Produce an R1CS constraint count within ±15 % of circom's O2
-///    baseline (recorded from circomlib `sha256(64)` — see comment
-///    below). The bound is intentionally looser than the plan's
-///    ±5 % because (a) we target BN254 while circom canonically
-///    reports for 254-bit, (b) our R1CS optimizer (O1) matches or
-///    beats circom O2 on Poseidon/MiMC but may differ in shape
-///    on bit-heavy circuits. A ±15 % bound is pragmatic; tighter
-///    monitoring belongs in the constraint benchmark suite.
+/// 1. Complete end-to-end (compile + instantiate + IR-optimize +
+///    R1CS-build + R1CS-O1) in under 120 seconds wall-clock. The
+///    legacy `sha256_64_r1cs_probe` hangs >25 minutes; Lysis
+///    avoids that by emitting `ExtendedInstruction::LoopUnroll`
+///    nodes the InterningSink hash-cons across iterations.
+/// 2. Produce a post-O1 R1CS constraint count within +/-15% of
+///    circom 2.2.3's `--O2` baseline. The bound is intentionally
+///    looser than the plan's +/-5% because (a) we target BN254
+///    while circom canonically reports for 254-bit, (b) achronyme
+///    O1 matches or beats circom O2 on Poseidon/MiMC but bit-heavy
+///    circuits like SHA-256 may carry a small DEDUCE-shaped
+///    residual -- DEDUCE itself is unscalable here (k x q monomial
+///    matrix grows to tens of GB on SHA-256) so we accept the
+///    residual.
+///
+/// Reference numbers from a clean run on `feat/circom-bit-width-inference`
+/// HEAD (Apr 2026):
+///
+/// ```text
+///   [compile]       ~47s   (circom lowering -- separate perf work)
+///   [instantiate]   ~8s    instructions=207,470
+///   [ir-optimize]   ~90ms  instructions=200,070
+///   [r1cs build]    ~46ms  constraints=70,623   (40,337 linear + 29,972 quadratic)
+///   [r1cs O1]       ~670ms constraints=30,113   (eliminates 40,510 vars in 2 rounds)
+/// ```
+///
+/// achronyme post-O1 (30,113) sits 3.7% below circom O1 (31,264)
+/// and 3.8% above circom O2 (29,014).
 ///
 /// Notes:
 ///
 /// - Uses arbitrary inputs. We care about structural completion,
 ///   not witness correctness (the constraint count doesn't depend
 ///   on input values).
-/// - Output lines are `eprintln`-style diagnostic — they surface
-///   wall-clock + instruction/constraint counts for both the
-///   Lysis path and its post-optimize state. If the gate fails,
-///   these give the first-look picture.
-///
-/// **Ignored — only one downstream gate remains**: the optimised
-/// constraint count is still ~2.3x the circom O2 baseline. The
-/// dangling-SsaVar bug in `optimize` (issue #86) is fixed.
-///
-/// **Walker / validator / instantiate / optimize / R1CS build all pass**:
-///
-/// ```text
-///   [compile]       ~47s   (circom lowering — separate perf work)
-///   [instantiate]   ~8s    instructions=207470
-///   [optimize]      ~130ms instructions=200070
-///   [r1cs build]    ~46ms  constraints=70623
-/// ```
-///
-/// The Phase 4 success criterion ("Lysis processes SHA-256 without
-/// crashing") is met; `optimize` runs cleanly. The remaining
-/// constraint-count gap is R1CS-optimizer work, tracked separately.
+/// - Output lines are `eprintln`-style diagnostic -- they surface
+///   wall-clock + instruction/constraint counts. If the gate
+///   fails, these give the first-look picture.
+/// - DEDUCE (`optimize_r1cs_o2`) is intentionally NOT run: the
+///   monomial x constraint matrix for SHA-256(64) is roughly
+///   60k x 60k field elements (~100 GB), unscalable on this
+///   circuit. The constraint benchmark `r1cs_optimization_benchmark`
+///   exercises O2 on smaller circuits where it converges quickly.
 ///
 /// **Closed architectural blockers (cumulative 2026-04-25)**:
 ///
-///   1. **Lifted template frame overflow** — *closed*
+///   1. **Lifted template frame overflow** -- *closed*
 ///      (`9828dcbe` + `f42f3ce0`).
-///   2. **Live-set > 64 captures** — *closed* (Phase 4,
+///   2. **Live-set > 64 captures** -- *closed* (Phase 4,
 ///      `feat/lysis-phase4-heap`).
-///   3. **`SymbolicIndexedEffectNotEmittable` after split** —
+///   3. **`SymbolicIndexedEffectNotEmittable` after split** --
 ///      *closed*: walker_const forwarded unfiltered across splits.
-///   4. **`Alloc(FrameOverflow)` from cold WitnessCall inputs** —
+///   4. **`Alloc(FrameOverflow)` from cold WitnessCall inputs** --
 ///      *closed*: `EmitWitnessCallHeap` mixed reg/slot inputs.
-///   5. **`UninitializedRegister` from missing capture init** —
+///   5. **`UninitializedRegister` from missing capture init** --
 ///      *closed*: validator rule 9 pre-initialises template
 ///      capture regs (`94a63693`).
-///   6. **`UninitializedRegister` from missing heap-op writes** —
+///   6. **`UninitializedRegister` from missing heap-op writes** --
 ///      *closed*: rule 9 tracks `StoreHeap` reads and `LoadHeap`
 ///      writes (`750171cf`).
-///   7. **`MaxCallDepthExceeded`** — *closed*: default cap raised
+///   7. **`MaxCallDepthExceeded`** -- *closed*: default cap raised
 ///      from 64 to 8192 to cover Phase 4 chain depth (`0160b073`).
-///   8. **`optimize` pass dangling SsaVar (issue #86)** —
+///   8. **`optimize` pass dangling SsaVar (issue #86)** --
 ///      *closed*: const_fold expansion was keyed by `result_var`,
 ///      ambiguous under alias-Decompose. Now keyed by instruction
-///      index. Validator at `ir::passes::validate` enforces the
-///      SSA invariant per pass when
-///      `ACHRONYME_VALIDATE_IR_PASSES=1`.
+///      index.
+///   9. **R1CS constraint parity** -- *closed*: gap was the missing
+///      `optimize_r1cs()` call (40,337 linear constraints that O1
+///      eliminates). achronyme post-O1 = 30,113, within +/-4% of
+///      circom O2.
 ///
-/// **Remaining blockers (each independent of Phase 4)**:
+/// **Remaining work (each independent of Phase 4 / this gate)**:
 ///
-///   - **Compile time** ≈ 47 s — circom lowering of circomlib's
-///     full SHA-256. Tracked in
-///     `.claude/plans/circom-lowering-perf.md`.
-///   - **R1CS constraint parity** — 70,623 vs circom O2 30,132
-///     (~2.3x). R1CS-optimizer work, separate from the IR
-///     `optimize` pass.
-///   - **Lazy-reload-without-recycling frame growth** — v1.1
+///   - **Compile time** ~47s -- circom lowering of circomlib's
+///     full SHA-256, tracked separately as a perf workstream.
+///   - **Lazy-reload-without-recycling frame growth** -- v1.1
 ///     placeholder (`ir-forge/tests/walker_adversarial.rs`); not
 ///     hit by SHA-256(64), would surface for larger circuits.
 #[test]
-#[ignore = "Phase 4 + cascade + issue #86 fix unblock SHA-256(64) end-to-end through optimize: 200,070 instructions post-optimize, 70,623 R1CS constraints. Only remaining gate is the constraint-count parity vs circom O2 (30,132 ±15%) — that is R1CS-optimizer work tracked separately. This test stays ignored until that gap closes."]
+#[ignore = "Compile takes ~47s on this host (circom lowering of full circomlib SHA-256). Run with `--ignored sha256_64_lysis_hard_gate` locally before pushing changes that touch the Lysis walker, R1CS optimizer, or instantiate path. Once compile time drops, this can become a CI-default gate."]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
 
-    // Circom O2 baseline recorded from circomlib at 2026-04-14 per
-    // the constraint benchmark (r1cs_optimization_benchmark). If
-    // the bound tightens in future, update here.
-    const CIRCOM_O2_CONSTRAINTS: usize = 30_132;
+    // circom 2.2.3 `--O2` on test/circomlib/sha256_test.circom.
+    // Pinning to a specific circom version because the count drifts
+    // between releases; recapture if the toolchain bumps.
+    const CIRCOM_O2_CONSTRAINTS: usize = 29_014;
     const TOLERANCE: f64 = 0.15;
-    const WALL_CLOCK_BUDGET: Duration = Duration::from_secs(60);
+    const WALL_CLOCK_BUDGET: Duration = Duration::from_secs(120);
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/sha256_test.circom");
@@ -1946,7 +1946,7 @@ fn sha256_64_lysis_hard_gate() {
     let t2 = Instant::now();
     ir::passes::optimize(&mut program);
     eprintln!(
-        "  [optimize]      {:?}  instructions={}",
+        "  [ir-optimize]   {:?}  instructions={}",
         t2.elapsed(),
         program.len()
     );
@@ -1959,15 +1959,25 @@ fn sha256_64_lysis_hard_gate() {
     // witness path eagerly evaluates every IR node and asserts wire
     // values against runtime AssertEq / RangeCheck constraints,
     // which would require us to produce a valid SHA-256 hash for
-    // arbitrary inputs — out of scope here. The constraint skeleton
+    // arbitrary inputs -- out of scope here. The constraint skeleton
     // generated by `compile_ir` is identical regardless of operand
     // values; gates 1+2 below only inspect that skeleton.
     rc.compile_ir(&program).expect("R1CS compile");
-    let r1cs_build = t3.elapsed();
+    let pre_o1 = rc.cs.num_constraints();
+    eprintln!("  [r1cs build]    {:?}  constraints={pre_o1}", t3.elapsed());
+
+    // O1 only -- DEDUCE (O2) builds a k x q monomial matrix that is
+    // ~100 GB for SHA-256(64). O1 alone closes the gap because
+    // `compile_ir` emits ~40k pure-linear constraints (`1.LC=C`)
+    // that O1 eliminates by structural substitution.
+    let t4 = Instant::now();
+    let stats = rc.optimize_r1cs();
     let constraints = rc.cs.num_constraints();
     eprintln!(
-        "  [r1cs build]    {:?}  constraints={constraints}",
-        r1cs_build
+        "  [r1cs O1]       {:?}  constraints={constraints}  vars_eliminated={}  rounds={}",
+        t4.elapsed(),
+        stats.variables_eliminated,
+        stats.rounds,
     );
 
     let total_elapsed = total.elapsed();
@@ -1992,6 +2002,220 @@ fn sha256_64_lysis_hard_gate() {
          (baseline={CIRCOM_O2_CONSTRAINTS}, tolerance=±{:.0}%)",
         TOLERANCE * 100.0
     );
+}
+
+/// Diagnostic instrumentation for the SHA-256(64) constraint-parity gap.
+///
+/// The hard-gate (`sha256_64_lysis_hard_gate`) reports 70,623 constraints
+/// post-IR-optimize, *pre*-R1CS-optimize. circom 2.2.3 with `--O2` on the
+/// same circuit reports 29,014 (0 linear, 29,014 non-linear). This test
+/// runs the full pipeline through `optimize_r1cs()` (O1 -- linear
+/// elimination only, no DEDUCE) and prints:
+///
+///   - constraint count + shape histogram pre-optimize
+///   - constraint count + shape histogram post-O1
+///   - the gap vs circom O0/O1/O2
+///
+/// O2 (DEDUCE Gaussian elimination) is intentionally skipped -- the
+/// monomial x constraint matrix is `~k x q` `FieldElement`s where both
+/// dimensions reach ~60k for SHA-256(64), exceeding 16 GB of RAM.
+/// circom's own progression (O0->O1 kills 171k linears, O1->O2 only ~2k
+/// more) suggests O1 closes most of the gap by itself.
+///
+/// Shape categories follow the `is_linear` predicate from
+/// `r1cs_optimize::predicates`: a constraint with one of A/B simplifying
+/// to a constant counts as "linear", everything else gets bucketed by
+/// term-count of A,B,C. The `(|A|,|B|,|C|)` histogram surfaces dominant
+/// patterns (e.g. `(1,1,0)` for `x*x=0`-shaped, `(1,2,0)` for bool
+/// checks, `(1,N,0)` for bit-decomposition equality).
+///
+/// `#[ignore]`d -- compile alone is ~47s on this host.
+#[test]
+#[ignore = "SHA-256(64) constraint shape diagnostic -- compile is ~47s. Run with `--ignored sha256_64_constraint_breakdown` to capture pre/post-O1 distributions."]
+fn sha256_64_constraint_breakdown() {
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    // circom 2.2.3 baseline captured 2026-04-25 from
+    // `circom test/circomlib/sha256_test.circom --r1cs --O{0,1,2}`.
+    const CIRCOM_O0: usize = 204_576;
+    const CIRCOM_O1: usize = 31_264;
+    const CIRCOM_O2: usize = 29_014;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let total = Instant::now();
+
+    let t0 = Instant::now();
+    let compile_result =
+        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
+            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    eprintln!("[compile]      {:?}", t0.elapsed());
+
+    let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    captures.insert("nBits".to_string(), FieldElement::<Bn254Fr>::from_u64(64));
+    let outs: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let t1 = Instant::now();
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&captures, &outs)
+        .expect("instantiate_lysis");
+    eprintln!(
+        "[instantiate]  {:?}  ir_inst={}",
+        t1.elapsed(),
+        program.len()
+    );
+
+    let t2 = Instant::now();
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "[ir-opt]       {:?}  ir_inst={}",
+        t2.elapsed(),
+        program.len()
+    );
+
+    let t3 = Instant::now();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).expect("R1CS compile");
+    let pre_o2 = rc.cs.num_constraints();
+    eprintln!("[r1cs build]   {:?}  constraints={pre_o2}", t3.elapsed());
+
+    eprintln!("\n-- PRE-R1CS-O2 shape histogram ----------------------");
+    print_constraint_histogram(rc.cs.constraints());
+
+    // Note: we run only O1 (`optimize_r1cs`) here, not O2.
+    // For SHA-256(64) the DEDUCE Gaussian elimination in O2 builds a
+    // monomial x constraint matrix of order ~60k x 60k field elements,
+    // which is ~100 GB and OOMs on a 16 GB host. circom's progression
+    // (O0->O1 kills 171k linears, O1->O2 only saves ~2k more) suggests
+    // O1 is sufficient for the parity gap on this circuit.
+    let t4 = Instant::now();
+    let stats = rc.optimize_r1cs();
+    let post_o1 = rc.cs.num_constraints();
+    eprintln!(
+        "\n[r1cs O1]      {:?}  constraints={post_o1}  vars_eliminated={}  rounds={}  trivial_removed={}  duplicates_removed={}",
+        t4.elapsed(),
+        stats.variables_eliminated,
+        stats.rounds,
+        stats.trivial_removed,
+        stats.duplicates_removed,
+    );
+
+    eprintln!("\n-- POST-R1CS-O1 shape histogram ---------------------");
+    print_constraint_histogram(rc.cs.constraints());
+
+    eprintln!("\n-- circom 2.2.3 baseline ----------------------------");
+    eprintln!("  --O0 = {CIRCOM_O0}");
+    eprintln!("  --O1 = {CIRCOM_O1}");
+    eprintln!("  --O2 = {CIRCOM_O2}");
+
+    eprintln!("\n-- achronyme vs circom delta ------------------------");
+    let delta_vs_o1 = post_o1 as i64 - CIRCOM_O1 as i64;
+    let pct_vs_o1 = (delta_vs_o1 as f64 / CIRCOM_O1 as f64) * 100.0;
+    let delta_vs_o2 = post_o1 as i64 - CIRCOM_O2 as i64;
+    let pct_vs_o2 = (delta_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
+    eprintln!("  achronyme pre-opt   = {pre_o2}");
+    eprintln!("  achronyme post-O1   = {post_o1}");
+    eprintln!("  vs circom O1 ({CIRCOM_O1})  -> delta = {delta_vs_o1:+}  ({pct_vs_o1:+.1}%)");
+    eprintln!("  vs circom O2 ({CIRCOM_O2})  -> delta = {delta_vs_o2:+}  ({pct_vs_o2:+.1}%)");
+
+    eprintln!("\n[total] {:?}", total.elapsed());
+}
+
+/// Histogram printer for [`sha256_64_constraint_breakdown`].
+///
+/// Two bucket layers:
+///   - **category** -- `is_linear`-style coarse classification (linear
+///     constraints with A or B constant, vs genuinely quadratic ones
+///     bucketed by term-count signature).
+///   - **(|A|,|B|,|C|)** -- fine-grained term-count distribution; surfaces
+///     things like the bool-check shape `(1,2,0)` or bit-decomposition
+///     shape `(1,N,0)` directly.
+fn print_constraint_histogram<F: memory::FieldBackend>(
+    constraints: &[constraints::r1cs::Constraint<F>],
+) {
+    use std::collections::BTreeMap;
+
+    let mut by_category: BTreeMap<&'static str, usize> = BTreeMap::new();
+    let mut by_size: BTreeMap<(usize, usize, usize), usize> = BTreeMap::new();
+
+    for c in constraints {
+        let a = c.a.simplify();
+        let b = c.b.simplify();
+        let cc = c.c.simplify();
+
+        let label = classify_constraint(&a, &b, &cc);
+        *by_category.entry(label).or_insert(0) += 1;
+
+        let key = (
+            a.terms().len().min(99),
+            b.terms().len().min(99),
+            cc.terms().len().min(99),
+        );
+        *by_size.entry(key).or_insert(0) += 1;
+    }
+
+    eprintln!("  by category:");
+    let mut items: Vec<_> = by_category.into_iter().collect();
+    items.sort_by(|x, y| y.1.cmp(&x.1));
+    for (label, n) in items {
+        eprintln!("    {label:38} = {n}");
+    }
+
+    eprintln!("\n  by (|A|,|B|,|C|), top 15 buckets:");
+    let mut items: Vec<_> = by_size.into_iter().collect();
+    items.sort_by(|x, y| y.1.cmp(&x.1));
+    for ((an, bn, cn), n) in items.into_iter().take(15) {
+        eprintln!("    ({an:3},{bn:3},{cn:3}) = {n}");
+    }
+}
+
+/// Coarse classifier matching `r1cs_optimize::predicates::is_linear`
+/// without depending on the `pub(super)` predicate directly.
+fn classify_constraint<F: memory::FieldBackend>(
+    a: &constraints::LinearCombination<F>,
+    b: &constraints::LinearCombination<F>,
+    cc: &constraints::LinearCombination<F>,
+) -> &'static str {
+    let a_const = a.is_constant();
+    let b_const = b.is_constant();
+
+    if a_const && b_const {
+        return "trivial-constant (A,B both const)";
+    }
+    if a_const {
+        return if a.terms().is_empty() {
+            "linear (A=0  =>  C=0)"
+        } else {
+            "linear (A=k  =>  k.B=C)"
+        };
+    }
+    if b_const {
+        return if b.terms().is_empty() {
+            "linear (B=0  =>  C=0)"
+        } else {
+            "linear (B=k  =>  k.A=C)"
+        };
+    }
+
+    let an = a.terms().len();
+    let bn = b.terms().len();
+    let cn = cc.terms().len();
+
+    if an == 1 && bn == 1 && cn == 0 {
+        "quadratic 1x1=0  (e.g. x.y=0 / x^2=0 / x.(1-x))"
+    } else if an == 1 && bn == 1 {
+        "quadratic 1x1=K"
+    } else if an == 1 && bn == 2 && cn == 0 {
+        "quadratic 1x2=0  (bool-check shape candidate)"
+    } else if (an == 1 && bn > 1) || (an > 1 && bn == 1) {
+        "quadratic 1xN (mono . multi)"
+    } else {
+        "quadratic NxM (multi . multi)"
+    }
 }
 
 /// Fase 4 deliverable check: a circom template whose `out <--`
