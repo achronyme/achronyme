@@ -32,7 +32,7 @@ use super::linear_cluster::{
     optimize_linear_clustered_with_protected as optimize_linear_with_protected,
 };
 use super::predicates::lc_fingerprint;
-use super::substitution::apply_substitution;
+use super::substitution::apply_substitution_in_place;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::{Constraint, LinearCombination, Variable};
 
@@ -445,7 +445,7 @@ where
         all_round_details.extend(stats.round_details);
 
         for expr in all_subs.values_mut() {
-            *expr = apply_substitution(expr, &new_subs);
+            apply_substitution_in_place(expr, &new_subs);
         }
         all_subs.extend(new_subs);
 
@@ -459,7 +459,7 @@ where
         all_round_details.extend(cleanup_stats.round_details);
 
         for expr in all_subs.values_mut() {
-            *expr = apply_substitution(expr, &cleanup_subs);
+            apply_substitution_in_place(expr, &cleanup_subs);
         }
         all_subs.extend(cleanup_subs);
 
@@ -468,7 +468,7 @@ where
         // and cleanup O1 may not have eliminated all of them.
         let aux_subs: SubstitutionMap<F> = aux_definitions.clone();
         for expr in all_subs.values_mut() {
-            *expr = apply_substitution(expr, &aux_subs);
+            apply_substitution_in_place(expr, &aux_subs);
         }
         // Remove aux wire entries from the substitution map (they don't exist
         // in the original witness vector)

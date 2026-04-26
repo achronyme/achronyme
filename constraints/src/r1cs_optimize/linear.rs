@@ -27,7 +27,7 @@ use super::predicates::{
     compute_variable_frequency, is_linear, is_trivially_satisfied, lc_fingerprint,
 };
 use super::substitution::{
-    apply_substitution, apply_substitution_to_constraint, solve_for_variable,
+    apply_substitution_in_place, apply_substitution_to_constraint_in_place, solve_for_variable,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::Constraint;
@@ -129,13 +129,22 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
 
         let linear_eliminated = to_remove.len();
 
-        // Remove eliminated constraints and apply substitutions to the rest
-        *constraints = constraints
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| !to_remove.contains(idx))
-            .map(|(_, c)| apply_substitution_to_constraint(c, &round_subs))
-            .collect();
+        // Drop eliminated constraints + apply substitutions in place to
+        // the survivors. Two-cursor compaction over the existing Vec so
+        // we avoid allocating a fresh Vec<Constraint> per round.
+        let n = constraints.len();
+        let mut write = 0usize;
+        for read in 0..n {
+            if to_remove.contains(&read) {
+                continue;
+            }
+            if write != read {
+                constraints.swap(write, read);
+            }
+            apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
+            write += 1;
+        }
+        constraints.truncate(write);
 
         // Remove trivially-satisfied constraints (0*B=0, k1*k2=k3)
         let before_trivial = constraints.len();
@@ -152,9 +161,11 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
 
         round_details.push((linear_eliminated, newly_linear));
 
-        // Compose with previous substitutions: apply new subs to old expressions
+        // Compose with previous substitutions: apply new subs to old
+        // expressions in place. Avoids the prior allocation of a fresh
+        // LC per substitution-map entry per round.
         for expr in all_subs.values_mut() {
-            *expr = apply_substitution(expr, &round_subs);
+            apply_substitution_in_place(expr, &round_subs);
         }
         all_subs.extend(round_subs);
     }

@@ -8,7 +8,6 @@
 ///   Index 0     = ONE (constant wire, always 1)
 ///   1..=n_pub   = public inputs (instance)
 ///   n_pub+1..   = private inputs + intermediate (witness)
-use std::collections::BTreeMap;
 use std::fmt;
 
 use memory::{Bn254Fr, FieldBackend, FieldElement};
@@ -177,21 +176,56 @@ impl<F: FieldBackend> LinearCombination<F> {
     /// assert!(lc.is_constant());
     /// ```
     pub fn simplify(&self) -> Self {
+        let mut result = self.clone();
+        result.simplify_in_place();
+        result
+    }
+
+    /// In-place version of [`Self::simplify`]: merges duplicate variable
+    /// terms and drops zero coefficients without allocating a temporary
+    /// `BTreeMap`. Sorts the terms vector by variable index, then runs a
+    /// single linear scan that merges adjacent duplicates and writes
+    /// non-zero results back via two cursors (read / write).
+    ///
+    /// **Why this exists:** the optimizer's hot path
+    /// (`apply_substitution`, `solve_cluster_linear`) calls `simplify`
+    /// many times per constraint per round. Allocating a `BTreeMap`
+    /// per call dominated allocator time on bit-heavy circuits.
+    /// Sorting an existing `Vec` is allocation-free; the merge scan
+    /// runs in-place; total allocations per call drop to zero
+    /// (assuming the caller already owns a `LinearCombination`).
+    pub fn simplify_in_place(&mut self) {
         if self.terms.len() <= 1 {
-            return self.clone();
+            // Single zero-coeff term still needs scrubbing.
+            if let Some((_, coeff)) = self.terms.first() {
+                if coeff.is_zero() {
+                    self.terms.clear();
+                }
+            }
+            return;
         }
-        let mut map: BTreeMap<usize, FieldElement<F>> = BTreeMap::new();
-        for (var, coeff) in &self.terms {
-            let e = map.entry(var.0).or_insert_with(FieldElement::<F>::zero);
-            *e = e.add(coeff);
+        // Sort by variable index so duplicates are adjacent.
+        self.terms.sort_unstable_by_key(|(var, _)| var.0);
+
+        // Two-cursor merge. `write` is the next free slot, `read` walks
+        // the input. Adjacent same-variable terms accumulate into the
+        // current `cur_coeff`; non-zero results land at `write`.
+        let n = self.terms.len();
+        let mut write = 0usize;
+        let mut read = 0usize;
+        while read < n {
+            let (cur_var, mut cur_coeff) = self.terms[read];
+            read += 1;
+            while read < n && self.terms[read].0 .0 == cur_var.0 {
+                cur_coeff = cur_coeff.add(&self.terms[read].1);
+                read += 1;
+            }
+            if !cur_coeff.is_zero() {
+                self.terms[write] = (cur_var, cur_coeff);
+                write += 1;
+            }
         }
-        Self {
-            terms: map
-                .into_iter()
-                .filter(|(_, c)| !c.is_zero())
-                .map(|(idx, c)| (Variable(idx), c))
-                .collect(),
-        }
+        self.terms.truncate(write);
     }
 
     /// Returns true if this LC only references `Variable::ONE` (i.e., it's a pure constant).
