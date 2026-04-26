@@ -34,13 +34,13 @@ use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::{Constraint, LinearCombination, Variable};
 
 /// Canonical quadratic monomial: (i, j) with i <= j, both > 0.
-type Monomial = (usize, usize);
+pub(super) type Monomial = (usize, usize);
 
-/// Expand constraint A×B into quadratic monomials and a "linear residual".
+/// Expand constraint A x B into quadratic monomials and a "linear residual".
 ///
 /// The constraint says: quadratic_part + linear_residual = 0.
-/// Where linear_residual = (linear terms from A×B) - C.
-fn expand_constraint_product<F: FieldBackend>(
+/// Where linear_residual = (linear terms from A x B) - C.
+pub(super) fn expand_constraint_product<F: FieldBackend>(
     constraint: &Constraint<F>,
 ) -> (HashMap<Monomial, FieldElement<F>>, LinearCombination<F>) {
     let a = constraint.a.simplify();
@@ -230,7 +230,7 @@ fn deduce_linear_from_quadratic<F: FieldBackend>(
 /// reducing the quadratic monomial count from N×M to 1 per constraint.
 /// DEDUCE can then find algebraic dependencies between the simplified
 /// monomials more effectively.
-fn decompose_for_deduce_tracked<F: FieldBackend>(
+pub(super) fn decompose_for_deduce_tracked<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     aux_wire_indices: &mut HashSet<usize>,
 ) {
