@@ -123,6 +123,12 @@ pub fn try_fold_const(expr: &CircuitExpr) -> Option<FieldConst> {
             }
         }
 
+        // R1″ for-loop placeholder must propagate, not fold. If it
+        // collapsed to a constant here, the per-iter substitution
+        // pass would have nothing to rewrite and every memoized
+        // iteration would emit iter-0 values.
+        CircuitExpr::LoopVar(_) => None,
+
         // Anything else (Var, Input, Capture, ArrayIndex, etc.) → not constant
         _ => None,
     }

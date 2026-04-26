@@ -254,6 +254,12 @@ fn eval_hint<F: FieldBackend>(
 ) -> Option<FieldElement<F>> {
     match expr {
         CircuitExpr::Const(fc) => fc.to_field::<F>(),
+        // R1″ contract: substitution must run before witness eval. If
+        // the placeholder reaches here, the memoization pipeline
+        // emitted unsubstituted IR — fall back gracefully so the
+        // callee can fault into the slow path instead of producing a
+        // bogus witness value.
+        CircuitExpr::LoopVar(_) => None,
         CircuitExpr::Input(name) | CircuitExpr::Var(name) | CircuitExpr::Capture(name) => {
             env.get(name).copied()
         }

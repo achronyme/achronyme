@@ -207,6 +207,7 @@ impl fmt::Display for CircuitExpr {
             CircuitExpr::Input(name) => write!(f, "{name}"),
             CircuitExpr::Capture(name) => write!(f, "${name}"),
             CircuitExpr::Var(name) => write!(f, "{name}"),
+            CircuitExpr::LoopVar(token) => write!(f, "%loop_var_{token}"),
             CircuitExpr::BinOp { op, lhs, rhs } => {
                 write!(f, "({lhs} {op} {rhs})")
             }

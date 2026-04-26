@@ -287,5 +287,12 @@ fn validate_expr(expr: &CircuitExpr) -> Result<(), String> {
         | CircuitExpr::Capture(_)
         | CircuitExpr::Var(_)
         | CircuitExpr::ArrayLen(_) => Ok(()),
+        // R1″ for-loop placeholder must not survive past lowering. If
+        // a ProveIR blob containing LoopVar is being validated, the
+        // for-loop unroller skipped substitution on a captured body.
+        CircuitExpr::LoopVar(token) => Err(format!(
+            "invalid ProveIR: CircuitExpr::LoopVar({token}) leaked into validation; \
+             R1″ placeholder must be substituted during for-loop unroll"
+        )),
     }
 }
