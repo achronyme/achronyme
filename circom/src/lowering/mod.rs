@@ -22,6 +22,8 @@ pub mod artik_lift;
 #[allow(dead_code)]
 pub mod bit_width;
 #[allow(dead_code)]
+pub mod branch_flip;
+#[allow(dead_code)]
 pub mod compile_time;
 #[allow(dead_code)]
 pub mod components;
