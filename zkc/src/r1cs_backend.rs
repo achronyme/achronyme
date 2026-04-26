@@ -170,6 +170,32 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         stats
     }
 
+    /// Run O2 constraint simplification with sparse-row DEDUCE.
+    ///
+    /// Functionally identical to `optimize_r1cs_o2` but partitions the
+    /// constraint set into connected components (Union-Find on shared
+    /// quadratic monomials) and runs Gaussian elimination on each
+    /// component independently using `BTreeMap`-row representation.
+    /// This avoids the dense `k x q` matrix that OOMs on bit-heavy
+    /// circuits like SHA-256, where both dimensions exceed 60k.
+    ///
+    /// Clusters larger than the configured threshold are skipped --
+    /// they would still fit in RAM in sparse form but full reduction
+    /// without Markowitz pivoting / fill-in management is not
+    /// worthwhile in this conservative path. Skipping is safe; the
+    /// cluster's quadratic constraints stay in the system unchanged.
+    pub fn optimize_r1cs_o2_sparse(&mut self) -> R1CSOptimizeResult {
+        let (subs, stats) = self.cs.optimize_o2_sparse();
+
+        if !subs.is_empty() {
+            crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
+            self.constraint_origins.clear();
+            self.substitution_map = Some(subs);
+        }
+
+        stats
+    }
+
     /// Declare a public input variable and bind it to `name`.
     ///
     /// Public inputs must be declared before witnesses to maintain the

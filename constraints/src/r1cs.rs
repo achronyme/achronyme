@@ -466,6 +466,22 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         crate::r1cs_optimize::optimize_o2(&mut self.constraints, self.num_pub_inputs)
     }
 
+    /// Sparse-row variant of `optimize_o2`.
+    ///
+    /// Partitions constraints into connected components (Union-Find on
+    /// shared quadratic monomials) and runs Gaussian elimination on each
+    /// cluster independently using `BTreeMap`-row representation. This
+    /// avoids the dense `k x q` monomial matrix that OOMs on bit-heavy
+    /// circuits (SHA-256, Keccak) where both dimensions reach 60k+.
+    pub fn optimize_o2_sparse(
+        &mut self,
+    ) -> (
+        crate::r1cs_optimize::SubstitutionMap<F>,
+        crate::r1cs_optimize::R1CSOptimizeResult,
+    ) {
+        crate::r1cs_optimize::optimize_o2_sparse(&mut self.constraints, self.num_pub_inputs)
+    }
+
     // --- Verification ---
 
     /// Verify that a witness satisfies all constraints.
