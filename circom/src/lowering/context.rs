@@ -223,4 +223,25 @@ impl<'a> LoweringContext<'a> {
             _ => None,
         }
     }
+
+    /// If `expr` is `Ident(name)` where `name` matches the active
+    /// memoization placeholder, return the corresponding placeholder
+    /// substring (e.g. `"$LV7$"`) suitable for embedding in component-
+    /// array name mangling like `format!("{base}_{segment}")`. Returns
+    /// `None` otherwise — the caller should fall back to the legacy
+    /// numeric resolution path.
+    ///
+    /// Only handles the bare `Ident` form, not `Ident ± const`. The
+    /// `is_memoizable` classifier in `lower_for_loop` is responsible
+    /// for refusing to memoize loops whose component-array indices use
+    /// shapes this method does not cover.
+    pub fn placeholder_index_segment(&self, expr: &crate::ast::Expr) -> Option<String> {
+        let (var, token) = self.placeholder_loop_var.as_ref()?;
+        if let crate::ast::Expr::Ident { name, .. } = expr {
+            if name == var {
+                return Some(super::loop_var_subst::loop_var_placeholder(*token));
+            }
+        }
+        None
+    }
 }

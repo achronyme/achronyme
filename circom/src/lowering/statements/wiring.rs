@@ -46,6 +46,13 @@ use super::super::context::LoweringContext;
 use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::utils::{extract_ident_name, EvalValue};
+// `resolve_component_array_name` is the legacy non-placeholder-aware
+// resolver. wiring.rs intentionally uses this — its callers look the
+// resolved name up in `pending` (the HashMap of inlined components),
+// which is keyed by the real iter-0 name (e.g. `Sigma0_0`), NOT by the
+// memoization placeholder (`Sigma0_$LV7$`). The targets.rs path uses
+// the `_ctx` placeholder-aware variant for IR emission, so the two
+// regimes coexist without coupling.
 use super::targets::resolve_component_array_name;
 
 /// Wiring progress for a pending component.

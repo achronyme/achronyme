@@ -24,7 +24,7 @@ use super::super::expressions::lower_expr;
 use super::super::signals::collect_signal_names;
 use super::super::utils::{extract_ident_name, EvalValue};
 use super::targets::{
-    extract_assign_target_with_constants, extract_target_name, linearize_multi_index,
+    extract_assign_target_ctx, extract_target_name, linearize_multi_index,
     try_resolve_component_array_target, AssignTarget,
 };
 use super::wiring::{maybe_trigger_inline, PendingComponent};
@@ -67,7 +67,7 @@ pub(super) fn lower_substitution<'a>(
     match op {
         // `target <== expr` → Let + AssertEq (or LetIndexed + AssertEq for arrays)
         AssignOp::ConstraintAssign => {
-            let assign_target = extract_assign_target_with_constants(target, &all_constants)
+            let assign_target = extract_assign_target_ctx(target, ctx, env)
                 .ok_or_else(|| {
                     LoweringError::new(
                         "constraint assignment target must be an identifier, \
@@ -131,7 +131,7 @@ pub(super) fn lower_substitution<'a>(
 
         // `target <-- expr` → WitnessHint or WitnessHintIndexed
         AssignOp::SignalAssign => {
-            let assign_target = extract_assign_target_with_constants(target, &all_constants)
+            let assign_target = extract_assign_target_ctx(target, ctx, env)
                 .ok_or_else(|| {
                     LoweringError::new(
                         "signal assignment target must be an identifier, \
