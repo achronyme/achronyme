@@ -53,6 +53,18 @@ pub struct LoweringContext<'a> {
     /// from an iteration's emission to obtain the "body-only" IR — the
     /// part that is uniform across iters and therefore memoizable.
     pub flush_tracker: FlushTracker,
+    /// R1″ Phase 6 / Option D: when `Some((var_name, token))`, the
+    /// expression lowering treats `Ident(var_name)` as the placeholder
+    /// `CircuitExpr::LoopVar(token)` instead of either a const fold
+    /// or an `env.resolve` lookup. The for-loop memoization unroller
+    /// sets this around the iter-0 capture window so the loop variable
+    /// flows through indexing/arithmetic as a symbolic node; the
+    /// captured slice is then cloned + `substitute_loop_var`'d for each
+    /// remaining iteration. Default `None` — outside the capture window
+    /// the legacy unroll path drives the loop var through
+    /// `env.known_constants` exactly as before, so existing behaviour
+    /// is byte-identical.
+    pub placeholder_loop_var: Option<(String, u32)>,
 }
 
 /// Records the IR-emission ranges produced by pending-component
@@ -129,6 +141,7 @@ impl<'a> LoweringContext<'a> {
             body_cache: HashMap::new(),
             pending_nodes: Vec::new(),
             flush_tracker: FlushTracker::default(),
+            placeholder_loop_var: None,
         }
     }
 
@@ -194,6 +207,20 @@ impl<'a> LoweringContext<'a> {
             anon_counter: 0,
             pending_nodes: Vec::new(),
             flush_tracker: FlushTracker::default(),
+            placeholder_loop_var: None,
+        }
+    }
+
+    /// If `name` matches the active R1″ memoization placeholder, return
+    /// its token. The lowering paths that resolve identifiers (`Ident`,
+    /// component-array index folding) consult this before the legacy
+    /// const-fold / env-resolve chain to keep the loop variable
+    /// symbolic during iter-0 capture.
+    #[inline]
+    pub fn placeholder_token_for(&self, name: &str) -> Option<u32> {
+        match self.placeholder_loop_var.as_ref() {
+            Some((var, token)) if var == name => Some(*token),
+            _ => None,
         }
     }
 }
