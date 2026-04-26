@@ -620,4 +620,61 @@ mod tests {
             panic!("not a For with WithExpr range");
         }
     }
+
+    #[test]
+    fn body_only_indices_no_flush_keeps_everything() {
+        // No flush ranges → every index in [0, total) is body-only.
+        let indices = body_only_indices(10, 15, &[]);
+        assert_eq!(indices, vec![0, 1, 2, 3, 4]);
+    }
+
+    #[test]
+    fn body_only_indices_drops_flush_ranges_in_window() {
+        // Iteration window [10, 20). Flush emitted at [12, 15).
+        // Body-only relative indices: 0, 1, 5, 6, 7, 8, 9
+        // (i.e. absolute 10, 11, 15, 16, 17, 18, 19).
+        let indices = body_only_indices(10, 20, &[(12, 15)]);
+        assert_eq!(indices, vec![0, 1, 5, 6, 7, 8, 9]);
+    }
+
+    #[test]
+    fn body_only_indices_handles_multiple_flushes() {
+        // Two flushes interleaved in the window.
+        // Window [0, 10). Flushes [2, 4) and [7, 9).
+        // Body-only relative: 0, 1, 4, 5, 6, 9.
+        let indices = body_only_indices(0, 10, &[(2, 4), (7, 9)]);
+        assert_eq!(indices, vec![0, 1, 4, 5, 6, 9]);
+    }
+
+    #[test]
+    fn body_only_indices_clips_partial_overlap() {
+        // Flush range [8, 13) partially overlaps window [10, 15) —
+        // only [10, 13) is in-window. Body-only: 3, 4 (abs 13, 14).
+        let indices = body_only_indices(10, 15, &[(8, 13)]);
+        assert_eq!(indices, vec![3, 4]);
+    }
+
+    #[test]
+    fn body_only_indices_ignores_out_of_window_ranges() {
+        // Flush range [50, 60) is outside window [10, 20) — ignored.
+        let indices = body_only_indices(10, 20, &[(50, 60)]);
+        assert_eq!(indices, (0..10).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn body_only_indices_empty_window_is_empty() {
+        assert!(body_only_indices(5, 5, &[(0, 100)]).is_empty());
+        assert!(body_only_indices(10, 5, &[]).is_empty());
+    }
+
+    #[test]
+    fn flushed_node_count_sums_in_window_clipped() {
+        // Window [10, 20). Flushes [12, 15) (3 in window) and
+        // [18, 25) (only [18, 20) in window = 2). Total = 5.
+        assert_eq!(flushed_node_count(10, 20, &[(12, 15), (18, 25)]), 5);
+        // Out-of-window flush contributes 0.
+        assert_eq!(flushed_node_count(10, 20, &[(50, 100)]), 0);
+        // Empty window contributes 0.
+        assert_eq!(flushed_node_count(20, 20, &[(0, 100)]), 0);
+    }
 }
