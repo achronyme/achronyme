@@ -2296,7 +2296,12 @@ fn sha256_64_o2_sparse_probe() {
     rc.compile_ir(&program).expect("R1CS compile");
     let pre_opt = rc.cs.num_constraints();
     eprintln!("[r1cs build]   {:?}  constraints={pre_opt}", t3.elapsed());
+    let num_pub_inputs = rc.cs.num_pub_inputs();
 
+    // Phase 6 default: optimize_r1cs is the cluster-based driver.
+    // The historical greedy implementation is preserved as the
+    // per-cluster fallback for clusters above
+    // CLUSTER_FALLBACK_THRESHOLD.
     let t4 = Instant::now();
     let stats = rc.optimize_r1cs();
     let post_o1 = rc.cs.num_constraints();
@@ -2309,11 +2314,10 @@ fn sha256_64_o2_sparse_probe() {
 
     // Snapshot post-O1 constraints; optimize_o2_sparse internally
     // reruns O1 (no-op on already-O1 input) then enters its
-    // decompose + DEDUCE outer loop. Any extra reductions surface
-    // as a delta vs post_o1.
+    // decompose + DEDUCE outer loop. Any extra reductions surface as
+    // a delta vs post_o1.
     let post_o1_snapshot: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
         rc.cs.constraints().to_vec();
-    let num_pub_inputs = rc.cs.num_pub_inputs();
 
     let t5 = Instant::now();
     let mut sparse_constraints = post_o1_snapshot;
