@@ -34,6 +34,8 @@ pub mod context;
 #[allow(dead_code)]
 pub mod env;
 #[allow(dead_code)]
+pub mod env_footprint;
+#[allow(dead_code)]
 pub mod error;
 #[allow(dead_code)]
 pub mod expressions;
