@@ -36,6 +36,8 @@ pub mod error;
 #[allow(dead_code)]
 pub mod expressions;
 #[allow(dead_code)]
+pub mod loop_var_subst;
+#[allow(dead_code)]
 pub mod signals;
 #[allow(dead_code)]
 pub mod statements;
