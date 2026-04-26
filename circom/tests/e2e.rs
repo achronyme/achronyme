@@ -2297,23 +2297,45 @@ fn sha256_64_o2_sparse_probe() {
     let pre_opt = rc.cs.num_constraints();
     eprintln!("[r1cs build]   {:?}  constraints={pre_opt}", t3.elapsed());
 
+    // Snapshot pre-opt for the cluster-O1 measurement (runs in
+    // parallel to the greedy O1 in `rc` below; both start from the
+    // same input).
+    let pre_opt_snapshot: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
+        rc.cs.constraints().to_vec();
+    let num_pub_inputs = rc.cs.num_pub_inputs();
+
     let t4 = Instant::now();
     let stats = rc.optimize_r1cs();
     let post_o1 = rc.cs.num_constraints();
     eprintln!(
-        "[r1cs O1]      {:?}  constraints={post_o1}  vars_eliminated={}  rounds={}",
+        "[r1cs O1-greedy] {:?}  constraints={post_o1}  vars_eliminated={}  rounds={}",
         t4.elapsed(),
         stats.variables_eliminated,
         stats.rounds,
     );
 
-    // Snapshot post-O1 constraints; optimize_o2_sparse internally
-    // reruns O1 (no-op on already-O1 input) then enters its
-    // decompose + DEDUCE outer loop. Any extra reductions surface
+    // Cluster-Gauss O1 on the pre-opt snapshot.
+    let t4b = Instant::now();
+    let mut cluster_constraints = pre_opt_snapshot;
+    let (_cluster_subs, cluster_stats) = constraints::r1cs_optimize::optimize_linear_clustered(
+        &mut cluster_constraints,
+        num_pub_inputs,
+    );
+    let post_o1_clus = cluster_stats.constraints_after;
+    eprintln!(
+        "[r1cs O1-clus] {:?}  constraints={post_o1_clus}  vars_eliminated={}  rounds={}  delta_vs_greedy={:+}",
+        t4b.elapsed(),
+        cluster_stats.variables_eliminated,
+        cluster_stats.rounds,
+        post_o1_clus as i64 - post_o1 as i64,
+    );
+
+    // Snapshot post-O1 (greedy) constraints; optimize_o2_sparse
+    // internally reruns O1 (no-op on already-O1 input) then enters
+    // its decompose + DEDUCE outer loop. Any extra reductions surface
     // as a delta vs post_o1.
     let post_o1_snapshot: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
         rc.cs.constraints().to_vec();
-    let num_pub_inputs = rc.cs.num_pub_inputs();
 
     let t5 = Instant::now();
     let mut sparse_constraints = post_o1_snapshot;
@@ -2321,30 +2343,55 @@ fn sha256_64_o2_sparse_probe() {
         constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
     let post_o2_sparse = sparse_stats.constraints_after;
     eprintln!(
-        "[r1cs O2-sparse] {:?}  constraints={post_o2_sparse}  delta_vs_O1={:+}  vars_eliminated={}",
+        "[r1cs O2-sparse] {:?}  constraints={post_o2_sparse}  delta_vs_O1g={:+}  vars_eliminated={}",
         t5.elapsed(),
         post_o2_sparse as i64 - post_o1 as i64,
         sparse_stats.variables_eliminated,
     );
 
+    // Sparse O2 on the cluster-O1 snapshot too: measures whether
+    // cluster + sparse is strictly better than greedy + sparse.
+    let t5b = Instant::now();
+    let mut clus_then_sparse = cluster_constraints.clone();
+    let (_, clus_sparse_stats) =
+        constraints::r1cs_optimize::optimize_o2_sparse(&mut clus_then_sparse, num_pub_inputs);
+    let post_clus_then_sparse = clus_sparse_stats.constraints_after;
+    eprintln!(
+        "[r1cs O1-clus + O2-sparse] {:?}  constraints={post_clus_then_sparse}  delta_vs_greedy_sparse={:+}",
+        t5b.elapsed(),
+        post_clus_then_sparse as i64 - post_o2_sparse as i64,
+    );
+
     let delta_o1_vs_o2 = post_o1 as i64 - CIRCOM_O2 as i64;
     let pct_o1_vs_o2 = (delta_o1_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
+    let delta_o1c_vs_o2 = post_o1_clus as i64 - CIRCOM_O2 as i64;
+    let pct_o1c_vs_o2 = (delta_o1c_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
     let delta_o2s_vs_o2 = post_o2_sparse as i64 - CIRCOM_O2 as i64;
     let pct_o2s_vs_o2 = (delta_o2s_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
+    let delta_cs_vs_o2 = post_clus_then_sparse as i64 - CIRCOM_O2 as i64;
+    let pct_cs_vs_o2 = (delta_cs_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
 
     eprintln!("\n-- circom 2.2.3 baseline --");
     eprintln!("  --O1 = {CIRCOM_O1}");
     eprintln!("  --O2 = {CIRCOM_O2}");
 
     eprintln!("\n-- achronyme vs circom O2 --");
-    eprintln!("  achronyme pre-opt    = {pre_opt}");
-    eprintln!("  achronyme post-O1    = {post_o1}");
-    eprintln!("  achronyme post-O2-s  = {post_o2_sparse}");
+    eprintln!("  achronyme pre-opt        = {pre_opt}");
+    eprintln!("  achronyme post-O1-greedy = {post_o1}");
+    eprintln!("  achronyme post-O1-clus   = {post_o1_clus}");
+    eprintln!("  achronyme post-O2-s      = {post_o2_sparse}");
+    eprintln!("  achronyme post-O1c+O2s   = {post_clus_then_sparse}");
     eprintln!(
-        "  achO1   vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o1_vs_o2:+}  ({pct_o1_vs_o2:+.1}%)"
+        "  achO1g    vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o1_vs_o2:+}  ({pct_o1_vs_o2:+.1}%)"
     );
     eprintln!(
-        "  achO2-s vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o2s_vs_o2:+}  ({pct_o2s_vs_o2:+.1}%)"
+        "  achO1c    vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o1c_vs_o2:+}  ({pct_o1c_vs_o2:+.1}%)"
+    );
+    eprintln!(
+        "  achO2-s   vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o2s_vs_o2:+}  ({pct_o2s_vs_o2:+.1}%)"
+    );
+    eprintln!(
+        "  achO1c+O2s vs cirO2 ({CIRCOM_O2})  -> delta = {delta_cs_vs_o2:+}  ({pct_cs_vs_o2:+.1}%)"
     );
 
     eprintln!("\n[total] {:?}", total.elapsed());

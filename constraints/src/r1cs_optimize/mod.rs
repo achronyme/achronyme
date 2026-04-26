@@ -51,6 +51,7 @@ mod union_find;
 pub use deduce::optimize_o2;
 pub use deduce_sparse::optimize_o2_sparse;
 pub use linear::optimize_linear;
+pub use linear_cluster::optimize_linear_clustered;
 pub use types::{R1CSOptimizeResult, SubstitutionMap};
 
 #[cfg(test)]

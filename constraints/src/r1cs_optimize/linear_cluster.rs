@@ -26,11 +26,28 @@ use std::collections::{HashMap, HashSet};
 
 use memory::{FieldBackend, FieldElement};
 
-use super::predicates::is_linear;
-use super::substitution::{apply_substitution, solve_for_variable};
-use super::types::SubstitutionMap;
+use super::linear::deduplicate_constraints;
+use super::predicates::{compute_variable_frequency, is_linear, is_trivially_satisfied};
+use super::substitution::{
+    apply_substitution, apply_substitution_to_constraint, solve_for_variable,
+};
+use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
+
+/// Clusters above this size skip the per-cluster Gaussian solver and
+/// flow through to the residual unchanged. The Gauss inner loop is
+/// O(cluster_size^2 * avg_density) -- on bit-heavy circuits like
+/// SHA-256(64) the linear constraints can form one connected
+/// component of 30k+ nodes via shared bit signals, where full
+/// reduction is intractable in this conservative path. Markowitz
+/// pivoting / fill-in management (the path that would handle giant
+/// clusters in finite time) is out of scope.
+///
+/// 5000 was chosen empirically: small enough that the worst case
+/// (5000^2 * ~5 LC terms = 125M field ops) finishes in seconds,
+/// large enough that the eight circomlib templates do not hit it.
+const CLUSTER_FALLBACK_THRESHOLD: usize = 5000;
 
 /// Cluster the linear constraints in `linear_constraints` by shared
 /// variable index. Two constraints land in the same cluster iff they
@@ -67,8 +84,7 @@ pub(super) fn build_clusters_by_signal<F: FieldBackend>(
     // table is keyed on signal index up to the maximum referenced
     // (sized lazily via HashMap, since the wire-index space is sparse
     // here -- we only see indices appearing in the linear subset).
-    let mut first_owner: std::collections::HashMap<usize, usize> =
-        std::collections::HashMap::new();
+    let mut first_owner: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
 
     for (idx, constraint) in linear_constraints.iter().enumerate() {
         // Walk only constraints that ARE linear. Non-linear ones
@@ -218,4 +234,173 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
     }
 
     (subs, residual)
+}
+
+/// Run cluster-based linear constraint elimination to fixpoint.
+///
+/// Mirrors `optimize_linear` (the greedy round-by-round eliminator)
+/// but partitions linear constraints into connected components by
+/// shared signal each round and runs Gaussian elimination per cluster
+/// (`solve_cluster_linear`). The fixpoint, dedup, and trivial-sweep
+/// post-processing are identical to the greedy path.
+///
+/// Protected variables (ONE + public inputs, indices
+/// `0..=num_pub_inputs`) are never substituted.
+pub fn optimize_linear_clustered<F: FieldBackend>(
+    constraints: &mut Vec<Constraint<F>>,
+    num_pub_inputs: usize,
+) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
+    optimize_linear_clustered_with_protected(constraints, num_pub_inputs, &HashSet::new())
+}
+
+/// Like `optimize_linear_clustered`, but also protects extra variable
+/// indices from substitution. Used by the upcoming default-switch
+/// in O2's outer loop (Phase 6) to shield decompose aux wires.
+#[allow(dead_code)] // wired in Phase 6
+pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
+    constraints: &mut Vec<Constraint<F>>,
+    num_pub_inputs: usize,
+    extra_protected: &HashSet<usize>,
+) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
+    let constraints_before = constraints.len();
+
+    // Protected: ONE (0) + public inputs (1..=num_pub_inputs) + extra.
+    let mut protected: HashSet<usize> = (0..=num_pub_inputs).collect();
+    protected.extend(extra_protected);
+
+    let mut all_subs: SubstitutionMap<F> = HashMap::new();
+    let mut rounds = 0usize;
+    let mut round_details: Vec<(usize, usize)> = Vec::new();
+    let mut total_trivial_removed = 0usize;
+
+    loop {
+        rounds += 1;
+
+        let var_freq = compute_variable_frequency(constraints);
+
+        // Round-protected: original protected + everything substituted
+        // in earlier rounds. Once a variable has been substituted it
+        // must never be picked again -- doing so would create chains
+        // in the substitution map and break the acyclic invariant
+        // witness fixup relies on.
+        let mut round_protected = protected.clone();
+        for var_idx in all_subs.keys() {
+            round_protected.insert(*var_idx);
+        }
+
+        // Partition constraints into linear (eligible for cluster
+        // Gauss) and non-linear (passed through unchanged this round).
+        let mut linear_indices: Vec<usize> = Vec::new();
+        let mut linear_constraints: Vec<Constraint<F>> = Vec::new();
+        for (idx, c) in constraints.iter().enumerate() {
+            if is_linear(c).is_some() {
+                linear_indices.push(idx);
+                linear_constraints.push(c.clone());
+            }
+        }
+
+        let nonlinear_before = constraints.len() - linear_constraints.len();
+
+        // Cluster the linear constraints by shared signal.
+        let clusters = build_clusters_by_signal(&linear_constraints, &round_protected);
+
+        // Solve each cluster and merge results.
+        let mut round_subs: SubstitutionMap<F> = HashMap::new();
+        let mut residuals: Vec<Constraint<F>> = Vec::new();
+        for cluster in &clusters {
+            let cluster_cons: Vec<Constraint<F>> = cluster
+                .iter()
+                .map(|&i| linear_constraints[i].clone())
+                .collect();
+            if cluster.len() > CLUSTER_FALLBACK_THRESHOLD {
+                // Cluster too big for the O(n^2) Gauss inner loop.
+                // Pass the constraints through as residual; they stay
+                // in the system unchanged. Soundness is preserved
+                // (the cluster's algebraic content is untouched);
+                // performance is the trade-off (we miss whatever
+                // substitutions a full reduction would have found).
+                residuals.extend(cluster_cons);
+                continue;
+            }
+            let (subs, residual) = solve_cluster_linear(cluster_cons, &round_protected, &var_freq);
+            // Clusters are disjoint over non-protected signals, so
+            // their substitution-map keys are disjoint by
+            // construction. Inserting unconditionally is safe.
+            for (k, v) in subs {
+                round_subs.insert(k, v);
+            }
+            residuals.extend(residual);
+        }
+
+        if round_subs.is_empty() {
+            rounds -= 1; // do not count empty round
+            break;
+        }
+
+        let linear_eliminated = linear_constraints.len() - residuals.len();
+
+        // Build the next constraint set: keep non-linear constraints
+        // (with substitutions applied) + new residuals (already had
+        // their own cluster's substitutions applied internally; apply
+        // round_subs so cross-cluster effects on shared protected
+        // signals fold in).
+        let linear_index_set: HashSet<usize> = linear_indices.iter().copied().collect();
+        let non_linear: Vec<Constraint<F>> = constraints
+            .iter()
+            .enumerate()
+            .filter(|(idx, _)| !linear_index_set.contains(idx))
+            .map(|(_, c)| apply_substitution_to_constraint(c, &round_subs))
+            .collect();
+
+        *constraints = non_linear;
+        for r in residuals {
+            constraints.push(apply_substitution_to_constraint(&r, &round_subs));
+        }
+
+        // Sweep trivially-satisfied constraints (0*B=0, k*LC=k*LC, etc.).
+        let before_trivial = constraints.len();
+        constraints.retain(|c| !is_trivially_satisfied(c));
+        let trivial_this_round = before_trivial - constraints.len();
+        total_trivial_removed += trivial_this_round;
+
+        // Count newly-linear constraints exposed by the substitutions
+        // applied to non-linears.
+        let nonlinear_after = constraints
+            .iter()
+            .filter(|c| is_linear(c).is_none())
+            .count();
+        let newly_linear = nonlinear_before.saturating_sub(nonlinear_after);
+
+        round_details.push((linear_eliminated, newly_linear));
+
+        // Compose with previous substitutions: apply new subs to old
+        // expressions so the final map remains acyclic.
+        for expr in all_subs.values_mut() {
+            *expr = apply_substitution(expr, &round_subs);
+        }
+        all_subs.extend(round_subs);
+    }
+
+    // Post-processing identical to optimize_linear: dedup non-linear
+    // constraints (after substitution different template instances can
+    // become identical) + final trivial sweep.
+    let before_dedup = constraints.len();
+    deduplicate_constraints(constraints);
+    let duplicates_removed = before_dedup - constraints.len();
+
+    let before_final_trivial = constraints.len();
+    constraints.retain(|c| !is_trivially_satisfied(c));
+    total_trivial_removed += before_final_trivial - constraints.len();
+
+    let result = R1CSOptimizeResult {
+        constraints_before,
+        constraints_after: constraints.len(),
+        variables_eliminated: all_subs.len(),
+        duplicates_removed,
+        trivial_removed: total_trivial_removed,
+        rounds,
+        round_details,
+    };
+
+    (all_subs, result)
 }

@@ -172,7 +172,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
 
 /// Remove duplicate constraints (same A, B, C after simplification).
 /// Also removes commuted duplicates (A*B=C == B*A=C).
-fn deduplicate_constraints<F: FieldBackend>(constraints: &mut Vec<Constraint<F>>) {
+pub(super) fn deduplicate_constraints<F: FieldBackend>(constraints: &mut Vec<Constraint<F>>) {
     let mut seen: HashSet<Vec<u8>> = HashSet::with_capacity(constraints.len());
 
     constraints.retain(|c| {

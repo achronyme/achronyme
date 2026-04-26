@@ -905,9 +905,7 @@ fn cluster_gauss_singleton_no_substitution() {
 /// assert structural equivalence, not byte equality.
 #[test]
 fn cluster_gauss_chain_match_greedy() {
-    use crate::r1cs_optimize::linear_cluster::{
-        build_clusters_by_signal, solve_cluster_linear,
-    };
+    use crate::r1cs_optimize::linear_cluster::{build_clusters_by_signal, solve_cluster_linear};
     use crate::r1cs_optimize::predicates::compute_variable_frequency;
     use std::collections::HashSet;
 
@@ -963,14 +961,206 @@ fn cluster_gauss_chain_match_greedy() {
     assert_eq!(av.mul(&bv), cv);
 }
 
+// ========================================================================
+// optimize_linear_clustered driver -- Phase 4 tests
+// ========================================================================
+
+/// Mirror of `test_single_linear_elimination` (the very first sanity
+/// test for greedy O1) under the clustered driver. Same input, same
+/// expected outcome: one substitution, one quadratic constraint left,
+/// witness still satisfied.
+#[test]
+fn cluster_gauss_multi_cluster_correctness() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let x = cs.alloc_witness();
+    let y = cs.alloc_witness();
+    let z = cs.alloc_witness();
+    let w = cs.alloc_witness();
+
+    // x * y = z (quadratic, kept)
+    cs.enforce(make_lc_var(x), make_lc_var(y), make_lc_var(z));
+    // 1 * w = z  (linear: w = z)
+    cs.enforce_equal(make_lc_var(w), make_lc_var(z));
+
+    let mut constraints = cs.constraints().to_vec();
+    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+
+    assert_eq!(stats.constraints_before, 2);
+    assert_eq!(stats.constraints_after, 1);
+    assert_eq!(stats.variables_eliminated, 1);
+    assert_eq!(subs.len(), 1);
+
+    // Witness check: x=6, y=7, z=42, w=42
+    let mut witness = vec![
+        FieldElement::ONE,
+        FieldElement::from_u64(6),  // x
+        FieldElement::from_u64(7),  // y
+        FieldElement::from_u64(42), // z
+        FieldElement::from_u64(42), // w
+    ];
+    for (var_idx, lc) in &subs {
+        witness[*var_idx] = lc.evaluate(&witness).unwrap();
+    }
+    for c in &constraints {
+        let av = c.a.evaluate(&witness).unwrap();
+        let bv = c.b.evaluate(&witness).unwrap();
+        let cv = c.c.evaluate(&witness).unwrap();
+        assert_eq!(av.mul(&bv), cv);
+    }
+}
+
+/// `extra_protected` plumbing: a synthetic "aux wire" shared with a
+/// non-protected variable across a cluster must never be picked as
+/// the substitution target -- the picker (max-frequency or min-occ)
+/// must always pick the non-protected wire.
+#[test]
+fn cluster_gauss_aux_wire_protection() {
+    use crate::r1cs_optimize::linear_cluster::optimize_linear_clustered_with_protected;
+    use std::collections::HashSet;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let aux = cs.alloc_witness(); // pretend this is a decompose aux wire (idx 1)
+    let other = cs.alloc_witness(); // idx 2
+
+    // 1 * aux = other -- linear, picker chooses one of {aux, other}.
+    cs.enforce_equal(make_lc_var(aux), make_lc_var(other));
+
+    let mut constraints = cs.constraints().to_vec();
+    let mut extra: HashSet<usize> = HashSet::new();
+    extra.insert(aux.index());
+    let (subs, _stats) =
+        optimize_linear_clustered_with_protected(&mut constraints, cs.num_pub_inputs(), &extra);
+
+    assert!(
+        !subs.contains_key(&aux.index()),
+        "aux wire must NOT be substituted"
+    );
+    assert!(
+        subs.contains_key(&other.index()),
+        "other wire SHOULD be substituted"
+    );
+}
+
+/// Public input variables must never be substituted. Mirrors
+/// `test_public_variable_not_substituted` for the clustered driver.
+#[test]
+fn cluster_gauss_does_not_substitute_protected() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let pub_out = cs.alloc_input(); // idx 1, public
+    let w = cs.alloc_witness(); // idx 2
+    let z = cs.alloc_witness(); // idx 3
+
+    cs.enforce_equal(make_lc_var(pub_out), make_lc_var(w));
+    cs.enforce(make_lc_var(w), make_lc_var(w), make_lc_var(z));
+
+    let mut constraints = cs.constraints().to_vec();
+    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+
+    assert_eq!(stats.variables_eliminated, 1);
+    assert!(subs.contains_key(&w.index()), "w should be substituted");
+    assert!(!subs.contains_key(&pub_out.index()), "pub_out is protected");
+    assert_eq!(constraints.len(), 1, "only the quadratic should remain");
+}
+
+/// Larger end-to-end soundness check on the `test_optimization_preserves_satisfaction`
+/// system, run through the clustered driver. After fixup, every
+/// remaining constraint must still satisfy the witness.
+#[test]
+fn cluster_gauss_soundness_witness_roundtrip() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let pub_out = cs.alloc_input();
+    let a = cs.alloc_witness();
+    let b = cs.alloc_witness();
+    let m1 = cs.alloc_witness();
+    let m2 = cs.alloc_witness();
+    let c = cs.alloc_witness();
+
+    cs.enforce(make_lc_var(a), make_lc_var(b), make_lc_var(pub_out));
+    cs.enforce_equal(
+        make_lc_var::<memory::Bn254Fr>(a) + make_lc_var(b),
+        make_lc_var(m1),
+    );
+    cs.enforce(make_lc_var(m1), make_lc_var(a), make_lc_var(m2));
+    cs.enforce_equal(make_lc_var(m2), make_lc_var(c));
+
+    let mut witness = vec![
+        FieldElement::ONE,
+        FieldElement::from_u64(12), // pub_out
+        FieldElement::from_u64(3),  // a
+        FieldElement::from_u64(4),  // b
+        FieldElement::from_u64(7),  // m1 = a+b
+        FieldElement::from_u64(21), // m2 = m1*a
+        FieldElement::from_u64(21), // c = m2
+    ];
+
+    let mut constraints = cs.constraints().to_vec();
+    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    assert_eq!(stats.constraints_before, 4);
+    assert_eq!(stats.constraints_after, 2);
+
+    // Apply subs to witness.
+    for (var_idx, lc) in &subs {
+        witness[*var_idx] = lc.evaluate(&witness).unwrap();
+    }
+
+    for (i, c) in constraints.iter().enumerate() {
+        let av = c.a.evaluate(&witness).unwrap();
+        let bv = c.b.evaluate(&witness).unwrap();
+        let cv = c.c.evaluate(&witness).unwrap();
+        assert_eq!(
+            av.mul(&bv),
+            cv,
+            "constraint {i} unsatisfied after clustered optimization"
+        );
+    }
+}
+
+/// Substituting one side of a constraint can collapse it into a
+/// tautology (e.g. `1 * pub = pub` after `x = pub`). The clustered
+/// driver must remove those via the trivial sweep.
+#[test]
+fn cluster_gauss_tautology_after_pivot() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let pub_out = cs.alloc_input(); // idx 1
+    let x = cs.alloc_witness(); // idx 2
+    let z = cs.alloc_witness(); // idx 3
+
+    cs.enforce_equal(make_lc_var(pub_out), make_lc_var(x));
+    cs.enforce_equal(make_lc_var(x), make_lc_var(pub_out));
+    cs.enforce(make_lc_var(x), make_lc_var(x), make_lc_var(z));
+
+    let mut constraints = cs.constraints().to_vec();
+    let (_, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+
+    // Cluster-Gauss absorbs the tautology inside solve_cluster_linear
+    // (the second linear constraint reduces to an empty row after the
+    // first substitution and is dropped before being re-emitted as
+    // residual), whereas the greedy path discovers it via
+    // is_trivially_satisfied AFTER applying substitutions. Both
+    // arrive at the same end state (1 constraint left, 1 var
+    // eliminated) by different bookkeeping; we assert the end state.
+    assert_eq!(stats.constraints_before, 3);
+    assert_eq!(
+        stats.constraints_after, 1,
+        "only pub*pub=z should remain after tautology absorption"
+    );
+    assert_eq!(stats.variables_eliminated, 1);
+}
+
 /// 20 linear constraints all sharing one anchor variable (a) collapse
 /// completely under cluster-Gauss: 20 substitutions produced, no
 /// duplicates in the substitution map, residual empty.
 #[test]
 fn cluster_gauss_high_degree_variable() {
-    use crate::r1cs_optimize::linear_cluster::{
-        build_clusters_by_signal, solve_cluster_linear,
-    };
+    use crate::r1cs_optimize::linear_cluster::{build_clusters_by_signal, solve_cluster_linear};
     use crate::r1cs_optimize::predicates::compute_variable_frequency;
     use std::collections::HashSet;
 
@@ -994,7 +1184,10 @@ fn cluster_gauss_high_degree_variable() {
     assert_eq!(clusters.len(), 1);
     assert_eq!(clusters[0].len(), 20);
 
-    let cluster_cons: Vec<_> = clusters[0].iter().map(|i| constraints[*i].clone()).collect();
+    let cluster_cons: Vec<_> = clusters[0]
+        .iter()
+        .map(|i| constraints[*i].clone())
+        .collect();
     let (subs, residual) =
         solve_cluster_linear::<memory::Bn254Fr>(cluster_cons, &protected, &var_freq);
 
@@ -1002,7 +1195,10 @@ fn cluster_gauss_high_degree_variable() {
     // to 20 substitutions; the surviving variable is the one each
     // substitution chains to.
     assert_eq!(subs.len(), 20);
-    assert!(residual.is_empty(), "residual should be empty, got {residual:?}");
+    assert!(
+        residual.is_empty(),
+        "residual should be empty, got {residual:?}"
+    );
 
     // No substitution should reference itself (acyclic invariant).
     for (var_idx, expr) in &subs {
