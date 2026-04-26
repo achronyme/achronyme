@@ -1999,7 +1999,7 @@ fn sha256_64_lysis_hard_gate() {
     assert!(
         (lower..=upper).contains(&constraints),
         "constraint count {constraints} outside circom O2 tolerance [{lower}, {upper}] \
-         (baseline={CIRCOM_O2_CONSTRAINTS}, tolerance=±{:.0}%)",
+         (baseline={CIRCOM_O2_CONSTRAINTS}, tolerance=+/-{:.0}%)",
         TOLERANCE * 100.0
     );
 }
@@ -2216,6 +2216,138 @@ fn classify_constraint<F: memory::FieldBackend>(
     } else {
         "quadratic NxM (multi . multi)"
     }
+}
+
+/// SHA-256(64) sparse-DEDUCE probe.
+///
+/// Diagnostic-only counterpart to `sha256_64_lysis_hard_gate` that
+/// validates whether sparse-clustered DEDUCE (`optimize_r1cs_o2_sparse`)
+/// recovers any constraints O1 alone misses on a real bit-heavy
+/// circuit.
+///
+/// The dense `optimize_r1cs_o2` is intentionally NOT exercised:
+/// SHA-256(64) generates `~k x q` `FieldElement`s with both dimensions
+/// near 60k (~100 GB) and would OOM on most hosts. The sparse path is
+/// the whole point of this probe.
+///
+/// Steps:
+///
+///   1. Compile (~47s, dominated by circom lowering).
+///   2. Build R1CS (witness-less, like the hard-gate).
+///   3. Run O1 once -- record constraint count.
+///   4. Run O2-sparse on a snapshot of the post-O1 constraints --
+///      record constraint count.
+///   5. Print O1 -> O2-sparse delta and the gap vs the circom 2.2.3
+///      O2 baseline (29,014).
+///
+/// Stays `#[ignore]`d for the same reason the hard-gate is: ~47s of
+/// circom lowering plus a few hundred ms of sparse DEDUCE on top.
+/// Run with
+/// `cargo test ... --ignored sha256_64_o2_sparse_probe -- --nocapture`.
+#[test]
+#[ignore = "SHA-256(64) sparse-DEDUCE probe -- compile is ~47s on this host. Run with `--ignored sha256_64_o2_sparse_probe -- --nocapture` to capture the O1 -> O2-sparse delta."]
+fn sha256_64_o2_sparse_probe() {
+    use std::collections::HashSet;
+    use std::time::Instant;
+
+    // circom 2.2.3 baselines on test/circomlib/sha256_test.circom.
+    // Pin to a specific circom version because counts drift across
+    // releases; recapture if the toolchain bumps.
+    const CIRCOM_O1: usize = 31_264;
+    const CIRCOM_O2: usize = 29_014;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let total = Instant::now();
+
+    let t0 = Instant::now();
+    let compile_result =
+        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
+            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    eprintln!("[compile]      {:?}", t0.elapsed());
+
+    let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    captures.insert("nBits".to_string(), FieldElement::<Bn254Fr>::from_u64(64));
+    let outs: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let t1 = Instant::now();
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&captures, &outs)
+        .expect("instantiate_lysis");
+    eprintln!(
+        "[instantiate]  {:?}  ir_inst={}",
+        t1.elapsed(),
+        program.len()
+    );
+
+    let t2 = Instant::now();
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "[ir-opt]       {:?}  ir_inst={}",
+        t2.elapsed(),
+        program.len()
+    );
+
+    let t3 = Instant::now();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).expect("R1CS compile");
+    let pre_opt = rc.cs.num_constraints();
+    eprintln!("[r1cs build]   {:?}  constraints={pre_opt}", t3.elapsed());
+
+    let t4 = Instant::now();
+    let stats = rc.optimize_r1cs();
+    let post_o1 = rc.cs.num_constraints();
+    eprintln!(
+        "[r1cs O1]      {:?}  constraints={post_o1}  vars_eliminated={}  rounds={}",
+        t4.elapsed(),
+        stats.variables_eliminated,
+        stats.rounds,
+    );
+
+    // Snapshot post-O1 constraints; optimize_o2_sparse internally
+    // reruns O1 (no-op on already-O1 input) then enters its
+    // decompose + DEDUCE outer loop. Any extra reductions surface
+    // as a delta vs post_o1.
+    let post_o1_snapshot: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
+        rc.cs.constraints().to_vec();
+    let num_pub_inputs = rc.cs.num_pub_inputs();
+
+    let t5 = Instant::now();
+    let mut sparse_constraints = post_o1_snapshot;
+    let (_subs, sparse_stats) =
+        constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
+    let post_o2_sparse = sparse_stats.constraints_after;
+    eprintln!(
+        "[r1cs O2-sparse] {:?}  constraints={post_o2_sparse}  delta_vs_O1={:+}  vars_eliminated={}",
+        t5.elapsed(),
+        post_o2_sparse as i64 - post_o1 as i64,
+        sparse_stats.variables_eliminated,
+    );
+
+    let delta_o1_vs_o2 = post_o1 as i64 - CIRCOM_O2 as i64;
+    let pct_o1_vs_o2 = (delta_o1_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
+    let delta_o2s_vs_o2 = post_o2_sparse as i64 - CIRCOM_O2 as i64;
+    let pct_o2s_vs_o2 = (delta_o2s_vs_o2 as f64 / CIRCOM_O2 as f64) * 100.0;
+
+    eprintln!("\n-- circom 2.2.3 baseline --");
+    eprintln!("  --O1 = {CIRCOM_O1}");
+    eprintln!("  --O2 = {CIRCOM_O2}");
+
+    eprintln!("\n-- achronyme vs circom O2 --");
+    eprintln!("  achronyme pre-opt    = {pre_opt}");
+    eprintln!("  achronyme post-O1    = {post_o1}");
+    eprintln!("  achronyme post-O2-s  = {post_o2_sparse}");
+    eprintln!(
+        "  achO1   vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o1_vs_o2:+}  ({pct_o1_vs_o2:+.1}%)"
+    );
+    eprintln!(
+        "  achO2-s vs cirO2 ({CIRCOM_O2})  -> delta = {delta_o2s_vs_o2:+}  ({pct_o2s_vs_o2:+.1}%)"
+    );
+
+    eprintln!("\n[total] {:?}", total.elapsed());
 }
 
 /// Fase 4 deliverable check: a circom template whose `out <--`
@@ -2995,12 +3127,20 @@ fn num2bits_optimization_diagnostic() {
 /// constraint elimination for key circomlib circuits.
 #[test]
 fn r1cs_optimization_benchmark() {
-    /// Compile a circom circuit and return (before_opt, after_opt) constraint counts.
+    /// Compile a circom circuit and return constraint counts at three
+    /// optimisation levels:
+    /// - `before_opt`  -- raw R1CS output, no optimization.
+    /// - `after_o1`    -- after `optimize_r1cs()` (O1 linear elimination).
+    /// - `after_o2_s`  -- after `optimize_r1cs_o2_sparse()` (sparse DEDUCE).
+    ///
+    /// The sparse path is measured on a clone of the pre-opt constraint
+    /// vec so the live R1CSCompiler keeps its O1-substitution map for
+    /// witness verification.
     fn compile_and_measure(
         name: &str,
         circom_file: &str,
         inputs: &HashMap<String, FieldElement<Bn254Fr>>,
-    ) -> (usize, usize) {
+    ) -> (usize, usize, usize) {
         let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
         let path = manifest_dir.join(circom_file);
         let lib_dirs = vec![manifest_dir.join("test/circomlib")];
@@ -3045,10 +3185,26 @@ fn r1cs_optimization_benchmark() {
 
         let before = compiler.cs.num_constraints();
 
+        // Snapshot the unoptimised constraint set for the sparse path so
+        // we can measure it independently of the live R1CSCompiler.
+        let pre_opt_constraints: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
+            compiler.cs.constraints().to_vec();
+        let num_pub_inputs = compiler.cs.num_pub_inputs();
+
         let tp = std::time::Instant::now();
         let stats = compiler.optimize_r1cs();
-        let after = stats.constraints_after;
+        let after_o1 = stats.constraints_after;
         let t_r1cs_opt = tp.elapsed();
+
+        // Run sparse O2 on the snapshot. Bypasses R1CSCompiler entirely
+        // -- the result feeds the constraint-count comparison only;
+        // witness fixup keeps using the O1 substitution map below.
+        let tp = std::time::Instant::now();
+        let mut sparse_constraints = pre_opt_constraints;
+        let (_subs, sparse_stats) =
+            constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
+        let after_o2_s = sparse_stats.constraints_after;
+        let t_r1cs_o2_sparse = tp.elapsed();
 
         // Re-fill substituted wires
         if let Some(subs) = &compiler.substitution_map {
@@ -3057,24 +3213,28 @@ fn r1cs_optimization_benchmark() {
             }
         }
 
-        // Verify optimized system
+        // Verify optimized system (O1 path -- the one with a fixed-up
+        // witness). Sparse O2 produces a different constraint set whose
+        // own substitution map we discarded; re-verifying it is not in
+        // scope here (covered by sparse_* unit tests in r1cs_optimize).
         compiler
             .cs
             .verify(&witness)
             .unwrap_or_else(|e| panic!("{name} verification FAILED after optimization: {e}"));
 
         eprintln!(
-            "║  {name:24} lower={:.0}ms inst={:.0}ms opt={:.0}ms wit={:.0}ms r1cs={:.0}ms r1csopt={:.0}ms nodes={}",
+            "||  {name:24} lower={:.0}ms inst={:.0}ms opt={:.0}ms wit={:.0}ms r1cs={:.0}ms r1csO1={:.0}ms r1csO2s={:.0}ms nodes={}",
             t_lower.as_secs_f64() * 1000.0,
             t_inst.as_secs_f64() * 1000.0,
             t_opt.as_secs_f64() * 1000.0,
             t_wit.as_secs_f64() * 1000.0,
             t_r1cs.as_secs_f64() * 1000.0,
             t_r1cs_opt.as_secs_f64() * 1000.0,
+            t_r1cs_o2_sparse.as_secs_f64() * 1000.0,
             prove_ir.body.len(),
         );
 
-        (before, after)
+        (before, after_o1, after_o2_s)
     }
 
     eprintln!("\n╔════════════════════════════════════════════════════════════════════════════╗");
@@ -3111,9 +3271,16 @@ fn r1cs_optimization_benchmark() {
 
     let t0 = std::time::Instant::now();
 
+    // Collected (name, achO1, achO2-sparse, circom-O2-baseline-str) per
+    // circuit. Printed in the second comparison table after the main
+    // achronyme-vs-circom view -- focuses the reader on the hypothesis
+    // under test ("does sparse DEDUCE recover constraints we miss with
+    // O1 alone?") without breaking the existing column layout.
+    let mut sparse_summary: Vec<(&str, usize, usize, &str)> = Vec::new();
+
     // Num2Bits(8)
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "Num2Bits(8)",
         "test/circom/num2bits_8.circom",
         &[("in", 13)]
@@ -3130,10 +3297,11 @@ fn r1cs_optimization_benchmark() {
         "17",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("Num2Bits(8)", a, asp, "17"));
 
     // IsZero
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "IsZero",
         "test/circom/iszero.circom",
         &[("in", 0)]
@@ -3150,10 +3318,11 @@ fn r1cs_optimization_benchmark() {
         "2",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("IsZero", a, asp, "2"));
 
     // LessThan(8)
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "LessThan(8)",
         "test/circom/lessthan_8.circom",
         &[("in_0", 3), ("in_1", 10)]
@@ -3170,10 +3339,11 @@ fn r1cs_optimization_benchmark() {
         "20",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("LessThan(8)", a, asp, "20"));
 
     // Pedersen(8)
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "Pedersen(8)",
         "test/circomlib/pedersen_test.circom",
         &(0..8)
@@ -3189,10 +3359,11 @@ fn r1cs_optimization_benchmark() {
         "13",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("Pedersen(8)", a, asp, "13"));
 
     // EscalarMulFix(253)
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "EscalarMulFix(253)",
         "test/circomlib/escalarmulfix_test.circom",
         &(0..253)
@@ -3208,6 +3379,7 @@ fn r1cs_optimization_benchmark() {
         "11",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("EscalarMulFix(253)", a, asp, "11"));
 
     // EscalarMulAny(254)
     let t = std::time::Instant::now();
@@ -3217,7 +3389,7 @@ fn r1cs_optimization_benchmark() {
     }
     ema_inputs.insert("p_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
     ema_inputs.insert("p_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "EscalarMulAny(254)",
         "test/circomlib/escalarmulany254_test.circom",
         &ema_inputs,
@@ -3231,10 +3403,11 @@ fn r1cs_optimization_benchmark() {
         "2310",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("EscalarMulAny(254)", a, asp, "2310"));
 
     // Poseidon(2)
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "Poseidon(2)",
         "test/circomlib/poseidon_test.circom",
         &[("inputs_0", 1), ("inputs_1", 2)]
@@ -3251,10 +3424,11 @@ fn r1cs_optimization_benchmark() {
         "240",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("Poseidon(2)", a, asp, "240"));
 
     // MiMCSponge(2,220,1)
     let t = std::time::Instant::now();
-    let (b, a) = compile_and_measure(
+    let (b, a, asp) = compile_and_measure(
         "MiMCSponge(2,220,1)",
         "test/circomlib/mimcsponge_test.circom",
         &[("ins_0", 1), ("ins_1", 2), ("k", 0)]
@@ -3271,6 +3445,7 @@ fn r1cs_optimization_benchmark() {
         "1320",
         t.elapsed().as_secs_f64() * 1000.0,
     );
+    sparse_summary.push(("MiMCSponge(2,220,1)", a, asp, "1320"));
 
     eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
     eprintln!(
@@ -3279,6 +3454,31 @@ fn r1cs_optimization_benchmark() {
         ""
     );
     eprintln!("╚════════════════════════════════════════════════════════════════════════════╝");
+    eprintln!();
+
+    // Second table: O1 vs O2-sparse vs circom O2.
+    //
+    // Validates the hypothesis "sparse DEDUCE recovers constraints O1
+    // misses, even on circuits where achronyme already matches or beats
+    // circom O2". `gain` is achO1 - achO2s (constraints removed by the
+    // sparse pass over O1 alone). `delta` is achO2s - cirO2 (positive
+    // means achronyme remains behind, negative means we beat circom).
+    eprintln!("+--- DEDUCE-sparse vs circom O2 ----------------------------------+");
+    eprintln!(
+        "| {:24} | {:>6} | {:>6} | {:>6} | {:>+6} | {:>5} |",
+        "Circuit", "achO1", "achO2s", "cirO2", "delta", "gain"
+    );
+    eprintln!("+--------------------------+--------+--------+--------+--------+-------+");
+    for (name, a_o1, a_o2s, cir_o2_str) in &sparse_summary {
+        let cir_o2: i64 = cir_o2_str.parse().unwrap_or(0);
+        let delta: i64 = *a_o2s as i64 - cir_o2;
+        let gain: i64 = *a_o1 as i64 - *a_o2s as i64;
+        eprintln!(
+            "| {:24} | {:>6} | {:>6} | {:>6} | {:>+6} | {:>5} |",
+            name, a_o1, a_o2s, cir_o2_str, delta, gain
+        );
+    }
+    eprintln!("+------------------------------------------------------------------+");
     eprintln!();
 }
 
