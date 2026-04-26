@@ -555,6 +555,7 @@ dependencies = [
  "ir-forge",
  "memory",
  "proving",
+ "sha2",
  "tempfile",
  "toml",
  "zkc",

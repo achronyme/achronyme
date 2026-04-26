@@ -201,6 +201,19 @@ fn collect_hints_recursive<F: FieldBackend>(
                     env.insert(name.clone(), *val);
                 }
             }
+            CircuitNode::LetArray { name, elements, .. } => {
+                // Compile-time array alias (e.g. `var outCalc[256] = sha256compression(...)`).
+                // The lift emits `LetArray { name, elements: [Var(artik_out_0), ...] }` so
+                // later `ArrayIndex { array: name, index: i }` references can resolve through
+                // to the underlying outputs. Without this, alias arrays produced by Artik
+                // (or any compile-time array binding) never materialize in env, breaking
+                // hint propagation through templates that wrap their outputs in a `var`.
+                for (i, elem) in elements.iter().enumerate() {
+                    if let Some(val) = eval_hint(elem, env) {
+                        env.insert(format!("{name}_{i}"), val);
+                    }
+                }
+            }
             _ => {}
         }
     }
