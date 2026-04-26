@@ -866,3 +866,148 @@ fn cluster_all_protected_returns_singletons() {
     assert_eq!(clusters.len(), 2);
     assert!(clusters.iter().all(|c| c.len() == 1));
 }
+
+// ========================================================================
+// linear_cluster::solve_cluster_linear -- Phase 3 tests
+// ========================================================================
+
+/// A cluster containing a single non-linear (quadratic) constraint must
+/// produce no substitutions and emit the constraint as residual. The
+/// solver linearises only what `is_linear` accepts.
+#[test]
+fn cluster_gauss_singleton_no_substitution() {
+    use crate::r1cs_optimize::linear_cluster::solve_cluster_linear;
+    use crate::r1cs_optimize::predicates::compute_variable_frequency;
+    use std::collections::HashSet;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let x = cs.alloc_witness();
+    let y = cs.alloc_witness();
+    let z = cs.alloc_witness();
+    // x * y = z -- genuinely quadratic, NOT linear.
+    cs.enforce(make_lc_var(x), make_lc_var(y), make_lc_var(z));
+
+    let constraints = cs.constraints().to_vec();
+    let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
+    let var_freq = compute_variable_frequency(&constraints);
+
+    let (subs, residual) =
+        solve_cluster_linear::<memory::Bn254Fr>(constraints.clone(), &protected, &var_freq);
+
+    assert!(subs.is_empty());
+    assert_eq!(residual.len(), 1);
+}
+
+/// Cluster-Gauss applied to the same chain system as
+/// `test_chain_substitution` (1*a=b, 1*b=c, c*c=d) must produce the
+/// same final constraint count and a witness-satisfying residual as
+/// the greedy path. Specific substitution keys may differ -- we
+/// assert structural equivalence, not byte equality.
+#[test]
+fn cluster_gauss_chain_match_greedy() {
+    use crate::r1cs_optimize::linear_cluster::{
+        build_clusters_by_signal, solve_cluster_linear,
+    };
+    use crate::r1cs_optimize::predicates::compute_variable_frequency;
+    use std::collections::HashSet;
+
+    let mut cs = ConstraintSystem::new();
+    let a = cs.alloc_witness();
+    let b = cs.alloc_witness();
+    let c = cs.alloc_witness();
+    let d = cs.alloc_witness();
+
+    cs.enforce_equal(make_lc_var(a), make_lc_var(b));
+    cs.enforce_equal(make_lc_var(b), make_lc_var(c));
+    cs.enforce(make_lc_var(c), make_lc_var(c), make_lc_var(d));
+
+    let constraints: Vec<_> = cs.constraints().to_vec();
+    let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
+    let var_freq = compute_variable_frequency(&constraints);
+    let clusters = build_clusters_by_signal(&constraints, &protected);
+
+    // Linear constraints (idx 0,1) cluster together via shared variable b.
+    // Quadratic constraint (idx 2) is its own singleton (is_linear -> None).
+    // Solve only the linear cluster.
+    let mut total_subs = std::collections::HashMap::new();
+    let mut total_residual: Vec<Constraint<memory::Bn254Fr>> = Vec::new();
+    for cluster in &clusters {
+        let cluster_cons: Vec<_> = cluster.iter().map(|i| constraints[*i].clone()).collect();
+        let (subs, residual) =
+            solve_cluster_linear::<memory::Bn254Fr>(cluster_cons, &protected, &var_freq);
+        total_subs.extend(subs);
+        total_residual.extend(residual);
+    }
+
+    // Greedy variant eliminated 2 vars and left 1 quadratic; cluster-Gauss
+    // must match those counts.
+    assert_eq!(
+        total_subs.len(),
+        2,
+        "expected 2 vars eliminated (a and b OR b and c)"
+    );
+    assert_eq!(total_residual.len(), 1, "1 quadratic residual constraint");
+
+    // Witness check: a=b=c=5, d=25 satisfies the residual quadratic.
+    let witness = vec![
+        FieldElement::ONE,
+        FieldElement::from_u64(5),  // a
+        FieldElement::from_u64(5),  // b
+        FieldElement::from_u64(5),  // c
+        FieldElement::from_u64(25), // d
+    ];
+    let con = &total_residual[0];
+    let av = con.a.evaluate(&witness).unwrap();
+    let bv = con.b.evaluate(&witness).unwrap();
+    let cv = con.c.evaluate(&witness).unwrap();
+    assert_eq!(av.mul(&bv), cv);
+}
+
+/// 20 linear constraints all sharing one anchor variable (a) collapse
+/// completely under cluster-Gauss: 20 substitutions produced, no
+/// duplicates in the substitution map, residual empty.
+#[test]
+fn cluster_gauss_high_degree_variable() {
+    use crate::r1cs_optimize::linear_cluster::{
+        build_clusters_by_signal, solve_cluster_linear,
+    };
+    use crate::r1cs_optimize::predicates::compute_variable_frequency;
+    use std::collections::HashSet;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let a = cs.alloc_witness();
+    let mut bs: Vec<Variable> = Vec::with_capacity(20);
+    for _ in 0..20 {
+        bs.push(cs.alloc_witness());
+    }
+    // 20 constraints: a == b_i for i in 0..20.
+    for &b in &bs {
+        cs.enforce_equal(make_lc_var(a), make_lc_var(b));
+    }
+
+    let constraints: Vec<_> = cs.constraints().to_vec();
+    let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
+    let var_freq = compute_variable_frequency(&constraints);
+    let clusters = build_clusters_by_signal(&constraints, &protected);
+
+    // All 20 constraints share variable `a` -- one cluster of 20.
+    assert_eq!(clusters.len(), 1);
+    assert_eq!(clusters[0].len(), 20);
+
+    let cluster_cons: Vec<_> = clusters[0].iter().map(|i| constraints[*i].clone()).collect();
+    let (subs, residual) =
+        solve_cluster_linear::<memory::Bn254Fr>(cluster_cons, &protected, &var_freq);
+
+    // 20 linear constraints over 21 variables (a + b0..b19) collapse
+    // to 20 substitutions; the surviving variable is the one each
+    // substitution chains to.
+    assert_eq!(subs.len(), 20);
+    assert!(residual.is_empty(), "residual should be empty, got {residual:?}");
+
+    // No substitution should reference itself (acyclic invariant).
+    for (var_idx, expr) in &subs {
+        for (term_var, _) in expr.terms() {
+            assert_ne!(term_var.index(), *var_idx, "self-reference in subs map");
+        }
+    }
+}
