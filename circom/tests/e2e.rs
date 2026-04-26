@@ -2071,7 +2071,11 @@ fn sha256_64_constraint_breakdown() {
 
     let t2 = Instant::now();
     ir::passes::optimize(&mut program);
-    eprintln!("[ir-opt]       {:?}  ir_inst={}", t2.elapsed(), program.len());
+    eprintln!(
+        "[ir-opt]       {:?}  ir_inst={}",
+        t2.elapsed(),
+        program.len()
+    );
 
     let t3 = Instant::now();
     let mut rc = R1CSCompiler::<Bn254Fr>::new();
