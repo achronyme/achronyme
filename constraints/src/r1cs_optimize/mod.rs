@@ -32,6 +32,10 @@
 //!   `optimize_o2`, `optimize_o2_with_deducer`).
 //! - [`deduce_sparse`] -- sparse-row clustered O2 variant
 //!   (`deduce_linear_from_quadratic_sparse`, `optimize_o2_sparse`).
+//! - [`union_find`] -- shared Vec-backed disjoint-set union with
+//!   path compression + union by rank. Used by `deduce_sparse` and
+//!   the upcoming `linear_cluster` (clustering keys differ between
+//!   consumers; the primitive is identical).
 //! - [`tests`] -- integration tests that round-trip constraints
 //!   through each pass and verify witness satisfaction.
 
@@ -41,6 +45,7 @@ mod linear;
 mod predicates;
 mod substitution;
 mod types;
+mod union_find;
 
 pub use deduce::optimize_o2;
 pub use deduce_sparse::optimize_o2_sparse;

@@ -33,6 +33,7 @@ use memory::{FieldBackend, FieldElement};
 
 use super::deduce::{expand_constraint_product, optimize_o2_with_deducer, Monomial};
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
+use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination};
 
 /// Largest cluster (in number of constraints) we run full Gaussian
@@ -56,52 +57,6 @@ type SparseRow<F> = BTreeMap<usize, FieldElement<F>>;
 /// the linear residual `(A x B linear terms) - C`. Shared input shape
 /// for clustering and per-cluster solving.
 type ExpandedConstraint<F> = (HashMap<Monomial, FieldElement<F>>, LinearCombination<F>);
-
-/// Vec-backed disjoint-set union with path compression + union by rank.
-struct UnionFind {
-    parent: Vec<usize>,
-    rank: Vec<u8>,
-}
-
-impl UnionFind {
-    fn new(n: usize) -> Self {
-        Self {
-            parent: (0..n).collect(),
-            rank: vec![0; n],
-        }
-    }
-
-    fn find(&mut self, mut x: usize) -> usize {
-        // Two-pass: walk to root, then compress every node on the path
-        // to point directly at the root.
-        let mut root = x;
-        while self.parent[root] != root {
-            root = self.parent[root];
-        }
-        while self.parent[x] != root {
-            let next = self.parent[x];
-            self.parent[x] = root;
-            x = next;
-        }
-        root
-    }
-
-    fn union(&mut self, a: usize, b: usize) {
-        let ra = self.find(a);
-        let rb = self.find(b);
-        if ra == rb {
-            return;
-        }
-        match self.rank[ra].cmp(&self.rank[rb]) {
-            std::cmp::Ordering::Less => self.parent[ra] = rb,
-            std::cmp::Ordering::Greater => self.parent[rb] = ra,
-            std::cmp::Ordering::Equal => {
-                self.parent[rb] = ra;
-                self.rank[ra] += 1;
-            }
-        }
-    }
-}
 
 /// Cluster constraints by shared quadratic monomials.
 ///
