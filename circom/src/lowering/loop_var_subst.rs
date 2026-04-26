@@ -677,4 +677,174 @@ mod tests {
         // Empty window contributes 0.
         assert_eq!(flushed_node_count(20, 20, &[(0, 100)]), 0);
     }
+
+    // ── R1″ Phase 6 / Option D — proof of concept ────────────────────
+    //
+    // Validates the architectural thesis that drives Option D: a
+    // `LetIndexed { index: LoopVar(t) }` body, after `substitute_loop_var`
+    // rewrites the placeholder to `Const(N)`, instantiates byte-identical
+    // to a hand-unrolled body that uses `Const(N)` directly. If this
+    // holds, the Phase 6 lowering integration can stop folding the loop
+    // variable to a flat name and instead lean on instantiate's existing
+    // `eval_const_expr` fast-path for `ArrayIndex` / `LetIndexed`.
+
+    use std::collections::{HashMap, HashSet};
+
+    use ir_forge::types::{
+        CaptureArrayDef, ProveIR, ProveInputDecl,
+    };
+    use ir_core::{Instruction, IrType};
+    use memory::{Bn254Fr, FieldElement};
+
+    /// Build a ProveIR with the given body and a single witness scalar
+    /// `x` plus a public output array `out[4]`. Used by both the
+    /// hand-unrolled and the substituted-from-placeholder bodies in the
+    /// PoC, so that any IR delta isolates to the substitution mechanic.
+    fn poc_prove_ir(body: Vec<CircuitNode>) -> ProveIR {
+        ProveIR {
+            name: Some("poc".into()),
+            public_inputs: vec![ProveInputDecl {
+                name: "out".into(),
+                array_size: Some(ir_forge::types::ArraySize::Literal(4)),
+                ir_type: IrType::Field,
+            }],
+            witness_inputs: vec![ProveInputDecl {
+                name: "x".into(),
+                array_size: None,
+                ir_type: IrType::Field,
+            }],
+            captures: vec![],
+            body,
+            capture_arrays: Vec::<CaptureArrayDef>::new(),
+        }
+    }
+
+    /// Body shape A: hand-unrolled `out[i] <== x + i` for i in 0..4
+    /// with concrete `Const` indices. Mirrors what circom's legacy
+    /// loop unroll emits today.
+    fn body_hand_unrolled() -> Vec<CircuitNode> {
+        (0..4)
+            .map(|i| CircuitNode::LetIndexed {
+                array: "out".into(),
+                index: CircuitExpr::Const(FieldConst::from_u64(i)),
+                value: CircuitExpr::BinOp {
+                    op: ir_forge::types::CircuitBinOp::Add,
+                    lhs: Box::new(CircuitExpr::Input("x".into())),
+                    rhs: Box::new(CircuitExpr::Const(FieldConst::from_u64(i))),
+                },
+                span: None,
+            })
+            .collect()
+    }
+
+    /// Body shape B: a one-iteration template `out[i] <== x + i` using
+    /// `LoopVar(0)` for the loop var, then cloned + substituted for
+    /// each iteration via `substitute_loop_var`. Post-substitute the
+    /// body is structurally identical to `body_hand_unrolled`.
+    fn body_loop_var_then_substituted() -> Vec<CircuitNode> {
+        let template = CircuitNode::LetIndexed {
+            array: "out".into(),
+            index: CircuitExpr::LoopVar(0),
+            value: CircuitExpr::BinOp {
+                op: ir_forge::types::CircuitBinOp::Add,
+                lhs: Box::new(CircuitExpr::Input("x".into())),
+                rhs: Box::new(CircuitExpr::LoopVar(0)),
+            },
+            span: None,
+        };
+        let mut body = Vec::with_capacity(4);
+        for i in 0..4u64 {
+            let mut node = template.clone();
+            substitute_loop_var(std::slice::from_mut(&mut node), 0, i);
+            body.push(node);
+        }
+        body
+    }
+
+    /// Categorise an instruction by its discriminant so the two IR
+    /// streams can be compared by shape (kind sequence) without
+    /// requiring SsaVar equality, which is allocator-driven and may
+    /// differ across runs without indicating a real semantic delta.
+    fn inst_kind(inst: &Instruction<Bn254Fr>) -> &'static str {
+        match inst {
+            Instruction::Const { .. } => "Const",
+            Instruction::Input { .. } => "Input",
+            Instruction::Add { .. } => "Add",
+            Instruction::Sub { .. } => "Sub",
+            Instruction::Mul { .. } => "Mul",
+            Instruction::Neg { .. } => "Neg",
+            Instruction::AssertEq { .. } => "AssertEq",
+            _ => "Other",
+        }
+    }
+
+    #[test]
+    fn poc_loopvar_substitute_then_instantiate_matches_hand_unroll() {
+        // The architectural claim under test: instantiate's existing
+        // `ArrayIndex` / `LetIndexed` fast-path collapses
+        // `LoopVar(t) → Const(N)` substitutions to the same SSA shape
+        // a hand-unrolled body produces. If this passes, the Phase 6
+        // lowering integration is unblocked: emit `LoopVar`, substitute
+        // per iter, hand to instantiate. No string-mangling needed in
+        // the lowering for the dominant signal-array case.
+        let outputs: HashSet<String> = std::iter::once("out".to_string()).collect();
+        let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+
+        let ir_a = poc_prove_ir(body_hand_unrolled())
+            .instantiate_with_outputs::<Bn254Fr>(&captures, &outputs)
+            .expect("hand-unrolled ProveIR should instantiate");
+        let ir_b = poc_prove_ir(body_loop_var_then_substituted())
+            .instantiate_with_outputs::<Bn254Fr>(&captures, &outputs)
+            .expect("substituted ProveIR should instantiate");
+
+        // Same instruction count proves no extra wires/constraints
+        // leak from the substitution path.
+        assert_eq!(
+            ir_a.instructions.len(),
+            ir_b.instructions.len(),
+            "instruction count diverged: hand-unrolled={}, substituted={}",
+            ir_a.instructions.len(),
+            ir_b.instructions.len(),
+        );
+
+        // Same kind sequence proves the fold path produced the same
+        // operation order. SsaVar identities differ run-to-run so we
+        // compare discriminants, not the full struct.
+        let kinds_a: Vec<&str> = ir_a.instructions.iter().map(inst_kind).collect();
+        let kinds_b: Vec<&str> = ir_b.instructions.iter().map(inst_kind).collect();
+        assert_eq!(
+            kinds_a, kinds_b,
+            "instruction kind sequence diverged"
+        );
+
+        // Sanity floor: the body must have actually emitted Add +
+        // AssertEq instructions. Without this the shape-equality
+        // above could be vacuously true on two empty streams (which
+        // would happen if both ProveIRs were silently rejected at
+        // scaffold time).
+        //
+        // Note: only 3 Adds, not 4 — instantiate's BinOp fold
+        // collapses `Add(Input(x), Const(0))` to just `Input(x)` for
+        // the i=0 iteration (additive identity). This identity fold
+        // applies to both ProveIRs uniformly, which is precisely why
+        // the kind-sequence equality above holds.
+        let adds = ir_a
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::Add { .. }))
+            .count();
+        let asserts = ir_a
+            .instructions
+            .iter()
+            .filter(|i| matches!(i, Instruction::AssertEq { .. }))
+            .count();
+        assert_eq!(
+            adds, 3,
+            "expected 3 Add instructions (i=1,2,3 — i=0 folds via additive identity), got {adds}",
+        );
+        assert_eq!(
+            asserts, 4,
+            "expected 4 AssertEq instructions (one per output element), got {asserts}",
+        );
+    }
 }

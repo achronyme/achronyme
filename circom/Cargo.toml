@@ -32,6 +32,7 @@ zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 proving = { path = "../proving" }
 akron = { path = "../akron" }
+ir-core = { path = "../ir-core" }
 tempfile = "3"
 toml = "0.8"
 sha2 = "0.10"
