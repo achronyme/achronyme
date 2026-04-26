@@ -1155,6 +1155,122 @@ fn cluster_gauss_tautology_after_pivot() {
     assert_eq!(stats.variables_eliminated, 1);
 }
 
+// ========================================================================
+// Picker selection -- Phase 5 (H1.D) tests
+// ========================================================================
+
+/// Above the MIN_OCCURRENCE_LOWER threshold (350), the picker switches
+/// to min-occurrence: the variable with the FEWEST occurrences in the
+/// global frequency map wins, tie-broken by largest signal index.
+///
+/// Construction: 360 linear constraints `1 * hot = bot_i` for
+/// i in 0..360. `hot` (idx 1) appears in 360 rows; each `bot_i`
+/// (indices 2..362) appears in exactly 1 row. They form one cluster
+/// of 360 (above the threshold).
+///
+/// Under min-occurrence: every row picks its own `bot_i` (freq 1)
+/// over `hot` (freq 360). Result: subs = {bot_0..bot_359}, hot is
+/// NEVER substituted.
+#[test]
+fn cluster_gauss_min_occurrence_picker_above_threshold() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let hot = cs.alloc_witness();
+    let mut bots: Vec<Variable> = Vec::with_capacity(360);
+    for _ in 0..360 {
+        bots.push(cs.alloc_witness());
+    }
+    for &b in &bots {
+        cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
+    }
+
+    let mut constraints = cs.constraints().to_vec();
+    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+
+    assert_eq!(stats.variables_eliminated, 360);
+    assert!(
+        !subs.contains_key(&hot.index()),
+        "hot variable (idx {}) must NOT be substituted under min-occurrence picker; \
+         subs has {} keys, hot present={}",
+        hot.index(),
+        subs.len(),
+        subs.contains_key(&hot.index()),
+    );
+    // Every bot_i should be substituted instead.
+    for &b in &bots {
+        assert!(
+            subs.contains_key(&b.index()),
+            "bot variable (idx {}) should be substituted",
+            b.index()
+        );
+    }
+}
+
+/// Below the threshold (340 < 350), the picker stays max-frequency:
+/// `hot` (freq 340) wins over each `bot_i` (freq 1). Hot IS
+/// substituted in the first round.
+#[test]
+fn cluster_gauss_max_frequency_picker_below_threshold() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    let mut cs: ConstraintSystem = ConstraintSystem::new();
+    let hot = cs.alloc_witness();
+    let mut bots: Vec<Variable> = Vec::with_capacity(340);
+    for _ in 0..340 {
+        bots.push(cs.alloc_witness());
+    }
+    for &b in &bots {
+        cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
+    }
+
+    let mut constraints = cs.constraints().to_vec();
+    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+
+    assert_eq!(stats.variables_eliminated, 340);
+    // Under max-frequency, the FIRST row's pick is `hot` -> hot is
+    // in subs. (Other bot_i's get substituted in subsequent rows.)
+    assert!(
+        subs.contains_key(&hot.index()),
+        "hot variable (idx {}) MUST be substituted under max-frequency picker",
+        hot.index(),
+    );
+}
+
+/// Threshold boundary: exactly 350 triggers min-occurrence; 349 stays
+/// max-frequency. Documents the picker's branch condition.
+#[test]
+fn cluster_gauss_picker_threshold_exact() {
+    use crate::r1cs_optimize::optimize_linear_clustered;
+
+    fn build_and_optimize(n: usize) -> bool {
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
+        let hot = cs.alloc_witness();
+        let mut bots: Vec<Variable> = Vec::with_capacity(n);
+        for _ in 0..n {
+            bots.push(cs.alloc_witness());
+        }
+        for &b in &bots {
+            cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
+        }
+        let mut constraints = cs.constraints().to_vec();
+        let (subs, _stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+        // Returns true iff hot was substituted (max-frequency picker).
+        subs.contains_key(&hot.index())
+    }
+
+    // 349 -> max-frequency -> hot substituted -> returns true
+    assert!(
+        build_and_optimize(349),
+        "n=349 should use max-frequency (hot substituted)"
+    );
+    // 350 -> min-occurrence -> hot NOT substituted -> returns false
+    assert!(
+        !build_and_optimize(350),
+        "n=350 should use min-occurrence (hot NOT substituted)"
+    );
+}
+
 /// 20 linear constraints all sharing one anchor variable (a) collapse
 /// completely under cluster-Gauss: 20 substitutions produced, no
 /// duplicates in the substitution map, residual empty.

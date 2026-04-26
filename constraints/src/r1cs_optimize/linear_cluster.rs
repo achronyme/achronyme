@@ -50,14 +50,52 @@ use crate::r1cs::{Constraint, LinearCombination, Variable};
 /// via different orderings), so the substitution map produced is
 /// equivalent. The min-occurrence picker (Phase 5) only applies
 /// inside the Gauss path and therefore only for clusters in
-/// `[350, CLUSTER_FALLBACK_THRESHOLD]`; outside that band we either
-/// use Gauss + max-frequency (small clusters) or greedy fallback
-/// (giant clusters).
+/// `[MIN_OCCURRENCE_LOWER, CLUSTER_FALLBACK_THRESHOLD]`; outside that
+/// band we either use Gauss + max-frequency (small clusters) or
+/// greedy fallback (giant clusters).
 ///
 /// 5000 was chosen empirically: small enough that the worst case
 /// (5000^2 * ~5 LC terms = 125M field ops) finishes in seconds,
 /// large enough that the eight circomlib templates do not hit it.
 const CLUSTER_FALLBACK_THRESHOLD: usize = 5000;
+
+/// Lower bound for switching from max-frequency picker to
+/// min-occurrence picker. Mirrors circom 2.2.x's threshold
+/// (`circom_algebra/src/simplification_utils.rs:548`, the `min`
+/// constant in `full_simplification`).
+const MIN_OCCURRENCE_LOWER: usize = 350;
+
+/// Upper bound for the min-occurrence picker. Above this, even
+/// scanning per-pivot for the smallest occurrence count becomes a
+/// notable cost; circom switches back to a coarser strategy. We
+/// already have a tighter ceiling (`CLUSTER_FALLBACK_THRESHOLD`) so
+/// this constant is documented for parity but never reached in
+/// practice -- by the time a cluster crosses 5000 we have already
+/// fallen back to greedy.
+const MIN_OCCURRENCE_UPPER: usize = 1_000_000;
+
+/// Pivot variable selection strategy used by the per-cluster Gaussian
+/// solver. Determined by cluster size: clusters in
+/// `[MIN_OCCURRENCE_LOWER, MIN_OCCURRENCE_UPPER)` use
+/// `MinOccurrence`, others use `MaxFrequency`. Mirrors circom 2.2.x
+/// (`circom_algebra/src/simplification_utils.rs`):
+/// `apply_less_ocurrences` switches to `take_signal_4` (min-occ)
+/// inside the same band.
+#[derive(Copy, Clone, Debug, PartialEq, Eq)]
+enum Picker {
+    MaxFrequency,
+    MinOccurrence,
+}
+
+impl Picker {
+    fn for_cluster_size(size: usize) -> Self {
+        if (MIN_OCCURRENCE_LOWER..MIN_OCCURRENCE_UPPER).contains(&size) {
+            Picker::MinOccurrence
+        } else {
+            Picker::MaxFrequency
+        }
+    }
+}
 
 /// Cluster the linear constraints in `linear_constraints` by shared
 /// variable index. Two constraints land in the same cluster iff they
@@ -132,6 +170,62 @@ pub(super) fn build_clusters_by_signal<F: FieldBackend>(
     clusters
 }
 
+/// Pick a substitution variable from `lc` according to `picker`.
+///
+/// `MaxFrequency`: delegates to the existing
+/// [`solve_for_variable`] -- pick the non-protected term with the
+/// highest occurrence count, tie-break by highest index. This is the
+/// achronyme-historical heuristic.
+///
+/// `MinOccurrence`: pick the non-protected term with the **lowest**
+/// occurrence count, tie-break by **highest** index. Mirrors circom
+/// 2.2.x's `take_signal_4`
+/// (`circom_algebra/src/simplification_utils.rs:380`); the rationale
+/// is that substituting a rarely-occurring variable propagates the
+/// fewest changes, keeping subsequent rows shorter and reducing
+/// overall fill-in.
+fn solve_for_variable_with_picker<F: FieldBackend>(
+    lc: LinearCombination<F>,
+    protected: &HashSet<usize>,
+    var_freq: &HashMap<usize, usize>,
+    picker: Picker,
+) -> Option<(Variable, LinearCombination<F>)> {
+    match picker {
+        Picker::MaxFrequency => solve_for_variable(lc, protected, var_freq),
+        Picker::MinOccurrence => {
+            let simplified = lc.simplify();
+            let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
+            for (var, coeff) in simplified.terms() {
+                if protected.contains(&var.index()) || var.index() == Variable::ONE.index() {
+                    continue;
+                }
+                let freq = var_freq.get(&var.index()).copied().unwrap_or(0);
+                match &best {
+                    None => best = Some((*var, *coeff, freq)),
+                    Some((prev_var, _, prev_freq)) => {
+                        // pick MIN freq; tie-break by MAX index
+                        if freq < *prev_freq
+                            || (freq == *prev_freq && var.index() > prev_var.index())
+                        {
+                            best = Some((*var, *coeff, freq));
+                        }
+                    }
+                }
+            }
+            let (target_var, target_coeff, _) = best?;
+            let neg_inv = target_coeff.neg().inv()?;
+            let mut result = LinearCombination::<F>::zero();
+            for (var, coeff) in simplified.terms() {
+                if *var == target_var {
+                    continue;
+                }
+                result.add_term(*var, coeff.mul(&neg_inv));
+            }
+            Some((target_var, result))
+        }
+    }
+}
+
 /// Run reduced row-echelon Gaussian elimination on a single cluster of
 /// linear constraints.
 ///
@@ -169,6 +263,9 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
     protected: &HashSet<usize>,
     var_freq: &HashMap<usize, usize>,
 ) -> (SubstitutionMap<F>, Vec<Constraint<F>>) {
+    let cluster_size = cluster_constraints.len();
+    let picker = Picker::for_cluster_size(cluster_size);
+
     // Linearize: build the per-constraint "must equal zero" LC.
     let mut zero_lcs: Vec<LinearCombination<F>> = Vec::new();
     let mut residual: Vec<Constraint<F>> = Vec::new();
@@ -202,7 +299,7 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
         let mut found: Option<(usize, Variable, LinearCombination<F>)> = None;
         for (i, lc) in zero_lcs.iter().enumerate() {
             if let Some((var, expr)) =
-                solve_for_variable(lc.clone(), &effective_protected, var_freq)
+                solve_for_variable_with_picker(lc.clone(), &effective_protected, var_freq, picker)
             {
                 found = Some((i, var, expr));
                 break;
