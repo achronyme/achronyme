@@ -26,7 +26,7 @@ use std::collections::{HashMap, HashSet};
 
 use memory::{FieldBackend, FieldElement};
 
-use super::linear::deduplicate_constraints;
+use super::linear::{deduplicate_constraints, optimize_linear_with_protected};
 use super::predicates::{compute_variable_frequency, is_linear, is_trivially_satisfied};
 use super::substitution::{
     apply_substitution, apply_substitution_to_constraint, solve_for_variable,
@@ -35,14 +35,24 @@ use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
 
-/// Clusters above this size skip the per-cluster Gaussian solver and
-/// flow through to the residual unchanged. The Gauss inner loop is
-/// O(cluster_size^2 * avg_density) -- on bit-heavy circuits like
-/// SHA-256(64) the linear constraints can form one connected
+/// Clusters above this size fall back to the greedy iterative
+/// eliminator (`optimize_linear_with_protected`) instead of running
+/// the per-cluster Gaussian solver. The Gauss inner loop is
+/// O(cluster_size^2 * avg_density) per round -- on bit-heavy circuits
+/// like SHA-256(64) the linear constraints can form one connected
 /// component of 30k+ nodes via shared bit signals, where full
 /// reduction is intractable in this conservative path. Markowitz
 /// pivoting / fill-in management (the path that would handle giant
 /// clusters in finite time) is out of scope.
+///
+/// Falling back to greedy on the cluster's subset is sound: the
+/// greedy and Gauss algorithms reach the same linear fixpoint (just
+/// via different orderings), so the substitution map produced is
+/// equivalent. The min-occurrence picker (Phase 5) only applies
+/// inside the Gauss path and therefore only for clusters in
+/// `[350, CLUSTER_FALLBACK_THRESHOLD]`; outside that band we either
+/// use Gauss + max-frequency (small clusters) or greedy fallback
+/// (giant clusters).
 ///
 /// 5000 was chosen empirically: small enough that the worst case
 /// (5000^2 * ~5 LC terms = 125M field ops) finishes in seconds,
@@ -313,13 +323,26 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
                 .map(|&i| linear_constraints[i].clone())
                 .collect();
             if cluster.len() > CLUSTER_FALLBACK_THRESHOLD {
-                // Cluster too big for the O(n^2) Gauss inner loop.
-                // Pass the constraints through as residual; they stay
-                // in the system unchanged. Soundness is preserved
-                // (the cluster's algebraic content is untouched);
-                // performance is the trade-off (we miss whatever
-                // substitutions a full reduction would have found).
-                residuals.extend(cluster_cons);
+                // Giant cluster -- delegate to the greedy iterative
+                // eliminator. Greedy reaches the same linear fixpoint
+                // as Gauss (modulo substitution-key choice) but
+                // applies substitutions in batched rounds, which
+                // scales linearly per round in cluster size instead
+                // of O(n^2) per round. Soundness is preserved; the
+                // resulting substitution map keys may differ from
+                // what Gauss would have picked, but both are valid
+                // closures of the same equivalence relation.
+                //
+                // We pass `0` for num_pub_inputs because round_protected
+                // already contains the public-input indices (plus aux
+                // wires + previously-substituted vars).
+                let mut subset = cluster_cons;
+                let (greedy_subs, _greedy_stats) =
+                    optimize_linear_with_protected(&mut subset, 0, &round_protected);
+                for (k, v) in greedy_subs {
+                    round_subs.insert(k, v);
+                }
+                residuals.extend(subset);
                 continue;
             }
             let (subs, residual) = solve_cluster_linear(cluster_cons, &round_protected, &var_freq);
