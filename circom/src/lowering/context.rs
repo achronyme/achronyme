@@ -46,6 +46,58 @@ pub struct LoweringContext<'a> {
     /// by every statement-level lowering call before it pushes its
     /// own node.
     pub pending_nodes: Vec<CircuitNode>,
+    /// R1″ for-loop body memoization: optional tracker that records
+    /// the `[start, end)` ranges of `nodes` covered by pending-component
+    /// flushes (i.e. emissions produced by `PendingComponent::inline_into`).
+    /// When enabled, the for-loop unroller can subtract these ranges
+    /// from an iteration's emission to obtain the "body-only" IR — the
+    /// part that is uniform across iters and therefore memoizable.
+    pub flush_tracker: FlushTracker,
+}
+
+/// Records the IR-emission ranges produced by pending-component
+/// flushes during a window of lowering. See `LoweringContext::flush_tracker`.
+///
+/// Disabled by default; the for-loop unroller turns it on around an
+/// iteration capture and reads the recorded ranges back. Each entry is
+/// a `(start, end)` half-open interval over the `nodes: Vec<CircuitNode>`
+/// passed to `PendingComponent::inline_into` — the slice
+/// `nodes[start..end]` is exactly the inlined component body.
+///
+/// Multiple flushes during the same window stack into `ranges` in the
+/// order they fired. Empty flushes (`start == end`) are skipped.
+#[derive(Default)]
+pub struct FlushTracker {
+    enabled: bool,
+    ranges: Vec<(usize, usize)>,
+}
+
+impl FlushTracker {
+    /// Turn on recording. Clears any previously recorded ranges.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+        self.ranges.clear();
+    }
+
+    /// Turn off recording and return the accumulated ranges, in the
+    /// order they fired.
+    pub fn take(&mut self) -> Vec<(usize, usize)> {
+        self.enabled = false;
+        std::mem::take(&mut self.ranges)
+    }
+
+    /// Record a flush range. No-op if recording is disabled or the
+    /// range is empty.
+    pub fn record(&mut self, start: usize, end: usize) {
+        if self.enabled && start < end {
+            self.ranges.push((start, end));
+        }
+    }
+
+    /// `true` iff recording is currently turned on.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
 }
 
 impl<'a> LoweringContext<'a> {
@@ -76,6 +128,7 @@ impl<'a> LoweringContext<'a> {
             anon_counter: 0,
             body_cache: HashMap::new(),
             pending_nodes: Vec::new(),
+            flush_tracker: FlushTracker::default(),
         }
     }
 
@@ -140,6 +193,7 @@ impl<'a> LoweringContext<'a> {
             bus_names: HashSet::new(),
             anon_counter: 0,
             pending_nodes: Vec::new(),
+            flush_tracker: FlushTracker::default(),
         }
     }
 }

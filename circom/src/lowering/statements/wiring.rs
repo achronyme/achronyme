@@ -216,7 +216,16 @@ impl<'a> PendingComponent<'a> {
             span,
         )?;
         propagate_const_nodes(&body, env);
+        // R1″ flush tracking: `nodes[start..end]` after this `extend`
+        // is exactly the inlined body. The for-loop unroller, when
+        // capturing iter 0 for memoization, uses these ranges to
+        // separate component flushes (scope cleanup that fires at
+        // iter 0 because that's the first time outer-scope inputs
+        // are wired) from the loop body's own work.
+        let start = nodes.len();
         nodes.extend(body);
+        let end = nodes.len();
+        ctx.flush_tracker.record(start, end);
         Ok(())
     }
 }
