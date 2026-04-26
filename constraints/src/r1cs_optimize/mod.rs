@@ -42,6 +42,7 @@
 mod deduce;
 mod deduce_sparse;
 mod linear;
+mod linear_cluster;
 mod predicates;
 mod substitution;
 mod types;
