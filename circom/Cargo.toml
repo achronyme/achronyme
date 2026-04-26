@@ -34,3 +34,4 @@ proving = { path = "../proving" }
 akron = { path = "../akron" }
 tempfile = "3"
 toml = "0.8"
+sha2 = "0.10"

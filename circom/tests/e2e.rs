@@ -3057,3 +3057,106 @@ fn r1cs_optimization_benchmark() {
     eprintln!("╚════════════════════════════════════════════════════════════════════════════╝");
     eprintln!();
 }
+
+/// SHA-256(64) witness-equivalence vs the FIPS-180-4 reference (`sha2` crate).
+///
+/// This is *semantic* verification — does our compile + witness pipeline
+/// produce the same 256-bit digest the reference produces? It is
+/// orthogonal to constraint-count parity (separate R1CS-optimizer
+/// concern). The test runs `compute_witness_hints_with_captures` over
+/// the Lysis-frontend ProveIR with concrete bit inputs and reads the
+/// 256 `out_i` signals from the env. If any `out_i` is missing or
+/// disagrees with `sha2::Sha256::digest`, the test fails.
+///
+/// Bit ordering follows circomlib convention: `in[byte*8 + bit]` is bit
+/// (7-bit) of the input byte, MSB-first. `out[byte*8 + bit]` is bit
+/// (7-bit) of the digest byte, MSB-first.
+///
+/// `#[ignore]`d because compile alone is ~47s on this host. Run
+/// explicitly via `cargo test ... --ignored
+/// sha256_64_witness_matches_sha2_reference`.
+#[test]
+#[ignore = "SHA-256(64) witness-equivalence — compile is ~47s on this host. Run with --ignored to verify the achronyme pipeline computes the same digest as FIPS-180-4."]
+fn sha256_64_witness_matches_sha2_reference() {
+    use sha2::{Digest, Sha256};
+    use std::time::Instant;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    // Concrete 8-byte input — picked to have varied bits so a missed
+    // alias collapse would surface as a digest mismatch.
+    let message: [u8; 8] = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
+
+    let t0 = Instant::now();
+    let compile_result =
+        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
+            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    eprintln!("  [compile]  {:?}", t0.elapsed());
+
+    // Build inputs: in_{byte*8 + bit} = bit (7-bit) of message[byte], MSB-first.
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    for (byte_idx, byte) in message.iter().enumerate() {
+        for bit_idx in 0..8 {
+            let bit_val = ((byte >> (7 - bit_idx)) & 1) as u64;
+            inputs.insert(
+                format!("in_{}", byte_idx * 8 + bit_idx),
+                FieldElement::<Bn254Fr>::from_u64(bit_val),
+            );
+        }
+    }
+
+    let t1 = Instant::now();
+    let env = circom::witness::compute_witness_hints_with_captures(
+        &compile_result.prove_ir,
+        &inputs,
+        &compile_result.capture_values,
+    )
+    .expect("compute_witness_hints_with_captures");
+    eprintln!("  [witness]  {:?}  env_size={}", t1.elapsed(), env.len());
+
+    // Reference digest from sha2 crate (FIPS-180-4 bit-exact).
+    let expected = Sha256::digest(message);
+
+    // Read 256 output bits and reconstruct 32 bytes MSB-first.
+    let mut got = [0u8; 32];
+    let mut missing: Vec<usize> = Vec::new();
+    for (byte_idx, byte) in got.iter_mut().enumerate() {
+        for bit_idx in 0..8 {
+            let key = format!("out_{}", byte_idx * 8 + bit_idx);
+            match env.get(&key) {
+                Some(fe) => {
+                    let bit = u8::from(fe == &FieldElement::<Bn254Fr>::one());
+                    *byte |= bit << (7 - bit_idx);
+                }
+                None => missing.push(byte_idx * 8 + bit_idx),
+            }
+        }
+    }
+
+    assert!(
+        missing.is_empty(),
+        "SHA-256 witness missing {} of 256 output bits — first missing indices: {:?}",
+        missing.len(),
+        &missing[..missing.len().min(8)]
+    );
+
+    assert_eq!(
+        &got[..],
+        expected.as_slice(),
+        "SHA-256(64) digest mismatch:\n  got:      {}\n  expected: {}",
+        hex_encode(&got),
+        hex_encode(expected.as_slice()),
+    );
+
+    eprintln!("  [verified] digest = {}", hex_encode(&got));
+}
+
+fn hex_encode(bytes: &[u8]) -> String {
+    let mut s = String::with_capacity(bytes.len() * 2);
+    for b in bytes {
+        s.push_str(&format!("{b:02x}"));
+    }
+    s
+}
