@@ -323,6 +323,34 @@ mod tests {
     }
 
     #[test]
+    fn loop_var_does_not_fold() {
+        // R1″ contract: CircuitExpr::LoopVar(token) must propagate
+        // unchanged through const-fold. Folding it would mean iter-N
+        // substitution has nothing to rewrite, and every memoized
+        // iteration would emit iter-0 values.
+        let placeholder = CircuitExpr::LoopVar(7);
+        assert_eq!(try_fold_const(&placeholder), None);
+
+        // LoopVar inside an arithmetic expression also fails to fold —
+        // the whole tree has to survive substitution.
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Add,
+            lhs: Box::new(c(10)),
+            rhs: Box::new(CircuitExpr::LoopVar(7)),
+        };
+        assert_eq!(try_fold_const(&expr), None);
+
+        // Nested: const_fold on a sub-tree without the placeholder
+        // should still succeed.
+        let foldable_subtree = CircuitExpr::BinOp {
+            op: CircuitBinOp::Mul,
+            lhs: Box::new(c(3)),
+            rhs: Box::new(c(4)),
+        };
+        assert_eq!(try_fold_const(&foldable_subtree), Some(fc(12)));
+    }
+
+    #[test]
     fn fold_large_mul_in_field() {
         // Multiply two large values — result must be mod p, not overflow
         let big = FieldConst::from_decimal_str(
