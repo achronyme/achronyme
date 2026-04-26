@@ -20,36 +20,62 @@ use memory::{FieldBackend, FieldElement};
 use super::types::SubstitutionMap;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
 
-/// Apply all substitutions in `subs` to a linear combination.
+/// Apply all substitutions in `subs` to a linear combination, in place.
 ///
-/// For each term `(var, coeff)` in `lc`: if `var` is in `subs`, replace the
-/// term with `coeff * subs[var]`. Returns the simplified result.
-pub(super) fn apply_substitution<F: FieldBackend>(
-    lc: &LinearCombination<F>,
+/// For each term `(var, coeff)` in `lc`: if `var` is in `subs`, replace
+/// the term with `coeff * subs[var]`. The historical
+/// `apply_substitution(&LC, &subs) -> LC` was removed in the
+/// allocation-cleanup pass; callers that needed a fresh LC now clone
+/// before calling this in-place variant. The hot loop callers
+/// (greedy O1's per-round constraint sweep, cluster-Gauss's
+/// substitution propagation) already owned mutable LCs and had been
+/// re-allocating result LCs every call; switching to in-place
+/// mutation removed that allocator pressure entirely.
+///
+/// **Allocation profile:** one `mem::take` swap of the underlying
+/// `Vec` (no allocation), plus a `Vec::reserve` if the rewritten
+/// terms outgrow the original capacity, plus the in-place sort +
+/// linear-merge in `simplify_in_place`. Zero allocations for
+/// substitutions that do not expand any term.
+pub(super) fn apply_substitution_in_place<F: FieldBackend>(
+    lc: &mut LinearCombination<F>,
     subs: &SubstitutionMap<F>,
-) -> LinearCombination<F> {
-    let mut result = LinearCombination::<F>::zero();
-    for (var, coeff) in &lc.terms {
+) {
+    if subs.is_empty() {
+        return;
+    }
+    // Take ownership of the existing terms; we will rebuild into a
+    // fresh `Vec`. We could in principle reuse the same `Vec` if no
+    // substitution expands beyond one term, but the branch is rare
+    // and the bookkeeping not worth it.
+    let old_terms = std::mem::take(&mut lc.terms);
+    lc.terms.reserve(old_terms.len());
+    for (var, coeff) in old_terms {
         if let Some(replacement) = subs.get(&var.index()) {
-            // var -> replacement LC, scaled by coeff
-            result = result + replacement.clone() * *coeff;
+            for (rep_var, rep_coeff) in replacement.terms() {
+                lc.terms.push((*rep_var, coeff.mul(rep_coeff)));
+            }
         } else {
-            result.add_term(*var, *coeff);
+            lc.terms.push((var, coeff));
         }
     }
-    result.simplify()
+    lc.simplify_in_place();
 }
 
-/// Apply substitutions to all three LCs in a constraint.
-pub(super) fn apply_substitution_to_constraint<F: FieldBackend>(
-    constraint: &Constraint<F>,
+/// In-place variant of substitution for an entire constraint:
+/// rewrites `constraint.{a,b,c}` against `subs` without allocating
+/// new constraint or LC shells. Hot-loop callers (greedy O1's
+/// per-round constraint sweep, cluster-Gauss's substitution
+/// propagation) all use this; the historical by-value
+/// `apply_substitution_to_constraint` was removed in the
+/// allocation-cleanup pass.
+pub(super) fn apply_substitution_to_constraint_in_place<F: FieldBackend>(
+    constraint: &mut Constraint<F>,
     subs: &SubstitutionMap<F>,
-) -> Constraint<F> {
-    Constraint {
-        a: apply_substitution(&constraint.a, subs),
-        b: apply_substitution(&constraint.b, subs),
-        c: apply_substitution(&constraint.c, subs),
-    }
+) {
+    apply_substitution_in_place(&mut constraint.a, subs);
+    apply_substitution_in_place(&mut constraint.b, subs);
+    apply_substitution_in_place(&mut constraint.c, subs);
 }
 
 /// Given an LC that must equal zero, solve for a non-protected variable.

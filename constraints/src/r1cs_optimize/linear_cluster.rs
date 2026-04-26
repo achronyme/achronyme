@@ -29,7 +29,7 @@ use memory::{FieldBackend, FieldElement};
 use super::linear::{deduplicate_constraints, optimize_linear_with_protected};
 use super::predicates::{compute_variable_frequency, is_linear, is_trivially_satisfied};
 use super::substitution::{
-    apply_substitution, apply_substitution_to_constraint, solve_for_variable,
+    apply_substitution_in_place, apply_substitution_to_constraint_in_place, solve_for_variable,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
@@ -324,10 +324,10 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
         single_sub.insert(var.index(), expr.clone());
 
         for lc in zero_lcs.iter_mut() {
-            *lc = apply_substitution(lc, &single_sub);
+            apply_substitution_in_place(lc, &single_sub);
         }
         for prev_expr in subs.values_mut() {
-            *prev_expr = apply_substitution(prev_expr, &single_sub);
+            apply_substitution_in_place(prev_expr, &single_sub);
         }
         subs.insert(var.index(), expr);
     }
@@ -470,17 +470,25 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         // their own cluster's substitutions applied internally; apply
         // round_subs so cross-cluster effects on shared protected
         // signals fold in).
+        // Compact non-linear constraints in place + apply round_subs to
+        // each. Two-cursor sweep avoids allocating a fresh `Vec`.
         let linear_index_set: HashSet<usize> = linear_indices.iter().copied().collect();
-        let non_linear: Vec<Constraint<F>> = constraints
-            .iter()
-            .enumerate()
-            .filter(|(idx, _)| !linear_index_set.contains(idx))
-            .map(|(_, c)| apply_substitution_to_constraint(c, &round_subs))
-            .collect();
-
-        *constraints = non_linear;
-        for r in residuals {
-            constraints.push(apply_substitution_to_constraint(&r, &round_subs));
+        let n = constraints.len();
+        let mut write = 0usize;
+        for read in 0..n {
+            if linear_index_set.contains(&read) {
+                continue;
+            }
+            if write != read {
+                constraints.swap(write, read);
+            }
+            apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
+            write += 1;
+        }
+        constraints.truncate(write);
+        for mut r in residuals {
+            apply_substitution_to_constraint_in_place(&mut r, &round_subs);
+            constraints.push(r);
         }
 
         // Sweep trivially-satisfied constraints (0*B=0, k*LC=k*LC, etc.).
@@ -500,9 +508,9 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         round_details.push((linear_eliminated, newly_linear));
 
         // Compose with previous substitutions: apply new subs to old
-        // expressions so the final map remains acyclic.
+        // expressions in place so the final map remains acyclic.
         for expr in all_subs.values_mut() {
-            *expr = apply_substitution(expr, &round_subs);
+            apply_substitution_in_place(expr, &round_subs);
         }
         all_subs.extend(round_subs);
     }
