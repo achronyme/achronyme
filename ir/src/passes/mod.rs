@@ -6,6 +6,7 @@ pub mod const_fold;
 pub mod cse;
 pub mod dce;
 pub mod taint;
+pub mod validate;
 
 pub use canonicalize::canonicalize_ssa;
 
@@ -63,10 +64,29 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
         .filter(|i| matches!(i, Instruction::Const { .. }))
         .count();
 
+    // Snapshot pre-pass instructions when validation is enabled, so the
+    // validator can locate the original defining instruction of any
+    // dangling SsaVar in the panic message. No-op (no clone) otherwise.
+    let snapshot = |program: &IrProgram<F>| -> Option<Vec<Instruction<F>>> {
+        if validate::validation_enabled() {
+            Some(program.instructions.clone())
+        } else {
+            None
+        }
+    };
+
+    let before = snapshot(program);
     const_fold::constant_fold(program);
+    validate::assert_no_dangling_ssa_vars_with_before(program, before.as_deref(), "const_fold");
     let proven_booleans = bool_prop::compute_proven_boolean(program);
     let bp_result = bit_pattern::detect_bit_patterns(program, &proven_booleans);
+    let before = snapshot(program);
     let bi_result = bound_inference::bound_inference(program, &bp_result.bounds);
+    validate::assert_no_dangling_ssa_vars_with_before(
+        program,
+        before.as_deref(),
+        "bound_inference",
+    );
 
     // Count Const instructions after folding — difference = folded
     let consts_after = program
@@ -75,7 +95,9 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
         .count();
     let const_fold_converted = consts_after.saturating_sub(consts_before);
 
+    let before = snapshot(program);
     let cse_eliminated = cse::common_subexpression_elimination(program);
+    validate::assert_no_dangling_ssa_vars_with_before(program, before.as_deref(), "cse");
 
     // Count tautological AssertEq(x, x) before DCE removes them
     let tautological_before = program
@@ -84,7 +106,9 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
         .count();
 
     let before_dce = program.len();
+    let before = snapshot(program);
     dce::dead_code_elimination(program);
+    validate::assert_no_dangling_ssa_vars_with_before(program, before.as_deref(), "dce");
     let dce_eliminated = before_dce
         .saturating_sub(program.len())
         .saturating_sub(tautological_before);

@@ -12,10 +12,16 @@ use crate::types::{Instruction, IrProgram, SsaVar};
 pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
     let mut constants: HashMap<SsaVar, FieldElement<F>> = HashMap::new();
     // Decompose(Const(k), N) can't be replaced in-place (1 → N+1 instructions).
-    // Collect them here and expand after the main loop.
-    let mut decompose_expansions: Vec<(SsaVar, FieldElement<F>, Vec<SsaVar>, usize)> = Vec::new();
+    // Collect them keyed by the *instruction index* so the expansion in
+    // Loop 2 can re-match them positionally. Keying by `result_var` was
+    // wrong: alias-style Decomposes (`Decompose { result, operand, .. }`
+    // with `result == operand`) all share the same result var across
+    // the program, so a result-keyed lookup ambiguously points at the
+    // first entry only — every subsequent Decompose's bit_results are
+    // dropped.
+    let mut decompose_expansions: Vec<(usize, FieldElement<F>, Vec<SsaVar>)> = Vec::new();
 
-    for inst in &mut program.instructions {
+    for (idx, inst) in program.instructions.iter_mut().enumerate() {
         match inst {
             Instruction::Const { result, value } => {
                 constants.insert(*result, *value);
@@ -404,7 +410,7 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
                 result,
                 bit_results,
                 operand,
-                num_bits,
+                ..
             } => {
                 if let Some(val) = constants.get(operand).copied() {
                     let limbs = val.to_canonical();
@@ -424,14 +430,12 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
                         constants.insert(*bit_var, bit_val);
                     }
                     constants.insert(*result, val);
-                    let nb = *num_bits as usize;
-                    let r = *result;
                     let bits: Vec<SsaVar> = bit_results.clone();
                     *inst = Instruction::Const {
-                        result: r,
+                        result: *result,
                         value: val,
                     };
-                    decompose_expansions.push((r, val, bits, nb));
+                    decompose_expansions.push((idx, val, bits));
                 }
             }
             // Input, AssertEq, Assert, PoseidonHash — no folding
@@ -439,54 +443,192 @@ pub fn constant_fold<F: FieldBackend>(program: &mut IrProgram<F>) {
         }
     }
 
-    // Expand constant Decompose: insert Const instructions for each bit.
+    // Expand constant Decompose: insert Const instructions for each bit
+    // immediately after the Decompose's original position. The
+    // decompose_expansions vec is naturally sorted by `idx` because we
+    // pushed in walk order; we sweep it in lockstep with the drain.
     if !decompose_expansions.is_empty() {
-        let mut new_instructions = Vec::with_capacity(
-            program.len()
-                + decompose_expansions
-                    .iter()
-                    .map(|(_, _, b, _)| b.len())
-                    .sum::<usize>(),
-        );
-        let folded_results: std::collections::HashSet<SsaVar> =
-            decompose_expansions.iter().map(|(r, _, _, _)| *r).collect();
+        let total_extra: usize = decompose_expansions.iter().map(|(_, _, b)| b.len()).sum();
+        let mut new_instructions = Vec::with_capacity(program.len() + total_extra);
+        let mut next_exp = 0usize;
 
-        for inst in program.drain_instructions() {
-            let result = inst.result_var();
-            if folded_results.contains(&result) {
-                // This is the Const that replaced the Decompose.
-                // Emit the original Const (alias for operand value)...
-                new_instructions.push(inst);
-                // ...then emit Const for each bit.
-                if let Some(pos) = decompose_expansions
-                    .iter()
-                    .position(|(r, _, _, _)| *r == result)
-                {
-                    let (_, val, bits, _nb) = &decompose_expansions[pos];
-                    let limbs = val.to_canonical();
-                    for (i, bit_var) in bits.iter().enumerate() {
-                        let limb_idx = i / 64;
-                        let bit_idx = i % 64;
-                        let bit = if limb_idx < 4 {
-                            (limbs[limb_idx] >> bit_idx) & 1
-                        } else {
-                            0
-                        };
-                        let bit_val = if bit == 1 {
-                            FieldElement::<F>::one()
-                        } else {
-                            FieldElement::<F>::zero()
-                        };
-                        new_instructions.push(Instruction::Const {
-                            result: *bit_var,
-                            value: bit_val,
-                        });
-                    }
+        for (idx, inst) in program.drain_instructions().enumerate() {
+            new_instructions.push(inst);
+            if next_exp < decompose_expansions.len() && decompose_expansions[next_exp].0 == idx {
+                let (_, val, bits) = &decompose_expansions[next_exp];
+                let limbs = val.to_canonical();
+                for (i, bit_var) in bits.iter().enumerate() {
+                    let limb_idx = i / 64;
+                    let bit_idx = i % 64;
+                    let bit = if limb_idx < 4 {
+                        (limbs[limb_idx] >> bit_idx) & 1
+                    } else {
+                        0
+                    };
+                    let bit_val = if bit == 1 {
+                        FieldElement::<F>::one()
+                    } else {
+                        FieldElement::<F>::zero()
+                    };
+                    new_instructions.push(Instruction::Const {
+                        result: *bit_var,
+                        value: bit_val,
+                    });
                 }
-            } else {
-                new_instructions.push(inst);
+                next_exp += 1;
             }
         }
         program.instructions = new_instructions;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use std::collections::HashSet;
+
+    use ir_core::{Instruction, IrProgram, SsaVar, Visibility};
+    use memory::FieldElement;
+
+    use super::constant_fold;
+
+    /// Regression for issue #86: the SHA-256(64) Lysis pipeline emits
+    /// many "alias-style" Decomposes — `Decompose { result, operand,
+    /// .. }` with `result == operand` (RangeCheck-shaped, used to
+    /// constrain that an existing var fits in N bits while exposing
+    /// the bit_results as new SSA wires). The pre-fix expansion logic
+    /// keyed by `result_var()`; with hundreds of alias-Decomposes
+    /// all reporting `result_var == %390`, only the first entry's
+    /// bit_results were emitted, and every later Decompose's
+    /// bit_results dangled. This test materialises that pattern with
+    /// two alias-Decomposes sharing a result var and asserts both
+    /// bit_var-Consts come out alive.
+    #[test]
+    fn alias_decompose_with_shared_result_emits_all_bit_consts() {
+        let mut p: IrProgram = IrProgram::new();
+        let v_const = SsaVar(0);
+        let bit_a = SsaVar(1);
+        let bit_b = SsaVar(2);
+        // %0 = Const(1) — the "alias" var that two Decomposes share as result.
+        p.push(Instruction::Const {
+            result: v_const,
+            value: FieldElement::from_u64(1),
+        });
+        // First alias-Decompose: result == operand == %0, bit_results = [%1].
+        p.push(Instruction::Decompose {
+            result: v_const,
+            bit_results: vec![bit_a],
+            operand: v_const,
+            num_bits: 1,
+        });
+        // Second alias-Decompose with the same result var. Pre-fix this
+        // entry's bit_results were dropped because the first entry's
+        // expansion shadowed it.
+        p.push(Instruction::Decompose {
+            result: v_const,
+            bit_results: vec![bit_b],
+            operand: v_const,
+            num_bits: 1,
+        });
+        p.next_var = 3;
+
+        constant_fold(&mut p);
+
+        // Both bit_vars must end up defined as Const{1}.
+        let const_results: HashSet<SsaVar> = p
+            .iter()
+            .filter_map(|i| match i {
+                Instruction::Const { result, value } if *value == FieldElement::one() => {
+                    Some(*result)
+                }
+                _ => None,
+            })
+            .collect();
+        assert!(
+            const_results.contains(&bit_a),
+            "bit_a (first alias Decompose) should be folded to Const(1)"
+        );
+        assert!(
+            const_results.contains(&bit_b),
+            "bit_b (second alias Decompose) should be folded to Const(1) — \
+             pre-fix this was dropped because expansion was keyed by result_var",
+        );
+    }
+
+    /// Three alias-Decomposes — exercise that expansion handles >2
+    /// entries with the same result var without offset drift.
+    #[test]
+    fn alias_decompose_chain_emits_each_bit_distinctly() {
+        let mut p: IrProgram = IrProgram::new();
+        let v = SsaVar(0);
+        let bits = [SsaVar(1), SsaVar(2), SsaVar(3)];
+        p.push(Instruction::Const {
+            result: v,
+            value: FieldElement::from_u64(5), // 0b101 — bits 0 and 2 are 1, bit 1 is 0
+        });
+        for &b in &bits {
+            p.push(Instruction::Decompose {
+                result: v,
+                bit_results: vec![b],
+                operand: v,
+                num_bits: 1,
+            });
+        }
+        p.next_var = 4;
+
+        constant_fold(&mut p);
+
+        // Each Decompose has num_bits=1, so each bit_var is the LSB
+        // of `5` from that Decompose's perspective. With num_bits=1
+        // the expansion only ever computes bit[0], regardless of the
+        // chain position. So all three bit_vars should be Const(1).
+        for &b in &bits {
+            let defined = p.iter().any(|i| {
+                matches!(i, Instruction::Const { result, value }
+                    if *result == b && *value == FieldElement::one())
+            });
+            assert!(defined, "{b} should be Const(1)");
+        }
+    }
+
+    /// Sanity: a single non-alias Decompose still folds correctly
+    /// (the original happy path the pre-fix code handled).
+    #[test]
+    fn non_alias_decompose_still_folds() {
+        let mut p: IrProgram = IrProgram::new();
+        let v_in = SsaVar(0);
+        let v_alias = SsaVar(1);
+        let bit_0 = SsaVar(2);
+        let bit_1 = SsaVar(3);
+        p.push(Instruction::Const {
+            result: v_in,
+            value: FieldElement::from_u64(2), // binary 10
+        });
+        p.push(Instruction::Input {
+            result: v_alias,
+            name: "y".into(),
+            visibility: Visibility::Witness,
+        });
+        // Non-alias Decompose: result != operand.
+        p.push(Instruction::Decompose {
+            result: v_alias,
+            bit_results: vec![bit_0, bit_1],
+            operand: v_in,
+            num_bits: 2,
+        });
+        p.next_var = 4;
+
+        constant_fold(&mut p);
+
+        // bit_0 = LSB(2) = 0; bit_1 = next bit = 1
+        let bit_0_val = p.iter().find_map(|i| match i {
+            Instruction::Const { result, value } if *result == bit_0 => Some(*value),
+            _ => None,
+        });
+        let bit_1_val = p.iter().find_map(|i| match i {
+            Instruction::Const { result, value } if *result == bit_1 => Some(*value),
+            _ => None,
+        });
+        assert_eq!(bit_0_val, Some(FieldElement::zero()));
+        assert_eq!(bit_1_val, Some(FieldElement::one()));
     }
 }

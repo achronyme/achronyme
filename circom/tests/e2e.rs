@@ -1844,32 +1844,22 @@ fn sha256_64_r1cs_probe() {
 ///   Lysis path and its post-optimize state. If the gate fails,
 ///   these give the first-look picture.
 ///
-/// **Ignored — Phase 4 + cascade unblocks the Lysis pipeline E2E,
-/// but two downstream gates fail post-Phase-4**:
+/// **Ignored — only one downstream gate remains**: the optimised
+/// constraint count is still ~2.3x the circom O2 baseline. The
+/// dangling-SsaVar bug in `optimize` (issue #86) is fixed.
 ///
-/// 1. The `optimize` pass produces a dangling `SsaVar` reference
-///    on the 207k-instruction SHA-256 IR. The bug surfaces as
-///    `R1CS compile: UnsupportedOperation("undefined SSA variable
-///    SsaVar(N)")`. Without `optimize`, R1CS compile succeeds
-///    cleanly with ~87,391 constraints. Tracked separately.
-///
-/// 2. Even with `optimize` working, the unoptimised constraint
-///    count (87k) is well above the circom O2 baseline (30,132).
-///    Phase 4 doesn't aim to match circom O2 directly; that's
-///    R1CS optimizer work.
-///
-/// **Walker / validator / instantiate / R1CS build all pass**:
+/// **Walker / validator / instantiate / optimize / R1CS build all pass**:
 ///
 /// ```text
 ///   [compile]       ~47s   (circom lowering — separate perf work)
 ///   [instantiate]   ~8s    instructions=207470
-///   [optimize]      <fails> dangling SsaVar
-///   [r1cs build]    50ms   constraints=87391  (without optimize)
+///   [optimize]      ~130ms instructions=200070
+///   [r1cs build]    ~46ms  constraints=70623
 /// ```
 ///
-/// The Phase 4 success criterion ("Lysis processes SHA-256
-/// without crashing") is met. The constraint count + optimize
-/// bug are downstream concerns tracked separately.
+/// The Phase 4 success criterion ("Lysis processes SHA-256 without
+/// crashing") is met; `optimize` runs cleanly. The remaining
+/// constraint-count gap is R1CS-optimizer work, tracked separately.
 ///
 /// **Closed architectural blockers (cumulative 2026-04-25)**:
 ///
@@ -1889,19 +1879,26 @@ fn sha256_64_r1cs_probe() {
 ///      writes (`750171cf`).
 ///   7. **`MaxCallDepthExceeded`** — *closed*: default cap raised
 ///      from 64 to 8192 to cover Phase 4 chain depth (`0160b073`).
+///   8. **`optimize` pass dangling SsaVar (issue #86)** —
+///      *closed*: const_fold expansion was keyed by `result_var`,
+///      ambiguous under alias-Decompose. Now keyed by instruction
+///      index. Validator at `ir::passes::validate` enforces the
+///      SSA invariant per pass when
+///      `ACHRONYME_VALIDATE_IR_PASSES=1`.
 ///
 /// **Remaining blockers (each independent of Phase 4)**:
 ///
 ///   - **Compile time** ≈ 47 s — circom lowering of circomlib's
 ///     full SHA-256. Tracked in
 ///     `.claude/plans/circom-lowering-perf.md`.
-///   - **`optimize` pass dangling SsaVar** — produces malformed
-///     IR for SHA-256-class circuits. Open follow-up.
+///   - **R1CS constraint parity** — 70,623 vs circom O2 30,132
+///     (~2.3x). R1CS-optimizer work, separate from the IR
+///     `optimize` pass.
 ///   - **Lazy-reload-without-recycling frame growth** — v1.1
 ///     placeholder (`ir-forge/tests/walker_adversarial.rs`); not
 ///     hit by SHA-256(64), would surface for larger circuits.
 #[test]
-#[ignore = "Phase 4 + cascade unblocks the Lysis pipeline E2E for SHA-256(64): walker, validator, instantiate, and R1CS build (without optimize) all pass with 87391 constraints. Two downstream issues prevent the assert from going green: (1) the optimize pass produces a dangling SsaVar ref on the 207k-instruction IR, and (2) the unoptimised constraint count is 87k vs the circom O2 baseline of 30k. Both are tracked as separate follow-ups; this gate stays ignored until they land."]
+#[ignore = "Phase 4 + cascade + issue #86 fix unblock SHA-256(64) end-to-end through optimize: 200,070 instructions post-optimize, 70,623 R1CS constraints. Only remaining gate is the constraint-count parity vs circom O2 (30,132 ±15%) — that is R1CS-optimizer work tracked separately. This test stays ignored until that gap closes."]
 fn sha256_64_lysis_hard_gate() {
     use std::collections::HashSet;
     use std::time::{Duration, Instant};
