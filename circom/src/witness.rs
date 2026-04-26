@@ -11,7 +11,7 @@
 use std::collections::HashMap;
 
 use ir_forge::types::{CircuitExpr, CircuitNode, ForRange, ProveIR};
-use memory::{FieldBackend, FieldElement};
+use memory::{FieldBackend, FieldElement, FieldFamily, PrimeId};
 
 /// Compute all witness hint values from a ProveIR body.
 ///
@@ -151,10 +151,70 @@ fn collect_hints_recursive<F: FieldBackend>(
                     }
                 }
             }
+            CircuitNode::WitnessCall {
+                output_bindings,
+                input_signals,
+                program_bytes,
+                ..
+            } => {
+                // Resolve input signals from env. If any aren't yet
+                // computed, skip this call (later passes may fill them
+                // in). For the main SHA-256 lift this is unreachable in
+                // practice — the lift's input_signals are sub-template
+                // outputs that always precede the call in the body.
+                let mut signal_vec: Vec<FieldElement<F>> = Vec::with_capacity(input_signals.len());
+                let mut all_resolved = true;
+                for expr in input_signals {
+                    match eval_hint(expr, env) {
+                        Some(v) => signal_vec.push(v),
+                        None => {
+                            all_resolved = false;
+                            break;
+                        }
+                    }
+                }
+                if !all_resolved {
+                    continue;
+                }
+
+                let family = artik_family_for::<F>().ok_or_else(|| WitnessError {
+                    message: format!(
+                        "no Artik field-family binding for backend {:?}",
+                        F::PRIME_ID
+                    ),
+                })?;
+                let program =
+                    artik::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
+                        WitnessError {
+                            message: format!("Artik decode failed: {e:?}"),
+                        }
+                    })?;
+
+                let mut slot_vec: Vec<FieldElement<F>> =
+                    vec![FieldElement::<F>::zero(); output_bindings.len()];
+                let mut ctx = artik::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
+                artik::execute(&program, &mut ctx).map_err(|e| WitnessError {
+                    message: format!("Artik execute failed: {e:?}"),
+                })?;
+
+                for (name, val) in output_bindings.iter().zip(slot_vec.iter()) {
+                    env.insert(name.clone(), *val);
+                }
+            }
             _ => {}
         }
     }
     Ok(())
+}
+
+/// Map the field backend to its Artik header family. Mirrors
+/// `ir::eval::witness_family` (kept local to avoid a `circom → ir`
+/// dependency).
+fn artik_family_for<F: FieldBackend>() -> Option<FieldFamily> {
+    match F::PRIME_ID {
+        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(FieldFamily::BnLike256),
+        _ => None,
+    }
 }
 
 /// Evaluate an expression and extract a u64 index value.
