@@ -313,3 +313,255 @@ fn subst_name(name: &mut String, ph: &str, vs: &str) {
         *name = name.replace(ph, vs);
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ir_forge::types::{CircuitBinOp, CircuitCmpOp};
+
+    fn const_(v: u64) -> CircuitExpr {
+        CircuitExpr::Const(FieldConst::from_u64(v))
+    }
+
+    #[test]
+    fn placeholder_format_is_unambiguous() {
+        // The whole reason for the trailing `$` is to make `$LV7$`
+        // and `$LV70$` non-overlapping under String::replace.
+        assert_eq!(loop_var_placeholder(7), "$LV7$");
+        assert_eq!(loop_var_placeholder(70), "$LV70$");
+        assert!(!"$LV70$".contains(&loop_var_placeholder(7)));
+        assert!(!"$LV7$".contains(&loop_var_placeholder(70)));
+    }
+
+    #[test]
+    fn loop_var_in_five_positions_substitutes_to_const_42() {
+        // Position 1: bare CircuitExpr::LoopVar in Let.value
+        // Position 2: nested in arithmetic in another Let.value
+        // Position 3: as AssertEq.lhs
+        // Position 4: inside LetArray.elements
+        // Position 5: inside a nested For body
+        let inner_for_body = vec![CircuitNode::Let {
+            name: "z".into(),
+            value: CircuitExpr::LoopVar(7),
+            span: None,
+        }];
+        let mut slice = vec![
+            CircuitNode::Let {
+                name: "x".into(),
+                value: CircuitExpr::LoopVar(7),
+                span: None,
+            },
+            CircuitNode::Let {
+                name: "y".into(),
+                value: CircuitExpr::BinOp {
+                    op: CircuitBinOp::Add,
+                    lhs: Box::new(const_(10)),
+                    rhs: Box::new(CircuitExpr::LoopVar(7)),
+                },
+                span: None,
+            },
+            CircuitNode::AssertEq {
+                lhs: CircuitExpr::LoopVar(7),
+                rhs: const_(0),
+                message: None,
+                span: None,
+            },
+            CircuitNode::LetArray {
+                name: "arr".into(),
+                elements: vec![const_(1), CircuitExpr::LoopVar(7), const_(2)],
+                span: None,
+            },
+            CircuitNode::For {
+                var: "j".into(),
+                range: ForRange::Literal { start: 0, end: 3 },
+                body: inner_for_body,
+                span: None,
+            },
+        ];
+
+        substitute_loop_var(&mut slice, 7, 42);
+
+        // Position 1: Let { value: Const(42) }
+        if let CircuitNode::Let { value, .. } = &slice[0] {
+            assert_eq!(*value, const_(42));
+        } else {
+            panic!("position 1 not a Let");
+        }
+        // Position 2: Let { value: BinOp(Const(10), Const(42)) }
+        if let CircuitNode::Let {
+            value: CircuitExpr::BinOp { lhs, rhs, .. },
+            ..
+        } = &slice[1]
+        {
+            assert_eq!(**lhs, const_(10));
+            assert_eq!(**rhs, const_(42));
+        } else {
+            panic!("position 2 not a BinOp");
+        }
+        // Position 3: AssertEq { lhs: Const(42) }
+        if let CircuitNode::AssertEq { lhs, rhs, .. } = &slice[2] {
+            assert_eq!(*lhs, const_(42));
+            assert_eq!(*rhs, const_(0));
+        } else {
+            panic!("position 3 not an AssertEq");
+        }
+        // Position 4: LetArray { elements: [Const(1), Const(42), Const(2)] }
+        if let CircuitNode::LetArray { elements, .. } = &slice[3] {
+            assert_eq!(elements.len(), 3);
+            assert_eq!(elements[0], const_(1));
+            assert_eq!(elements[1], const_(42));
+            assert_eq!(elements[2], const_(2));
+        } else {
+            panic!("position 4 not a LetArray");
+        }
+        // Position 5: For { body: [Let { value: Const(42) }] }
+        if let CircuitNode::For { body, .. } = &slice[4] {
+            if let CircuitNode::Let { value, .. } = &body[0] {
+                assert_eq!(*value, const_(42));
+            } else {
+                panic!("position 5 inner body not a Let");
+            }
+        } else {
+            panic!("position 5 not a For");
+        }
+    }
+
+    #[test]
+    fn slice_without_placeholder_is_unchanged() {
+        // Negative test: nothing references the loop var. The
+        // substitution pass must be a no-op (modulo the redundant
+        // walk) and produce structurally identical output.
+        let original = vec![
+            CircuitNode::Let {
+                name: "x".into(),
+                value: const_(99),
+                span: None,
+            },
+            CircuitNode::AssertEq {
+                lhs: CircuitExpr::Var("x".into()),
+                rhs: const_(99),
+                message: None,
+                span: None,
+            },
+            CircuitNode::If {
+                cond: CircuitExpr::Comparison {
+                    op: CircuitCmpOp::Lt,
+                    lhs: Box::new(CircuitExpr::Var("x".into())),
+                    rhs: Box::new(const_(100)),
+                },
+                then_body: vec![CircuitNode::Expr {
+                    expr: CircuitExpr::Var("x".into()),
+                    span: None,
+                }],
+                else_body: vec![],
+                span: None,
+            },
+        ];
+        let mut slice = original.clone();
+        substitute_loop_var(&mut slice, 7, 42);
+        assert_eq!(slice, original);
+    }
+
+    #[test]
+    fn different_token_is_left_untouched() {
+        // An outer-loop placeholder (token 1) must survive when the
+        // inner-loop substitution runs (token 0). Tests the equality
+        // guard in the LoopVar arm.
+        let mut slice = vec![CircuitNode::Let {
+            name: "outer".into(),
+            value: CircuitExpr::LoopVar(1),
+            span: None,
+        }];
+        substitute_loop_var(&mut slice, 0, 99);
+        if let CircuitNode::Let { value, .. } = &slice[0] {
+            assert_eq!(*value, CircuitExpr::LoopVar(1));
+        } else {
+            panic!("outer placeholder mutated");
+        }
+    }
+
+    #[test]
+    fn placeholder_in_name_is_substituted() {
+        // Names like `t1_$LV7$` (mangled at iter-0 capture) must
+        // become `t1_42` after substitution.
+        let mut slice = vec![
+            CircuitNode::Let {
+                name: "t1_$LV7$".into(),
+                value: CircuitExpr::Var("t0_$LV7$".into()),
+                span: None,
+            },
+            CircuitNode::LetIndexed {
+                array: "$LV7$_arr".into(),
+                index: CircuitExpr::LoopVar(7),
+                value: const_(1),
+                span: None,
+            },
+        ];
+        substitute_loop_var(&mut slice, 7, 42);
+        if let CircuitNode::Let { name, value, .. } = &slice[0] {
+            assert_eq!(name, "t1_42");
+            assert_eq!(*value, CircuitExpr::Var("t0_42".into()));
+        } else {
+            panic!("not a Let");
+        }
+        if let CircuitNode::LetIndexed { array, index, .. } = &slice[1] {
+            assert_eq!(array, "42_arr");
+            assert_eq!(*index, const_(42));
+        } else {
+            panic!("not a LetIndexed");
+        }
+    }
+
+    #[test]
+    fn token_7_does_not_corrupt_token_70_placeholder() {
+        // The trailing `$` makes $LV7$ ≠ a substring of $LV70$.
+        // Without it, replacing token 7 would mangle $LV70$ into
+        // `420$`, corrupting the outer-loop placeholder.
+        let mut slice = vec![CircuitNode::Let {
+            name: "shared_$LV7$_$LV70$".into(),
+            value: const_(0),
+            span: None,
+        }];
+        substitute_loop_var(&mut slice, 7, 42);
+        if let CircuitNode::Let { name, .. } = &slice[0] {
+            // `$LV7$` becomes `42`; `$LV70$` is preserved verbatim.
+            assert_eq!(name, "shared_42_$LV70$");
+        } else {
+            panic!("not a Let");
+        }
+    }
+
+    #[test]
+    fn substitutes_inside_for_range_with_expr() {
+        // ForRange::WithExpr's bound expression may reference the
+        // outer loop variable: `for j in 0..(LoopVar(7) + 1)`.
+        let mut slice = vec![CircuitNode::For {
+            var: "j".into(),
+            range: ForRange::WithExpr {
+                start: 0,
+                end_expr: Box::new(CircuitExpr::BinOp {
+                    op: CircuitBinOp::Add,
+                    lhs: Box::new(CircuitExpr::LoopVar(7)),
+                    rhs: Box::new(const_(1)),
+                }),
+            },
+            body: vec![],
+            span: None,
+        }];
+        substitute_loop_var(&mut slice, 7, 5);
+        if let CircuitNode::For {
+            range: ForRange::WithExpr { end_expr, .. },
+            ..
+        } = &slice[0]
+        {
+            if let CircuitExpr::BinOp { lhs, rhs, .. } = end_expr.as_ref() {
+                assert_eq!(**lhs, const_(5));
+                assert_eq!(**rhs, const_(1));
+            } else {
+                panic!("end_expr not a BinOp");
+            }
+        } else {
+            panic!("not a For with WithExpr range");
+        }
+    }
+}
