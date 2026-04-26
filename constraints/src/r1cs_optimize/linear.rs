@@ -32,23 +32,37 @@ use super::substitution::{
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::Constraint;
 
-/// Run linear constraint elimination to fixpoint.
+/// Run greedy iterative linear constraint elimination to fixpoint.
 ///
 /// Protected variables (ONE + public inputs, indices `0..=num_pub_inputs`)
 /// are never substituted away.
 ///
-/// Returns the reduced constraint set, a substitution map (for witness
-/// fixup), and optimization statistics.
-pub fn optimize_linear<F: FieldBackend>(
+/// **Phase 6 note:** this entry is no longer the public O1 driver --
+/// `r1cs_optimize::optimize_linear` is now an alias for the
+/// cluster-based driver (`linear_cluster::optimize_linear_clustered`).
+/// This function is preserved as a `pub(super)` helper because:
+///   1. `linear_cluster::optimize_linear_clustered_with_protected`
+///      uses it as the per-cluster fallback for clusters whose size
+///      exceeds `CLUSTER_FALLBACK_THRESHOLD` (greedy reaches the same
+///      linear fixpoint as Gauss but in batched rounds, scaling
+///      linearly per round in cluster size).
+///   2. A handful of internal tests still exercise the greedy
+///      heuristic explicitly (e.g. `test_frequency_heuristic_greedy`).
+#[allow(dead_code)] // wrapper retained for tests exercising greedy directly
+pub(super) fn optimize_linear_greedy<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
     optimize_linear_with_protected(constraints, num_pub_inputs, &HashSet::new())
 }
 
-/// Like `optimize_linear`, but also protects additional variable indices
-/// from substitution. Used by O2 to shield decomposition wires during
-/// DEDUCE processing so they remain available as simple monomials.
+/// Like `optimize_linear_greedy`, but also protects additional variable
+/// indices from substitution. Used by:
+/// - `linear_cluster::optimize_linear_clustered_with_protected` as the
+///   per-cluster fallback for clusters above
+///   `CLUSTER_FALLBACK_THRESHOLD`.
+/// - `deduce::optimize_o2_with_deducer` historically; phase 6 swaps
+///   those call sites to the clustered variant.
 pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,

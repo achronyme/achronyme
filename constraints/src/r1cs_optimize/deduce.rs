@@ -27,7 +27,10 @@ use std::collections::{HashMap, HashSet};
 
 use memory::{FieldBackend, FieldElement};
 
-use super::linear::{optimize_linear, optimize_linear_with_protected};
+use super::linear_cluster::{
+    optimize_linear_clustered as optimize_linear,
+    optimize_linear_clustered_with_protected as optimize_linear_with_protected,
+};
 use super::predicates::lc_fingerprint;
 use super::substitution::apply_substitution;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};

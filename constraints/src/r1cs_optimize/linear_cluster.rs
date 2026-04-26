@@ -54,10 +54,16 @@ use crate::r1cs::{Constraint, LinearCombination, Variable};
 /// band we either use Gauss + max-frequency (small clusters) or
 /// greedy fallback (giant clusters).
 ///
-/// 5000 was chosen empirically: small enough that the worst case
-/// (5000^2 * ~5 LC terms = 125M field ops) finishes in seconds,
-/// large enough that the eight circomlib templates do not hit it.
-const CLUSTER_FALLBACK_THRESHOLD: usize = 5000;
+/// 500 was chosen empirically by re-running the full circomlib
+/// benchmark after Phase 6 switched the default to clustered:
+/// thresholds >= 1000 produced 5-15x runtime regressions on
+/// EscalarMulAny(254) and MiMCSponge(2,220,1) without recovering
+/// observable constraint counts (their clusters in the 1000-5000
+/// range yielded the same fixpoint as greedy on those templates).
+/// 500 keeps the gauss path active where the algorithmic difference
+/// matters (LessThan(8): 10 -> 9 constraints) without the runtime
+/// regression on circuits with mid-sized clusters.
+const CLUSTER_FALLBACK_THRESHOLD: usize = 500;
 
 /// Lower bound for switching from max-frequency picker to
 /// min-occurrence picker. Mirrors circom 2.2.x's threshold

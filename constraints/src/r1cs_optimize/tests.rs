@@ -507,15 +507,21 @@ fn test_tautological_linear_removed() {
     let mut constraints = cs.constraints().to_vec();
     let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
-    // First constraint: x substituted → pub
-    // Second: 1*pub = pub → tautological, removed
-    // Third: pub*pub = z → quadratic, kept
+    // First constraint: x substituted -> pub
+    // Second: 1*pub = pub -> tautological, removed
+    // Third: pub*pub = z -> quadratic, kept
+    //
+    // The cluster-Gauss path (Phase 6 default) absorbs the tautology
+    // inside solve_cluster_linear (the second linear constraint
+    // reduces to an empty row after the first substitution and is
+    // dropped before being re-emitted as residual). Greedy used to
+    // discover it via is_trivially_satisfied AFTER applying
+    // substitutions. End state is the same (1 constraint, 1 var
+    // eliminated); we no longer assert on the trivial_removed
+    // counter because it's a bookkeeping detail.
     assert_eq!(stats.constraints_before, 3);
     assert_eq!(stats.constraints_after, 1, "only pub*pub=z should remain");
-    assert!(
-        stats.trivial_removed >= 1,
-        "tautological constraint detected"
-    );
+    assert_eq!(stats.variables_eliminated, 1);
 }
 
 // ========================================================================
@@ -971,7 +977,7 @@ fn cluster_gauss_chain_match_greedy() {
 /// witness still satisfied.
 #[test]
 fn cluster_gauss_multi_cluster_correctness() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     let mut cs: ConstraintSystem = ConstraintSystem::new();
     let x = cs.alloc_witness();
@@ -985,7 +991,7 @@ fn cluster_gauss_multi_cluster_correctness() {
     cs.enforce_equal(make_lc_var(w), make_lc_var(z));
 
     let mut constraints = cs.constraints().to_vec();
-    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 2);
     assert_eq!(stats.constraints_after, 1);
@@ -1047,7 +1053,7 @@ fn cluster_gauss_aux_wire_protection() {
 /// `test_public_variable_not_substituted` for the clustered driver.
 #[test]
 fn cluster_gauss_does_not_substitute_protected() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     let mut cs: ConstraintSystem = ConstraintSystem::new();
     let pub_out = cs.alloc_input(); // idx 1, public
@@ -1058,7 +1064,7 @@ fn cluster_gauss_does_not_substitute_protected() {
     cs.enforce(make_lc_var(w), make_lc_var(w), make_lc_var(z));
 
     let mut constraints = cs.constraints().to_vec();
-    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.variables_eliminated, 1);
     assert!(subs.contains_key(&w.index()), "w should be substituted");
@@ -1071,7 +1077,7 @@ fn cluster_gauss_does_not_substitute_protected() {
 /// remaining constraint must still satisfy the witness.
 #[test]
 fn cluster_gauss_soundness_witness_roundtrip() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     let mut cs: ConstraintSystem = ConstraintSystem::new();
     let pub_out = cs.alloc_input();
@@ -1100,7 +1106,7 @@ fn cluster_gauss_soundness_witness_roundtrip() {
     ];
 
     let mut constraints = cs.constraints().to_vec();
-    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
     assert_eq!(stats.constraints_before, 4);
     assert_eq!(stats.constraints_after, 2);
 
@@ -1126,7 +1132,7 @@ fn cluster_gauss_soundness_witness_roundtrip() {
 /// driver must remove those via the trivial sweep.
 #[test]
 fn cluster_gauss_tautology_after_pivot() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     let mut cs: ConstraintSystem = ConstraintSystem::new();
     let pub_out = cs.alloc_input(); // idx 1
@@ -1138,7 +1144,7 @@ fn cluster_gauss_tautology_after_pivot() {
     cs.enforce(make_lc_var(x), make_lc_var(x), make_lc_var(z));
 
     let mut constraints = cs.constraints().to_vec();
-    let (_, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Cluster-Gauss absorbs the tautology inside solve_cluster_linear
     // (the second linear constraint reduces to an empty row after the
@@ -1173,7 +1179,7 @@ fn cluster_gauss_tautology_after_pivot() {
 /// NEVER substituted.
 #[test]
 fn cluster_gauss_min_occurrence_picker_above_threshold() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     let mut cs: ConstraintSystem = ConstraintSystem::new();
     let hot = cs.alloc_witness();
@@ -1186,7 +1192,7 @@ fn cluster_gauss_min_occurrence_picker_above_threshold() {
     }
 
     let mut constraints = cs.constraints().to_vec();
-    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.variables_eliminated, 360);
     assert!(
@@ -1212,7 +1218,7 @@ fn cluster_gauss_min_occurrence_picker_above_threshold() {
 /// substituted in the first round.
 #[test]
 fn cluster_gauss_max_frequency_picker_below_threshold() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     let mut cs: ConstraintSystem = ConstraintSystem::new();
     let hot = cs.alloc_witness();
@@ -1225,7 +1231,7 @@ fn cluster_gauss_max_frequency_picker_below_threshold() {
     }
 
     let mut constraints = cs.constraints().to_vec();
-    let (subs, stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+    let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.variables_eliminated, 340);
     // Under max-frequency, the FIRST row's pick is `hot` -> hot is
@@ -1241,7 +1247,7 @@ fn cluster_gauss_max_frequency_picker_below_threshold() {
 /// max-frequency. Documents the picker's branch condition.
 #[test]
 fn cluster_gauss_picker_threshold_exact() {
-    use crate::r1cs_optimize::optimize_linear_clustered;
+    use crate::r1cs_optimize::optimize_linear;
 
     fn build_and_optimize(n: usize) -> bool {
         let mut cs: ConstraintSystem = ConstraintSystem::new();
@@ -1254,7 +1260,7 @@ fn cluster_gauss_picker_threshold_exact() {
             cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
         }
         let mut constraints = cs.constraints().to_vec();
-        let (subs, _stats) = optimize_linear_clustered(&mut constraints, cs.num_pub_inputs());
+        let (subs, _stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
         // Returns true iff hot was substituted (max-frequency picker).
         subs.contains_key(&hot.index())
     }
