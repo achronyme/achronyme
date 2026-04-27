@@ -132,7 +132,7 @@ pub(super) fn lower_for_loop<'a>(
     // iter. Gated on `R1PP_ENABLED=1` so the default behaviour stays
     // byte-for-byte legacy until the validation pass in D4 flips it.
     if r1pp_enabled() {
-        if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end) {
+        if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end, env) {
             return memoize_loop(
                 &var_name, start, end, body, span, env, nodes, ctx, pending, plan,
             );
@@ -281,8 +281,16 @@ fn is_memoizable(
     loop_var: &str,
     start: u64,
     end: u64,
+    env: &LoweringEnv,
 ) -> Option<MemoPlan> {
-    if matches!(strategy, LoopLowering::MixedSignalVar) {
+    // MVP: only memoize the simplest strategy. `KnownArrayRefs` reads
+    // compile-time arrays (Poseidon's `C[i+r]`, Mix's `M[j][i]`) whose
+    // bindings flow through nested component inlining as substring
+    // renames; the env-state mirroring for those bindings under
+    // memoization isn't complete. `ComponentArrayOps` instantiates
+    // sub-components per iter; pending state machinery isn't fully
+    // captured by `EnvFootprint` either. Both are follow-ups.
+    if !matches!(strategy, LoopLowering::IndexedAssignmentLoop) {
         return None;
     }
     if end <= start || (end - start) < 4 {
@@ -345,7 +353,99 @@ fn is_memoizable(
     if body_has_dot_access(body) {
         return None;
     }
+    if body_reads_capture_array(body, env) {
+        return None;
+    }
     Some(MemoPlan { token: 0 })
+}
+
+/// `true` iff the body indexes into a captured array parameter
+/// (e.g. `C[i + r]` where `C` is a `CaptureArrayDef` in the enclosing
+/// template's captures). The capture-array binding flows through
+/// component inlining via name substring rename (`C` →
+/// `verifier.hash.pEx.ark_0.C`); when memoization clones iter-0 nodes
+/// referencing the original capture name, the post-inline rename
+/// either fails or leaves the array binding in a state instantiate
+/// can't resolve as `InstEnvValue::Array`. EdDSAPoseidon → Poseidon
+/// → PoseidonEx → Ark trips this, producing
+/// `verifier.hash.pEx.ark_0.C is not an array` at instantiate.
+/// Until the EnvFootprint mirroring covers `CaptureArrayDef` rebinding
+/// across substitution, the safe call is to skip memoization for
+/// these bodies.
+fn body_reads_capture_array(stmts: &[Stmt], env: &LoweringEnv) -> bool {
+    stmts.iter().any(|s| stmt_reads_capture_array(s, env))
+}
+
+fn stmt_reads_capture_array(stmt: &Stmt, env: &LoweringEnv) -> bool {
+    match stmt {
+        Stmt::Substitution { value, .. } => expr_reads_capture_array(value, env),
+        Stmt::CompoundAssign { value, .. } => expr_reads_capture_array(value, env),
+        Stmt::ConstraintEq { lhs, rhs, .. } => {
+            expr_reads_capture_array(lhs, env) || expr_reads_capture_array(rhs, env)
+        }
+        Stmt::VarDecl { init, .. } => init.as_ref().is_some_and(|v| expr_reads_capture_array(v, env)),
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_reads_capture_array(condition, env)
+                || then_body
+                    .stmts
+                    .iter()
+                    .any(|s| stmt_reads_capture_array(s, env))
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => {
+                        b.stmts.iter().any(|s| stmt_reads_capture_array(s, env))
+                    }
+                    Some(ElseBranch::IfElse(s)) => stmt_reads_capture_array(s, env),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(|s| stmt_reads_capture_array(s, env)),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(|s| stmt_reads_capture_array(s, env))
+        }
+        _ => false,
+    }
+}
+
+fn expr_reads_capture_array(expr: &Expr, env: &LoweringEnv) -> bool {
+    match expr {
+        Expr::Index { object, index, .. } => {
+            // `cap[idx]` shape — the object resolves to a capture name.
+            if let Expr::Ident { name, .. } = object.as_ref() {
+                if env.captures.contains(name) {
+                    return true;
+                }
+            }
+            expr_reads_capture_array(object, env) || expr_reads_capture_array(index, env)
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_reads_capture_array(lhs, env) || expr_reads_capture_array(rhs, env)
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_reads_capture_array(operand, env),
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_reads_capture_array(condition, env)
+                || expr_reads_capture_array(if_true, env)
+                || expr_reads_capture_array(if_false, env)
+        }
+        Expr::Call { args, .. } => args.iter().any(|a| expr_reads_capture_array(a, env)),
+        Expr::DotAccess { object, .. } => expr_reads_capture_array(object, env),
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter().any(|e| expr_reads_capture_array(e, env))
+        }
+        _ => false,
+    }
 }
 
 fn body_has_dot_access(stmts: &[Stmt]) -> bool {
