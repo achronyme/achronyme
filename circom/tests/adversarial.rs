@@ -18,10 +18,63 @@
 
 use std::collections::HashMap;
 use std::path::Path;
+use std::sync::Mutex;
 
 use constraints::r1cs::Variable;
 use memory::{Bn254Fr, FieldElement};
 use zkc::r1cs_backend::R1CSCompiler;
+
+/// Serialise tests that mutate the `R1PP_ENABLED` process env var. The
+/// var is read on every `lower_for_loop` call, so two parallel tests
+/// flipping it would race. Tests in this file that DON'T touch the var
+/// are insensitive to its value (the multi-dim/component-call gates in
+/// `is_memoizable` reject memoization for the surrounding circuits) so
+/// they don't need the guard. Note: this Mutex prevents Rust-side
+/// concurrency races within these tests; it does NOT satisfy the
+/// stdlib `set_var` safety contract against concurrent C-side `getenv`
+/// readers, which is a theoretical TSAN concern not hit on Linux glibc
+/// under `cargo test`.
+static R1PP_ENV_LOCK: Mutex<()> = Mutex::new(());
+
+/// RAII guard that pins `R1PP_ENABLED` for its lifetime and restores
+/// the prior value on Drop. Crucially, the restoration runs even if
+/// the test panics, so a leaked env var cannot poison subsequent test
+/// runs in the same process (and the `R1PP_ENV_LOCK` Mutex never
+/// inherits a polluted state via poison-recovery).
+struct R1ppEnvGuard {
+    _lock: std::sync::MutexGuard<'static, ()>,
+    prior: Option<String>,
+}
+
+impl R1ppEnvGuard {
+    fn new(value: &str) -> Self {
+        let lock = R1PP_ENV_LOCK
+            .lock()
+            .unwrap_or_else(|poisoned| poisoned.into_inner());
+        let prior = std::env::var("R1PP_ENABLED").ok();
+        // SAFETY: env mutation is guarded by R1PP_ENV_LOCK against
+        // concurrent Rust callers in this test file. Other test files
+        // do not read R1PP_ENABLED. This does not protect against
+        // simultaneous C-side getenv readers, but cargo test on Linux
+        // glibc has no such readers.
+        unsafe {
+            std::env::set_var("R1PP_ENABLED", value);
+        }
+        Self { _lock: lock, prior }
+    }
+}
+
+impl Drop for R1ppEnvGuard {
+    fn drop(&mut self) {
+        // SAFETY: see R1ppEnvGuard::new — same lock held for Drop.
+        unsafe {
+            match &self.prior {
+                Some(v) => std::env::set_var("R1PP_ENABLED", v),
+                None => std::env::remove_var("R1PP_ENABLED"),
+            }
+        }
+    }
+}
 
 type Fe = FieldElement<Bn254Fr>;
 
@@ -570,3 +623,108 @@ fn mux4_forge_output_rejected() {
 // not signal. The deferral is tracked in
 // `project_beta20_circom_session_apr4.md` under "BinSum / Multiplexer
 // pending E2E".
+
+// ============================================================================
+// R1″ Phase 6 / Follow-up A — placeholder-aware lower_multi_index
+// ============================================================================
+//
+// Edit 2 of Follow-up A made `lower_multi_index` skip its const-fold
+// fast path when the active R1″ memoization placeholder loop variable
+// appears in any index slot. Edit 4 (not yet landed at this commit)
+// will drop the `body_has_multi_dim_index` disqualifier from
+// `is_memoizable` so that bodies with multi-dim shapes like `c[i][k]`
+// become memoizable.
+//
+// This regression test pins the contract: under both R1PP_ENABLED=0
+// and R1PP_ENABLED=1, the Mux3 wrapper must produce IDENTICAL
+// constraint counts AND must continue to reject the same forgery
+// (`out` flipped while the selector encodes a different index). The
+// test is "trivially passing" today — Mux3's MultiMux3(1) instance
+// has n=1 < 4 so the iteration-count gate already rejects memoization
+// regardless of the multi-dim gate. Once Edit 4 widens the population
+// of memoizable bodies, this test becomes the regression watchdog
+// proving Edits 1+2 keep the IR byte-identical.
+//
+// Counter-factual procedure (manual, off-CI): stage Edit 4 (gate
+// removed) WITHOUT Edits 1+2 on a temporary branch and re-run this
+// test under R1PP_ENABLED=1. It MUST fail (witness mismatch or
+// constraint divergence), proving the placeholder gates were
+// load-bearing.
+
+fn compile_mux3_active_selector() -> (R1CSCompiler<Bn254Fr>, Vec<Fe>) {
+    compile_valid_witness(
+        "test/circomlib/mux3_test.circom",
+        &[
+            ("c_0", 10),
+            ("c_1", 20),
+            ("c_2", 30),
+            ("c_3", 40),
+            ("c_4", 50),
+            ("c_5", 60),
+            ("c_6", 70),
+            ("c_7", 80),
+            ("s_0", 1),
+            ("s_1", 1),
+            ("s_2", 0),
+        ],
+        false,
+    )
+}
+
+#[test]
+fn r1pp_followup_a_mux3_constraint_count_byte_identical_across_modes() {
+    let (compiler_off, _w_off) = {
+        let _g = R1ppEnvGuard::new("0");
+        compile_mux3_active_selector()
+    };
+    let count_off = compiler_off.cs.num_constraints();
+
+    let (compiler_on, _w_on) = {
+        let _g = R1ppEnvGuard::new("1");
+        compile_mux3_active_selector()
+    };
+    let count_on = compiler_on.cs.num_constraints();
+
+    assert_eq!(
+        count_off, count_on,
+        "R1″ Follow-up A regression: Mux3 must produce byte-identical \
+         constraint counts under R1PP_ENABLED=0 and R1PP_ENABLED=1. A \
+         divergence here means Edits 1+2 (placeholder-aware \
+         lower_multi_index) failed to keep memoized lowering equivalent \
+         to legacy unrolling. Counter-factual: this test is what fails \
+         when Edit 4 ships without Edits 1+2."
+    );
+}
+
+/// Dormant until Edit 4 widens memoization to multi-dim bodies. With
+/// the current iteration-count gate (`< 4`) and the still-active
+/// `body_has_multi_dim_index` gate, Mux3's MultiMux3(1) instance never
+/// memoizes regardless of `R1PP_ENABLED` value, so this test asserts
+/// the same property as `mux3_forge_output_with_active_selector_rejected`
+/// for now. It earns its keep AFTER Edit 4: the constraint-count test
+/// above pins structural divergence, but a lowering bug that produces
+/// the SAME constraint COUNT with WRONG constraint CONTENTS would slip
+/// past it. This forgery test catches that residue by exercising the
+/// soundness property under R1PP=1 specifically.
+#[test]
+fn r1pp_followup_a_mux3_forgery_rejected_under_r1pp_on() {
+    let (compiler, mut witness) = {
+        let _g = R1ppEnvGuard::new("1");
+        compile_mux3_active_selector()
+    };
+
+    let w_out = wire(&compiler, "out");
+    // Honest: index = 1+2+0 = 3 → out = c[3] = 40.
+    assert_eq!(witness[w_out.index()], Fe::from_u64(40));
+
+    witness[w_out.index()] = Fe::from_u64(10);
+
+    assert!(
+        compiler.cs.verify(&witness).is_err(),
+        "R1″ Follow-up A regression: forging Mux3's `out` under \
+         R1PP_ENABLED=1 must still be rejected. If memoized lowering \
+         dropped a constraint OR produced same-count-different-contents \
+         IR, this assertion catches the under-constraint silently \
+         introduced by the optimisation."
+    );
+}
