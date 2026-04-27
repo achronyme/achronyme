@@ -331,10 +331,11 @@ fn is_memoizable(
     //   breaks the const-fold chain in `lower_multi_index`, with
     //   defence-in-depth phantom-`ArrayIndex` and missing-strides
     //   guards (E213). See R1″ Phase 6 / Follow-up A. The previous
-    //   `body_has_multi_dim_index` disqualifier (commit 8bfd2fd4) is
-    //   no longer load-bearing FOR BODIES THAT PASS THE OTHER MVP
-    //   GATES (component_or_call, dot_access, capture_array, iter <
-    //   4). Widening any of those re-exposes the question whether the
+    //   `body_has_multi_dim_index` disqualifier (added 8bfd2fd4,
+    //   gate removed 6a4e5f36, walker deleted 71383148) is no
+    //   longer load-bearing FOR BODIES THAT PASS THE OTHER MVP GATES
+    //   (component_or_call, dot_access, capture_array, iter < 4).
+    //   Widening any of those re-exposes the question whether the
     //   placeholder + phantom-ArrayIndex + strides guards cover the
     //   new shape — re-validate end-to-end before loosening.
     if body_has_component_or_call(body) {
