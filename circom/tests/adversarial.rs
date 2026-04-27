@@ -728,3 +728,69 @@ fn r1pp_followup_a_mux3_forgery_rejected_under_r1pp_on() {
          introduced by the optimisation."
     );
 }
+
+// ============================================================================
+// R1″ Phase 6 / Follow-up B — vestigial gate cleanup
+// ============================================================================
+//
+// Follow-up B dropped the `body_reads_capture_array` gate from
+// `is_memoizable` after empirical investigation showed the gate
+// fired 5 times across the full e2e suite and never returned
+// `true`. The cleanup is behaviourally a no-op today (no template
+// memoizes that wouldn't have memoized before).
+//
+// This regression pin compiles EdDSAPoseidon — the heaviest circuit
+// in the corpus, exercising Ark/Mix/PoseidonEx/EscalarMulFix —
+// under both R1PP modes and asserts the constraint counts are
+// byte-identical. If a future change accidentally re-introduces a
+// behaviour-altering gate or breaks the cross-mode equivalence
+// contract, this test trips immediately.
+
+fn compile_eddsaposeidon_constraint_count() -> usize {
+    use std::collections::HashMap;
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/eddsaposeidon_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("EdDSAPoseidon compile failed: {e}"));
+    let prove_ir = &compile_result.prove_ir;
+    let capture_values = &compile_result.capture_values;
+    let fe_captures: HashMap<String, Fe> = capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), Fe::from_u64(*v)))
+        .collect();
+
+    let mut program = prove_ir
+        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .unwrap_or_else(|e| panic!("EdDSAPoseidon instantiate failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
+    compiler
+        .compile_ir(&program)
+        .unwrap_or_else(|e| panic!("EdDSAPoseidon R1CS compile failed: {e}"));
+    compiler.cs.num_constraints()
+}
+
+#[test]
+fn r1pp_followup_b_eddsaposeidon_constraint_count_byte_identical_across_modes() {
+    let count_off = {
+        let _g = R1ppEnvGuard::new("0");
+        compile_eddsaposeidon_constraint_count()
+    };
+
+    let count_on = {
+        let _g = R1ppEnvGuard::new("1");
+        compile_eddsaposeidon_constraint_count()
+    };
+
+    assert_eq!(
+        count_off, count_on,
+        "R1″ Follow-up B regression: EdDSAPoseidon must produce \
+         byte-identical R1CS constraint counts under R1PP_ENABLED=0 \
+         and R1PP_ENABLED=1. A divergence here means a behaviour-\
+         altering gate slipped into is_memoizable since Follow-up B's \
+         vestigial-gate cleanup, breaking cross-mode equivalence."
+    );
+}
