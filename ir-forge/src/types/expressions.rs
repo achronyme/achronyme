@@ -22,6 +22,15 @@ pub enum CircuitExpr {
     /// Reference to a local let-binding.
     Var(String),
 
+    /// For-loop induction-variable placeholder used by R1″ body
+    /// memoization. Token IDs are minted per active loop nesting.
+    /// Substituted with `Const(value)` by `substitute_loop_var` when
+    /// replaying a memoized iter-0 body for iters 1..end. Must NOT be
+    /// const-folded (`try_fold_const` returns None) and must NOT
+    /// survive past `lower_for_loop` — instantiate-time encountering
+    /// `LoopVar` is a bug.
+    LoopVar(u32),
+
     /// Arithmetic: +, -, *, /
     BinOp {
         op: CircuitBinOp,

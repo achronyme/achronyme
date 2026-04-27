@@ -46,6 +46,70 @@ pub struct LoweringContext<'a> {
     /// by every statement-level lowering call before it pushes its
     /// own node.
     pub pending_nodes: Vec<CircuitNode>,
+    /// R1″ for-loop body memoization: optional tracker that records
+    /// the `[start, end)` ranges of `nodes` covered by pending-component
+    /// flushes (i.e. emissions produced by `PendingComponent::inline_into`).
+    /// When enabled, the for-loop unroller can subtract these ranges
+    /// from an iteration's emission to obtain the "body-only" IR — the
+    /// part that is uniform across iters and therefore memoizable.
+    pub flush_tracker: FlushTracker,
+    /// R1″ Phase 6 / Option D: when `Some((var_name, token))`, the
+    /// expression lowering treats `Ident(var_name)` as the placeholder
+    /// `CircuitExpr::LoopVar(token)` instead of either a const fold
+    /// or an `env.resolve` lookup. The for-loop memoization unroller
+    /// sets this around the iter-0 capture window so the loop variable
+    /// flows through indexing/arithmetic as a symbolic node; the
+    /// captured slice is then cloned + `substitute_loop_var`'d for each
+    /// remaining iteration. Default `None` — outside the capture window
+    /// the legacy unroll path drives the loop var through
+    /// `env.known_constants` exactly as before, so existing behaviour
+    /// is byte-identical.
+    pub placeholder_loop_var: Option<(String, u32)>,
+}
+
+/// Records the IR-emission ranges produced by pending-component
+/// flushes during a window of lowering. See `LoweringContext::flush_tracker`.
+///
+/// Disabled by default; the for-loop unroller turns it on around an
+/// iteration capture and reads the recorded ranges back. Each entry is
+/// a `(start, end)` half-open interval over the `nodes: Vec<CircuitNode>`
+/// passed to `PendingComponent::inline_into` — the slice
+/// `nodes[start..end]` is exactly the inlined component body.
+///
+/// Multiple flushes during the same window stack into `ranges` in the
+/// order they fired. Empty flushes (`start == end`) are skipped.
+#[derive(Default)]
+pub struct FlushTracker {
+    enabled: bool,
+    ranges: Vec<(usize, usize)>,
+}
+
+impl FlushTracker {
+    /// Turn on recording. Clears any previously recorded ranges.
+    pub fn enable(&mut self) {
+        self.enabled = true;
+        self.ranges.clear();
+    }
+
+    /// Turn off recording and return the accumulated ranges, in the
+    /// order they fired.
+    pub fn take(&mut self) -> Vec<(usize, usize)> {
+        self.enabled = false;
+        std::mem::take(&mut self.ranges)
+    }
+
+    /// Record a flush range. No-op if recording is disabled or the
+    /// range is empty.
+    pub fn record(&mut self, start: usize, end: usize) {
+        if self.enabled && start < end {
+            self.ranges.push((start, end));
+        }
+    }
+
+    /// `true` iff recording is currently turned on.
+    pub fn is_enabled(&self) -> bool {
+        self.enabled
+    }
 }
 
 impl<'a> LoweringContext<'a> {
@@ -76,6 +140,8 @@ impl<'a> LoweringContext<'a> {
             anon_counter: 0,
             body_cache: HashMap::new(),
             pending_nodes: Vec::new(),
+            flush_tracker: FlushTracker::default(),
+            placeholder_loop_var: None,
         }
     }
 
@@ -140,6 +206,42 @@ impl<'a> LoweringContext<'a> {
             bus_names: HashSet::new(),
             anon_counter: 0,
             pending_nodes: Vec::new(),
+            flush_tracker: FlushTracker::default(),
+            placeholder_loop_var: None,
         }
+    }
+
+    /// If `name` matches the active R1″ memoization placeholder, return
+    /// its token. The lowering paths that resolve identifiers (`Ident`,
+    /// component-array index folding) consult this before the legacy
+    /// const-fold / env-resolve chain to keep the loop variable
+    /// symbolic during iter-0 capture.
+    #[inline]
+    pub fn placeholder_token_for(&self, name: &str) -> Option<u32> {
+        match self.placeholder_loop_var.as_ref() {
+            Some((var, token)) if var == name => Some(*token),
+            _ => None,
+        }
+    }
+
+    /// If `expr` is `Ident(name)` where `name` matches the active
+    /// memoization placeholder, return the corresponding placeholder
+    /// substring (e.g. `"$LV7$"`) suitable for embedding in component-
+    /// array name mangling like `format!("{base}_{segment}")`. Returns
+    /// `None` otherwise — the caller should fall back to the legacy
+    /// numeric resolution path.
+    ///
+    /// Only handles the bare `Ident` form, not `Ident ± const`. The
+    /// `is_memoizable` classifier in `lower_for_loop` is responsible
+    /// for refusing to memoize loops whose component-array indices use
+    /// shapes this method does not cover.
+    pub fn placeholder_index_segment(&self, expr: &crate::ast::Expr) -> Option<String> {
+        let (var, token) = self.placeholder_loop_var.as_ref()?;
+        if let crate::ast::Expr::Ident { name, .. } = expr {
+            if name == var {
+                return Some(super::loop_var_subst::loop_var_placeholder(*token));
+            }
+        }
+        None
     }
 }

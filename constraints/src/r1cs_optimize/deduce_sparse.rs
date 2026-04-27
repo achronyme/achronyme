@@ -269,3 +269,33 @@ pub fn optimize_o2_sparse<F: FieldBackend>(
         deduce_linear_from_quadratic_sparse,
     )
 }
+
+/// Diagnostic: returns the size of each monomial-shared cluster that
+/// `deduce_linear_from_quadratic_sparse` would build for the given
+/// constraints (without solving any of them). Sizes are returned
+/// in cluster-iteration order (sorted by smallest member index).
+///
+/// Intended only for instrumentation/research (e.g. measuring how
+/// many constraints sit in clusters above `MAX_CLUSTER_SIZE`).
+/// Not part of the core optimizer pipeline.
+#[doc(hidden)]
+#[allow(dead_code)]
+pub fn diagnostic_monomial_cluster_sizes<F: FieldBackend>(
+    constraints: &[Constraint<F>],
+) -> Vec<usize> {
+    if constraints.is_empty() {
+        return vec![];
+    }
+    let expanded: Vec<_> = constraints.iter().map(expand_constraint_product).collect();
+    let clusters = cluster_constraints_by_monomial(&expanded);
+    clusters.iter().map(|c| c.len()).collect()
+}
+
+/// Diagnostic: returns the current `MAX_CLUSTER_SIZE` threshold at
+/// which `deduce_linear_from_quadratic_sparse` stops attempting
+/// Gaussian elimination on a monomial cluster.
+#[doc(hidden)]
+#[allow(dead_code)]
+pub fn diagnostic_max_cluster_size() -> usize {
+    MAX_CLUSTER_SIZE
+}

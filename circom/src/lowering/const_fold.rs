@@ -123,6 +123,12 @@ pub fn try_fold_const(expr: &CircuitExpr) -> Option<FieldConst> {
             }
         }
 
+        // R1″ for-loop placeholder must propagate, not fold. If it
+        // collapsed to a constant here, the per-iter substitution
+        // pass would have nothing to rewrite and every memoized
+        // iteration would emit iter-0 values.
+        CircuitExpr::LoopVar(_) => None,
+
         // Anything else (Var, Input, Capture, ArrayIndex, etc.) → not constant
         _ => None,
     }
@@ -314,6 +320,34 @@ mod tests {
         let five = FieldElement::<Bn254Fr>::from_u64(5);
         let three = FieldElement::<Bn254Fr>::from_u64(3);
         assert_eq!(fe.add(&five), three);
+    }
+
+    #[test]
+    fn loop_var_does_not_fold() {
+        // R1″ contract: CircuitExpr::LoopVar(token) must propagate
+        // unchanged through const-fold. Folding it would mean iter-N
+        // substitution has nothing to rewrite, and every memoized
+        // iteration would emit iter-0 values.
+        let placeholder = CircuitExpr::LoopVar(7);
+        assert_eq!(try_fold_const(&placeholder), None);
+
+        // LoopVar inside an arithmetic expression also fails to fold —
+        // the whole tree has to survive substitution.
+        let expr = CircuitExpr::BinOp {
+            op: CircuitBinOp::Add,
+            lhs: Box::new(c(10)),
+            rhs: Box::new(CircuitExpr::LoopVar(7)),
+        };
+        assert_eq!(try_fold_const(&expr), None);
+
+        // Nested: const_fold on a sub-tree without the placeholder
+        // should still succeed.
+        let foldable_subtree = CircuitExpr::BinOp {
+            op: CircuitBinOp::Mul,
+            lhs: Box::new(c(3)),
+            rhs: Box::new(c(4)),
+        };
+        assert_eq!(try_fold_const(&foldable_subtree), Some(fc(12)));
     }
 
     #[test]

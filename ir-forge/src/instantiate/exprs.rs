@@ -24,6 +24,18 @@ use ir_core::{Instruction, IrType, SsaVar};
 impl<'a, F: FieldBackend> Instantiator<'a, F> {
     pub(super) fn emit_expr(&mut self, expr: &CircuitExpr) -> Result<SsaVar, ProveIrError> {
         match expr {
+            // R1″ contract: LoopVar must be substituted by the
+            // for-loop unroller before reaching instantiation.
+            // Reaching this arm means substitute_loop_var missed a
+            // site or the placeholder leaked across a memoization
+            // boundary.
+            CircuitExpr::LoopVar(token) => Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "internal: CircuitExpr::LoopVar({token}) reached instantiation; \
+                     for-loop body memoization failed to substitute the placeholder"
+                ),
+                span: None,
+            }),
             CircuitExpr::Const(field_const) => {
                 let fe = field_const.to_field::<F>().ok_or_else(|| {
                     ProveIrError::UnsupportedOperation {

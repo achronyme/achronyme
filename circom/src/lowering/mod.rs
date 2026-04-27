@@ -22,6 +22,8 @@ pub mod artik_lift;
 #[allow(dead_code)]
 pub mod bit_width;
 #[allow(dead_code)]
+pub mod branch_flip;
+#[allow(dead_code)]
 pub mod compile_time;
 #[allow(dead_code)]
 pub mod components;
@@ -32,9 +34,13 @@ pub mod context;
 #[allow(dead_code)]
 pub mod env;
 #[allow(dead_code)]
+pub mod env_footprint;
+#[allow(dead_code)]
 pub mod error;
 #[allow(dead_code)]
 pub mod expressions;
+#[allow(dead_code)]
+pub mod loop_var_subst;
 #[allow(dead_code)]
 pub mod signals;
 #[allow(dead_code)]

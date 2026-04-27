@@ -200,6 +200,11 @@ pub fn infer_expr(expr: &CircuitExpr, ctx: &InferenceCtx<'_>) -> BitWidth {
     match expr {
         // ---- Leaves ----
         CircuitExpr::Const(fc) => BitWidth::Exact(bits_of_field_const(fc)),
+        // R1″ placeholder: at iter-0 capture time we have no bound on
+        // the future iter value, so return Field. Once substituted to
+        // Const(N) for a real iteration, this site re-runs (or the
+        // captured IR is re-inferred) and tightens.
+        CircuitExpr::LoopVar(_) => BitWidth::Field,
         CircuitExpr::Capture(name) | CircuitExpr::Var(name) => {
             // First try compile-time constant resolution via
             // param_values / known_constants — yields exact width.
@@ -423,6 +428,8 @@ fn const_eval_shift(expr: &CircuitExpr, ctx: &InferenceCtx<'_>) -> Option<u32> {
 pub fn rewrite_num_bits_in_expr(expr: &mut CircuitExpr, ctx: &InferenceCtx<'_>) {
     // First, recurse into children.
     match expr {
+        // R1″ placeholder is a leaf — nothing to rewrite.
+        CircuitExpr::LoopVar(_) => {}
         CircuitExpr::BinOp { lhs, rhs, .. }
         | CircuitExpr::Comparison { lhs, rhs, .. }
         | CircuitExpr::BoolOp { lhs, rhs, .. } => {

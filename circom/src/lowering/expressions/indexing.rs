@@ -116,44 +116,75 @@ pub(super) fn lower_multi_index(
 ///
 /// Handles 1D (`comp[i]` → `comp_0`) and multi-dim (`comp[i][j]` → `comp_0_1`).
 /// Merges `env.known_constants` + `ctx.param_values` for full resolution.
+///
+/// Used on the *expression* (read) side. R1″ Phase 6 / Option D: when
+/// the active memoization placeholder matches an index slot, the
+/// segment is emitted as `loop_var_placeholder(token)` so the resulting
+/// `Var` reference can be rewritten by `substitute_loop_var` per
+/// iteration. The READ side intentionally embeds the placeholder
+/// because the consumer is IR emission; the wiring.rs lookup path
+/// uses the legacy non-placeholder `resolve_component_array_name` to
+/// preserve `pending` HashMap key matching against the real iter-0
+/// component name.
 pub(super) fn resolve_component_array_expr_full(
     expr: &Expr,
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<String> {
     let all = ctx.all_constants(env);
-    resolve_component_array_expr_with_constants(expr, &all)
+    resolve_component_array_expr_with_constants(expr, &all, Some(ctx))
 }
 
 /// Resolve a component array expression with explicit known constants.
 ///
 /// Returns `None` for negative indices (e.g., `bits[n-2]` where `n=1`),
 /// which prevents generating invalid component names.
+///
+/// `placeholder_ctx` carries the optional R1″ memoization context;
+/// `Some(ctx)` enables the per-index placeholder check, `None` keeps
+/// the legacy numeric-only resolution. Recursive calls propagate the
+/// same option so multi-dim indices like `comp[0][i]` mix literals and
+/// placeholders correctly.
 fn resolve_component_array_expr_with_constants(
     expr: &Expr,
     known_constants: &HashMap<String, FieldConst>,
+    placeholder_ctx: Option<&LoweringContext>,
 ) -> Option<String> {
     match expr {
         Expr::Index { object, index, .. } => {
-            let idx = const_eval_u64(index).or_else(|| {
-                // Evaluate using BigVal to detect negative values
-                let vars = super::super::utils::fc_map_to_bigval(known_constants);
-                let empty_fns = HashMap::new();
-                let empty_arrays: HashMap<String, crate::lowering::utils::EvalValue> =
-                    HashMap::new();
-                let result =
-                    super::super::utils::eval_expr(index, &vars, &empty_arrays, &empty_fns, 0)?;
-                if result.is_negative() {
-                    None
-                } else {
-                    result.to_u64()
-                }
-            })?;
+            let idx_segment = placeholder_ctx
+                .and_then(|c| c.placeholder_index_segment(index))
+                .or_else(|| {
+                    let idx = const_eval_u64(index).or_else(|| {
+                        // Evaluate using BigVal to detect negative values
+                        let vars = super::super::utils::fc_map_to_bigval(known_constants);
+                        let empty_fns = HashMap::new();
+                        let empty_arrays: HashMap<String, crate::lowering::utils::EvalValue> =
+                            HashMap::new();
+                        let result = super::super::utils::eval_expr(
+                            index,
+                            &vars,
+                            &empty_arrays,
+                            &empty_fns,
+                            0,
+                        )?;
+                        if result.is_negative() {
+                            None
+                        } else {
+                            result.to_u64()
+                        }
+                    })?;
+                    Some(idx.to_string())
+                })?;
             if let Some(arr_name) = extract_ident_name(object) {
-                Some(format!("{arr_name}_{idx}"))
+                Some(format!("{arr_name}_{idx_segment}"))
             } else {
-                let inner = resolve_component_array_expr_with_constants(object, known_constants)?;
-                Some(format!("{inner}_{idx}"))
+                let inner = resolve_component_array_expr_with_constants(
+                    object,
+                    known_constants,
+                    placeholder_ctx,
+                )?;
+                Some(format!("{inner}_{idx_segment}"))
             }
         }
         _ => None,

@@ -168,7 +168,10 @@ fn walk_expr(
         }
 
         // Leaf nodes — no captures to track
-        CircuitExpr::Const(_) | CircuitExpr::Input(_) | CircuitExpr::Var(_) => {}
+        CircuitExpr::Const(_)
+        | CircuitExpr::Input(_)
+        | CircuitExpr::Var(_)
+        | CircuitExpr::LoopVar(_) => {}
 
         // Recursive cases — constraint context
         CircuitExpr::BinOp { lhs, rhs, .. } => {

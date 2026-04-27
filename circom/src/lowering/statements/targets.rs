@@ -17,6 +17,7 @@ use super::super::expressions::lower_expr;
 use super::super::utils::{const_eval_u64, extract_ident_name};
 
 /// Describes the target of a signal assignment.
+#[cfg_attr(test, derive(Debug))]
 pub(super) enum AssignTarget {
     /// Simple identifier: `x`
     Scalar(String),
@@ -118,19 +119,29 @@ pub(super) fn extract_assign_target_ctx(
 }
 
 /// Resolve component array name using ctx+env (avoids merged HashMap).
-fn resolve_component_array_name_ctx(
+pub(super) fn resolve_component_array_name_ctx(
     expr: &Expr,
     ctx: &LoweringContext,
     env: &LoweringEnv,
 ) -> Option<String> {
     match expr {
         Expr::Index { object, index, .. } => {
-            let idx = resolve_const_index_ctx(index, ctx, env)?;
+            // R1″ Phase 6 / Option D: when the index references the
+            // active memoization placeholder (e.g. `comp[i]` while
+            // capturing iter 0 of the loop over `i`), embed the
+            // placeholder substring instead of the iter-0 numeric
+            // value so `substitute_loop_var` can rewrite it per
+            // iteration during replay. Falls back to the numeric
+            // resolution otherwise — non-memoization callers hit the
+            // `None` branch and behave exactly as before.
+            let idx_segment = ctx
+                .placeholder_index_segment(index)
+                .or_else(|| resolve_const_index_ctx(index, ctx, env).map(|v| v.to_string()))?;
             if let Some(arr_name) = extract_ident_name(object) {
-                Some(format!("{arr_name}_{idx}"))
+                Some(format!("{arr_name}_{idx_segment}"))
             } else {
                 let inner = resolve_component_array_name_ctx(object, ctx, env)?;
-                Some(format!("{inner}_{idx}"))
+                Some(format!("{inner}_{idx_segment}"))
             }
         }
         _ => None,
@@ -138,6 +149,13 @@ fn resolve_component_array_name_ctx(
 }
 
 /// Resolve constant index using ctx+env (avoids creating merged HashMap).
+///
+/// Mirrors [`resolve_const_index`]'s capability set so the two variants
+/// stay interchangeable from the caller's perspective. Earlier this
+/// function only handled `Add` / `Sub` and relied on the BigVal
+/// fallback for everything else; subbing `extract_assign_target_ctx`
+/// for `extract_assign_target_with_constants` exposed the gap on
+/// circomlib's Poseidon (`ark[nRoundsF\2]` = IntDiv on a capture).
 fn resolve_const_index_ctx(expr: &Expr, ctx: &LoweringContext, env: &LoweringEnv) -> Option<u64> {
     if let Some(v) = const_eval_u64(expr) {
         return Some(v);
@@ -151,6 +169,14 @@ fn resolve_const_index_ctx(expr: &Expr, ctx: &LoweringContext, env: &LoweringEnv
                 return match op {
                     crate::ast::BinOp::Add => lhs_val.checked_add(rhs_val),
                     crate::ast::BinOp::Sub => lhs_val.checked_sub(rhs_val),
+                    crate::ast::BinOp::Mul => lhs_val.checked_mul(rhs_val),
+                    crate::ast::BinOp::IntDiv => {
+                        if rhs_val != 0 {
+                            Some(lhs_val / rhs_val)
+                        } else {
+                            None
+                        }
+                    }
                     _ => None,
                 };
             }
@@ -341,8 +367,13 @@ pub(super) fn try_resolve_component_array_target(
                 indices.reverse();
                 let mut comp_name = name.clone();
                 for idx_expr in &indices {
-                    let idx = resolve_const_index(idx_expr, &all_constants)?;
-                    comp_name = format!("{comp_name}_{idx}");
+                    // R1″ Phase 6 / Option D: per-index placeholder
+                    // check. Multi-dim arrays may mix placeholder and
+                    // non-placeholder slots (e.g. `mux.c[0][i]`).
+                    let idx_segment = ctx.placeholder_index_segment(idx_expr).or_else(|| {
+                        resolve_const_index(idx_expr, &all_constants).map(|v| v.to_string())
+                    })?;
+                    comp_name = format!("{comp_name}_{idx_segment}");
                 }
                 return Some(comp_name);
             }
@@ -425,4 +456,78 @@ pub(super) fn linearize_multi_index(
     // SAFETY: `indices` is non-empty (caller guarantees multi-indexed access),
     // so at least one iteration ran and `result` is Some.
     Ok(result.expect("linearize_multi_index called with empty indices"))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::super::super::env::LoweringEnv;
+    use super::super::super::test_helpers::{make_ctx, parse_expr};
+    use super::*;
+
+    #[test]
+    fn assign_target_ctx_uses_placeholder_for_component_array() {
+        // R1″ Phase 6 / Option D: `comp[i].sig <== expr` with the
+        // memoization placeholder active should produce a target
+        // whose component segment is the placeholder substring, not
+        // the iter-0 numeric value. After `substitute_loop_var` runs
+        // per replay iteration the substring is rewritten to the
+        // concrete iter index.
+        let target = parse_expr("comp[i].sig");
+        let mut env = LoweringEnv::new();
+        env.component_arrays.insert("comp".to_string());
+        // Seed `i` in known_constants too — the placeholder check
+        // must take precedence so the placeholder regime doesn't
+        // depend on whether the unroll path also cleared the entry.
+        env.known_constants
+            .insert("i".to_string(), FieldConst::from_u64(0));
+
+        let mut ctx = make_ctx();
+        ctx.placeholder_loop_var = Some(("i".to_string(), 7));
+
+        match extract_assign_target_ctx(&target, &ctx, &env) {
+            Some(AssignTarget::Scalar(s)) => assert_eq!(s, "comp_$LV7$.sig"),
+            other => panic!("expected Scalar(\"comp_$LV7$.sig\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn assign_target_ctx_no_placeholder_uses_numeric() {
+        // Sanity: with no placeholder set, the legacy numeric
+        // resolution path runs, producing the iter-0 name from
+        // `known_constants`. Proves the new branch is gated on
+        // `placeholder_loop_var` and doesn't leak into vanilla
+        // lowering.
+        let target = parse_expr("comp[i].sig");
+        let mut env = LoweringEnv::new();
+        env.component_arrays.insert("comp".to_string());
+        env.known_constants
+            .insert("i".to_string(), FieldConst::from_u64(3));
+
+        let ctx = make_ctx();
+
+        match extract_assign_target_ctx(&target, &ctx, &env) {
+            Some(AssignTarget::Scalar(s)) => assert_eq!(s, "comp_3.sig"),
+            other => panic!("expected Scalar(\"comp_3.sig\"), got {other:?}"),
+        }
+    }
+
+    #[test]
+    fn try_resolve_component_array_target_mixes_placeholder_and_literal() {
+        // 2D component array `mux[0][i]`: the outer index is a literal
+        // (must stay numeric), the inner is the placeholder loop var
+        // (must become `$LV{t}$`). Proves the per-index check inside
+        // `try_resolve_component_array_target` doesn't clobber
+        // non-placeholder slots.
+        let target = parse_expr("mux[0][i]");
+        let mut env = LoweringEnv::new();
+        env.component_arrays.insert("mux".to_string());
+        env.known_constants
+            .insert("i".to_string(), FieldConst::from_u64(0));
+
+        let mut ctx = make_ctx();
+        ctx.placeholder_loop_var = Some(("i".to_string(), 7));
+
+        let resolved = try_resolve_component_array_target(&target, &env, &ctx);
+        assert_eq!(resolved.as_deref(), Some("mux_0_$LV7$"));
+    }
 }

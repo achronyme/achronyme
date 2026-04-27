@@ -399,6 +399,13 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
         expr: &CircuitExpr,
     ) -> Result<FieldElement<F>, ProveIrError> {
         match expr {
+            CircuitExpr::LoopVar(token) => Err(ProveIrError::UnsupportedOperation {
+                description: format!(
+                    "internal: CircuitExpr::LoopVar({token}) reached eval_const_expr; \
+                     R1″ placeholder must be substituted before instantiation"
+                ),
+                span: None,
+            }),
             CircuitExpr::Const(fc) => {
                 fc.to_field::<F>()
                     .ok_or_else(|| ProveIrError::UnsupportedOperation {

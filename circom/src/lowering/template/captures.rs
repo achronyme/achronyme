@@ -145,6 +145,8 @@ fn collect_expr_captures<'a>(expr: &'a CircuitExpr, captures: &mut HashSet<&'a s
         CircuitExpr::Capture(name) => {
             captures.insert(name.as_str());
         }
+        // R1″ placeholder references no template capture.
+        CircuitExpr::LoopVar(_) => {}
         CircuitExpr::BinOp { lhs, rhs, .. }
         | CircuitExpr::Comparison { lhs, rhs, .. }
         | CircuitExpr::BoolOp { lhs, rhs, .. }

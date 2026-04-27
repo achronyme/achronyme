@@ -538,6 +538,10 @@ fn mangle_expr(
     match expr {
         // Leaf nodes
         CircuitExpr::Const(c) => CircuitExpr::Const(*c),
+        // R1″ placeholder is loop-local, not template-level. Pass
+        // through unchanged so the for-loop unroller can substitute
+        // it after template-inlining mangling has finished.
+        CircuitExpr::LoopVar(token) => CircuitExpr::LoopVar(*token),
         CircuitExpr::Input(name) => {
             // Input signals in inlined body → Var with mangled name
             // (they are wired from outside as Let bindings)

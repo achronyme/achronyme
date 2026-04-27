@@ -552,6 +552,7 @@ dependencies = [
  "constraints",
  "diagnostics",
  "ir",
+ "ir-core",
  "ir-forge",
  "memory",
  "proving",
