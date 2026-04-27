@@ -40,6 +40,8 @@ pub mod error;
 #[allow(dead_code)]
 pub mod expressions;
 #[allow(dead_code)]
+pub mod known_array_fold;
+#[allow(dead_code)]
 pub mod loop_var_subst;
 #[allow(dead_code)]
 pub mod signals;

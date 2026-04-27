@@ -49,26 +49,21 @@ pub(super) fn lower_multi_index(
                 return Ok(CircuitExpr::Const(fc));
             }
         }
-    } else if env.known_array_values.contains_key(base_name) && !env.arrays.contains_key(base_name)
-    {
-        // Phantom-ArrayIndex guard: the symbolic linearisation below would
-        // emit `ArrayIndex { array: base_name, index: <symbolic> }` against
-        // a name that has no signal-array binding, dangling at instantiate.
-        // The `is_memoizable` classifier's `KnownArrayRefs` strategy gate
-        // is supposed to reject such bodies upstream — this is defence in
-        // depth in case that gate ever loosens.
-        return Err(LoweringError::with_code(
-            format!(
-                "internal: cannot symbolically index `{base_name}` against the \
-                 R1″ memoization placeholder loop variable; `{base_name}` lives \
-                 only in known_array_values (no signal binding). The \
-                 is_memoizable classifier should have rejected this body via \
-                 the KnownArrayRefs strategy gate."
-            ),
-            "E213",
-            indices[0].span(),
-        ));
     }
+    // R1″ Phase 6 / Follow-up A → Option II: the previous E213 guard
+    // here rejected `ArrayIndex { array: <kav-only name>, index:
+    // <symbolic> }` emissions because they would dangle at instantiate.
+    // Option II accepts that shape: the symbolic linearisation below
+    // emits the node, `memoize_loop` substitutes the placeholder per
+    // iteration, then `known_array_fold::fold_known_array_indices`
+    // collapses the now-foldable index. For multi-dim kav values
+    // (`EvalValue::Array(EvalValue::Array(_))`), the fold pass returns
+    // the node unchanged (its leaf converter rejects nested arrays);
+    // such residuals reach instantiate and fail loudly there. The
+    // upstream classifier (`body_has_state_carrying_var_mutation`)
+    // currently blocks Mix-shaped multi-dim bodies (Mix's `M[j][i]`),
+    // so this path is unreachable today through real code; the
+    // strides guard below still catches the n>1+missing-strides case.
 
     let strides = env.strides.get(base_name);
     let n = indices.len();
@@ -248,14 +243,19 @@ fn resolve_component_array_expr_with_constants(
 
 /// Try to resolve a 1-D known array index `arr[expr]` to a `FieldConst`.
 ///
-/// R1″ Phase 6 / Follow-up A: returns `None` when the active memoization
-/// placeholder loop variable appears in `index`. The placeholder loop var
-/// must stay symbolic (`LoopVar(token)`) until late substitution; the
-/// fall-back symbolic emission in `lower_index` handles this correctly
-/// when the base is registered in `env.arrays`. Callers that emit
-/// `CircuitExpr::ArrayIndex` against a `known_array_values`-only name
-/// after this returns `None` must add their own phantom-ArrayIndex guard
-/// (see `expressions/mod.rs::lower_index` and `lower_multi_index` above).
+/// R1″ Phase 6 / Follow-up A → Option II: returns `None` when the
+/// active memoization placeholder loop variable appears in `index`.
+/// The placeholder loop var must stay symbolic (`LoopVar(token)`) until
+/// late substitution; the symbolic-fallthrough in `lower_index` /
+/// `lower_multi_index` emits the `CircuitExpr::ArrayIndex { array:
+/// <kav-name>, index: <symbolic-with-LoopVar> }` shape, which Option
+/// II's [`crate::lowering::known_array_fold::fold_known_array_indices`]
+/// pass collapses to `Const(fc)` after each per-iter
+/// `substitute_loop_var` call in `memoize_loop`. The previous E213
+/// phantom-`ArrayIndex` guards in `lower_index` and `lower_multi_index`
+/// have been relaxed to accept this shape — the post-substitute fold
+/// is now the authoritative resolution path for kav-only ArrayIndex
+/// nodes produced under iter-0 capture.
 pub(super) fn try_resolve_known_array_index(
     object: &Expr,
     index: &Expr,
@@ -298,7 +298,13 @@ pub(super) fn eval_index_expr(
 }
 
 /// Convert an [`EvalValue`] leaf to a `FieldConst`.
-fn eval_value_to_field_const(val: &EvalValue) -> Option<FieldConst> {
+///
+/// Visible to sibling lowering modules (e.g. `known_array_fold`) so the
+/// post-substitute fold pass can resolve `EvalValue::Scalar` /
+/// `EvalValue::Expr(Number|HexNumber)` leaves uniformly with the
+/// lowering-time path. `EvalValue::Array(_)` returns `None` — multi-dim
+/// shapes are not foldable through this entry point.
+pub(in crate::lowering) fn eval_value_to_field_const(val: &EvalValue) -> Option<FieldConst> {
     match val {
         EvalValue::Scalar(v) => Some(v.to_field_const()),
         EvalValue::Expr(expr) => match expr.as_ref() {
