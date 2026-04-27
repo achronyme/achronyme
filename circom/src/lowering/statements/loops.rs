@@ -1900,4 +1900,108 @@ mod tests {
              tripped a different MVP gate."
         );
     }
+
+    /// R1″ Phase 6 / Follow-up A deferred risk — Add-slot in placeholder index.
+    ///
+    /// Body shape `c[i+1][k]` puts the loop variable inside an `Add`
+    /// expression in the outer index slot. `placeholder_appears_in`
+    /// recurses through `BinOp` so it correctly returns `true`, the
+    /// const-fold fast path is skipped, and the symbolic linearisation
+    /// emits `BinOp(Add, LoopVar(token), Const(1))` for the slot.
+    /// `substitute_loop_var` rewrites `LoopVar(token) → Const(v)` per
+    /// iter; instantiate's eval_const_expr collapses `Const(v)+Const(1)`
+    /// to `Const(v+1)` and the final ArrayIndex resolves correctly.
+    /// This test pins the classifier-side acceptance — the
+    /// substitute-then-late-fold path is exercised at lowering time
+    /// when the body actually compiles, but ensuring the gate accepts
+    /// the shape is the first step.
+    #[test]
+    fn is_memoizable_accepts_add_slot_in_placeholder_index() {
+        let stmts = extract_template_body(
+            r#"
+            template T(n) {
+                signal input c[n][8];
+                signal output out[n];
+                for (var i = 0; i < n - 1; i++) {
+                    out[i] <== c[i + 1][0] + c[i + 1][7];
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert!(
+            is_memoizable(
+                LoopLowering::IndexedAssignmentLoop,
+                &for_body,
+                "i",
+                0,
+                8,
+                &env,
+            )
+            .is_some(),
+            "is_memoizable must accept multi-dim bodies whose placeholder \
+             slot is wrapped in an arithmetic expression like `c[i+1][k]`. \
+             Substitution + late fold handles the rewrite per iter; this \
+             test ensures the classifier doesn't reject upstream."
+        );
+    }
+
+    /// R1″ Phase 6 / Follow-up A deferred risk — compile-time outer slot
+    /// with placeholder in inner slot.
+    ///
+    /// Body shape `c[k][i]` for compile-time `k` (template param)
+    /// resolved at lowering via `param_values` / `known_constants`. With
+    /// `any_slot_has_placeholder = true` (slot 1 is the placeholder),
+    /// the const-fold fast path is skipped. Symbolic linearisation
+    /// lowers slot 0 to `Const(k_value)` and slot 1 to `LoopVar(token)`.
+    /// Stride 0 = inner-dim size; the result is
+    /// `Const(k*inner_size) + LoopVar(token)` which the
+    /// substitute-then-late-fold path collapses to
+    /// `Const(k*inner_size + v)` per iter. The test substitutes `k`
+    /// with a literal (`3`) since classifier-level gates don't see
+    /// template params.
+    #[test]
+    fn is_memoizable_accepts_compile_time_outer_with_placeholder_inner() {
+        let stmts = extract_template_body(
+            r#"
+            template T(n) {
+                signal input c[8][n];
+                signal output out[n];
+                for (var i = 0; i < n; i++) {
+                    out[i] <== c[3][i];
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert!(
+            is_memoizable(
+                LoopLowering::IndexedAssignmentLoop,
+                &for_body,
+                "i",
+                0,
+                8,
+                &env,
+            )
+            .is_some(),
+            "is_memoizable must accept multi-dim bodies where the \
+             placeholder is in an inner slot (`c[k][i]` shape). \
+             Symbolic linearisation lowers k to Const + i to LoopVar; \
+             substitution per iter resolves the index correctly."
+        );
+    }
 }
