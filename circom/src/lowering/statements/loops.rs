@@ -132,7 +132,7 @@ pub(super) fn lower_for_loop<'a>(
     // iter. Gated on `R1PP_ENABLED=1` so the default behaviour stays
     // byte-for-byte legacy until the validation pass in D4 flips it.
     if r1pp_enabled() {
-        if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end, env) {
+        if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end) {
             return memoize_loop(
                 &var_name, start, end, body, span, env, nodes, ctx, pending, plan,
             );
@@ -281,7 +281,6 @@ fn is_memoizable(
     loop_var: &str,
     start: u64,
     end: u64,
-    env: &LoweringEnv,
 ) -> Option<MemoPlan> {
     // MVP: only memoize the simplest strategy. `KnownArrayRefs` reads
     // compile-time arrays (Poseidon's `C[i+r]`, Mix's `M[j][i]`) whose
@@ -351,101 +350,23 @@ fn is_memoizable(
     if body_has_dot_access(body) {
         return None;
     }
-    if body_reads_capture_array(body, env) {
-        return None;
-    }
+    // R1″ Phase 6 / Follow-up B: the previous `body_reads_capture_array`
+    // gate was empirically vestigial — instrumentation across the full
+    // e2e suite (EdDSAPoseidon, MiMCSponge, Pedersen, SHA-256, Poseidon)
+    // confirmed it fires 5 times total, never returns `true`. Reason:
+    // array template params land in `env.known_array_values`
+    // (`components.rs:212`), NOT `env.captures` (which only carries
+    // scalars per `components.rs:204-208`); the predicate's
+    // `env.captures.contains(name)` check therefore never trips on a
+    // real array binding. The gate's original use case
+    // (`verifier.hash.pEx.ark_0.C is not an array` at instantiate) was
+    // closed structurally by Edit 2 of Follow-up A's E213
+    // phantom-`ArrayIndex` guard, which now rejects such cases at
+    // lowering time. Limitation noted: `EnvFootprint` does not mirror
+    // `env.captures` mutations — see `env_footprint.rs:47-65`. This
+    // matters only if a future widening admits bodies that mutate
+    // captures across iters; until then it's a documented blind spot.
     Some(MemoPlan { token: 0 })
-}
-
-/// `true` iff the body indexes into a captured array parameter
-/// (e.g. `C[i + r]` where `C` is a `CaptureArrayDef` in the enclosing
-/// template's captures). The capture-array binding flows through
-/// component inlining via name substring rename (`C` →
-/// `verifier.hash.pEx.ark_0.C`); when memoization clones iter-0 nodes
-/// referencing the original capture name, the post-inline rename
-/// either fails or leaves the array binding in a state instantiate
-/// can't resolve as `InstEnvValue::Array`. EdDSAPoseidon → Poseidon
-/// → PoseidonEx → Ark trips this, producing
-/// `verifier.hash.pEx.ark_0.C is not an array` at instantiate.
-/// Until the EnvFootprint mirroring covers `CaptureArrayDef` rebinding
-/// across substitution, the safe call is to skip memoization for
-/// these bodies.
-fn body_reads_capture_array(stmts: &[Stmt], env: &LoweringEnv) -> bool {
-    stmts.iter().any(|s| stmt_reads_capture_array(s, env))
-}
-
-fn stmt_reads_capture_array(stmt: &Stmt, env: &LoweringEnv) -> bool {
-    match stmt {
-        Stmt::Substitution { value, .. } => expr_reads_capture_array(value, env),
-        Stmt::CompoundAssign { value, .. } => expr_reads_capture_array(value, env),
-        Stmt::ConstraintEq { lhs, rhs, .. } => {
-            expr_reads_capture_array(lhs, env) || expr_reads_capture_array(rhs, env)
-        }
-        Stmt::VarDecl { init, .. } => init
-            .as_ref()
-            .is_some_and(|v| expr_reads_capture_array(v, env)),
-        Stmt::IfElse {
-            condition,
-            then_body,
-            else_body,
-            ..
-        } => {
-            expr_reads_capture_array(condition, env)
-                || then_body
-                    .stmts
-                    .iter()
-                    .any(|s| stmt_reads_capture_array(s, env))
-                || match else_body {
-                    Some(ElseBranch::Block(b)) => {
-                        b.stmts.iter().any(|s| stmt_reads_capture_array(s, env))
-                    }
-                    Some(ElseBranch::IfElse(s)) => stmt_reads_capture_array(s, env),
-                    None => false,
-                }
-        }
-        Stmt::Block(b) => b.stmts.iter().any(|s| stmt_reads_capture_array(s, env)),
-        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
-            body.stmts.iter().any(|s| stmt_reads_capture_array(s, env))
-        }
-        _ => false,
-    }
-}
-
-fn expr_reads_capture_array(expr: &Expr, env: &LoweringEnv) -> bool {
-    match expr {
-        Expr::Index { object, index, .. } => {
-            // `cap[idx]` shape — the object resolves to a capture name.
-            if let Expr::Ident { name, .. } = object.as_ref() {
-                if env.captures.contains(name) {
-                    return true;
-                }
-            }
-            expr_reads_capture_array(object, env) || expr_reads_capture_array(index, env)
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            expr_reads_capture_array(lhs, env) || expr_reads_capture_array(rhs, env)
-        }
-        Expr::UnaryOp { operand, .. }
-        | Expr::PrefixOp { operand, .. }
-        | Expr::PostfixOp { operand, .. }
-        | Expr::ParallelOp { operand, .. } => expr_reads_capture_array(operand, env),
-        Expr::Ternary {
-            condition,
-            if_true,
-            if_false,
-            ..
-        } => {
-            expr_reads_capture_array(condition, env)
-                || expr_reads_capture_array(if_true, env)
-                || expr_reads_capture_array(if_false, env)
-        }
-        Expr::Call { args, .. } => args.iter().any(|a| expr_reads_capture_array(a, env)),
-        Expr::DotAccess { object, .. } => expr_reads_capture_array(object, env),
-        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
-            elements.iter().any(|e| expr_reads_capture_array(e, env))
-        }
-        _ => false,
-    }
 }
 
 fn body_has_dot_access(stmts: &[Stmt]) -> bool {
@@ -1882,17 +1803,8 @@ mod tests {
             Some(b) => b.clone(),
             None => panic!("expected a for loop"),
         };
-        let env = LoweringEnv::new();
         assert!(
-            is_memoizable(
-                LoopLowering::IndexedAssignmentLoop,
-                &for_body,
-                "i",
-                0,
-                8,
-                &env,
-            )
-            .is_some(),
+            is_memoizable(LoopLowering::IndexedAssignmentLoop, &for_body, "i", 0, 8).is_some(),
             "is_memoizable must accept multi-dim signal-array bodies \
              after R1″ Follow-up A — placeholder propagation through \
              lower_multi_index handles `c[i][k]` correctly. A None here \
@@ -1935,17 +1847,8 @@ mod tests {
             Some(b) => b.clone(),
             None => panic!("expected a for loop"),
         };
-        let env = LoweringEnv::new();
         assert!(
-            is_memoizable(
-                LoopLowering::IndexedAssignmentLoop,
-                &for_body,
-                "i",
-                0,
-                8,
-                &env,
-            )
-            .is_some(),
+            is_memoizable(LoopLowering::IndexedAssignmentLoop, &for_body, "i", 0, 8).is_some(),
             "is_memoizable must accept multi-dim bodies whose placeholder \
              slot is wrapped in an arithmetic expression like `c[i+1][k]`. \
              Substitution + late fold handles the rewrite per iter; this \
@@ -1987,17 +1890,8 @@ mod tests {
             Some(b) => b.clone(),
             None => panic!("expected a for loop"),
         };
-        let env = LoweringEnv::new();
         assert!(
-            is_memoizable(
-                LoopLowering::IndexedAssignmentLoop,
-                &for_body,
-                "i",
-                0,
-                8,
-                &env,
-            )
-            .is_some(),
+            is_memoizable(LoopLowering::IndexedAssignmentLoop, &for_body, "i", 0, 8).is_some(),
             "is_memoizable must accept multi-dim bodies where the \
              placeholder is in an inner slot (`c[k][i]` shape). \
              Symbolic linearisation lowers k to Const + i to LoopVar; \
