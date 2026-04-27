@@ -644,7 +644,7 @@ fn expr_has_multi_dim_index(expr: &Expr) -> bool {
 /// expression would all see iter-`start`'s frozen value. Num2Bits's
 /// `e2` doubling sequence is the canonical case. Pedersen's
 /// `nBits = (i == ...) ? n - (nSegments-1)*200 : 200;` is the broader
-/// case where the value depends directly on the loop var.
+///   case where the value depends directly on the loop var.
 ///
 /// Conservative on purpose: a body with `var x = 5;` (a literal-only
 /// assign) is technically safe to memoize, but the rule rejects it
