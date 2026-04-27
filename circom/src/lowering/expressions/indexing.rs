@@ -34,37 +34,88 @@ pub(super) fn lower_multi_index(
         )));
     }
 
+    // R1″ Phase 6 / Follow-up A: hard-skip both const-resolve fast paths
+    // when the active memoization placeholder loop variable appears in any
+    // index slot. The loop var must stay symbolic (as `LoopVar(token)`)
+    // until `substitute_loop_var` rewrites it per iteration; either fast
+    // path would either fail (placeholder absent from params/known_consts)
+    // or, in a hypothetical scope leak, bake iter-0 into the IR.
+    let any_slot_has_placeholder = indices.iter().any(|idx| ctx.placeholder_appears_in(idx));
+
     // Check known compile-time arrays first (e.g. M[j][i] where M = POSEIDON_M(t))
-    if let Some(arr_val) = env.known_array_values.get(base_name) {
-        if let Some(fc) = resolve_multi_dim_array(arr_val, indices, env, ctx) {
-            return Ok(CircuitExpr::Const(fc));
+    if !any_slot_has_placeholder {
+        if let Some(arr_val) = env.known_array_values.get(base_name) {
+            if let Some(fc) = resolve_multi_dim_array(arr_val, indices, env, ctx) {
+                return Ok(CircuitExpr::Const(fc));
+            }
         }
+    } else if env.known_array_values.contains_key(base_name) && !env.arrays.contains_key(base_name)
+    {
+        // Phantom-ArrayIndex guard: the symbolic linearisation below would
+        // emit `ArrayIndex { array: base_name, index: <symbolic> }` against
+        // a name that has no signal-array binding, dangling at instantiate.
+        // The `is_memoizable` classifier's `KnownArrayRefs` strategy gate
+        // is supposed to reject such bodies upstream — this is defence in
+        // depth in case that gate ever loosens.
+        return Err(LoweringError::with_code(
+            format!(
+                "internal: cannot symbolically index `{base_name}` against the \
+                 R1″ memoization placeholder loop variable; `{base_name}` lives \
+                 only in known_array_values (no signal binding). The \
+                 is_memoizable classifier should have rejected this body via \
+                 the KnownArrayRefs strategy gate."
+            ),
+            "E213",
+            indices[0].span(),
+        ));
     }
 
     let strides = env.strides.get(base_name);
     let n = indices.len();
 
-    // Try full constant evaluation for direct resolution (using known_constants for loop vars)
-    let const_vals: Option<Vec<usize>> = indices
-        .iter()
-        .map(|idx| {
-            const_eval_u64(idx)
-                .map(|v| v as usize)
-                .or_else(|| eval_index_expr(idx, env, ctx))
-        })
-        .collect();
-    if let Some(vals) = const_vals {
-        let mut linear: usize = 0;
-        for (dim, &val) in vals.iter().enumerate() {
-            let stride = if dim < n - 1 {
-                strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
-            } else {
-                1
-            };
-            linear += val * stride;
-        }
-        if let Some(elem_name) = env.resolve_array_element(base_name, linear) {
-            return Ok(CircuitExpr::Var(elem_name));
+    // Strides guard for symbolic placeholder paths: when the placeholder is
+    // present and we have multi-dim shape, missing strides would silently
+    // default to 1 below and produce wrong constraints. The `is_memoizable`
+    // classifier should reject such bodies via the existing gates; defence
+    // in depth in case Edit 4 (or a future loosening) lets one slip through.
+    if any_slot_has_placeholder && n > 1 && strides.is_none() {
+        return Err(LoweringError::with_code(
+            format!(
+                "internal: cannot symbolically index `{base_name}` (multi-dim) \
+                 against the R1″ memoization placeholder loop variable; \
+                 `{base_name}` has no strides registered, so symbolic \
+                 linearisation would default to stride=1 and produce wrong \
+                 constraints."
+            ),
+            "E213",
+            indices[0].span(),
+        ));
+    }
+
+    // Try full constant evaluation for direct resolution (using known_constants for loop vars).
+    // Skip entirely when the placeholder is in any slot — see comment above.
+    if !any_slot_has_placeholder {
+        let const_vals: Option<Vec<usize>> = indices
+            .iter()
+            .map(|idx| {
+                const_eval_u64(idx)
+                    .map(|v| v as usize)
+                    .or_else(|| eval_index_expr(idx, env, ctx))
+            })
+            .collect();
+        if let Some(vals) = const_vals {
+            let mut linear: usize = 0;
+            for (dim, &val) in vals.iter().enumerate() {
+                let stride = if dim < n - 1 {
+                    strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+                } else {
+                    1
+                };
+                linear += val * stride;
+            }
+            if let Some(elem_name) = env.resolve_array_element(base_name, linear) {
+                return Ok(CircuitExpr::Var(elem_name));
+            }
         }
     }
 
@@ -196,6 +247,15 @@ fn resolve_component_array_expr_with_constants(
 // ---------------------------------------------------------------------------
 
 /// Try to resolve a 1-D known array index `arr[expr]` to a `FieldConst`.
+///
+/// R1″ Phase 6 / Follow-up A: returns `None` when the active memoization
+/// placeholder loop variable appears in `index`. The placeholder loop var
+/// must stay symbolic (`LoopVar(token)`) until late substitution; the
+/// fall-back symbolic emission in `lower_index` handles this correctly
+/// when the base is registered in `env.arrays`. Callers that emit
+/// `CircuitExpr::ArrayIndex` against a `known_array_values`-only name
+/// after this returns `None` must add their own phantom-ArrayIndex guard
+/// (see `expressions/mod.rs::lower_index` and `lower_multi_index` above).
 pub(super) fn try_resolve_known_array_index(
     object: &Expr,
     index: &Expr,
@@ -204,6 +264,9 @@ pub(super) fn try_resolve_known_array_index(
 ) -> Option<FieldConst> {
     let base_name = extract_ident_name(object)?;
     let arr_val = env.known_array_values.get(&base_name)?;
+    if ctx.placeholder_appears_in(index) {
+        return None;
+    }
     let idx = eval_index_expr(index, env, ctx)?;
     eval_value_to_field_const(arr_val.index(idx)?)
 }
