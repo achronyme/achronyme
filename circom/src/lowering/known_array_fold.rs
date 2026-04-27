@@ -527,4 +527,83 @@ mod tests {
         fold_known_array_indices(&mut slice, &kav);
         assert_eq!(slice, original);
     }
+
+    /// Composition contract for R1″ Option II: an Ark-shape iter-0
+    /// capture body — `Let { value: ArrayIndex { array: "C", index:
+    /// BinOp::Add(LoopVar(0), Const(r)) } }` — when run through
+    /// `substitute_loop_var(token=0, value=N)` followed by
+    /// `fold_known_array_indices(kav)`, must produce a body
+    /// structurally identical to the legacy hand-unrolled iter `N`
+    /// emission, which is `Let { value: Const(C[N+r]) }`.
+    ///
+    /// This is the load-bearing invariant Option II depends on.
+    /// Memoization captures iter-0 with the placeholder, then for each
+    /// replay iter clones the captured body and runs substitute + fold;
+    /// constraint downstream sees the same `Const` leaves a legacy
+    /// unroll would have emitted via `lower_index` Case 0
+    /// (`try_resolve_known_array_index`). If this composition diverges,
+    /// the cross-mode constraint pin
+    /// (`r1pp_followup_b_eddsaposeidon_constraint_count_byte_identical_across_modes`)
+    /// would catch the divergence at e2e level — but tripping there
+    /// after a refactor leaves you debugging through 31685 nodes;
+    /// tripping here points the diff straight at the substitute/fold
+    /// boundary.
+    #[test]
+    fn substitute_then_fold_matches_hand_unrolled_iter_n() {
+        use crate::lowering::loop_var_subst::substitute_loop_var;
+
+        // Ark coefficient table for t=4, r=0: synthetic values 100..104.
+        let kav = kav_with("C", array_1d(&[100, 101, 102, 103, 104, 105]));
+
+        // Iter-0 capture body shape: out_$LV0$ <== in_$LV0$ + C[i + 1]
+        // (r = 1 picked deliberately so the index is an Add, not a
+        // bare LoopVar — this is the Ark-with-r-offset case the
+        // advisor flagged as the dominant production shape).
+        let template = vec![CircuitNode::Let {
+            name: "out_$LV0$".to_string(),
+            value: CircuitExpr::BinOp {
+                op: CircuitBinOp::Add,
+                lhs: Box::new(CircuitExpr::Var("in_$LV0$".to_string())),
+                rhs: Box::new(CircuitExpr::ArrayIndex {
+                    array: "C".to_string(),
+                    index: Box::new(CircuitExpr::BinOp {
+                        op: CircuitBinOp::Add,
+                        lhs: Box::new(CircuitExpr::LoopVar(0)),
+                        rhs: Box::new(const_(1)),
+                    }),
+                }),
+            },
+            span: None,
+        }];
+
+        // Replay iters 0..4 via substitute + fold; collect each result.
+        let mut composed: Vec<CircuitNode> = Vec::new();
+        for n in 0..4u64 {
+            let mut iter = template.clone();
+            substitute_loop_var(&mut iter, 0, n);
+            fold_known_array_indices(&mut iter, &kav);
+            composed.extend(iter);
+        }
+
+        // Hand-unrolled emission: out_n <== in_n + Const(C[n+1]).
+        let hand_unrolled: Vec<CircuitNode> = (0..4u64)
+            .map(|n| CircuitNode::Let {
+                name: format!("out_{n}"),
+                value: CircuitExpr::BinOp {
+                    op: CircuitBinOp::Add,
+                    lhs: Box::new(CircuitExpr::Var(format!("in_{n}"))),
+                    rhs: Box::new(const_(100 + n + 1)),
+                },
+                span: None,
+            })
+            .collect();
+
+        assert_eq!(
+            composed, hand_unrolled,
+            "Option II contract: substitute_loop_var + fold_known_array_indices \
+             must produce structurally-identical IR to a hand-unrolled body. \
+             Divergence here breaks the byte-identical-constraints invariant \
+             that EdDSAPoseidon's cross-mode pin enforces at e2e level."
+        );
+    }
 }
