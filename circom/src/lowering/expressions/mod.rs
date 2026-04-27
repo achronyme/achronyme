@@ -260,7 +260,7 @@ pub fn lower_expr(
 fn lower_index(
     object: &Expr,
     index: &Expr,
-    _span: &diagnostics::Span,
+    span: &diagnostics::Span,
     env: &LoweringEnv,
     ctx: &mut LoweringContext,
 ) -> Result<CircuitExpr, LoweringError> {
@@ -305,6 +305,29 @@ fn lower_index(
                     return Ok(CircuitExpr::Const(FieldConst::zero()));
                 }
             }
+        }
+
+        // R1″ Phase 6 / Follow-up A: phantom-ArrayIndex guard. If the
+        // placeholder loop variable appears in `index` AND `array_name` is
+        // only bound in `known_array_values` (no signal-array binding),
+        // emitting `ArrayIndex` here would dangle at instantiate. The
+        // KnownArrayRefs strategy gate in is_memoizable should reject
+        // such bodies upstream — this is defence in depth.
+        if ctx.placeholder_appears_in(index)
+            && env.known_array_values.contains_key(&array_name)
+            && !env.arrays.contains_key(&array_name)
+        {
+            return Err(LoweringError::with_code(
+                format!(
+                    "internal: cannot symbolically index `{array_name}` against \
+                     the R1″ memoization placeholder loop variable; \
+                     `{array_name}` lives only in known_array_values (no signal \
+                     binding). The is_memoizable classifier should have rejected \
+                     this body via the KnownArrayRefs strategy gate."
+                ),
+                "E213",
+                span,
+            ));
         }
 
         let idx = lower_expr(index, env, ctx)?;

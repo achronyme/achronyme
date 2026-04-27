@@ -327,20 +327,18 @@ fn is_memoizable(
     //   `body_has_state_carrying_var_mutation` rule covers most
     //   call-via-var-decl shapes, but bare expression calls in signal
     //   positions still need analysis.
-    // - Multi-dim signal-array reads with the loop var in any slot:
-    //   the placeholder has to break the const-fold chain in
-    //   `lower_multi_index`. The `known_constants[loop_var]` removal
-    //   in `memoize_loop` handles the bare-`Ident` case but
-    //   compound-shape indices (e.g. `c[i][k]`) still hit
-    //   `eval_index_expr` which itself walks
-    //   `const_eval_with_params(idx, &all_constants)` over the FULL
-    //   index expression — that path doesn't know about the
-    //   placeholder. This gate ensures we don't trip MultiMux3-style
-    //   under-constraint bugs.
+    // - Multi-dim signal-array reads (`c[i][k]`): the placeholder
+    //   breaks the const-fold chain in `lower_multi_index`, with
+    //   defence-in-depth phantom-`ArrayIndex` and missing-strides
+    //   guards (E213). See R1″ Phase 6 / Follow-up A. The previous
+    //   `body_has_multi_dim_index` disqualifier (added 8bfd2fd4,
+    //   gate removed 6a4e5f36, walker deleted 71383148) is no
+    //   longer load-bearing FOR BODIES THAT PASS THE OTHER MVP GATES
+    //   (component_or_call, dot_access, capture_array, iter < 4).
+    //   Widening any of those re-exposes the question whether the
+    //   placeholder + phantom-ArrayIndex + strides guards cover the
+    //   new shape — re-validate end-to-end before loosening.
     if body_has_component_or_call(body) {
-        return None;
-    }
-    if body_has_multi_dim_index(body) {
         return None;
     }
     // Exclude any DotAccess (`comp.sig`, `arr.field`). The placeholder
@@ -554,85 +552,6 @@ fn stmt_has_component_or_call(stmt: &Stmt) -> bool {
 
 fn expr_contains_call(expr: &Expr) -> bool {
     expr_has_call(expr)
-}
-
-/// `true` iff the body has any `arr[i][j]` (chained `Expr::Index`)
-/// shape. The MVP placeholder mechanism breaks the const-fold chain
-/// for the bare `Ident(loop_var)` form in `lower_index`, but the
-/// multi-dim path in `lower_multi_index` runs `const_eval_u64` /
-/// `eval_index_expr` over each index slot independently, missing the
-/// placeholder for any non-Ident index shape. Rejecting multi-dim
-/// loops keeps MultiMux3's `c[i][k]` from emitting frozen iter-`start`
-/// names.
-fn body_has_multi_dim_index(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(stmt_has_multi_dim_index)
-}
-
-fn stmt_has_multi_dim_index(stmt: &Stmt) -> bool {
-    match stmt {
-        Stmt::Substitution { target, value, .. } => {
-            expr_has_multi_dim_index(target) || expr_has_multi_dim_index(value)
-        }
-        Stmt::CompoundAssign { target, value, .. } => {
-            expr_has_multi_dim_index(target) || expr_has_multi_dim_index(value)
-        }
-        Stmt::ConstraintEq { lhs, rhs, .. } => {
-            expr_has_multi_dim_index(lhs) || expr_has_multi_dim_index(rhs)
-        }
-        Stmt::IfElse {
-            condition,
-            then_body,
-            else_body,
-            ..
-        } => {
-            expr_has_multi_dim_index(condition)
-                || then_body.stmts.iter().any(stmt_has_multi_dim_index)
-                || match else_body {
-                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_multi_dim_index),
-                    Some(ElseBranch::IfElse(s)) => stmt_has_multi_dim_index(s),
-                    None => false,
-                }
-        }
-        Stmt::Block(b) => b.stmts.iter().any(stmt_has_multi_dim_index),
-        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
-            body.stmts.iter().any(stmt_has_multi_dim_index)
-        }
-        _ => false,
-    }
-}
-
-fn expr_has_multi_dim_index(expr: &Expr) -> bool {
-    match expr {
-        Expr::Index { object, index, .. } => {
-            // Chained Index: `arr[i][j]` shape.
-            matches!(object.as_ref(), Expr::Index { .. })
-                || expr_has_multi_dim_index(object)
-                || expr_has_multi_dim_index(index)
-        }
-        Expr::BinOp { lhs, rhs, .. } => {
-            expr_has_multi_dim_index(lhs) || expr_has_multi_dim_index(rhs)
-        }
-        Expr::UnaryOp { operand, .. }
-        | Expr::PrefixOp { operand, .. }
-        | Expr::PostfixOp { operand, .. }
-        | Expr::ParallelOp { operand, .. } => expr_has_multi_dim_index(operand),
-        Expr::Ternary {
-            condition,
-            if_true,
-            if_false,
-            ..
-        } => {
-            expr_has_multi_dim_index(condition)
-                || expr_has_multi_dim_index(if_true)
-                || expr_has_multi_dim_index(if_false)
-        }
-        Expr::Call { args, .. } => args.iter().any(expr_has_multi_dim_index),
-        Expr::DotAccess { object, .. } => expr_has_multi_dim_index(object),
-        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
-            elements.iter().any(expr_has_multi_dim_index)
-        }
-        _ => false,
-    }
 }
 
 /// `true` iff the body contains a compile-time `var` mutation —
@@ -1929,6 +1848,56 @@ mod tests {
         assert_eq!(
             classify_loop_body(&for_body, &env, "k"),
             Some(LoopLowering::IndexedAssignmentLoop),
+        );
+    }
+
+    /// R1″ Phase 6 / Follow-up A — Edit 5.
+    ///
+    /// Body has a multi-dim signal-array read (`c[i][0]`, `c[i][7]`)
+    /// with the loop var in the outer slot. Pre-Edit 4 the
+    /// `body_has_multi_dim_index` disqualifier rejected this. With
+    /// Edit 4 dropped and Edits 1+2's placeholder-aware
+    /// `lower_multi_index` in place, `is_memoizable` must accept it.
+    /// A future regression that re-introduces the multi-dim gate (or
+    /// loosens any of the placeholder mechanism upstream) trips this
+    /// test immediately.
+    #[test]
+    fn is_memoizable_accepts_multi_dim_signal_array_body() {
+        let stmts = extract_template_body(
+            r#"
+            template T(n) {
+                signal input c[n][8];
+                signal input s;
+                signal output out[n];
+                for (var i = 0; i < n; i++) {
+                    out[i] <== c[i][0] + c[i][7] * s;
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        let env = LoweringEnv::new();
+        assert!(
+            is_memoizable(
+                LoopLowering::IndexedAssignmentLoop,
+                &for_body,
+                "i",
+                0,
+                8,
+                &env,
+            )
+            .is_some(),
+            "is_memoizable must accept multi-dim signal-array bodies \
+             after R1″ Follow-up A — placeholder propagation through \
+             lower_multi_index handles `c[i][k]` correctly. A None here \
+             means a regression re-introduced the multi-dim gate or \
+             tripped a different MVP gate."
         );
     }
 }
