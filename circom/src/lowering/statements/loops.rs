@@ -14,8 +14,10 @@ use crate::ast::{self, AssignOp, BinOp, CompoundOp, ElseBranch, Expr, PostfixOp,
 use super::super::compile_time::CompileTimeEnv;
 use super::super::context::LoweringContext;
 use super::super::env::{Frontend, LoweringEnv};
+use super::super::env_footprint::EnvFootprint;
 use super::super::error::LoweringError;
 use super::super::expressions::lower_expr;
+use super::super::loop_var_subst::substitute_loop_var;
 use super::super::utils::{const_eval_u64, BigVal};
 use super::arrays::{body_has_component_array_ops, body_references_known_arrays};
 use super::targets::extract_target_name;
@@ -119,6 +121,24 @@ pub(super) fn lower_for_loop<'a>(
     let is_mixed = strategy == LoopLowering::MixedSignalVar;
     let end = resolve_bound_to_u64(&bound, env, ctx, span)?;
 
+    // R1″ Phase 6 / Option D: opt-in memoized unroll. Capture iter
+    // `start` with the loop variable held as a `LoopVar(token)`
+    // placeholder; replay each remaining iter by cloning the captured
+    // node slice and `substitute_loop_var`-rewriting the placeholder
+    // to the iter value. Saves the dominant `lower_stmt` cost on heavy
+    // bodies (SHA-256 round body in particular) without changing any
+    // constraint downstream — the substituted slice is structurally
+    // identical to what the legacy unroll would have emitted for that
+    // iter. Gated on `R1PP_ENABLED=1` so the default behaviour stays
+    // byte-for-byte legacy until the validation pass in D4 flips it.
+    if r1pp_enabled() {
+        if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end) {
+            return memoize_loop(
+                &var_name, start, end, body, span, env, nodes, ctx, pending, plan,
+            );
+        }
+    }
+
     // Unroll: for each iteration, set loop var as known constant, lower body.
     // For mixed signal+var loops (e.g. CompConstant), evaluate var-only
     // statements at compile time so vars like `b`, `a`, `e` become concrete
@@ -197,6 +217,683 @@ pub(super) fn lower_for_loop<'a>(
             }
         }
     }
+
+    Ok(())
+}
+
+// ─── R1″ Phase 6 / Option D — memoized unroll ───────────────────────
+
+/// `true` iff `R1PP_ENABLED=1` is set in the process environment.
+/// The memoized unroll path is opt-in until D4 validates against the
+/// full benchmark + adversarial suite; once green, the default flips.
+fn r1pp_enabled() -> bool {
+    std::env::var("R1PP_ENABLED")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
+/// A go-ahead from the memoization classifier.
+///
+/// Carries the LoopVar token to mint for the placeholder. The token is
+/// a single 32-bit slot per active capture window; nested memoized
+/// loops would need to allocate distinct tokens, but this MVP only
+/// memoizes the outermost eligible loop and bails on nested cases via
+/// the disqualifier set in [`is_memoizable`].
+#[derive(Debug, Clone, Copy)]
+struct MemoPlan {
+    token: u32,
+}
+
+/// Decide whether this for-loop is safe to memoize.
+///
+/// Returns `Some(plan)` if every iteration's emission is either:
+///   1. Independent of the loop var entirely (the substitute pass is a
+///      no-op for those nodes), or
+///   2. Differs only by names containing `loop_var_placeholder(token)`
+///      and `CircuitExpr::LoopVar(token)` leaves that
+///      `substitute_loop_var` will rewrite uniformly.
+///
+/// Disqualifiers — each rejects the loop and falls back to the legacy
+/// unroll. Tightening this set is safer than loosening it; once the
+/// classifier returns `Some`, the memoization branch trusts it
+/// completely.
+///
+///   - **MixedSignalVar strategy**: the body interleaves compile-time
+///     `var` mutations with signal expressions. Footprint replay can't
+///     re-execute the var arithmetic.
+///   - **Iteration count < 4**: memoization overhead (capture clone +
+///     N substitutes) likely exceeds the savings on a small loop.
+///   - **WitnessCall in body**: `program_bytes` is opaque Artik
+///     bytecode; `substitute_loop_var` deliberately does NOT walk it
+///     (see Phase 2 caveat). Any iter-dependent witness logic embedded
+///     in bytecode would replay iter-0 semantics for every iter.
+///   - **`var x = …` whose RHS references the loop var**: replaying
+///     iter-0's footprint would seed `known_constants` with iter-0's
+///     value of `x`, then every replay iter would read the stale value
+///     instead of recomputing.
+///   - **Nested for/while bound depending on the loop var**: the
+///     bound resolves to a `Capture(loop_var)` or expression — under
+///     memoization it would carry `LoopVar(token)`, which
+///     `eval_const_expr_u64` at instantiate time cannot fold.
+fn is_memoizable(
+    strategy: LoopLowering,
+    body: &[Stmt],
+    loop_var: &str,
+    start: u64,
+    end: u64,
+) -> Option<MemoPlan> {
+    if matches!(strategy, LoopLowering::MixedSignalVar) {
+        return None;
+    }
+    if end <= start || (end - start) < 4 {
+        return None;
+    }
+    if body_has_witness_call(body) {
+        return None;
+    }
+    if body_has_loop_var_dependent_var_decl(body, loop_var) {
+        return None;
+    }
+    if body_has_nested_loop_with_loop_var_bound(body, loop_var) {
+        return None;
+    }
+    if body_has_state_carrying_var_mutation(body) {
+        return None;
+    }
+    // MVP-conservative gates. Each one excludes a class of bodies that
+    // exposes a soundness or instantiation gap in the current
+    // capture+substitute model. Loosening any of these requires a
+    // matching extension elsewhere — see the comment per-gate.
+    //
+    // - Component decls / instantiations: D2 plumbed the placeholder
+    //   through the AssignTarget side, but multi-step component-of-
+    //   component patterns (`escalarMuls[i].windows[j].table` in
+    //   Pedersen_old) and the post-iter env-state mirroring for
+    //   complex sub-template registrations have edge cases that
+    //   produce `is not an array` errors at instantiate. Reject for
+    //   now; widen once a regression test pins the exact missing
+    //   `apply_substituted` field.
+    // - Function calls: const-eval-via-function-evaluation paths
+    //   (e.g. `var nb = nbits(maxval);` returning loop-var-dependent
+    //   shapes) are out of scope for the MVP; the
+    //   `body_has_state_carrying_var_mutation` rule covers most
+    //   call-via-var-decl shapes, but bare expression calls in signal
+    //   positions still need analysis.
+    // - Multi-dim signal-array reads with the loop var in any slot:
+    //   the placeholder has to break the const-fold chain in
+    //   `lower_multi_index`. The `known_constants[loop_var]` removal
+    //   in `memoize_loop` handles the bare-`Ident` case but
+    //   compound-shape indices (e.g. `c[i][k]`) still hit
+    //   `eval_index_expr` which itself walks
+    //   `const_eval_with_params(idx, &all_constants)` over the FULL
+    //   index expression — that path doesn't know about the
+    //   placeholder. This gate ensures we don't trip MultiMux3-style
+    //   under-constraint bugs.
+    if body_has_component_or_call(body) {
+        return None;
+    }
+    if body_has_multi_dim_index(body) {
+        return None;
+    }
+    // Exclude any DotAccess (`comp.sig`, `arr.field`). The placeholder
+    // path through component-scoped reads still has gaps for inlined
+    // sub-template's array-typed signal captures (`verifier.hash.pEx.ark_0.C`
+    // in EdDSAPoseidon hits these). Until the env-state mirroring for
+    // sub-template array CaptureArrayDef bindings is complete, the
+    // safe call is to refuse memoization for any body that reads
+    // through a `.field` chain.
+    if body_has_dot_access(body) {
+        return None;
+    }
+    Some(MemoPlan { token: 0 })
+}
+
+fn body_has_dot_access(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_dot_access)
+}
+
+fn stmt_has_dot_access(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Substitution { target, value, .. } => {
+            expr_has_dot_access(target) || expr_has_dot_access(value)
+        }
+        Stmt::CompoundAssign { target, value, .. } => {
+            expr_has_dot_access(target) || expr_has_dot_access(value)
+        }
+        Stmt::ConstraintEq { lhs, rhs, .. } => {
+            expr_has_dot_access(lhs) || expr_has_dot_access(rhs)
+        }
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_has_dot_access(condition)
+                || then_body.stmts.iter().any(stmt_has_dot_access)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_dot_access),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_dot_access(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_dot_access),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(stmt_has_dot_access)
+        }
+        _ => false,
+    }
+}
+
+fn expr_has_dot_access(expr: &Expr) -> bool {
+    match expr {
+        Expr::DotAccess { .. } => true,
+        Expr::Index { object, index, .. } => {
+            expr_has_dot_access(object) || expr_has_dot_access(index)
+        }
+        Expr::BinOp { lhs, rhs, .. } => expr_has_dot_access(lhs) || expr_has_dot_access(rhs),
+        Expr::UnaryOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_has_dot_access(operand),
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_has_dot_access(condition)
+                || expr_has_dot_access(if_true)
+                || expr_has_dot_access(if_false)
+        }
+        Expr::Call { args, .. } => args.iter().any(expr_has_dot_access),
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter().any(expr_has_dot_access)
+        }
+        _ => false,
+    }
+}
+
+fn body_has_component_or_call(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_component_or_call)
+}
+
+fn stmt_has_component_or_call(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::ComponentDecl { .. } => true,
+        Stmt::Substitution { value, target, .. } => {
+            // `comp[i] = T()` is parsed as Substitution; reject any
+            // Substitution whose value is a Call (template instantiation
+            // or function call).
+            expr_contains_call(value) || expr_contains_call(target)
+        }
+        Stmt::CompoundAssign { value, .. } => expr_contains_call(value),
+        Stmt::ConstraintEq { lhs, rhs, .. } => expr_contains_call(lhs) || expr_contains_call(rhs),
+        Stmt::VarDecl { init, .. } => init.as_ref().is_some_and(expr_contains_call),
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_contains_call(condition)
+                || then_body.stmts.iter().any(stmt_has_component_or_call)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_component_or_call),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_component_or_call(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_component_or_call),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(stmt_has_component_or_call)
+        }
+        _ => false,
+    }
+}
+
+fn expr_contains_call(expr: &Expr) -> bool {
+    expr_has_call(expr)
+}
+
+/// `true` iff the body has any `arr[i][j]` (chained `Expr::Index`)
+/// shape. The MVP placeholder mechanism breaks the const-fold chain
+/// for the bare `Ident(loop_var)` form in `lower_index`, but the
+/// multi-dim path in `lower_multi_index` runs `const_eval_u64` /
+/// `eval_index_expr` over each index slot independently, missing the
+/// placeholder for any non-Ident index shape. Rejecting multi-dim
+/// loops keeps MultiMux3's `c[i][k]` from emitting frozen iter-`start`
+/// names.
+fn body_has_multi_dim_index(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_multi_dim_index)
+}
+
+fn stmt_has_multi_dim_index(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Substitution { target, value, .. } => {
+            expr_has_multi_dim_index(target) || expr_has_multi_dim_index(value)
+        }
+        Stmt::CompoundAssign { target, value, .. } => {
+            expr_has_multi_dim_index(target) || expr_has_multi_dim_index(value)
+        }
+        Stmt::ConstraintEq { lhs, rhs, .. } => {
+            expr_has_multi_dim_index(lhs) || expr_has_multi_dim_index(rhs)
+        }
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_has_multi_dim_index(condition)
+                || then_body.stmts.iter().any(stmt_has_multi_dim_index)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_multi_dim_index),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_multi_dim_index(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_multi_dim_index),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(stmt_has_multi_dim_index)
+        }
+        _ => false,
+    }
+}
+
+fn expr_has_multi_dim_index(expr: &Expr) -> bool {
+    match expr {
+        Expr::Index { object, index, .. } => {
+            // Chained Index: `arr[i][j]` shape.
+            matches!(object.as_ref(), Expr::Index { .. })
+                || expr_has_multi_dim_index(object)
+                || expr_has_multi_dim_index(index)
+        }
+        Expr::BinOp { lhs, rhs, .. } => {
+            expr_has_multi_dim_index(lhs) || expr_has_multi_dim_index(rhs)
+        }
+        Expr::UnaryOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_has_multi_dim_index(operand),
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => {
+            expr_has_multi_dim_index(condition)
+                || expr_has_multi_dim_index(if_true)
+                || expr_has_multi_dim_index(if_false)
+        }
+        Expr::Call { args, .. } => args.iter().any(expr_has_multi_dim_index),
+        Expr::DotAccess { object, .. } => expr_has_multi_dim_index(object),
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter().any(expr_has_multi_dim_index)
+        }
+        _ => false,
+    }
+}
+
+/// `true` iff the body contains a compile-time `var` mutation —
+/// either a `CompoundAssign` (always state-carrying — `lc1 += out[i]
+/// * e2` accumulates across iters) or any plain `Substitution Assign`
+/// whose target is a bare `Ident` (var-style assign). The Phase 5
+/// footprint replay model captures the iter-`start` snapshot's value
+/// of the var; iters that depend on that var via the captured
+/// expression would all see iter-`start`'s frozen value. Num2Bits's
+/// `e2` doubling sequence is the canonical case. Pedersen's
+/// `nBits = (i == ...) ? n - (nSegments-1)*200 : 200;` is the broader
+/// case where the value depends directly on the loop var.
+///
+/// Conservative on purpose: a body with `var x = 5;` (a literal-only
+/// assign) is technically safe to memoize, but the rule rejects it
+/// uniformly to keep the classifier dead simple. Loosening would need
+/// per-stmt analysis of "does this var participate in any
+/// loop-var-dependent expression downstream", which is exactly the
+/// kind of analysis the brief warned about as expensive to make
+/// correct.
+///
+/// Signal substitutions (`out[i] <== …` / `out[i] <-- …`) are
+/// excluded because they target indexed signals (`Expr::Index`), not
+/// bare identifiers, and they're handled via `LetIndexed` /
+/// `WitnessHintIndexed` whose `index: LoopVar(token)` substitutes
+/// uniformly.
+fn body_has_state_carrying_var_mutation(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_state_carrying_var_mutation)
+}
+
+fn stmt_has_state_carrying_var_mutation(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::CompoundAssign { .. } => true,
+        Stmt::Substitution {
+            op: AssignOp::Assign,
+            target: Expr::Ident { .. },
+            ..
+        } => true,
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .stmts
+                .iter()
+                .any(stmt_has_state_carrying_var_mutation)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(stmt_has_state_carrying_var_mutation),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_state_carrying_var_mutation(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_state_carrying_var_mutation),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(stmt_has_state_carrying_var_mutation)
+        }
+        _ => false,
+    }
+}
+
+/// Walk the body looking for `Expr::Call` patterns that lift to
+/// Artik witness bytecode. We don't have a typed marker on the AST for
+/// these (the lift happens during lowering, not parsing), so the
+/// conservative rule is: any function call whose callee is a
+/// recognised function name might lift. Until the lift pass exposes
+/// a "this would emit a `WitnessCall`" predicate, refuse to memoize
+/// any loop that contains a call whose name matches the witness-lift
+/// shape (`__artik_*`), or — more conservatively — any function call
+/// that doesn't trivially const-fold. SHA-256's round body has no
+/// witness-lifted calls, so this gate is a no-op for the perf target.
+///
+/// **MVP**: we use the loosest practical check — any explicit
+/// `Call`. Tightening (recognise pure compile-time calls and exempt
+/// them) is a follow-up if it's needed to widen the memoizable set.
+fn body_has_witness_call(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_call)
+}
+
+fn stmt_has_call(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Substitution { value, .. } => expr_has_call(value),
+        Stmt::CompoundAssign { value, .. } => expr_has_call(value),
+        Stmt::ConstraintEq { lhs, rhs, .. } => expr_has_call(lhs) || expr_has_call(rhs),
+        Stmt::VarDecl { init, .. } => init.as_ref().is_some_and(expr_has_call),
+        Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            expr_has_call(condition)
+                || then_body.stmts.iter().any(stmt_has_call)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b.stmts.iter().any(stmt_has_call),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_call(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_call),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            body.stmts.iter().any(stmt_has_call)
+        }
+        _ => false,
+    }
+}
+
+fn expr_has_call(expr: &Expr) -> bool {
+    match expr {
+        Expr::Call { .. } => true,
+        Expr::BinOp { lhs, rhs, .. } => expr_has_call(lhs) || expr_has_call(rhs),
+        Expr::UnaryOp { operand, .. }
+        | Expr::PrefixOp { operand, .. }
+        | Expr::PostfixOp { operand, .. }
+        | Expr::ParallelOp { operand, .. } => expr_has_call(operand),
+        Expr::Ternary {
+            condition,
+            if_true,
+            if_false,
+            ..
+        } => expr_has_call(condition) || expr_has_call(if_true) || expr_has_call(if_false),
+        Expr::Index { object, index, .. } => expr_has_call(object) || expr_has_call(index),
+        Expr::DotAccess { object, .. } => expr_has_call(object),
+        Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
+            elements.iter().any(expr_has_call)
+        }
+        Expr::AnonComponent {
+            template_args,
+            signal_args,
+            ..
+        } => {
+            template_args.iter().any(expr_has_call)
+                || signal_args.iter().any(|a| expr_has_call(&a.value))
+        }
+        _ => false,
+    }
+}
+
+/// `true` iff the body declares a compile-time `var` whose initializer
+/// references the loop variable. Replaying such a `var` from a
+/// memoized iter-0 footprint would seed every replay iter with iter-0's
+/// computed value (Phase 5 caveat).
+fn body_has_loop_var_dependent_var_decl(stmts: &[Stmt], loop_var: &str) -> bool {
+    stmts
+        .iter()
+        .any(|s| stmt_has_loop_var_dependent_var_decl(s, loop_var))
+}
+
+fn stmt_has_loop_var_dependent_var_decl(stmt: &Stmt, loop_var: &str) -> bool {
+    match stmt {
+        Stmt::VarDecl { init: Some(v), .. } => expr_references_ident(v, loop_var),
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .stmts
+                .iter()
+                .any(|s| stmt_has_loop_var_dependent_var_decl(s, loop_var))
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(|s| stmt_has_loop_var_dependent_var_decl(s, loop_var)),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_loop_var_dependent_var_decl(s, loop_var),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b
+            .stmts
+            .iter()
+            .any(|s| stmt_has_loop_var_dependent_var_decl(s, loop_var)),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => body
+            .stmts
+            .iter()
+            .any(|s| stmt_has_loop_var_dependent_var_decl(s, loop_var)),
+        _ => false,
+    }
+}
+
+/// `true` iff the body contains a nested for/while/do-while whose
+/// bound or condition references the outer loop var.
+fn body_has_nested_loop_with_loop_var_bound(stmts: &[Stmt], loop_var: &str) -> bool {
+    stmts
+        .iter()
+        .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var))
+}
+
+fn stmt_has_nested_loop_with_loop_var_bound(stmt: &Stmt, loop_var: &str) -> bool {
+    match stmt {
+        Stmt::For {
+            condition, body, ..
+        } => {
+            // Inner-loop bound mentions the outer loop var.
+            expr_references_ident(condition, loop_var)
+                || body
+                    .stmts
+                    .iter()
+                    .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var))
+        }
+        Stmt::While { condition, body, .. }
+        | Stmt::DoWhile { condition, body, .. } => {
+            expr_references_ident(condition, loop_var)
+                || body
+                    .stmts
+                    .iter()
+                    .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var))
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .stmts
+                .iter()
+                .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var))
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var)),
+                    Some(ElseBranch::IfElse(s)) => {
+                        stmt_has_nested_loop_with_loop_var_bound(s, loop_var)
+                    }
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b
+            .stmts
+            .iter()
+            .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var)),
+        _ => false,
+    }
+}
+
+/// Capture iter `start` with the loop-var placeholder, then clone +
+/// substitute for each remaining iter `n in (start+1)..end`.
+///
+/// The captured node slice and `EnvFootprint` together describe one
+/// iteration's complete effect on the parent scope. Replay re-applies
+/// the env diff (with placeholder substituted) and clones the captured
+/// nodes (with `LoopVar(token)` → `Const(n)` and `$LV{token}$` → `n`
+/// substituted). Constraint downstream sees structurally identical IR
+/// to the legacy unroll, so `eval_const_expr` on `LetIndexed` /
+/// `ArrayIndex` resolves indices and instantiate's existing path picks
+/// up `array_slots[n]`.
+#[allow(clippy::too_many_arguments)]
+fn memoize_loop<'a>(
+    var_name: &str,
+    start: u64,
+    end: u64,
+    body: &'a ast::Block,
+    _span: &diagnostics::Span,
+    env: &mut LoweringEnv,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'a>,
+    pending: &mut HashMap<String, PendingComponent<'a>>,
+    plan: MemoPlan,
+) -> Result<(), LoweringError> {
+    let token = plan.token;
+
+    // Snapshot the env *before* the iter-0 capture so the footprint
+    // diff isolates exactly the mutations this iteration caused.
+    let pre_env = env.clone();
+
+    // Capture iter `start`. The placeholder takes precedence over
+    // `known_constants` for `Ident(loop_var)` lowering (Phase D1) AND
+    // we deliberately do NOT seed `known_constants[loop_var]` with
+    // the iter value. Two reasons:
+    //
+    //  1. `lower_multi_index`'s fast path tries `const_eval_u64` /
+    //     `const_eval_with_params` on each index expression. The
+    //     latter consults `known_constants`. If the loop var were
+    //     present, multi-dim shapes like `c[i][k]` would fold the
+    //     `i` slot to a numeric, take the
+    //     `resolve_array_element` → `Var("c_<linear>")` branch, and
+    //     bake iter-`start`'s numeric into the emitted name — which
+    //     `substitute_loop_var` cannot rewrite (no placeholder
+    //     substring), producing a wrong reference for every replay
+    //     iter. MultiMux3's `c[i][k]` is the canonical case.
+    //
+    //  2. Component-array name resolution (D2) already consults the
+    //     placeholder before falling through to the numeric path, so
+    //     the absence of `known_constants[loop_var]` doesn't lose
+    //     coverage there — the placeholder branch always wins for the
+    //     bare-Ident shape.
+    //
+    // Consequence: any helper that resolves the loop var via
+    // `known_constants` during the capture window will see `None`.
+    // The `is_memoizable` classifier is responsible for rejecting any
+    // body shape that would have needed that fallback (e.g. nested
+    // loops with bounds that depend on the outer loop var, var decls
+    // whose RHS reads the loop var via const-eval).
+    ctx.placeholder_loop_var = Some((var_name.to_string(), token));
+
+    let body_start = nodes.len();
+    for stmt in &body.stmts {
+        super::lower_stmt(stmt, env, nodes, ctx, pending)?;
+    }
+    let body_end = nodes.len();
+
+    // Capture the footprint *before* clearing the placeholder so any
+    // post-cleanup mutations don't pollute the diff.
+    let footprint = EnvFootprint::from_diff(&pre_env, env, var_name);
+
+    // Clear the placeholder before replay — nothing in the replay
+    // path needs it (replay clones already-substituted node templates,
+    // and `apply_substituted` substitutes env names directly).
+    ctx.placeholder_loop_var = None;
+
+    // Snapshot the captured iter-`start` body so the per-iter clones
+    // don't see the new nodes pushed by replays. Without the snapshot
+    // a 64-iter SHA-256 round body would clone iter `start`'s body,
+    // then iter `start+1`'s body, etc. — quadratic blowup.
+    let body_template: Vec<CircuitNode> = nodes[body_start..body_end].to_vec();
+
+    // Substitute the iter-`start` nodes IN PLACE — they're still in
+    // `nodes` carrying `LoopVar(token)` literals and `$LV{token}$`
+    // name fragments. Substituting the iter value here matches what
+    // a legacy unroll would have emitted for iter `start` byte-for-
+    // byte; without this step the placeholders would reach
+    // instantiate and trip the `LoopVar` exhaustive-match panic.
+    substitute_loop_var(&mut nodes[body_start..body_end], token, start);
+
+    // Reset env to its pre-iter state. Capture left placeholder-named
+    // entries (`Sigma0_$LV0$`) in env; replay rewrites them to the
+    // concrete iter names (`Sigma0_0`, `Sigma0_1`, …) by re-applying
+    // the footprint with substitution. Without the reset, the
+    // placeholder entries would linger AND coexist with the
+    // substituted ones, leaking placeholder strings into post-loop
+    // resolution (collect_value_component_refs, env.resolve, etc.).
+    *env = pre_env;
+
+    // Replay iters `start..end`. The iter-`start` re-application is
+    // what the legacy unroll did at iter-`start` exit; we already
+    // emitted those nodes (substituted in place above), but the env
+    // state still needs to reflect them.
+    for iter in start..end {
+        footprint.apply_substituted(env, token, iter);
+        env.known_constants
+            .insert(var_name.to_string(), FieldConst::from_u64(iter));
+
+        // iter `start`'s nodes are already in `nodes` (substituted
+        // in place). Skip the clone for that one.
+        if iter == start {
+            continue;
+        }
+
+        let mut iter_nodes = body_template.clone();
+        substitute_loop_var(&mut iter_nodes, token, iter);
+        nodes.extend(iter_nodes);
+    }
+
+    // Match legacy unroll's post-loop cleanup: the loop var stops
+    // being a known constant once the loop ends.
+    env.known_constants.remove(var_name);
 
     Ok(())
 }

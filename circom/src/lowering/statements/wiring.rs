@@ -46,14 +46,16 @@ use super::super::context::LoweringContext;
 use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::utils::{extract_ident_name, EvalValue};
-// `resolve_component_array_name` is the legacy non-placeholder-aware
-// resolver. wiring.rs intentionally uses this — its callers look the
-// resolved name up in `pending` (the HashMap of inlined components),
-// which is keyed by the real iter-0 name (e.g. `Sigma0_0`), NOT by the
-// memoization placeholder (`Sigma0_$LV7$`). The targets.rs path uses
-// the `_ctx` placeholder-aware variant for IR emission, so the two
-// regimes coexist without coupling.
-use super::targets::resolve_component_array_name;
+// R1″ Phase 6 / Option D: wiring.rs uses the ctx-aware resolver so the
+// `pending` HashMap stays consistent with the IR emission side. During
+// a memoized iter-0 capture, `try_resolve_component_array_target`
+// (assignment side) and `resolve_component_array_name_ctx` (read +
+// wiring side) both return the placeholder substring (`Sigma0_$LV7$`),
+// so the component is REGISTERED in pending under the placeholder key
+// AND looked up under the same key — no collision. After the loop,
+// all components are inlined; pending is empty; outside callers (where
+// `placeholder_loop_var = None`) get back to legacy numeric names.
+use super::targets::resolve_component_array_name_ctx;
 
 /// Wiring progress for a pending component.
 ///
@@ -334,40 +336,40 @@ pub(super) fn collect_value_component_refs(
     ctx: &LoweringContext,
 ) -> Vec<String> {
     let mut refs = Vec::new();
-    let all_constants = ctx.all_constants(env);
-    collect_refs_recursive(expr, pending, &all_constants, &mut refs);
+    collect_refs_recursive(expr, pending, env, ctx, &mut refs);
     refs
 }
 
 fn collect_refs_recursive(
     expr: &Expr,
     pending: &HashMap<String, PendingComponent>,
-    constants: &HashMap<String, FieldConst>,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
     refs: &mut Vec<String>,
 ) {
     match expr {
         Expr::DotAccess { object, .. } => {
             // comp.signal or comp[i].signal
             let comp_name = extract_ident_name(object)
-                .or_else(|| resolve_component_array_name(object, constants));
+                .or_else(|| resolve_component_array_name_ctx(object, ctx, env));
             if let Some(name) = comp_name {
                 if pending.contains_key(&name) && !refs.contains(&name) {
                     refs.push(name);
                 }
             }
             // Also recurse into the object (handles nested Index chains)
-            collect_refs_recursive(object, pending, constants, refs);
+            collect_refs_recursive(object, pending, env, ctx, refs);
         }
         Expr::Index { object, index, .. } => {
-            collect_refs_recursive(object, pending, constants, refs);
-            collect_refs_recursive(index, pending, constants, refs);
+            collect_refs_recursive(object, pending, env, ctx, refs);
+            collect_refs_recursive(index, pending, env, ctx, refs);
         }
         Expr::BinOp { lhs, rhs, .. } => {
-            collect_refs_recursive(lhs, pending, constants, refs);
-            collect_refs_recursive(rhs, pending, constants, refs);
+            collect_refs_recursive(lhs, pending, env, ctx, refs);
+            collect_refs_recursive(rhs, pending, env, ctx, refs);
         }
         Expr::UnaryOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
-            collect_refs_recursive(operand, pending, constants, refs);
+            collect_refs_recursive(operand, pending, env, ctx, refs);
         }
         Expr::Ternary {
             condition,
@@ -375,18 +377,18 @@ fn collect_refs_recursive(
             if_false,
             ..
         } => {
-            collect_refs_recursive(condition, pending, constants, refs);
-            collect_refs_recursive(if_true, pending, constants, refs);
-            collect_refs_recursive(if_false, pending, constants, refs);
+            collect_refs_recursive(condition, pending, env, ctx, refs);
+            collect_refs_recursive(if_true, pending, env, ctx, refs);
+            collect_refs_recursive(if_false, pending, env, ctx, refs);
         }
         Expr::Call { args, .. } => {
             for arg in args {
-                collect_refs_recursive(arg, pending, constants, refs);
+                collect_refs_recursive(arg, pending, env, ctx, refs);
             }
         }
         Expr::Tuple { elements, .. } => {
             for elem in elements {
-                collect_refs_recursive(elem, pending, constants, refs);
+                collect_refs_recursive(elem, pending, env, ctx, refs);
             }
         }
         // Leaf nodes: Ident, Number, HexNumber, etc. — no component references
@@ -440,9 +442,6 @@ pub(super) fn extract_component_wiring_with_env(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<(String, String)> {
-    // Build combined constants for index resolution
-    let all_constants = ctx.all_constants(env);
-
     match target {
         // comp.signal <== expr  OR  comp[i].signal <== expr  OR  comp[i][j].signal <== expr
         Expr::DotAccess { object, field, .. } => {
@@ -451,7 +450,7 @@ pub(super) fn extract_component_wiring_with_env(
                 return Some((obj, field.clone()));
             }
             // Component array (1D or multi-dim): comp[i].signal, comp[i][j].signal
-            if let Some(comp_name) = resolve_component_array_name(object, &all_constants) {
+            if let Some(comp_name) = resolve_component_array_name_ctx(object, ctx, env) {
                 return Some((comp_name, field.clone()));
             }
             None
@@ -470,7 +469,7 @@ pub(super) fn extract_component_wiring_with_env(
                         if let Some(obj) = extract_ident_name(da_obj) {
                             return Some((obj, field.clone()));
                         }
-                        if let Some(comp) = resolve_component_array_name(da_obj, &all_constants) {
+                        if let Some(comp) = resolve_component_array_name_ctx(da_obj, ctx, env) {
                             return Some((comp, field.clone()));
                         }
                         return None;
