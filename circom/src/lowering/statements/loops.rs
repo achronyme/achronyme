@@ -251,16 +251,28 @@ struct MemoPlan {
 ///      no-op for those nodes), or
 ///   2. Differs only by names containing `loop_var_placeholder(token)`
 ///      and `CircuitExpr::LoopVar(token)` leaves that
-///      `substitute_loop_var` will rewrite uniformly.
+///      `substitute_loop_var` will rewrite uniformly, AND
+///   3. Reads of compile-time arrays (`KnownArrayRefs` strategy) whose
+///      `ArrayIndex { array: <kav-name>, index: <symbolic> }` shape is
+///      collapsed to `Const(fc)` per iteration by the post-substitute
+///      [`crate::lowering::known_array_fold::fold_known_array_indices`]
+///      pass wired into `memoize_loop`.
 ///
 /// Disqualifiers — each rejects the loop and falls back to the legacy
 /// unroll. Tightening this set is safer than loosening it; once the
 /// classifier returns `Some`, the memoization branch trusts it
 /// completely.
 ///
-///   - **MixedSignalVar strategy**: the body interleaves compile-time
-///     `var` mutations with signal expressions. Footprint replay can't
-///     re-execute the var arithmetic.
+///   - **`ComponentArrayOps` strategy**: instantiating sub-components
+///     per iter requires `EnvFootprint` to mirror more state than it
+///     does today (component arrays, pending wiring). Separate widening.
+///   - **`MixedSignalVar` strategy**: the body interleaves compile-
+///     time `var` mutations with branched signal expressions.
+///     Footprint replay can't re-execute the var arithmetic. Note:
+///     Mix's outer-i body does NOT classify here empirically (its
+///     signal ops are linear, not branched) — it classifies as
+///     `KnownArrayRefs` and is rejected downstream by
+///     `body_has_state_carrying_var_mutation` instead.
 ///   - **Iteration count < 4**: memoization overhead (capture clone +
 ///     N substitutes) likely exceeds the savings on a small loop.
 ///   - **WitnessCall in body**: `program_bytes` is opaque Artik
@@ -282,7 +294,7 @@ fn is_memoizable(
     start: u64,
     end: u64,
 ) -> Option<MemoPlan> {
-    // R1″ Phase 6 / Option II (commit pending): `KnownArrayRefs` is
+    // R1″ Phase 6 / Option II (commit `2bd57034`): `KnownArrayRefs` is
     // accepted alongside `IndexedAssignmentLoop`. Memoizing a
     // KnownArrayRefs body — Poseidon's Ark (`out[i] <== in[i] +
     // C[i+r]`), MixS's second-pass loop (`out[i] <== in[i] + in[0] *
@@ -1943,6 +1955,90 @@ mod tests {
              placeholder is in an inner slot (`c[k][i]` shape). \
              Symbolic linearisation lowers k to Const + i to LoopVar; \
              substitution per iter resolves the index correctly."
+        );
+    }
+
+    /// R1″ Phase 6 / Option II.
+    ///
+    /// Pre-Option II the strategy gate at `loops.rs:292-294` rejected
+    /// any body whose `classify_loop_body` result was not exactly
+    /// `IndexedAssignmentLoop`. After Option II's commit, the gate
+    /// accepts `IndexedAssignmentLoop | KnownArrayRefs`. This test
+    /// pins the new acceptance contract using an Ark-shaped synthetic
+    /// body — `out[i] <== in[i] + C[i+r]` — that classifies as
+    /// `KnownArrayRefs` (because of the `C[i+r]` reference into a
+    /// compile-time array) and passes all downstream gates (no
+    /// component / call / dot-access / state-carrying var mutation).
+    /// A future regression that re-tightens the strategy gate or that
+    /// trips one of the downstream gates on this minimal shape would
+    /// fail this assertion.
+    ///
+    /// Note: the synthetic env has C registered in `known_array_values`
+    /// to make `body_references_known_arrays` fire, mirroring what
+    /// `inline_component_body` does at `components.rs:212` when Ark is
+    /// inlined inside its parent (PoseidonEx). The classifier consults
+    /// `env.known_array_values` so the test must populate it explicitly
+    /// — without that the body would classify as `IndexedAssignmentLoop`
+    /// (catch-all signal-ops branch) and the test would pass for the
+    /// wrong reason.
+    #[test]
+    fn is_memoizable_accepts_known_array_refs_strategy_with_const_array() {
+        use crate::lowering::utils::bigval::BigVal;
+        use crate::lowering::utils::EvalValue;
+
+        let stmts = extract_template_body(
+            r#"
+            template Ark(t, r) {
+                signal input in[t];
+                signal output out[t];
+                for (var i = 0; i < t; i++) {
+                    out[i] <== in[i] + C[i + r];
+                }
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+
+        // Verify the classifier picks KnownArrayRefs given the kav
+        // binding for C — this is the precondition for the strategy
+        // gate test below.
+        let mut env = LoweringEnv::new();
+        env.known_array_values.insert(
+            "C".to_string(),
+            EvalValue::Array(
+                (0..16)
+                    .map(|v| EvalValue::Scalar(BigVal::from_u64(v)))
+                    .collect(),
+            ),
+        );
+        let strategy = classify_loop_body(&for_body, &env, "i");
+        assert_eq!(
+            strategy,
+            Some(LoopLowering::KnownArrayRefs),
+            "Ark-shape body (`out[i] <== in[i] + C[i+r]`) must classify \
+             as KnownArrayRefs when C lives in known_array_values. A \
+             different classification breaks the precondition for the \
+             strategy-gate test below."
+        );
+
+        // The Option II contract: KnownArrayRefs strategy is now
+        // accepted by `is_memoizable` alongside `IndexedAssignmentLoop`.
+        // 6 iters > 4 (iter_count gate); no components, calls, dot-
+        // access, var mutations in the body — all downstream gates
+        // pass.
+        assert!(
+            is_memoizable(LoopLowering::KnownArrayRefs, &for_body, "i", 0, 6).is_some(),
+            "Option II contract: is_memoizable must accept the \
+             `KnownArrayRefs` strategy on bodies that pass all other \
+             MVP gates. A `None` here means the strategy gate was \
+             re-tightened or one of the downstream gates rejected \
+             this minimal Ark-shaped body."
         );
     }
 }

@@ -52,6 +52,20 @@
 //! captured iteration body — both the in-place iter-`start`
 //! substitution and each per-iter replay — immediately after
 //! `substitute_loop_var`.
+//!
+//! ## Commit history
+//!
+//! - `3b4a3707` Edits 1+2 — module + walker + unit tests.
+//! - `41538cc0` Edits 3+4+5 — E213 phantom-`ArrayIndex` guards
+//!   relaxed at single-dim (`expressions/mod.rs`) and multi-dim
+//!   (`expressions/indexing.rs`) lowering sites so the symbolic
+//!   `ArrayIndex` flows through to this fold pass instead of erroring.
+//! - `f4488f7e` Edit 6 — `substitute_then_fold_matches_hand_unrolled_iter_n`
+//!   composition contract pin in the unit-test module below.
+//! - `2bd57034` Edits 7+8 — `is_memoizable` strategy gate drop
+//!   accepts `KnownArrayRefs` alongside `IndexedAssignmentLoop`, plus
+//!   the `memoize_loop` wire-up that calls this fold pass after both
+//!   `substitute_loop_var` invocations.
 
 use std::collections::HashMap;
 
