@@ -260,7 +260,7 @@ pub fn lower_expr(
 fn lower_index(
     object: &Expr,
     index: &Expr,
-    span: &diagnostics::Span,
+    _span: &diagnostics::Span,
     env: &LoweringEnv,
     ctx: &mut LoweringContext,
 ) -> Result<CircuitExpr, LoweringError> {
@@ -307,29 +307,22 @@ fn lower_index(
             }
         }
 
-        // R1″ Phase 6 / Follow-up A: phantom-ArrayIndex guard. If the
-        // placeholder loop variable appears in `index` AND `array_name` is
-        // only bound in `known_array_values` (no signal-array binding),
-        // emitting `ArrayIndex` here would dangle at instantiate. The
-        // KnownArrayRefs strategy gate in is_memoizable should reject
-        // such bodies upstream — this is defence in depth.
-        if ctx.placeholder_appears_in(index)
-            && env.known_array_values.contains_key(&array_name)
-            && !env.arrays.contains_key(&array_name)
-        {
-            return Err(LoweringError::with_code(
-                format!(
-                    "internal: cannot symbolically index `{array_name}` against \
-                     the R1″ memoization placeholder loop variable; \
-                     `{array_name}` lives only in known_array_values (no signal \
-                     binding). The is_memoizable classifier should have rejected \
-                     this body via the KnownArrayRefs strategy gate."
-                ),
-                "E213",
-                span,
-            ));
-        }
-
+        // R1″ Phase 6 / Follow-up A → Option II: previously this site
+        // emitted E213 when `ctx.placeholder_appears_in(index)` AND the
+        // base lived only in `known_array_values` (kav). Option II
+        // accepts that shape — the IR carries `ArrayIndex { array:
+        // <kav-name>, index: <symbolic-with-LoopVar> }` through iter-0
+        // capture, then `memoize_loop` invokes
+        // `known_array_fold::fold_known_array_indices` after each
+        // `substitute_loop_var` pass to collapse the now-foldable node
+        // to `CircuitExpr::Const(fc)`. The post-substitute fold mirrors
+        // what legacy `try_resolve_known_array_index` (Case 0 above)
+        // produces for non-placeholder shapes. If the fold pass
+        // doesn't collapse the node (placeholder leaked, multi-dim kav
+        // shape unreachable today, etc.) the residual reaches
+        // instantiate and fails loudly there — preserving the original
+        // safety net's intent without rejecting the legitimate Option
+        // II Ark / MixS-loop shapes.
         let idx = lower_expr(index, env, ctx)?;
         return Ok(CircuitExpr::ArrayIndex {
             array: array_name,
