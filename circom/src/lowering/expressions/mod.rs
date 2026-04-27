@@ -470,9 +470,7 @@ mod tests {
                 assert_eq!(array, "arr");
                 assert_eq!(*index, CircuitExpr::LoopVar(7));
             }
-            other => panic!(
-                "expected ArrayIndex {{ array, index: LoopVar(7) }}, got {other:?}",
-            ),
+            other => panic!("expected ArrayIndex {{ array, index: LoopVar(7) }}, got {other:?}",),
         }
     }
 

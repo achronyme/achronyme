@@ -690,10 +690,8 @@ mod tests {
 
     use std::collections::{HashMap, HashSet};
 
-    use ir_forge::types::{
-        CaptureArrayDef, ProveIR, ProveInputDecl,
-    };
     use ir_core::{Instruction, IrType};
+    use ir_forge::types::{CaptureArrayDef, ProveIR, ProveInputDecl};
     use memory::{Bn254Fr, FieldElement};
 
     /// Build a ProveIR with the given body and a single witness scalar
@@ -812,10 +810,7 @@ mod tests {
         // compare discriminants, not the full struct.
         let kinds_a: Vec<&str> = ir_a.instructions.iter().map(inst_kind).collect();
         let kinds_b: Vec<&str> = ir_b.instructions.iter().map(inst_kind).collect();
-        assert_eq!(
-            kinds_a, kinds_b,
-            "instruction kind sequence diverged"
-        );
+        assert_eq!(kinds_a, kinds_b, "instruction kind sequence diverged");
 
         // Sanity floor: the body must have actually emitted Add +
         // AssertEq instructions. Without this the shape-equality

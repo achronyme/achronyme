@@ -67,14 +67,13 @@ pub(super) fn lower_substitution<'a>(
     match op {
         // `target <== expr` → Let + AssertEq (or LetIndexed + AssertEq for arrays)
         AssignOp::ConstraintAssign => {
-            let assign_target = extract_assign_target_ctx(target, ctx, env)
-                .ok_or_else(|| {
-                    LoweringError::new(
-                        "constraint assignment target must be an identifier, \
+            let assign_target = extract_assign_target_ctx(target, ctx, env).ok_or_else(|| {
+                LoweringError::new(
+                    "constraint assignment target must be an identifier, \
                      component signal, or array element",
-                        span,
-                    )
-                })?;
+                    span,
+                )
+            })?;
             let lowered = lower_expr(value, env, ctx)?;
             // Snapshot the lowered value for constant tracking before it moves
             let lowered_ref = lowered.clone();
@@ -131,14 +130,13 @@ pub(super) fn lower_substitution<'a>(
 
         // `target <-- expr` → WitnessHint or WitnessHintIndexed
         AssignOp::SignalAssign => {
-            let assign_target = extract_assign_target_ctx(target, ctx, env)
-                .ok_or_else(|| {
-                    LoweringError::new(
-                        "signal assignment target must be an identifier, \
+            let assign_target = extract_assign_target_ctx(target, ctx, env).ok_or_else(|| {
+                LoweringError::new(
+                    "signal assignment target must be an identifier, \
                      component signal, or array element",
-                        span,
-                    )
-                })?;
+                    span,
+                )
+            })?;
             let lowered = lower_expr(value, env, ctx)?;
             let lowered_ref = lowered.clone();
             match assign_target {

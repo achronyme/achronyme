@@ -383,7 +383,9 @@ fn stmt_reads_capture_array(stmt: &Stmt, env: &LoweringEnv) -> bool {
         Stmt::ConstraintEq { lhs, rhs, .. } => {
             expr_reads_capture_array(lhs, env) || expr_reads_capture_array(rhs, env)
         }
-        Stmt::VarDecl { init, .. } => init.as_ref().is_some_and(|v| expr_reads_capture_array(v, env)),
+        Stmt::VarDecl { init, .. } => init
+            .as_ref()
+            .is_some_and(|v| expr_reads_capture_array(v, env)),
         Stmt::IfElse {
             condition,
             then_body,
@@ -460,9 +462,7 @@ fn stmt_has_dot_access(stmt: &Stmt) -> bool {
         Stmt::CompoundAssign { target, value, .. } => {
             expr_has_dot_access(target) || expr_has_dot_access(value)
         }
-        Stmt::ConstraintEq { lhs, rhs, .. } => {
-            expr_has_dot_access(lhs) || expr_has_dot_access(rhs)
-        }
+        Stmt::ConstraintEq { lhs, rhs, .. } => expr_has_dot_access(lhs) || expr_has_dot_access(rhs),
         Stmt::IfElse {
             condition,
             then_body,
@@ -681,10 +681,9 @@ fn stmt_has_state_carrying_var_mutation(stmt: &Stmt) -> bool {
                 .iter()
                 .any(stmt_has_state_carrying_var_mutation)
                 || match else_body {
-                    Some(ElseBranch::Block(b)) => b
-                        .stmts
-                        .iter()
-                        .any(stmt_has_state_carrying_var_mutation),
+                    Some(ElseBranch::Block(b)) => {
+                        b.stmts.iter().any(stmt_has_state_carrying_var_mutation)
+                    }
                     Some(ElseBranch::IfElse(s)) => stmt_has_state_carrying_var_mutation(s),
                     None => false,
                 }
@@ -801,7 +800,9 @@ fn stmt_has_loop_var_dependent_var_decl(stmt: &Stmt, loop_var: &str) -> bool {
                         .stmts
                         .iter()
                         .any(|s| stmt_has_loop_var_dependent_var_decl(s, loop_var)),
-                    Some(ElseBranch::IfElse(s)) => stmt_has_loop_var_dependent_var_decl(s, loop_var),
+                    Some(ElseBranch::IfElse(s)) => {
+                        stmt_has_loop_var_dependent_var_decl(s, loop_var)
+                    }
                     None => false,
                 }
         }
@@ -837,8 +838,12 @@ fn stmt_has_nested_loop_with_loop_var_bound(stmt: &Stmt, loop_var: &str) -> bool
                     .iter()
                     .any(|s| stmt_has_nested_loop_with_loop_var_bound(s, loop_var))
         }
-        Stmt::While { condition, body, .. }
-        | Stmt::DoWhile { condition, body, .. } => {
+        Stmt::While {
+            condition, body, ..
+        }
+        | Stmt::DoWhile {
+            condition, body, ..
+        } => {
             expr_references_ident(condition, loop_var)
                 || body
                     .stmts

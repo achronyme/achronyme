@@ -370,10 +370,9 @@ pub(super) fn try_resolve_component_array_target(
                     // R1″ Phase 6 / Option D: per-index placeholder
                     // check. Multi-dim arrays may mix placeholder and
                     // non-placeholder slots (e.g. `mux.c[0][i]`).
-                    let idx_segment =
-                        ctx.placeholder_index_segment(idx_expr).or_else(|| {
-                            resolve_const_index(idx_expr, &all_constants).map(|v| v.to_string())
-                        })?;
+                    let idx_segment = ctx.placeholder_index_segment(idx_expr).or_else(|| {
+                        resolve_const_index(idx_expr, &all_constants).map(|v| v.to_string())
+                    })?;
                     comp_name = format!("{comp_name}_{idx_segment}");
                 }
                 return Some(comp_name);
@@ -461,8 +460,8 @@ pub(super) fn linearize_multi_index(
 
 #[cfg(test)]
 mod tests {
-    use super::super::super::test_helpers::{make_ctx, parse_expr};
     use super::super::super::env::LoweringEnv;
+    use super::super::super::test_helpers::{make_ctx, parse_expr};
     use super::*;
 
     #[test]
