@@ -24,18 +24,23 @@
 //!
 //! ## Contract
 //!
-//! - **Single-dim only.** The pass folds `ArrayIndex { array, index }`
-//!   nodes whose `index` constant-folds to a single `FieldConst` AND
-//!   whose `kav[array].index(idx)` resolves to a scalar leaf (via
-//!   [`super::expressions::indexing::eval_value_to_field_const`]).
-//!   2-D shapes (`EvalValue::Array(EvalValue::Array(_))`) return `None`
-//!   from the leaf converter and are left untouched — the multi-dim
-//!   linearisation in `lower_multi_index` doesn't reach this pass today
-//!   because the only memoizable bodies that read multi-dim known
-//!   arrays (Mix's `M[j][i]`) are blocked upstream by
-//!   `body_has_state_carrying_var_mutation`. If a future loosening
-//!   admits Mix-shaped bodies, the multi-dim handling is the next
-//!   extension here.
+//! - **1-D and uniformly-dimensioned 2-D shapes.** The pass folds
+//!   `ArrayIndex { array, index }` nodes whose `index` constant-folds to
+//!   a single `FieldConst` representing a row-major linearised index. For
+//!   1-D `EvalValue::Array([scalar0, scalar1, ...])` the linearised
+//!   index is just the array position. For 2-D `EvalValue::Array([
+//!   Array([s00, ..]), Array([s10, ..]), ...])` with uniform inner
+//!   length, the linearised index `linear` decomposes to `arr[linear /
+//!   inner_len][linear % inner_len]`, mirroring `lower_multi_index`'s
+//!   row-major linearisation via row strides. Non-uniform 2-D shapes,
+//!   3-D+ shapes, and missing-key / non-foldable indices are passthrough.
+//! - **Why 2-D matters.** R1″ Phase 6 / Follow-up D admits Mix's outer-i
+//!   body for memoization, which reads `M[j][i]` with `M` a uniform t×t
+//!   matrix in `known_array_values` (no `env.strides` registered, but
+//!   `lower_multi_index` derives strides from the kav structure on the
+//!   spot). After substitute, the residual `ArrayIndex { array: "M",
+//!   index: Const(j*t + i) }` reaches this pass; the 2-D linearisation
+//!   below collapses it to the scalar leaf.
 //! - **Pass-through on missing keys / non-foldable indices.** A node
 //!   whose `array` isn't in `kav`, or whose `index` doesn't constant-
 //!   fold, is left structurally unchanged. Defence-in-depth phantom-
@@ -69,7 +74,7 @@
 
 use std::collections::HashMap;
 
-use ir_forge::types::{ArraySize, CircuitExpr, CircuitNode, ForRange};
+use ir_forge::types::{ArraySize, CircuitExpr, CircuitNode, FieldConst, ForRange};
 
 use super::const_fold::try_fold_const;
 use super::expressions::indexing::eval_value_to_field_const;
@@ -251,10 +256,8 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
             if let Some(arr_val) = kav.get(array.as_str()) {
                 if let Some(idx_fc) = try_fold_const(index) {
                     if let Some(idx_u64) = idx_fc.to_u64() {
-                        if let Some(leaf) = arr_val.index(idx_u64 as usize) {
-                            if let Some(fc) = eval_value_to_field_const(leaf) {
-                                *expr = CircuitExpr::Const(fc);
-                            }
+                        if let Some(fc) = lookup_kav_linear(arr_val, idx_u64 as usize) {
+                            *expr = CircuitExpr::Const(fc);
                         }
                     }
                 }
@@ -327,6 +330,51 @@ fn fold_range(range: &mut ForRange, kav: &HashMap<String, EvalValue>) {
 fn fold_array_size(_size: &mut ArraySize, _kav: &HashMap<String, EvalValue>) {
     // ArraySize variants carry no expressions — Literal / Capture only.
     // Kept as an explicit no-op so future variants force review here.
+}
+
+/// Look up a row-major flattened linear index against a known-array
+/// value, supporting 1-D and uniformly-dimensioned 2-D shapes.
+///
+/// Mirrors the linearisation [`super::expressions::indexing::lower_multi_index`]
+/// produces. For a 2-D `EvalValue::Array([Array([..]), Array([..]), ...])`
+/// with uniform inner length `n`, an index expression `M[j][i]` lowers to
+/// `M[j*n + i]`; this helper inverts that linearisation by computing
+/// `(linear / inner_len, linear % inner_len)` and indexing into the inner
+/// row.
+///
+/// Returns `None` if the value is not an array, the linear index is out
+/// of bounds, the inner row at the computed offset is not a uniform
+/// matching `EvalValue::Array` of the same length as the first row
+/// (defensive check against ragged shapes), or the leaf is not
+/// scalar-convertible (`EvalValue::Array(_)` at the leaf level —
+/// 3-D+ shapes return `None` here, deferred until a real consumer).
+fn lookup_kav_linear(arr_val: &EvalValue, linear: usize) -> Option<FieldConst> {
+    let outer = match arr_val {
+        EvalValue::Array(elems) => elems,
+        _ => return None,
+    };
+    let first = outer.first()?;
+    if matches!(first, EvalValue::Array(_)) {
+        // 2-D row-major flatten.
+        let inner_len = first.len()?;
+        if inner_len == 0 {
+            return None;
+        }
+        let row = linear / inner_len;
+        let col = linear % inner_len;
+        let row_val = outer.get(row)?;
+        // Uniformity defence: rows must be Arrays of the same length.
+        // A ragged 2-D would silently mis-index, so refuse to fold.
+        match row_val {
+            EvalValue::Array(_) if row_val.len() == Some(inner_len) => {
+                eval_value_to_field_const(row_val.index(col)?)
+            }
+            _ => None,
+        }
+    } else {
+        // 1-D direct lookup.
+        eval_value_to_field_const(outer.get(linear)?)
+    }
 }
 
 #[cfg(test)]
@@ -441,20 +489,79 @@ mod tests {
         assert_eq!(expr, original);
     }
 
-    /// 2-D `EvalValue::Array(EvalValue::Array(_))` resolved via flat
-    /// linearised index returns an inner `Array`, not a scalar. The
-    /// leaf converter returns `None` and the fold pass must leave the
-    /// node untouched. Forward-compat for hypothetical multi-dim
-    /// loosening.
+    /// R1″ Phase 6 / Follow-up D: 2-D `EvalValue::Array(EvalValue::
+    /// Array(_))` with a uniform inner length resolves via row-major
+    /// flatten. `M[j*inner_len + i]` decomposes to `M[j][i]`.
+    /// Mirrors `lower_multi_index`'s linearisation for kav-derived
+    /// strides (Mix's `M[j][i]` case).
     #[test]
-    fn passes_through_multi_dim_array_value() {
-        let inner_a = array_1d(&[1, 2, 3]);
-        let inner_b = array_1d(&[4, 5, 6]);
+    fn folds_uniform_2d_via_row_major_flatten() {
+        let inner_a = array_1d(&[1, 2, 3]); // M[0]
+        let inner_b = array_1d(&[4, 5, 6]); // M[1]
+        let inner_c = array_1d(&[7, 8, 9]); // M[2]
+        let m = EvalValue::Array(vec![inner_a, inner_b, inner_c]);
+        let kav = kav_with("M", m);
+        // M[1][2] linearised with inner_len=3 → 1*3+2 = 5
+        let mut expr = CircuitExpr::ArrayIndex {
+            array: "M".to_string(),
+            index: Box::new(const_(5)),
+        };
+        fold_expr(&mut expr, &kav);
+        assert_eq!(expr, const_(6)); // M[1][2] = 6
+    }
+
+    /// R1″ Phase 6 / Follow-up D: row-major flatten covers row-0 too —
+    /// confirms the `(linear / inner_len, linear % inner_len)` decomp
+    /// handles linear=0 correctly (row=0, col=0).
+    #[test]
+    fn folds_uniform_2d_first_element() {
+        let inner_a = array_1d(&[42, 43, 44]);
+        let inner_b = array_1d(&[45, 46, 47]);
         let m = EvalValue::Array(vec![inner_a, inner_b]);
+        let kav = kav_with("M", m);
+        let mut expr = CircuitExpr::ArrayIndex {
+            array: "M".to_string(),
+            index: Box::new(const_(0)),
+        };
+        fold_expr(&mut expr, &kav);
+        assert_eq!(expr, const_(42));
+    }
+
+    /// Ragged 2-D (rows have different inner lengths) must NOT fold —
+    /// the linearisation formula assumes uniform inner length, so a
+    /// ragged shape would silently mis-index. Defence: refuse to fold,
+    /// pass through untouched.
+    #[test]
+    fn passes_through_ragged_2d() {
+        let inner_a = array_1d(&[1, 2, 3]); // length 3
+        let inner_b = array_1d(&[4, 5]); // length 2 — RAGGED
+        let m = EvalValue::Array(vec![inner_a, inner_b]);
+        let kav = kav_with("M", m);
+        // linear=3 → row=1, col=0 under inner_len=3. row_val is
+        // Array(len=2), uniformity check fails → passthrough.
+        let original = CircuitExpr::ArrayIndex {
+            array: "M".to_string(),
+            index: Box::new(const_(3)),
+        };
+        let mut expr = original.clone();
+        fold_expr(&mut expr, &kav);
+        assert_eq!(expr, original);
+    }
+
+    /// 3-D `EvalValue::Array(Array(Array(_)))` is not handled — the
+    /// `lookup_kav_linear` helper returns None on a 3-D leaf because
+    /// the 2-D row contains another Array, not a scalar. Passthrough.
+    /// Documented limitation; extend if a real consumer arrives.
+    #[test]
+    fn passes_through_3d_array_value() {
+        let leaf_a = array_1d(&[1, 2]);
+        let leaf_b = array_1d(&[3, 4]);
+        let row = EvalValue::Array(vec![leaf_a, leaf_b]);
+        let m = EvalValue::Array(vec![row]);
         let kav = kav_with("M", m);
         let original = CircuitExpr::ArrayIndex {
             array: "M".to_string(),
-            index: Box::new(const_(0)), // resolves to Array, not scalar
+            index: Box::new(const_(0)),
         };
         let mut expr = original.clone();
         fold_expr(&mut expr, &kav);

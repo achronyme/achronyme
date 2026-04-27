@@ -4,7 +4,7 @@
 //! While loops are only allowed when they touch variables (not signals/components)
 //! and are evaluated entirely at compile time.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use diagnostics::SpanRange;
 use ir_forge::types::{CircuitNode, FieldConst, ForRange};
@@ -316,10 +316,17 @@ fn is_memoizable(
     // does NOT classify as MixedSignalVar empirically — it classifies
     // as KnownArrayRefs because Mix's signal ops are linear, not
     // branched; `body_mixes_signals_and_vars` only fires on if/else-
-    // branched signal ops. Mix's outer-i is rejected downstream by
-    // `body_has_state_carrying_var_mutation` (CompoundAssign in nested
-    // for + `lc = 0` Substitution-to-Ident). Loosening that gate is
-    // the next widening — see Follow-up D in the closeout.
+    // branched signal ops.
+    //
+    // R1″ Phase 6 / Follow-up D: `body_has_state_carrying_var_mutation`
+    // was loosened to admit Mix's outer-i body (`lc = 0; for(j) lc +=
+    // M[j][i]*in[j]; out[i] <== lc;`). The discriminator is whether
+    // each name with a CompoundAssign or self-referential SubAssignIdent
+    // in the body has a corresponding **in-body reset** (a non-self-
+    // referential `Substitution { Assign, Ident(name), value }` earlier
+    // in the same body). Mix's `lc = 0` is the reset; Num2Bits's
+    // body has neither a reset for `lc1` nor a non-self-referential
+    // assign for `e2 = e2 + e2`, so it stays rejected.
     if !matches!(
         strategy,
         LoopLowering::IndexedAssignmentLoop | LoopLowering::KnownArrayRefs
@@ -509,66 +516,159 @@ fn expr_contains_call(expr: &Expr) -> bool {
     expr_has_call(expr)
 }
 
-/// `true` iff the body contains a compile-time `var` mutation —
-/// either a `CompoundAssign` (always state-carrying — `lc1 += out[i]
-/// * e2` accumulates across iters) or any plain `Substitution Assign`
-/// whose target is a bare `Ident` (var-style assign). The Phase 5
-/// footprint replay model captures the iter-`start` snapshot's value
-/// of the var; iters that depend on that var via the captured
-/// expression would all see iter-`start`'s frozen value. Num2Bits's
-/// `e2` doubling sequence is the canonical case. Pedersen's
-/// `nBits = (i == ...) ? n - (nSegments-1)*200 : 200;` is the broader
-///   case where the value depends directly on the loop var.
+/// `true` iff the body has a state-carrying var mutation that is NOT
+/// offset by an in-body reset of the same name.
 ///
-/// Conservative on purpose: a body with `var x = 5;` (a literal-only
-/// assign) is technically safe to memoize, but the rule rejects it
-/// uniformly to keep the classifier dead simple. Loosening would need
-/// per-stmt analysis of "does this var participate in any
-/// loop-var-dependent expression downstream", which is exactly the
-/// kind of analysis the brief warned about as expensive to make
-/// correct.
+/// A mutation is **state-carrying** when iter-N's value of a compile-
+/// time `var` depends on iter-(N-1)'s value, which the memoization
+/// replay model can't reconstruct (the captured iter-`start` body would
+/// emit a snapshot of iter-`start`'s var values; replay just clones +
+/// substitutes the placeholder, no per-iter recomputation). Examples:
+///   - **Num2Bits's `lc1 += out[i] * e2`** — `lc1` accumulates without
+///     a fresh reset in the body, so iter 0's final `lc1` value would
+///     leak into iter 1.
+///   - **Num2Bits's `e2 = e2 + e2`** — self-referential SubAssignIdent;
+///     iter N's value is `2^N * iter_start_e2`, depends on prior iter.
+///   - **MixS first-loop `lc += S[r*5+i]*in[i]`** — same shape as
+///     Num2Bits's lc1: CompoundAssign with no in-body reset.
 ///
-/// Signal substitutions (`out[i] <== …` / `out[i] <-- …`) are
-/// excluded because they target indexed signals (`Expr::Index`), not
-/// bare identifiers, and they're handled via `LetIndexed` /
-/// `WitnessHintIndexed` whose `index: LoopVar(token)` substitutes
-/// uniformly.
+/// A mutation is **offset (safe)** when the same name has an earlier
+/// non-self-referential `Substitution { Assign, Ident(name) }` in the
+/// **same body**. Each iter starts fresh: the IR-level SSA shadowing
+/// chain begins anew with the reset's `Let { name, value: <iter-
+/// independent> }`, and subsequent CompoundAssigns build on top of
+/// that reset rather than the prior iter's accumulator.
+///
+/// Mix's outer-i body is the canonical safe case:
+/// ```text
+///   lc = 0;                          // RESET (non-self-ref Subst on Ident)
+///   for (j) { lc += M[j][i] * in[j]; }  // CompoundAssign in nested for
+///   out[i] <== lc;                   // signal substitution (not flagged)
+/// ```
+/// `lc` has a CompoundAssign in the nested for, but `lc = 0` resets it
+/// at the start of every outer iter, so the accumulator doesn't carry
+/// across outer iters.
+///
+/// **Recursion semantics:**
+///   - `IfElse` / `Block`: each branch starts with the current
+///     `reset_names`. Resets inside a branch are scoped to that branch
+///     and do NOT propagate to siblings (conservative — a reset only in
+///     the `then` branch leaves `name` unsafe in the `else` branch).
+///   - `For` / `While` / `DoWhile`: the nested body inherits the OUTER
+///     reset_names. Resets inside the nested body apply only to that
+///     body's own iters and do NOT propagate up.
+///   - `CompoundAssign` whose target is not a bare `Ident` is rejected
+///     uniformly (conservative; no current circuit hits this).
+///
+/// **Self-referential SubAssignIdent always state-carrying.**
+/// `e2 = e2 + e2` is rejected even if `e2` is in `reset_names` from an
+/// earlier reset in the same body. This is the conservative call:
+/// loosening to "first SubAssignIdent counts as reset, subsequent
+/// self-referential ones are safe under SSA shadowing" requires per-
+/// stmt SSA tracking that's not worth the complexity for the MVP. No
+/// real circuit hits the loosened pattern. If a future widening needs
+/// it, the rule is local (this function) and the pattern is `lc = 0;
+/// lc = lc + 1; …` — easy to extend.
+///
+/// **Signal substitutions excluded.** `out[i] <== …` / `out[i] <-- …`
+/// target indexed signals (`Expr::Index`), not bare identifiers, and
+/// route through `LetIndexed` / `WitnessHintIndexed` whose
+/// `index: LoopVar(token)` substitutes uniformly.
+///
+/// Unit tests pinning the contract:
+///   - `is_memoizable_rejects_num2bits_state_carrying_body` — Num2Bits
+///     stays rejected (no in-body reset for lc1; e2 self-referential).
+///   - `is_memoizable_rejects_inner_j_compoundassign_without_reset` —
+///     Mix's inner-j body alone (CompoundAssign, no in-body reset).
+///   - `is_memoizable_rejects_mixs_first_loop_compoundassign_without_reset`
+///     — MixS's first-pass loop, structurally identical to inner-j.
+///   - `is_memoizable_accepts_mix_outer_i_with_in_body_reset` —
+///     positive pin for Mix's outer-i body (admit when reset is in
+///     the same body).
 fn body_has_state_carrying_var_mutation(stmts: &[Stmt]) -> bool {
-    stmts.iter().any(stmt_has_state_carrying_var_mutation)
+    let mut reset_names: HashSet<String> = HashSet::new();
+    body_has_state_carrying_var_mutation_with_resets(stmts, &mut reset_names)
 }
 
-fn stmt_has_state_carrying_var_mutation(stmt: &Stmt) -> bool {
+/// Recursive worker. `reset_names` is mutated in place to track names
+/// reset by non-self-referential `Substitution { Assign, Ident, … }`
+/// stmts seen so far in the current body's stmt sequence. Nested
+/// scopes (IfElse branches, Block, For/While/DoWhile bodies) clone
+/// `reset_names` so resets inside them don't propagate out.
+fn body_has_state_carrying_var_mutation_with_resets(
+    stmts: &[Stmt],
+    reset_names: &mut HashSet<String>,
+) -> bool {
+    for stmt in stmts {
+        if stmt_carries_state(stmt, reset_names) {
+            return true;
+        }
+        // Track non-self-referential SubAssignIdent as a reset for the
+        // remainder of THIS body's stmt sequence.
+        if let Stmt::Substitution {
+            op: AssignOp::Assign,
+            target: Expr::Ident { name, .. },
+            value,
+            ..
+        } = stmt
+        {
+            if !expr_references_ident(value, name) {
+                reset_names.insert(name.clone());
+            }
+        }
+    }
+    false
+}
+
+fn stmt_carries_state(stmt: &Stmt, reset_names: &HashSet<String>) -> bool {
     match stmt {
-        Stmt::CompoundAssign { .. } => true,
+        Stmt::CompoundAssign { target, .. } => match target {
+            Expr::Ident { name, .. } => !reset_names.contains(name),
+            _ => true,
+        },
         Stmt::Substitution {
             op: AssignOp::Assign,
-            target: Expr::Ident { .. },
+            target: Expr::Ident { name, .. },
+            value,
             ..
-        } => true,
+        } => expr_references_ident(value, name),
         Stmt::IfElse {
             then_body,
             else_body,
             ..
         } => {
-            then_body
-                .stmts
-                .iter()
-                .any(stmt_has_state_carrying_var_mutation)
-                || match else_body {
-                    Some(ElseBranch::Block(b)) => {
-                        b.stmts.iter().any(stmt_has_state_carrying_var_mutation)
-                    }
-                    Some(ElseBranch::IfElse(s)) => stmt_has_state_carrying_var_mutation(s),
-                    None => false,
+            let mut then_resets = reset_names.clone();
+            if body_has_state_carrying_var_mutation_with_resets(&then_body.stmts, &mut then_resets)
+            {
+                return true;
+            }
+            match else_body {
+                Some(ElseBranch::Block(b)) => {
+                    let mut else_resets = reset_names.clone();
+                    body_has_state_carrying_var_mutation_with_resets(&b.stmts, &mut else_resets)
                 }
+                Some(ElseBranch::IfElse(s)) => stmt_carries_state(s, reset_names),
+                None => false,
+            }
         }
-        Stmt::Block(b) => b.stmts.iter().any(stmt_has_state_carrying_var_mutation),
+        Stmt::Block(b) => {
+            let mut block_resets = reset_names.clone();
+            body_has_state_carrying_var_mutation_with_resets(&b.stmts, &mut block_resets)
+        }
         Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
-            body.stmts.iter().any(stmt_has_state_carrying_var_mutation)
+            let mut body_resets = reset_names.clone();
+            body_has_state_carrying_var_mutation_with_resets(&body.stmts, &mut body_resets)
         }
         _ => false,
     }
 }
+
+// `expr_references_ident` is defined later in this module (originally
+// added by `body_has_loop_var_dependent_var_decl`). It walks the AST
+// exhaustively for occurrences of an `Expr::Ident { name }`, which is
+// exactly the predicate Follow-up D needs to detect self-referential
+// `Substitution { Assign, Ident(name), value: <contains Ident(name)> }`
+// shapes (Num2Bits's `e2 = e2 + e2`).
 
 /// Walk the body looking for `Expr::Call` patterns that lift to
 /// Artik witness bytecode. We don't have a typed marker on the AST for
@@ -2039,6 +2139,228 @@ mod tests {
              MVP gates. A `None` here means the strategy gate was \
              re-tightened or one of the downstream gates rejected \
              this minimal Ark-shaped body."
+        );
+    }
+
+    /// R1″ Phase 6 / Follow-up D — soundness pin.
+    ///
+    /// Num2Bits's body has two state-carrying mutations that memoization
+    /// CANNOT correctly replay: `lc1 += out[i] * e2` (an accumulator with
+    /// no in-body reset, so iter 0's final `lc1` would leak into iter 1)
+    /// and `e2 = e2 + e2` (a self-referential SubAssignIdent that doubles
+    /// across iters — iter N's value depends on iter (N-1)'s). Either
+    /// alone is sufficient to make the body unsafe.
+    ///
+    /// `is_memoizable` MUST return `None` on this shape. The contract
+    /// holds today via the blanket `body_has_state_carrying_var_mutation`
+    /// rule. A future loosening (Follow-up D) refines that gate to admit
+    /// Mix's outer-i body (which DOES have an in-body reset of `lc`); the
+    /// refinement MUST continue to reject this Num2Bits shape — both the
+    /// CompoundAssign-without-reset and the self-referential SubAssign.
+    ///
+    /// If this test starts failing, a loosening regressed the soundness
+    /// rule. The downstream catch is the `r1pp_followup_a_*_forgery_*`
+    /// adversarial e2e (and `num2bits_forge_*`), but those run far
+    /// downstream of this pin and report less specifically.
+    #[test]
+    fn is_memoizable_rejects_num2bits_state_carrying_body() {
+        let stmts = extract_template_body(
+            r#"
+            template Num2Bits(n) {
+                signal input in;
+                signal output out[n];
+                var lc1 = 0;
+                var e2 = 1;
+                for (var i = 0; i < n; i++) {
+                    out[i] <-- (in >> i) & 1;
+                    out[i] * (out[i] - 1) === 0;
+                    lc1 += out[i] * e2;
+                    e2 = e2 + e2;
+                }
+                lc1 === in;
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        // n=8 — well above the iter_count gate (4); strategy chosen to
+        // bypass the strategy gate so the rejection is attributable to
+        // the state-carrying-var-mutation rule, not the strategy gate.
+        assert!(
+            is_memoizable(LoopLowering::IndexedAssignmentLoop, &for_body, "i", 0, 8).is_none(),
+            "is_memoizable MUST reject Num2Bits's body. `lc1 += out[i] * e2` \
+             is an accumulator without an in-body reset, AND `e2 = e2 + e2` \
+             is a self-referential SubAssignIdent. Either makes the body \
+             unsafe to memoize: iter-0's final lc1/e2 would leak into \
+             iter 1's emission, breaking soundness. If this test fails, a \
+             loosening of body_has_state_carrying_var_mutation regressed."
+        );
+    }
+
+    /// R1″ Phase 6 / Follow-up D — soundness pin.
+    ///
+    /// Mix's inner-j body in isolation (`lc += M[j][i]*in[j]`) has a
+    /// CompoundAssign on `lc` with NO in-body reset. Memoizing it alone
+    /// would leak iter-(j-1)'s value of `lc` into iter j, accumulating
+    /// the wrong sum. The outer-i body has the reset (`lc = 0` before
+    /// the inner for), so when outer-i is memoized, the inner-j body
+    /// gets unrolled normally during iter-0 capture — but the inner-j
+    /// body alone, classified independently, MUST still reject.
+    ///
+    /// This rejection ALSO prevents nested `memoize_loop` placeholder
+    /// collision: token=0 is shared, and a nested memoize would clobber
+    /// the outer's placeholder.
+    #[test]
+    fn is_memoizable_rejects_inner_j_compoundassign_without_reset() {
+        let stmts = extract_template_body(
+            r#"
+            template T(t) {
+                signal input in[t];
+                signal output out[t];
+                var lc = 0;
+                for (var j = 0; j < t; j++) {
+                    lc += in[j];
+                }
+                out[0] <== lc;
+            }
+            "#,
+        );
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        assert!(
+            is_memoizable(LoopLowering::IndexedAssignmentLoop, &for_body, "j", 0, 8).is_none(),
+            "is_memoizable MUST reject a body that has CompoundAssign on \
+             a var without an in-body reset of that var. The reset must \
+             appear within the loop's own body — a template-scope reset \
+             outside the loop does not count, because the accumulator \
+             would still carry across this loop's iters."
+        );
+    }
+
+    /// R1″ Phase 6 / Follow-up D — soundness pin.
+    ///
+    /// MixS's first loop (`for(i) lc += S[(t*2-1)*r+i]*in[i]`) is
+    /// structurally identical to inner-j: CompoundAssign without an
+    /// in-body reset. The reset (`var lc = 0`) lives at template scope,
+    /// outside this loop. MUST stay rejected.
+    /// R1″ Phase 6 / Follow-up D — admit pin.
+    ///
+    /// Mix's outer-i body has a CompoundAssign on `lc` inside a nested
+    /// for, BUT with a top-level `lc = 0` reset before that. The reset
+    /// makes each outer iter start fresh, so memoization is sound. The
+    /// loosened `body_has_state_carrying_var_mutation` rule must admit
+    /// this shape; before Follow-up D the blanket rule rejected it.
+    ///
+    /// This test would have FAILED on the pre-loosening code (with a
+    /// `None` from is_memoizable), confirming the loosening is the
+    /// load-bearing change. See plan-D-results.md for the counter-
+    /// factual trace.
+    #[test]
+    fn is_memoizable_accepts_mix_outer_i_with_in_body_reset() {
+        use crate::lowering::utils::bigval::BigVal;
+        use crate::lowering::utils::EvalValue;
+
+        let stmts = extract_template_body(
+            r#"
+            template Mix(t) {
+                signal input in[t];
+                signal output out[t];
+                var lc;
+                for (var i = 0; i < t; i++) {
+                    lc = 0;
+                    for (var j = 0; j < t; j++) {
+                        lc += M[j][i] * in[j];
+                    }
+                    out[i] <== lc;
+                }
+            }
+            "#,
+        );
+        // Pick the outer-i for loop (first For statement).
+        let outer_for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected an outer for loop"),
+        };
+
+        // For Mix to classify as KnownArrayRefs (the strategy gate
+        // requires this), `M` must be in env.known_array_values. The
+        // POSEIDON_M is t×t; for t=6 it's a 6×6 uniform matrix.
+        let mut env = LoweringEnv::new();
+        let row: Vec<EvalValue> = (0..6)
+            .map(|v| EvalValue::Scalar(BigVal::from_u64(v)))
+            .collect();
+        let m: Vec<EvalValue> = (0..6).map(|_| EvalValue::Array(row.clone())).collect();
+        env.known_array_values
+            .insert("M".to_string(), EvalValue::Array(m));
+
+        let strategy = classify_loop_body(&outer_for_body, &env, "i");
+        assert_eq!(
+            strategy,
+            Some(LoopLowering::KnownArrayRefs),
+            "Mix's outer-i body must classify as KnownArrayRefs (M is \
+             in env.known_array_values, no signals branched in if/else, \
+             no component decls). A different classification means the \
+             precondition for the admit assertion below is invalid."
+        );
+
+        assert!(
+            is_memoizable(LoopLowering::KnownArrayRefs, &outer_for_body, "i", 0, 6).is_some(),
+            "Follow-up D contract: is_memoizable MUST admit Mix's \
+             outer-i body. The CompoundAssign on `lc` inside the nested \
+             for is offset by the in-body reset `lc = 0` at the top of \
+             the body, so each outer iter starts with `lc` cleared and \
+             memoization replay is sound. A `None` here means the \
+             loosening regressed or the reset-tracking logic missed \
+             the top-level Substitution Assign on Ident lc with RHS 0."
+        );
+    }
+
+    #[test]
+    fn is_memoizable_rejects_mixs_first_loop_compoundassign_without_reset() {
+        let stmts = extract_template_body(
+            r#"
+            template MixS(t, r) {
+                signal input in[t];
+                signal output out[t];
+                var lc = 0;
+                for (var i = 0; i < t; i++) {
+                    lc += in[i];
+                }
+                out[0] <== lc;
+                for (var i = 1; i < t; i++) {
+                    out[i] <== in[i];
+                }
+            }
+            "#,
+        );
+        // Pick the FIRST For (the accumulator loop), not the second
+        // (which is the already-memoizable signal-only loop).
+        let for_body = match stmts.iter().find_map(|s| match s {
+            Stmt::For { body, .. } => Some(&body.stmts),
+            _ => None,
+        }) {
+            Some(b) => b.clone(),
+            None => panic!("expected a for loop"),
+        };
+        assert!(
+            is_memoizable(LoopLowering::IndexedAssignmentLoop, &for_body, "i", 0, 8).is_none(),
+            "is_memoizable MUST reject MixS's first-pass accumulator \
+             loop. Its single CompoundAssign on `lc` with no in-body \
+             reset means iter (i-1)'s lc value leaks into iter i, \
+             breaking the per-iter independence memoization needs."
         );
     }
 }
