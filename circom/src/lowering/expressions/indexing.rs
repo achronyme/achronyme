@@ -298,7 +298,13 @@ pub(super) fn eval_index_expr(
 }
 
 /// Convert an [`EvalValue`] leaf to a `FieldConst`.
-fn eval_value_to_field_const(val: &EvalValue) -> Option<FieldConst> {
+///
+/// Visible to sibling lowering modules (e.g. `known_array_fold`) so the
+/// post-substitute fold pass can resolve `EvalValue::Scalar` /
+/// `EvalValue::Expr(Number|HexNumber)` leaves uniformly with the
+/// lowering-time path. `EvalValue::Array(_)` returns `None` — multi-dim
+/// shapes are not foldable through this entry point.
+pub(in crate::lowering) fn eval_value_to_field_const(val: &EvalValue) -> Option<FieldConst> {
     match val {
         EvalValue::Scalar(v) => Some(v.to_field_const()),
         EvalValue::Expr(expr) => match expr.as_ref() {

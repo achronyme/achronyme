@@ -14,7 +14,7 @@
 //! - Unary `-`, `!` → `CircuitExpr::UnaryOp`
 
 mod calls;
-mod indexing;
+pub(in crate::lowering) mod indexing;
 pub(crate) mod operators;
 
 use ir_forge::types::{CircuitExpr, CircuitUnaryOp, FieldConst};
