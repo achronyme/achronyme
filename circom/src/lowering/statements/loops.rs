@@ -327,20 +327,17 @@ fn is_memoizable(
     //   `body_has_state_carrying_var_mutation` rule covers most
     //   call-via-var-decl shapes, but bare expression calls in signal
     //   positions still need analysis.
-    // - Multi-dim signal-array reads with the loop var in any slot:
-    //   the placeholder has to break the const-fold chain in
-    //   `lower_multi_index`. The `known_constants[loop_var]` removal
-    //   in `memoize_loop` handles the bare-`Ident` case but
-    //   compound-shape indices (e.g. `c[i][k]`) still hit
-    //   `eval_index_expr` which itself walks
-    //   `const_eval_with_params(idx, &all_constants)` over the FULL
-    //   index expression — that path doesn't know about the
-    //   placeholder. This gate ensures we don't trip MultiMux3-style
-    //   under-constraint bugs.
+    // - Multi-dim signal-array reads (`c[i][k]`): the placeholder
+    //   breaks the const-fold chain in `lower_multi_index`, with
+    //   defence-in-depth phantom-`ArrayIndex` and missing-strides
+    //   guards (E213). See R1″ Phase 6 / Follow-up A. The previous
+    //   `body_has_multi_dim_index` disqualifier (commit 8bfd2fd4) is
+    //   no longer load-bearing FOR BODIES THAT PASS THE OTHER MVP
+    //   GATES (component_or_call, dot_access, capture_array, iter <
+    //   4). Widening any of those re-exposes the question whether the
+    //   placeholder + phantom-ArrayIndex + strides guards cover the
+    //   new shape — re-validate end-to-end before loosening.
     if body_has_component_or_call(body) {
-        return None;
-    }
-    if body_has_multi_dim_index(body) {
         return None;
     }
     // Exclude any DotAccess (`comp.sig`, `arr.field`). The placeholder
@@ -557,17 +554,19 @@ fn expr_contains_call(expr: &Expr) -> bool {
 }
 
 /// `true` iff the body has any `arr[i][j]` (chained `Expr::Index`)
-/// shape. The MVP placeholder mechanism breaks the const-fold chain
-/// for the bare `Ident(loop_var)` form in `lower_index`, but the
-/// multi-dim path in `lower_multi_index` runs `const_eval_u64` /
-/// `eval_index_expr` over each index slot independently, missing the
-/// placeholder for any non-Ident index shape. Rejecting multi-dim
-/// loops keeps MultiMux3's `c[i][k]` from emitting frozen iter-`start`
-/// names.
+/// shape. R1″ Phase 6 / Follow-up A made `lower_multi_index`
+/// placeholder-aware (it skips the const-fold fast path when the loop
+/// var appears in any slot and falls through to symbolic linearisation
+/// emitting `LoopVar(token)`). With that fix the disqualifier is no
+/// longer needed in `is_memoizable`, but the helpers are retained
+/// `#[allow(dead_code)]` so a future regression can re-add the gate
+/// with a one-line change rather than reconstructing the walker.
+#[allow(dead_code)]
 fn body_has_multi_dim_index(stmts: &[Stmt]) -> bool {
     stmts.iter().any(stmt_has_multi_dim_index)
 }
 
+#[allow(dead_code)]
 fn stmt_has_multi_dim_index(stmt: &Stmt) -> bool {
     match stmt {
         Stmt::Substitution { target, value, .. } => {
@@ -601,6 +600,7 @@ fn stmt_has_multi_dim_index(stmt: &Stmt) -> bool {
     }
 }
 
+#[allow(dead_code)]
 fn expr_has_multi_dim_index(expr: &Expr) -> bool {
     match expr {
         Expr::Index { object, index, .. } => {
