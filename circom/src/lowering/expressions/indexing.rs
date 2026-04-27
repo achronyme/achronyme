@@ -65,22 +65,45 @@ pub(super) fn lower_multi_index(
     // so this path is unreachable today through real code; the
     // strides guard below still catches the n>1+missing-strides case.
 
-    let strides = env.strides.get(base_name);
+    let env_strides = env.strides.get(base_name);
     let n = indices.len();
+
+    // R1″ Phase 6 / Follow-up D: derive strides from a 2-D
+    // `known_array_values` entry when `env.strides` is missing.
+    // Compile-time arrays (Mix's `M`, `POSEIDON_M`, BabyJubjub coefficient
+    // tables, …) live in `env.known_array_values` and never get registered
+    // in `env.strides` (that map is signal-only — `extract_signal_strides`
+    // populates it from template signal decls). The R1″ symbolic-
+    // linearisation path below needs strides to produce the correct
+    // `j*inner_len + i` shape for `M[j][i]`; without them, the strides
+    // guard would fire (defence-in-depth below). Derive strides from the
+    // kav structure when env.strides is absent — the shape's `outer_len`
+    // and uniform `inner_len` are the ground truth.
+    let derived_strides: Option<Vec<usize>> = if env_strides.is_none() {
+        env.known_array_values
+            .get(base_name)
+            .and_then(|arr| derive_strides_from_kav(arr, n))
+    } else {
+        None
+    };
+    let strides_slice: Option<&[usize]> = env_strides
+        .map(Vec::as_slice)
+        .or(derived_strides.as_deref());
 
     // Strides guard for symbolic placeholder paths: when the placeholder is
     // present and we have multi-dim shape, missing strides would silently
     // default to 1 below and produce wrong constraints. The `is_memoizable`
     // classifier should reject such bodies via the existing gates; defence
     // in depth in case Edit 4 (or a future loosening) lets one slip through.
-    if any_slot_has_placeholder && n > 1 && strides.is_none() {
+    if any_slot_has_placeholder && n > 1 && strides_slice.is_none() {
         return Err(LoweringError::with_code(
             format!(
                 "internal: cannot symbolically index `{base_name}` (multi-dim) \
                  against the R1″ memoization placeholder loop variable; \
-                 `{base_name}` has no strides registered, so symbolic \
-                 linearisation would default to stride=1 and produce wrong \
-                 constraints."
+                 `{base_name}` has no strides registered (neither in \
+                 `env.strides` nor derivable from a uniform `EvalValue::Array` \
+                 in `env.known_array_values`), so symbolic linearisation \
+                 would default to stride=1 and produce wrong constraints."
             ),
             "E213",
             indices[0].span(),
@@ -102,7 +125,7 @@ pub(super) fn lower_multi_index(
             let mut linear: usize = 0;
             for (dim, &val) in vals.iter().enumerate() {
                 let stride = if dim < n - 1 {
-                    strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+                    strides_slice.and_then(|s| s.get(dim)).copied().unwrap_or(1)
                 } else {
                     1
                 };
@@ -119,7 +142,7 @@ pub(super) fn lower_multi_index(
     for (dim, idx) in indices.iter().enumerate() {
         let lowered = lower_expr(idx, env, ctx)?;
         let stride = if dim < n - 1 {
-            strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+            strides_slice.and_then(|s| s.get(dim)).copied().unwrap_or(1)
         } else {
             1
         };
@@ -297,6 +320,77 @@ pub(super) fn eval_index_expr(
     Some(fc.to_u64()? as usize)
 }
 
+/// Derive row-major strides for an `n_dims`-dimensional access against
+/// a uniformly-shaped `EvalValue::Array(...)` value.
+///
+/// R1″ Phase 6 / Follow-up D: compile-time arrays in
+/// `env.known_array_values` (Mix's `M`, `POSEIDON_M`, BabyJubjub
+/// coefficient tables, …) never get registered in `env.strides` because
+/// strides are populated only for SIGNAL arrays via
+/// `extract_signal_strides`. The R1″ symbolic-linearisation path needs
+/// strides to produce the correct `j*inner_len + i` shape for `M[j][i]`;
+/// this helper synthesises them from the kav structure on demand.
+///
+/// Returns `Some(strides)` of length `n_dims - 1` where `strides[i]` is
+/// the product of dimensions `i+1..n_dims` (matching
+/// `extract_signal_strides`'s row-major convention). Returns `None` if:
+///   - `n_dims < 2` (no strides needed for 1-D),
+///   - the value is not deeply enough nested for `n_dims`,
+///   - any sibling row at any level has a different length than the
+///     first (uniformity defence — a ragged shape's strides would be
+///     wrong, and rejecting closes the soundness gap that would
+///     otherwise let the strides guard be bypassed).
+///
+/// Layered with the strides guard above: this helper is the only path
+/// that can satisfy the guard for kav-only multi-dim names; if it
+/// returns `None`, the guard fires and the caller hits E213 cleanly.
+pub(in crate::lowering) fn derive_strides_from_kav(
+    arr: &EvalValue,
+    n_dims: usize,
+) -> Option<Vec<usize>> {
+    if n_dims < 2 {
+        return None;
+    }
+    let mut dims: Vec<usize> = Vec::with_capacity(n_dims);
+    let mut current: &EvalValue = arr;
+    for _ in 0..n_dims {
+        let elems = match current {
+            EvalValue::Array(elems) => elems,
+            _ => return None,
+        };
+        if elems.is_empty() {
+            return None;
+        }
+        dims.push(elems.len());
+        let first = elems.first()?;
+        // Uniformity defence: every sibling row must match `first`'s
+        // arrayness/length so the row-major linearisation is sound.
+        for sibling in elems.iter() {
+            match (sibling, first) {
+                (EvalValue::Array(s), EvalValue::Array(f)) if s.len() == f.len() => {}
+                (EvalValue::Scalar(_), EvalValue::Scalar(_)) => {}
+                (EvalValue::Expr(_), EvalValue::Expr(_)) => {}
+                (EvalValue::Scalar(_), EvalValue::Expr(_))
+                | (EvalValue::Expr(_), EvalValue::Scalar(_)) => {
+                    // Mixed scalar/expr leaves are still scalar-shaped
+                    // for indexing purposes; uniformity holds.
+                }
+                _ => return None,
+            }
+        }
+        current = first;
+    }
+    if dims.len() < n_dims {
+        return None;
+    }
+    let mut strides = Vec::with_capacity(n_dims - 1);
+    for i in 0..n_dims - 1 {
+        let s: usize = dims[i + 1..].iter().product();
+        strides.push(s);
+    }
+    Some(strides)
+}
+
 /// Convert an [`EvalValue`] leaf to a `FieldConst`.
 ///
 /// Visible to sibling lowering modules (e.g. `known_array_fold`) so the
@@ -313,5 +407,80 @@ pub(in crate::lowering) fn eval_value_to_field_const(val: &EvalValue) -> Option<
             _ => None,
         },
         EvalValue::Array(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::lowering::utils::bigval::BigVal;
+
+    fn scalar(v: u64) -> EvalValue {
+        EvalValue::Scalar(BigVal::from_u64(v))
+    }
+
+    fn array_1d(values: &[u64]) -> EvalValue {
+        EvalValue::Array(values.iter().map(|&v| scalar(v)).collect())
+    }
+
+    /// Mix's `M[j][i]` with `t=6`: a 6×6 uniform matrix derives strides
+    /// `[6]` (row-major: stride for outer dim is the inner row length).
+    #[test]
+    fn derive_strides_from_uniform_2d_returns_inner_len() {
+        let row = array_1d(&[1, 2, 3, 4, 5, 6]);
+        let m = EvalValue::Array(vec![
+            row.clone(),
+            row.clone(),
+            row.clone(),
+            row.clone(),
+            row.clone(),
+            row,
+        ]);
+        let strides = derive_strides_from_kav(&m, 2);
+        assert_eq!(strides, Some(vec![6]));
+    }
+
+    /// 1-D access against a 1-D kav doesn't need strides, returns None.
+    #[test]
+    fn derive_strides_returns_none_for_1d_access() {
+        let arr = array_1d(&[1, 2, 3]);
+        assert_eq!(derive_strides_from_kav(&arr, 1), None);
+    }
+
+    /// Ragged 2-D shape (rows have different inner lengths) returns
+    /// None — uniformity defence. The caller's strides guard then fires
+    /// E213 instead of silently linearising with wrong strides.
+    #[test]
+    fn derive_strides_returns_none_for_ragged_2d() {
+        let row_a = array_1d(&[1, 2, 3]);
+        let row_b = array_1d(&[4, 5]);
+        let m = EvalValue::Array(vec![row_a, row_b]);
+        assert_eq!(derive_strides_from_kav(&m, 2), None);
+    }
+
+    /// Empty outer array returns None — no shape to derive from.
+    #[test]
+    fn derive_strides_returns_none_for_empty_array() {
+        let m = EvalValue::Array(vec![]);
+        assert_eq!(derive_strides_from_kav(&m, 2), None);
+    }
+
+    /// 1-D kav indexed with `n_dims=2` (caller asks for 2-D strides
+    /// against a 1-D value) returns None — the kav isn't deep enough.
+    #[test]
+    fn derive_strides_returns_none_for_too_shallow_kav() {
+        let arr = array_1d(&[1, 2, 3]);
+        assert_eq!(derive_strides_from_kav(&arr, 2), None);
+    }
+
+    /// 3-D uniform shape: 2×3×4 produces strides `[12, 4]`. Matches
+    /// `extract_signal_strides`'s row-major convention.
+    #[test]
+    fn derive_strides_handles_3d_uniform() {
+        let leaf = array_1d(&[1, 2, 3, 4]);
+        let row = EvalValue::Array(vec![leaf.clone(), leaf.clone(), leaf]);
+        let m = EvalValue::Array(vec![row.clone(), row]);
+        let strides = derive_strides_from_kav(&m, 3);
+        assert_eq!(strides, Some(vec![12, 4]));
     }
 }
