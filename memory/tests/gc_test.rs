@@ -187,6 +187,7 @@ fn test_gc_lock_survives_sweep() {
 }
 
 #[test]
+#[cfg(debug_assertions)]
 #[should_panic(expected = "unlock_gc called without matching lock_gc")]
 fn test_gc_unlock_without_lock_panics() {
     let mut heap = Heap::new();
