@@ -448,6 +448,12 @@ impl<F: FieldBackend> Walker<F> {
         // it, so wide single-instruction templates (Decompose, Or)
         // don't pay the slot tax up-front.
         let body = lifted;
+        // Precompute last-use index map once. `do_split`'s live-set
+        // predicate consults this O(1) instead of rebuilding a
+        // referenced-SsaVar HashSet from `body[next_idx..]` on every
+        // split (148 M visits across 1,288 SHA-256(64) splits in the
+        // pre-fix profile, 99 % of `walker.lower`'s wall time).
+        let last_use_idx = compute_last_use_idx(&body);
         for (i, inst) in body.iter().enumerate() {
             // Pre-emit split decision. Skip the check at i == 0 —
             // the allocator is at most at 1 (just the `one` const)
@@ -461,7 +467,7 @@ impl<F: FieldBackend> Walker<F> {
                     .saturating_add(cost)
                     .saturating_add(cold_loads);
                 if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
-                    self.do_split(&body, i)?;
+                    self.do_split(&body, i, &last_use_idx)?;
                 }
             }
             self.emit(inst).map_err(|e| match e {
@@ -522,13 +528,20 @@ impl<F: FieldBackend> Walker<F> {
         &mut self,
         body: &[ExtendedInstruction<F>],
         next_idx: usize,
+        last_use_idx: &HashMap<SsaVar, usize>,
     ) -> Result<(), WalkError> {
         // Live set: SSA vars defined in the current frame AND
         // referenced by some instruction in `body[next_idx..]`. The
         // `one` const is intentionally excluded — re-load is cheaper
         // than capture-bind, and the InterningSink dedupes anyway.
-        let referenced = collect_referenced_ssa_vars(&body[next_idx..]);
-        let live = self.compute_live_set(|v| referenced.contains(v))?;
+        //
+        // Predicate equivalence: `v ∈ referenced(body[next_idx..])` ⟺
+        // `last_use_idx[v] ≥ next_idx`, by construction of
+        // `compute_last_use_idx`. The HashMap lookup replaces a
+        // tail-slice scan that previously rebuilt a HashSet from
+        // scratch on every split.
+        let live =
+            self.compute_live_set(|v| last_use_idx.get(v).is_some_and(|&j| j >= next_idx))?;
         dump_live_set_trace("top_level", live.len(), body.len() - next_idx, self.current);
         // Partition by first-use ordering in the upcoming body.
         // Phase 4 §6.4: the first MAX_CAPTURES_HOT (≤ 48) referenced
@@ -2694,6 +2707,138 @@ fn collect_referenced_ssa_vars<F: FieldBackend>(
         collect_in_extinst(inst, &mut out);
     }
     out
+}
+
+/// Precompute, for every SSA var referenced anywhere in `body`, the
+/// highest top-level body index at which it is referenced. The
+/// `do_split` predicate `v ∈ referenced(body[next_idx..])` is then
+/// equivalent to `last_use_idx[v] >= next_idx`.
+///
+/// The recursion mirrors [`collect_in_extinst`] exactly: references
+/// inside a `LoopUnroll.body` count as references at the **outer**
+/// body index that contains the LoopUnroll, because that is the
+/// boundary at which a top-level split decides whether to capture
+/// them.
+///
+/// Replaces the per-`do_split` rebuild that scanned `body[next_idx..]`
+/// from scratch on every split (148 M instruction visits across 1,288
+/// SHA-256(64) splits → 5.96 s in `walker.lower`). One forward pass
+/// here is O(N) and the per-split cost drops to O(|ssa_to_reg|).
+fn compute_last_use_idx<F: FieldBackend>(
+    body: &[ExtendedInstruction<F>],
+) -> HashMap<SsaVar, usize> {
+    let mut out: HashMap<SsaVar, usize> = HashMap::new();
+    for (i, inst) in body.iter().enumerate() {
+        record_last_use_in_extinst(inst, i, &mut out);
+    }
+    out
+}
+
+fn record_last_use_in_extinst<F: FieldBackend>(
+    inst: &ExtendedInstruction<F>,
+    idx: usize,
+    out: &mut HashMap<SsaVar, usize>,
+) {
+    match inst {
+        ExtendedInstruction::Plain(i) => record_last_use_in_instruction(i, idx, out),
+        ExtendedInstruction::LoopUnroll { body, .. } => {
+            for nested in body {
+                record_last_use_in_extinst(nested, idx, out);
+            }
+        }
+        ExtendedInstruction::TemplateCall { captures, .. } => {
+            for v in captures {
+                bump_last_use(out, *v, idx);
+            }
+        }
+        ExtendedInstruction::TemplateBody { .. } => {}
+        ExtendedInstruction::SymbolicIndexedEffect {
+            index_var,
+            value_var,
+            ..
+        } => {
+            bump_last_use(out, *index_var, idx);
+            if let Some(v) = value_var {
+                bump_last_use(out, *v, idx);
+            }
+        }
+        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
+            bump_last_use(out, *index_var, idx);
+        }
+        ExtendedInstruction::SymbolicShift {
+            operand_var,
+            shift_var,
+            ..
+        } => {
+            bump_last_use(out, *operand_var, idx);
+            bump_last_use(out, *shift_var, idx);
+        }
+    }
+}
+
+fn record_last_use_in_instruction<F: FieldBackend>(
+    inst: &Instruction<F>,
+    idx: usize,
+    out: &mut HashMap<SsaVar, usize>,
+) {
+    match inst {
+        Instruction::Const { .. } | Instruction::Input { .. } => {}
+        Instruction::Add { lhs, rhs, .. }
+        | Instruction::Sub { lhs, rhs, .. }
+        | Instruction::Mul { lhs, rhs, .. }
+        | Instruction::Div { lhs, rhs, .. }
+        | Instruction::And { lhs, rhs, .. }
+        | Instruction::Or { lhs, rhs, .. }
+        | Instruction::IsEq { lhs, rhs, .. }
+        | Instruction::IsLt { lhs, rhs, .. }
+        | Instruction::IsNeq { lhs, rhs, .. }
+        | Instruction::IsLe { lhs, rhs, .. }
+        | Instruction::IsLtBounded { lhs, rhs, .. }
+        | Instruction::IsLeBounded { lhs, rhs, .. }
+        | Instruction::AssertEq { lhs, rhs, .. }
+        | Instruction::IntDiv { lhs, rhs, .. }
+        | Instruction::IntMod { lhs, rhs, .. } => {
+            bump_last_use(out, *lhs, idx);
+            bump_last_use(out, *rhs, idx);
+        }
+        Instruction::Neg { operand, .. }
+        | Instruction::Not { operand, .. }
+        | Instruction::Assert { operand, .. }
+        | Instruction::RangeCheck { operand, .. }
+        | Instruction::Decompose { operand, .. } => {
+            bump_last_use(out, *operand, idx);
+        }
+        Instruction::Mux {
+            cond,
+            if_true,
+            if_false,
+            ..
+        } => {
+            bump_last_use(out, *cond, idx);
+            bump_last_use(out, *if_true, idx);
+            bump_last_use(out, *if_false, idx);
+        }
+        Instruction::PoseidonHash { left, right, .. } => {
+            bump_last_use(out, *left, idx);
+            bump_last_use(out, *right, idx);
+        }
+        Instruction::WitnessCall { inputs, .. } => {
+            for v in inputs {
+                bump_last_use(out, *v, idx);
+            }
+        }
+    }
+}
+
+#[inline]
+fn bump_last_use(out: &mut HashMap<SsaVar, usize>, v: SsaVar, idx: usize) {
+    out.entry(v)
+        .and_modify(|j| {
+            if idx > *j {
+                *j = idx;
+            }
+        })
+        .or_insert(idx);
 }
 
 fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut HashSet<SsaVar>) {
