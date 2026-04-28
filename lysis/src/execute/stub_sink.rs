@@ -171,6 +171,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "intern_pure called on side-effect variant")]
     fn intern_pure_rejects_side_effect_in_debug() {
         let mut sink = StubSink::<Bn254Fr>::new();
@@ -186,6 +187,7 @@ mod tests {
     }
 
     #[test]
+    #[cfg(debug_assertions)]
     #[should_panic(expected = "emit_effect called on pure variant")]
     fn emit_effect_rejects_pure_in_debug() {
         let mut sink = StubSink::<Bn254Fr>::new();
