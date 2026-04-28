@@ -239,9 +239,16 @@ fn r1pp_enabled() -> bool {
 /// loops would need to allocate distinct tokens, but this MVP only
 /// memoizes the outermost eligible loop and bails on nested cases via
 /// the disqualifier set in [`is_memoizable`].
+///
+/// `strategy` records which classifier branch admitted the loop so
+/// `memoize_loop` can skip work that is only meaningful for one of
+/// them — e.g. cloning `pre_env.known_array_values` for the post-
+/// substitute kav fold pass, which is a no-op for the
+/// `IndexedAssignmentLoop` path.
 #[derive(Debug, Clone, Copy)]
 struct MemoPlan {
     token: u32,
+    strategy: LoopLowering,
 }
 
 /// Decide whether this for-loop is safe to memoize.
@@ -407,7 +414,7 @@ fn is_memoizable(
     // `env.captures` mutations — see `env_footprint.rs:47-65`. This
     // matters only if a future widening admits bodies that mutate
     // captures across iters; until then it's a documented blind spot.
-    Some(MemoPlan { token: 0 })
+    Some(MemoPlan { token: 0, strategy })
 }
 
 fn body_has_dot_access(stmts: &[Stmt]) -> bool {
@@ -892,7 +899,20 @@ fn memoize_loop<'a>(
     // bodies that mutate `known_array_values` mid-iteration, swap to
     // referencing the live `env.known_array_values` after the post-
     // capture `*env = pre_env` reset (§5 risk #1).
-    let kav_snapshot: HashMap<String, EvalValue> = pre_env.known_array_values.clone();
+    //
+    // The clone is gated on `KnownArrayRefs` because the fold pass that
+    // consumes the snapshot only fires kav-named `ArrayIndex` residuals,
+    // which classify exclusively under that strategy
+    // (`body_references_known_arrays` is the predicate). The
+    // `IndexedAssignmentLoop` path admits no kav reads, so an empty map
+    // is sound — the fold pass walks the body once and finds nothing to
+    // collapse, byte-identical output.
+    let kav_snapshot: HashMap<String, EvalValue> =
+        if matches!(plan.strategy, LoopLowering::KnownArrayRefs) {
+            pre_env.known_array_values.clone()
+        } else {
+            HashMap::new()
+        };
 
     // Capture iter `start`. The placeholder takes precedence over
     // `known_constants` for `Ident(loop_var)` lowering (Phase D1) AND
