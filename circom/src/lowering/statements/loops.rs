@@ -121,16 +121,17 @@ pub(super) fn lower_for_loop<'a>(
     let is_mixed = strategy == LoopLowering::MixedSignalVar;
     let end = resolve_bound_to_u64(&bound, env, ctx, span)?;
 
-    // R1″ Phase 6 / Option D: opt-in memoized unroll. Capture iter
-    // `start` with the loop variable held as a `LoopVar(token)`
-    // placeholder; replay each remaining iter by cloning the captured
-    // node slice and `substitute_loop_var`-rewriting the placeholder
-    // to the iter value. Saves the dominant `lower_stmt` cost on heavy
-    // bodies (SHA-256 round body in particular) without changing any
+    // R1″ Phase 6 / Option D: memoized unroll. Capture iter `start`
+    // with the loop variable held as a `LoopVar(token)` placeholder;
+    // replay each remaining iter by cloning the captured node slice
+    // and `substitute_loop_var`-rewriting the placeholder to the iter
+    // value. Saves the dominant `lower_stmt` cost on heavy bodies
+    // (SHA-256 round body in particular) without changing any
     // constraint downstream — the substituted slice is structurally
     // identical to what the legacy unroll would have emitted for that
-    // iter. Gated on `R1PP_ENABLED=1` so the default behaviour stays
-    // byte-for-byte legacy until the validation pass in D4 flips it.
+    // iter. Default-on after D4 validation closed (550 tests + 8/8
+    // byte-identical benchmarks under both polarities); set
+    // `R1PP_ENABLED=0` to opt out and exercise the legacy unroll path.
     if r1pp_enabled() {
         if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end) {
             return memoize_loop(
@@ -223,13 +224,18 @@ pub(super) fn lower_for_loop<'a>(
 
 // ─── R1″ Phase 6 / Option D — memoized unroll ───────────────────────
 
-/// `true` iff `R1PP_ENABLED=1` is set in the process environment.
-/// The memoized unroll path is opt-in until D4 validates against the
-/// full benchmark + adversarial suite; once green, the default flips.
+/// `true` unless `R1PP_ENABLED=0` (or `false`) is set in the process
+/// environment. The memoized unroll path is the default after D4
+/// validation closed (Follow-up D, 2026-04-27): 550 tests pass under
+/// both polarities, 8/8 benchmark templates byte-identical, and 4
+/// adversarial soundness tests pin the cross-mode invariants. Set
+/// `R1PP_ENABLED=0` to force the legacy unroll path — useful for
+/// cross-mode debugging and the byte-identical asserts in
+/// `circom/tests/adversarial.rs`.
 fn r1pp_enabled() -> bool {
     std::env::var("R1PP_ENABLED")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
+        .map(|v| !(v == "0" || v.eq_ignore_ascii_case("false")))
+        .unwrap_or(true)
 }
 
 /// A go-ahead from the memoization classifier.
