@@ -1569,6 +1569,18 @@ pub(super) fn classify_loop_body(
     if body_references_known_arrays(stmts, env) {
         return Some(LoopLowering::KnownArrayRefs);
     }
+    // Bug Class A guard. The Lysis rolled-loop path below cannot
+    // soundly represent a `var` accumulator that escapes the loop —
+    // the instantiator's body-once symbolic walk collapses the
+    // accumulator's SSA chain (e.g. `0 + x*1 → x`) and then leaks
+    // the body-local SsaVar into the outer env, producing a stream
+    // the walker rejects with `UndefinedSsaVar`. Detect the pattern
+    // here and force eager unroll for those loops; pure-signal /
+    // pure-array bodies stay rolled. See
+    // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-a.md`.
+    let writes_outer_var =
+        env.frontend == Frontend::Lysis && body_writes_to_outer_scope_var(stmts, env, loop_var);
+
     if body_has_loop_var_indexed_assignments(stmts, loop_var) {
         // Gap 1 Stage 5: when targeting Lysis, the
         // `SymbolicIndexedEffect` path (instantiate Stage 2 + walker
@@ -1576,7 +1588,7 @@ pub(super) fn classify_loop_body(
         // bytecode without unrolling at lowering time. Keep the loop
         // rolled and let `lower_for` emit a `CircuitNode::For`. Legacy
         // R1CS compilation continues to unroll.
-        if env.frontend == Frontend::Lysis {
+        if env.frontend == Frontend::Lysis && !writes_outer_var {
             return None;
         }
         return Some(LoopLowering::IndexedAssignmentLoop);
@@ -1597,12 +1609,149 @@ pub(super) fn classify_loop_body(
         // wants the rolled `CircuitNode::For`; the walker handles
         // signal-op bodies via `SymbolicIndexedEffect` + per-iter
         // unrolling. Legacy keeps the catch-all unroll.
-        if env.frontend == Frontend::Lysis {
+        if env.frontend == Frontend::Lysis && !writes_outer_var {
             return None;
         }
         return Some(LoopLowering::IndexedAssignmentLoop);
     }
     None
+}
+
+/// `true` if the body contains a write (`=` or `+=`/`-=`/`*=`/...) to
+/// a simple-identifier target whose name is bound in the enclosing
+/// scope (`env.locals`) and is not declared inside this body.
+///
+/// Bug Class A trigger. The instantiator's `LoopUnrollMode::Symbolic`
+/// path emits the body exactly once and propagates `var` updates
+/// through the env. When the update RHS reads a `SymbolicArrayRead`,
+/// arithmetic peephole simplification (`0 + x*1 → x`,
+/// `0 + x → x`) can collapse the chain to the SymArrRead's
+/// loop-local `result_var`. The env binding for the outer `var` then
+/// holds a body-local SsaVar; any post-loop reference resolves to
+/// that var outside its `LoopUnroll` scope and the walker rejects it
+/// as undefined. Forcing eager unroll for these bodies routes them
+/// through the Legacy path that materialises a fresh per-iteration
+/// SSA chain in the outer scope, sidestepping the env-leak entirely.
+///
+/// Detection is local: walk the body once collecting body-local
+/// `var` decl names, then scan for assignment/compound-assign
+/// statements whose target is a simple identifier in `env.locals`
+/// that wasn't declared inside the body. Signals (`<==`, `<--`,
+/// `==>`, `-->`) are skipped because they don't propagate through
+/// the env binding mechanism.
+fn body_writes_to_outer_scope_var(stmts: &[Stmt], env: &LoweringEnv, loop_var: &str) -> bool {
+    let mut body_decls: HashSet<String> = HashSet::new();
+    for s in stmts {
+        collect_var_decls_in_stmt(s, &mut body_decls);
+    }
+    stmts
+        .iter()
+        .any(|s| stmt_writes_to_outer_var(s, env, &body_decls, loop_var))
+}
+
+fn collect_var_decls_in_stmt(stmt: &Stmt, acc: &mut HashSet<String>) {
+    match stmt {
+        Stmt::VarDecl { names, .. } => {
+            for n in names {
+                acc.insert(n.clone());
+            }
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for s in &then_body.stmts {
+                collect_var_decls_in_stmt(s, acc);
+            }
+            match else_body {
+                Some(ElseBranch::Block(b)) => {
+                    for s in &b.stmts {
+                        collect_var_decls_in_stmt(s, acc);
+                    }
+                }
+                Some(ElseBranch::IfElse(s)) => collect_var_decls_in_stmt(s, acc),
+                None => {}
+            }
+        }
+        Stmt::Block(b) => {
+            for s in &b.stmts {
+                collect_var_decls_in_stmt(s, acc);
+            }
+        }
+        Stmt::For { init, body, .. } => {
+            collect_var_decls_in_stmt(init, acc);
+            for s in &body.stmts {
+                collect_var_decls_in_stmt(s, acc);
+            }
+        }
+        Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => {
+            for s in &body.stmts {
+                collect_var_decls_in_stmt(s, acc);
+            }
+        }
+        _ => {}
+    }
+}
+
+fn stmt_writes_to_outer_var(
+    stmt: &Stmt,
+    env: &LoweringEnv,
+    body_decls: &HashSet<String>,
+    loop_var: &str,
+) -> bool {
+    match stmt {
+        Stmt::CompoundAssign { target, .. } => simple_ident_name(target)
+            .map(|name| {
+                name != loop_var && env.locals.contains(&name) && !body_decls.contains(&name)
+            })
+            .unwrap_or(false),
+        Stmt::Substitution {
+            target,
+            op: AssignOp::Assign,
+            ..
+        } => simple_ident_name(target)
+            .map(|name| {
+                name != loop_var && env.locals.contains(&name) && !body_decls.contains(&name)
+            })
+            .unwrap_or(false),
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .stmts
+                .iter()
+                .any(|s| stmt_writes_to_outer_var(s, env, body_decls, loop_var))
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(|s| stmt_writes_to_outer_var(s, env, body_decls, loop_var)),
+                    Some(ElseBranch::IfElse(s)) => {
+                        stmt_writes_to_outer_var(s, env, body_decls, loop_var)
+                    }
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b
+            .stmts
+            .iter()
+            .any(|s| stmt_writes_to_outer_var(s, env, body_decls, loop_var)),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => body
+            .stmts
+            .iter()
+            .any(|s| stmt_writes_to_outer_var(s, env, body_decls, loop_var)),
+        _ => false,
+    }
+}
+
+fn simple_ident_name(expr: &Expr) -> Option<String> {
+    match expr {
+        Expr::Ident { name, .. } => Some(name.clone()),
+        _ => None,
+    }
 }
 
 /// `true` if the body contains any signal-level statement —
