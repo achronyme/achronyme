@@ -38,6 +38,14 @@ struct Stats {
     inside_loop_defs: HashSet<SsaVar>,
     /// SsaVars used by Plain instructions specifically (vs by SymbolicArrayRead etc.).
     plain_uses: HashMap<SsaVar, Vec<usize>>,
+    /// Bug Class B counters — SymbolicIndexedEffect writes.
+    eff_total: usize,
+    eff_in_loop: usize,
+    /// First few examples: (slots_len, depth, index_var, has_value).
+    eff_examples: Vec<(usize, usize, SsaVar, bool)>,
+    /// Histogram of slots.len() for symbolic effects (helps identify
+    /// sub-component sized arrays — e.g. 32 = SHA-256 word).
+    eff_slot_len_hist: HashMap<usize, usize>,
 }
 
 fn record_def(stats: &mut Stats, v: SsaVar, depth: usize) {
@@ -94,6 +102,17 @@ fn walk<F: memory::FieldBackend>(body: &[ExtendedInstruction<F>], depth: usize, 
                 value_var,
                 ..
             } => {
+                stats.eff_total += 1;
+                if depth > 0 {
+                    stats.eff_in_loop += 1;
+                }
+                let n = array_slots.len();
+                *stats.eff_slot_len_hist.entry(n).or_default() += 1;
+                if stats.eff_examples.len() < 10 {
+                    stats
+                        .eff_examples
+                        .push((n, depth, *index_var, value_var.is_some()));
+                }
                 record_use(stats, *index_var, depth, false);
                 if let Some(v) = value_var {
                     record_use(stats, *v, depth, false);
@@ -214,6 +233,24 @@ fn analyze(label: &str, path_rel: &str, captures: &[(&str, u64)], output_names: 
         );
     }
 
+    // Bug Class B: SymbolicIndexedEffect writes.
+    println!(
+        "[{label}] SymbolicIndexedEffect total: {}  (inside-LoopUnroll: {})",
+        stats.eff_total, stats.eff_in_loop
+    );
+    if !stats.eff_slot_len_hist.is_empty() {
+        let mut hist: Vec<_> = stats.eff_slot_len_hist.iter().collect();
+        hist.sort_by_key(|(k, _)| *k);
+        let s: Vec<String> = hist.iter().map(|(k, v)| format!("{k}->{v}")).collect();
+        println!("[{label}]   slot_len histogram: {{{}}}", s.join(", "));
+    }
+    for (n, depth, idx, has_val) in &stats.eff_examples {
+        println!(
+            "  - eff: slots_len={}, depth={}, index_var=%{}, has_value={}",
+            n, depth, idx.0, has_val
+        );
+    }
+
     // Run the walker and report.
     println!("[{label}] Walker run:");
     let walker_result = prove_ir.instantiate_lysis_with_outputs::<Bn254Fr>(&fe_caps, &on);
@@ -244,6 +281,54 @@ fn sha256_lysis_inspect() {
     analyze(
         "Sha256(64)",
         "test/circomlib/sha256_test.circom",
+        &[],
+        &["out"],
+    );
+}
+
+// === Bug Class B candidates ===
+// These four templates currently FAIL Lysis at instantiate time with
+// "symbolic indexed write into <comp>.<arr> but the array is not
+// declared in this scope". The `analyze` helper runs the full pipeline
+// and prints the failure path so we can confirm where the error fires
+// vs. how many SymbolicIndexedEffect writes the SHA-256 baseline
+// emits without failure.
+
+#[test]
+fn pedersen_lysis_inspect_classb() {
+    analyze(
+        "Pedersen(8)",
+        "test/circomlib/pedersen_test.circom",
+        &[],
+        &["out"],
+    );
+}
+
+#[test]
+fn escalarmulfix_lysis_inspect_classb() {
+    analyze(
+        "EscalarMulFix(3)",
+        "test/circomlib/escalarmulfix_test.circom",
+        &[],
+        &["out"],
+    );
+}
+
+#[test]
+fn escalarmulany_lysis_inspect_classb() {
+    analyze(
+        "EscalarMulAny(254)",
+        "test/circomlib/escalarmulany254_test.circom",
+        &[],
+        &["out"],
+    );
+}
+
+#[test]
+fn poseidon_lysis_inspect_classb() {
+    analyze(
+        "Poseidon(2)",
+        "test/circomlib/poseidon_test.circom",
         &[],
         &["out"],
     );

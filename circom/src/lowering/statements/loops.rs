@@ -1569,17 +1569,33 @@ pub(super) fn classify_loop_body(
     if body_references_known_arrays(stmts, env) {
         return Some(LoopLowering::KnownArrayRefs);
     }
-    // Bug Class A guard. The Lysis rolled-loop path below cannot
-    // soundly represent a `var` accumulator that escapes the loop —
-    // the instantiator's body-once symbolic walk collapses the
-    // accumulator's SSA chain (e.g. `0 + x*1 → x`) and then leaks
-    // the body-local SsaVar into the outer env, producing a stream
-    // the walker rejects with `UndefinedSsaVar`. Detect the pattern
-    // here and force eager unroll for those loops; pure-signal /
-    // pure-array bodies stay rolled. See
+    // Bug Class A + Class B guard. The Lysis rolled-loop path below
+    // cannot soundly represent two patterns:
+    //
+    // **Class A** — a `var` accumulator that escapes the loop. The
+    // instantiator's body-once symbolic walk collapses the
+    // accumulator's SSA chain (e.g. `0 + x*1 → x`) and leaks the
+    // body-local SsaVar into the outer env, producing a stream the
+    // walker rejects with `UndefinedSsaVar`. See
     // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-a.md`.
-    let writes_outer_var =
-        env.frontend == Frontend::Lysis && body_writes_to_outer_scope_var(stmts, env, loop_var);
+    //
+    // **Class B** — a write `<comp>.<arr>[i] <== ...` to a scalar
+    // sub-component's input array. Sub-component arrays are
+    // registered in `LoweringEnv` at component-decl lowering but
+    // never emitted as `WitnessArrayDecl` IR nodes, so the
+    // instantiator's `snapshot_array_slots` returns None and the
+    // emit fails with "symbolic indexed write into <comp>.<arr> but
+    // the array is not declared in this scope". See
+    // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-b.md`.
+    //
+    // Classifier-ordering invariant: BOTH predicates run *after*
+    // `MixedSignalVar` / `ComponentArrayOps` / `KnownArrayRefs` have
+    // already preempted. SHA-256's nested sub-component wirings hit
+    // `ComponentArrayOps` on the outer `for(i)` and never reach this
+    // gate; do not reorder.
+    let writes_outer_var = env.frontend == Frontend::Lysis
+        && (body_writes_to_outer_scope_var(stmts, env, loop_var)
+            || body_writes_to_subcomponent_array(stmts, env, loop_var));
 
     if body_has_loop_var_indexed_assignments(stmts, loop_var) {
         // Gap 1 Stage 5: when targeting Lysis, the
@@ -1751,6 +1767,118 @@ fn simple_ident_name(expr: &Expr) -> Option<String> {
     match expr {
         Expr::Ident { name, .. } => Some(name.clone()),
         _ => None,
+    }
+}
+
+/// `true` if the body contains a signal/var write whose target is
+/// `<comp>.<arr>[<idx>]...` (one or more `Index`-wrappings around a
+/// `DotAccess`) where `<comp>` is bound in `env.locals` as a *scalar*
+/// component (not in `env.component_arrays`) AND any index in the
+/// chain references `loop_var`.
+///
+/// **Bug Class B trigger.** The instantiator's
+/// `LoopUnrollMode::Symbolic` path emits a `SymbolicIndexedEffect`
+/// for `comp.arr[i] <== ...` and immediately calls
+/// `snapshot_array_slots("comp.arr")`, which fails because no
+/// `WitnessArrayDecl` was emitted for sub-component input arrays at
+/// component-decl lowering time (`statements/mod.rs::lower_component_decl`
+/// only registers the names in `env.locals` / `env.arrays`, not in
+/// the IR stream). Forcing eager unroll for these bodies routes the
+/// writes through the const-index `LetIndexed` path, which lazily
+/// allocates slots via `ensure_array_slot` and works fine.
+///
+/// Classifier-ordering invariant: this predicate must run AFTER
+/// `body_has_component_array_ops` (line 1566) and
+/// `body_references_known_arrays` (line 1569). SHA-256's nested
+/// sub-component wirings (`sha256compression_0.hin[k] <== ...`)
+/// match the syntactic shape post-unroll, but the post-unroll only
+/// happens because the outer `for(i)` already eager-unrolled via
+/// `ComponentArrayOps`. By the time this predicate could run on
+/// SHA-256's inner loop, control has already taken a different
+/// branch. Empirically verified by `bug_class_b_discriminate.rs`:
+/// SHA-256(64) shows 3 SymIndEff total, all over `paddedIn` (parent-
+/// owned), zero over sub-component arrays. Do not reorder this
+/// predicate ahead of the higher-priority strategies.
+fn body_writes_to_subcomponent_array(stmts: &[Stmt], env: &LoweringEnv, loop_var: &str) -> bool {
+    stmts
+        .iter()
+        .any(|s| stmt_writes_subcomp_array(s, env, loop_var))
+}
+
+fn stmt_writes_subcomp_array(stmt: &Stmt, env: &LoweringEnv, loop_var: &str) -> bool {
+    match stmt {
+        Stmt::Substitution {
+            target,
+            op:
+                AssignOp::ConstraintAssign
+                | AssignOp::SignalAssign
+                | AssignOp::RConstraintAssign
+                | AssignOp::RSignalAssign
+                | AssignOp::Assign,
+            ..
+        } => target_is_subcomp_array_with_loop_idx(target, env, loop_var),
+        Stmt::CompoundAssign { target, .. } => {
+            target_is_subcomp_array_with_loop_idx(target, env, loop_var)
+        }
+        Stmt::ConstraintEq { lhs, rhs, .. } => {
+            target_is_subcomp_array_with_loop_idx(lhs, env, loop_var)
+                || target_is_subcomp_array_with_loop_idx(rhs, env, loop_var)
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .stmts
+                .iter()
+                .any(|s| stmt_writes_subcomp_array(s, env, loop_var))
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(|s| stmt_writes_subcomp_array(s, env, loop_var)),
+                    Some(ElseBranch::IfElse(s)) => stmt_writes_subcomp_array(s, env, loop_var),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b
+            .stmts
+            .iter()
+            .any(|s| stmt_writes_subcomp_array(s, env, loop_var)),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => body
+            .stmts
+            .iter()
+            .any(|s| stmt_writes_subcomp_array(s, env, loop_var)),
+        _ => false,
+    }
+}
+
+/// `true` if `expr` matches `<chain of Index>(DotAccess { Ident(c), f })`
+/// where `c` is a scalar component (in `env.locals`, NOT in
+/// `env.component_arrays`) and any of the indices along the chain
+/// references `loop_var`.
+fn target_is_subcomp_array_with_loop_idx(expr: &Expr, env: &LoweringEnv, loop_var: &str) -> bool {
+    let mut indices_have_loop_var = false;
+    let mut cur = expr;
+    loop {
+        match cur {
+            Expr::Index { object, index, .. } => {
+                if expr_references_ident(index, loop_var) {
+                    indices_have_loop_var = true;
+                }
+                cur = object;
+            }
+            Expr::DotAccess { object, .. } => match object.as_ref() {
+                Expr::Ident { name, .. } => {
+                    return indices_have_loop_var
+                        && env.locals.contains(name)
+                        && !env.component_arrays.contains(name);
+                }
+                _ => return false,
+            },
+            _ => return false,
+        }
     }
 }
 
@@ -2075,6 +2203,147 @@ mod tests {
             classify_loop_body(&for_body, &env, "i"),
             Some(LoopLowering::MixedSignalVar),
         );
+    }
+
+    // ──── Class B predicate pre-flight tests ────────────────────────
+    //
+    // The four tests below pin `body_writes_to_subcomponent_array`'s
+    // exact match shape. Run before wiring the predicate into
+    // `classify_loop_body` to verify (a) it fires on the four failing
+    // wrapper templates' canonical body, (b) it does NOT fire on
+    // Pedersen_old's const-index sub-component writes,
+    // SHA-256-style component-array writes, or parent-owned signal
+    // array writes. A regression here means the classifier may
+    // re-route templates that currently pass Lysis.
+
+    fn extract_first_for_body(src: &str) -> (Vec<Stmt>, String) {
+        let stmts = extract_template_body(src);
+        // Scan until the first `for` and return its body + var name.
+        for s in &stmts {
+            if let Stmt::For { init, body, .. } = s {
+                let var = match init.as_ref() {
+                    Stmt::VarDecl { names, .. } if !names.is_empty() => names[0].clone(),
+                    Stmt::Substitution { target, .. } => {
+                        super::extract_target_name(target).unwrap_or_default()
+                    }
+                    _ => panic!("can't extract loop var"),
+                };
+                return (body.stmts.clone(), var);
+            }
+        }
+        panic!("no for loop");
+    }
+
+    fn env_with_locals(locals: &[&str]) -> LoweringEnv {
+        let mut env = LoweringEnv::new();
+        env.frontend = Frontend::Lysis;
+        for n in locals {
+            env.locals.insert((*n).to_string());
+        }
+        env
+    }
+
+    #[test]
+    fn class_b_predicate_fires_on_pedersen_wrapper_shape() {
+        // Canonical Pedersen wrapper:
+        //   component ped = ...;
+        //   for (i) { ped.in[i] <== in[i]; }
+        // `ped` is a scalar component (in env.locals, NOT in
+        // component_arrays); `in[i]` would be a parent-owned write.
+        let (body, var) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal input in[n];
+                for (var i = 0; i < n; i++) {
+                    ped.in[i] <== in[i];
+                }
+            }
+            "#,
+        );
+        let env = env_with_locals(&["ped", "ped.in", "in"]);
+        assert!(body_writes_to_subcomponent_array(&body, &env, &var));
+    }
+
+    #[test]
+    fn class_b_predicate_does_not_fire_on_const_index_subcomp_write() {
+        // Pedersen_old's Window4 shape: const-index writes to a
+        // sub-component array. Loop var doesn't appear in the index.
+        let (body, var) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal input in[n];
+                for (var i = 0; i < 4; i++) {
+                    mux.c[0][i] <== in[i];
+                }
+            }
+            "#,
+        );
+        // Even though `i` is in `mux.c[0][i]`, the predicate's job is
+        // to detect *any* index referencing loop_var. This shape DOES
+        // contain `i`. So it would fire — except `mux` is a scalar
+        // component sub-component-array write that the bug fires on.
+        // Distinct from Pedersen_old's actual mux.c[0][k] where `k`
+        // is from an outer scope (not the inner loop var). Adjust:
+        let env = env_with_locals(&["mux", "in"]);
+        // Predicate fires on this shape because i is in env.locals
+        // (loop var) and mux is local non-component-array. This
+        // matches the failing pattern, so the assertion is "fires".
+        assert!(body_writes_to_subcomponent_array(&body, &env, &var));
+
+        // Genuine const-index Pedersen_old shape — index is a literal,
+        // not the loop var:
+        let (body2, var2) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal input in[n];
+                for (var i = 0; i < 4; i++) {
+                    mux.c[0][3] <== in[i];
+                }
+            }
+            "#,
+        );
+        let env2 = env_with_locals(&["mux", "in"]);
+        assert!(!body_writes_to_subcomponent_array(&body2, &env2, &var2));
+    }
+
+    #[test]
+    fn class_b_predicate_does_not_fire_on_component_array() {
+        // SHA-256-style: `sha256compression[i].inp[k]` — the outer
+        // component is an array (`component sha256compression[n]`),
+        // tracked in env.component_arrays. Predicate must NOT fire.
+        let (body, var) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal input inp[n][512];
+                for (var i = 0; i < n; i++) {
+                    for (var k = 0; k < 512; k++) {
+                        sha256compression[i].inp[k] <== inp[i][k];
+                    }
+                }
+            }
+            "#,
+        );
+        let mut env = env_with_locals(&["sha256compression", "inp"]);
+        env.component_arrays.insert("sha256compression".into());
+        assert!(!body_writes_to_subcomponent_array(&body, &env, &var));
+    }
+
+    #[test]
+    fn class_b_predicate_does_not_fire_on_parent_array() {
+        // Parent-owned `paddedIn[k] <== 0` — target is `Index(Ident,
+        // ...)`, not `Index(DotAccess, ...)`. Predicate must NOT fire.
+        let (body, var) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal paddedIn[512];
+                for (var k = 0; k < 512; k++) {
+                    paddedIn[k] <-- 0;
+                }
+            }
+            "#,
+        );
+        let env = env_with_locals(&["paddedIn"]);
+        assert!(!body_writes_to_subcomponent_array(&body, &env, &var));
     }
 
     #[test]
