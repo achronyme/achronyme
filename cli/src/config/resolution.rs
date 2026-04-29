@@ -167,12 +167,13 @@ pub fn resolve_config(
         .unwrap_or_default();
 
     // Circom frontend pipeline: TOML circom.frontend ("lysis" | "legacy",
-    // default "legacy"). Validated upstream by `validation::validate`.
+    // default "lysis" since Phase 1.A). Validated upstream by
+    // `validation::validate`.
     let circom_frontend = toml
         .and_then(|t| t.circom.as_ref()?.frontend.as_deref())
         .map(|f| match f {
-            "lysis" => super::CircomFrontend::Lysis,
-            _ => super::CircomFrontend::Legacy,
+            "legacy" => super::CircomFrontend::Legacy,
+            _ => super::CircomFrontend::Lysis,
         })
         .unwrap_or_default();
 

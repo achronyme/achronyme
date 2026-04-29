@@ -706,4 +706,82 @@ fn cross_path_baseline_circom() {
 
     let total = t0.elapsed();
     render_report(&rows, total);
+
+    // Phase 1.A hard-gate. Every non-skipped template must either be
+    // byte-identical (pre-O1 + post-O1) or appear in the allowlist of
+    // known wire-id divergences below. Any unexpected skip, side-level
+    // failure, or unknown divergence aborts the test.
+    //
+    // Known divergences:
+    //   * `EdDSAPoseidon`: pure wire-id pair-swap — same constraint
+    //     count (9719 → 3965), variables (10410), and public partition
+    //     (1) on both sides; only the SSA wire IDs allocated to four
+    //     pre-O1 BabyAdd witness pairs (w10395 ↔ w10403, w10397 ↔
+    //     w10405) differ. Each swapped pair shares its definition
+    //     across the swap, so R1CS satisfiability is preserved under
+    //     the renaming. Confirmed deterministic at HEAD `6e6a4629`
+    //     pre-flip and persists post-flip; the README claim of "11/12
+    //     byte-identical" mis-counted this row, which the print-only
+    //     baseline did not surface.
+    //
+    // The SHA-256(64) row is permitted to skip (Legacy OOMs).
+    const ALLOW_DIVERGE: &[&str] = &["EdDSAPoseidon"];
+    const ALLOW_SKIP: &[&str] = &["SHA-256(64)"];
+
+    let mut violations: Vec<String> = Vec::new();
+    for row in &rows {
+        if let Some(reason) = &row.skipped_reason {
+            if !ALLOW_SKIP.contains(&row.template.as_str()) {
+                violations.push(format!(
+                    "{}: unexpected SKIP ({reason}) — not in ALLOW_SKIP",
+                    row.template
+                ));
+            }
+            continue;
+        }
+        match &row.verdict {
+            Some(Verdict::Ran {
+                pre_eq, post_eq, ..
+            }) => {
+                let identical = *pre_eq && *post_eq;
+                let allowed = ALLOW_DIVERGE.contains(&row.template.as_str());
+                if !identical && !allowed {
+                    violations.push(format!(
+                        "{}: divergence (pre_eq={pre_eq}, post_eq={post_eq}) and not in ALLOW_DIVERGE",
+                        row.template
+                    ));
+                }
+                if identical && allowed {
+                    violations.push(format!(
+                        "{}: ALLOW_DIVERGE entry is now byte-identical — remove it from the allowlist",
+                        row.template
+                    ));
+                }
+            }
+            Some(Verdict::Failed {
+                legacy_err,
+                lysis_err,
+                ..
+            }) => {
+                let which = match (legacy_err.is_some(), lysis_err.is_some()) {
+                    (true, true) => "both",
+                    (true, false) => "Legacy",
+                    (false, true) => "Lysis",
+                    (false, false) => unreachable!(),
+                };
+                violations.push(format!("{}: {which} side failed", row.template));
+            }
+            None => {
+                violations.push(format!("{}: no verdict recorded", row.template));
+            }
+        }
+    }
+
+    if !violations.is_empty() {
+        panic!(
+            "cross_path_baseline_circom: {} violation(s) — Phase 1.A gate not satisfied:\n  - {}",
+            violations.len(),
+            violations.join("\n  - ")
+        );
+    }
 }
