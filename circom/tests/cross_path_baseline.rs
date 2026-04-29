@@ -710,19 +710,26 @@ fn cross_path_baseline_circom() {
     // Phase 1.A hard-gate. Every non-skipped template must either be
     // byte-identical (pre-O1 + post-O1) or appear in the allowlist of
     // known wire-id divergences below. Any unexpected skip, side-level
-    // failure, or unknown divergence aborts the test.
+    // failure, or unknown divergence aborts the test. For allowlisted
+    // entries, secondary shape invariants (constraint counts, variable
+    // counts, public-input counts) MUST still match exactly — the
+    // allowlist swallows wire-id permutation but NOT real shape drift.
     //
     // Known divergences:
-    //   * `EdDSAPoseidon`: pure wire-id pair-swap — same constraint
-    //     count (9719 → 3965), variables (10410), and public partition
-    //     (1) on both sides; only the SSA wire IDs allocated to four
-    //     pre-O1 BabyAdd witness pairs (w10395 ↔ w10403, w10397 ↔
-    //     w10405) differ. Each swapped pair shares its definition
-    //     across the swap, so R1CS satisfiability is preserved under
-    //     the renaming. Confirmed deterministic at HEAD `6e6a4629`
-    //     pre-flip and persists post-flip; the README claim of "11/12
-    //     byte-identical" mis-counted this row, which the print-only
-    //     baseline did not surface.
+    //   * `EdDSAPoseidon`: wire-id pair-swap on four pre-O1 BabyAdd
+    //     witness pairs (w10395 ↔ w10403, w10397 ↔ w10405). Each
+    //     swapped pair shares its definition across the swap, so R1CS
+    //     satisfiability is preserved under the renaming. Same
+    //     constraint count (9719 → 3965), variables (10410), and
+    //     public partition (1) on both sides — only the canonical
+    //     wire IDs allocated to that pair differ.
+    //
+    //     The divergence is NON-DETERMINISTIC across runs (~60% no/no,
+    //     ~40% yes/yes on this host). Likely upstream HashMap iteration
+    //     order leaking into wire allocation. The README claim of
+    //     "11/12 byte-identical" landed during a yes/yes run and was
+    //     never re-verified — print-only baseline didn't surface it.
+    //     Tracked as a Phase 1.A follow-up; not a Phase 1.A regression.
     //
     // The SHA-256(64) row is permitted to skip (Legacy OOMs).
     const ALLOW_DIVERGE: &[&str] = &["EdDSAPoseidon"];
@@ -741,7 +748,11 @@ fn cross_path_baseline_circom() {
         }
         match &row.verdict {
             Some(Verdict::Ran {
-                pre_eq, post_eq, ..
+                legacy,
+                lysis,
+                pre_eq,
+                post_eq,
+                ..
             }) => {
                 let identical = *pre_eq && *post_eq;
                 let allowed = ALLOW_DIVERGE.contains(&row.template.as_str());
@@ -752,10 +763,52 @@ fn cross_path_baseline_circom() {
                     ));
                 }
                 if identical && allowed {
-                    violations.push(format!(
-                        "{}: ALLOW_DIVERGE entry is now byte-identical — remove it from the allowlist",
+                    // Allowlisted entries can flip to byte-identical
+                    // when the upstream non-determinism happens to
+                    // align. Print a notice but don't fail — turning
+                    // this into a hard violation makes the test flaky
+                    // for entries whose divergence is non-deterministic
+                    // (`EdDSAPoseidon`). When upstream wire allocation
+                    // becomes deterministic, reclassify per a separate
+                    // follow-up.
+                    eprintln!(
+                        "note: {} (ALLOW_DIVERGE) ran byte-identical this invocation; \
+                         keep monitoring for permanent fix to wire allocation non-determinism",
                         row.template
-                    ));
+                    );
+                }
+                // Even for allowlisted entries, secondary invariants must
+                // hold: the divergence is allowed only when constraint
+                // counts, variable counts, and public partitions match
+                // exactly across sides. Anything else is a real shape
+                // regression that the allowlist must NOT swallow.
+                if allowed {
+                    if legacy.constraints_pre != lysis.constraints_pre {
+                        violations.push(format!(
+                            "{}: ALLOW_DIVERGE shape regression — pre-O1 constraint count drift (legacy={}, lysis={})",
+                            row.template, legacy.constraints_pre, lysis.constraints_pre
+                        ));
+                    }
+                    if legacy.constraints_post != lysis.constraints_post {
+                        violations.push(format!(
+                            "{}: ALLOW_DIVERGE shape regression — post-O1 constraint count drift (legacy={}, lysis={})",
+                            row.template, legacy.constraints_post, lysis.constraints_post
+                        ));
+                    }
+                    if legacy.variables != lysis.variables {
+                        violations.push(format!(
+                            "{}: ALLOW_DIVERGE shape regression — variable count drift (legacy={}, lysis={})",
+                            row.template, legacy.variables, lysis.variables
+                        ));
+                    }
+                    if legacy.public_inputs.len() != lysis.public_inputs.len() {
+                        violations.push(format!(
+                            "{}: ALLOW_DIVERGE shape regression — public-input count drift (legacy={}, lysis={})",
+                            row.template,
+                            legacy.public_inputs.len(),
+                            lysis.public_inputs.len()
+                        ));
+                    }
                 }
             }
             Some(Verdict::Failed {
