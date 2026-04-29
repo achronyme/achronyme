@@ -207,11 +207,18 @@ pub fn compile_to_prove_ir(source: &str) -> Result<CircomCompileResult, CircomEr
 ///
 /// `library_dirs` are additional directories to search for `include` paths
 /// (equivalent to Circom's `-l` flag).
+///
+/// Defaults to [`Frontend::Lysis`] — the production pipeline since Phase 1.A
+/// closed the cross-path equivalence baseline. The downstream caller is
+/// expected to pair with [`ProveIR::instantiate_lysis_with_outputs`] (or
+/// the no-outputs `instantiate_lysis`) to walk the rolled loops through
+/// the Walker. Use [`compile_file_with_frontend`] with [`Frontend::Legacy`]
+/// to opt back into the eager-amplification path for regression baselines.
 pub fn compile_file(
     path: &Path,
     library_dirs: &[PathBuf],
 ) -> Result<CircomCompileResult, CircomError> {
-    compile_file_with_frontend(path, library_dirs, Frontend::Legacy)
+    compile_file_with_frontend(path, library_dirs, Frontend::Lysis)
 }
 
 /// Compile a `.circom` file targeting the given downstream pipeline.
@@ -350,6 +357,13 @@ fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, 
 /// Same as [`compile_program`] but skips validation — callers who
 /// already ran [`load_and_validate_program`] (e.g. [`compile_file`])
 /// pass its warnings through here to avoid doing the work twice.
+///
+/// Stays on [`Frontend::Legacy`] so [`compile_to_prove_ir`] (the
+/// in-memory single-file entry used by tests + the witness evaluator)
+/// keeps its pre-Phase-1.A behaviour. The Phase 1.A flip ships only
+/// through [`compile_file`], which the CLI and akronc circom imports
+/// route through; tests that exercise the eager-unroll regression
+/// surface stay on Legacy via this path.
 fn compile_program_with_warnings(
     program: &ast::CircomProgram,
     warnings: Vec<Diagnostic>,
