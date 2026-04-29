@@ -189,6 +189,28 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 // unrolls indexed assignments before the slots are
                 // needed.
                 let size = self.resolve_array_size(size)?;
+
+                // Re-use pre-allocated slots if the env already holds an
+                // `InstEnvValue::Array(existing)` for this name. This
+                // happens whenever a parent `comp.arr[i] <== rhs;` loop
+                // ran *before* the inlined sub-component body's
+                // `WitnessArrayDecl` does (the Class B eager-unroll
+                // path: `emit_let_indexed_const` → `ensure_array_slot`
+                // populates the array lazily as the parent feeds each
+                // slot). Without this re-use the handler would allocate
+                // a second set of fresh witness `Input` wires for the
+                // same logical slot, leaking N orphan witnesses with
+                // no constraint references. Confirmed empirically
+                // closing a +256-wire orphan delta on EscalarMulAny(254)
+                // and analogous slack on Pedersen / EscalarMulFix /
+                // Poseidon / MiMCSponge / Pedersen_old / LessThan;
+                // see `.claude/plans/cross-path-baseline-2026-04-28/slack-audit.md`.
+                if let Some(InstEnvValue::Array(existing)) = self.env.get(name) {
+                    if existing.len() == size {
+                        return Ok(());
+                    }
+                }
+
                 let mut elem_vars = Vec::with_capacity(size);
                 for i in 0..size {
                     let elem_name = format!("{name}_{i}");
