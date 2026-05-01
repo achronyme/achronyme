@@ -1,20 +1,20 @@
 //! Public entry points for ProveIR instantiation.
 //!
-//! Two pipelines, four entry points:
+//! One pipeline, two pairs of entry points:
 //!
-//! 1. **Legacy** (commit 2.2): [`ProveIR::instantiate`] +
-//!    [`ProveIR::instantiate_with_outputs`] return a flat
-//!    `IrProgram<F>` ready for the existing optimize → R1CS path.
-//!    Built on top of [`LegacySink`].
+//! **Extended IR (intermediate)**: [`ProveIR::instantiate_extended`] +
+//! [`ProveIR::instantiate_with_outputs_extended`] return an
+//! [`ExtendedIrProgram<F>`] whose body is `Vec<ExtendedInstruction<F>>`.
+//! Built on top of [`ExtendedSink`]. Primarily an internal stepping-
+//! stone: every `Lysis` entry point invokes one of these first, then
+//! runs the result through the Walker → InterningSink → materialize
+//! cable.
 //!
-//! 2. **Extended** (commit 2.4): [`ProveIR::instantiate_extended`] +
-//!    [`ProveIR::instantiate_with_outputs_extended`] return an
-//!    [`ExtendedIrProgram<F>`] whose body is
-//!    `Vec<ExtendedInstruction<F>>` (every entry wrapped as
-//!    `Plain(_)` for now — `LoopUnroll` emission lands in commit
-//!    2.5). Built on top of [`ExtendedSink`]. Used by Phase 3.C.6's
-//!    Lysis path: `instantiate_extended → Walker → InterningSink →
-//!    materialize → IrProgram → R1CS`.
+//! **Lysis (production)**: [`ProveIR::instantiate_lysis`] +
+//! [`ProveIR::instantiate_lysis_with_outputs`] return a flat
+//! [`IrProgram<F>`] ready for the optimize → R1CS path. Internally:
+//! `instantiate_extended → Walker → InterningSink → materialize →
+//! IrProgram`.
 //!
 //! `*_with_outputs` differs only in step 2: for every input whose
 //! name appears in `output_names`, it records the element-level SSA
@@ -29,7 +29,7 @@ use std::collections::{HashMap, HashSet};
 use lysis::{execute, expected_family, InterningSink, LysisConfig};
 use memory::{FieldBackend, FieldElement};
 
-use super::{ExtendedSink, InstEnvValue, Instantiator, InstrSink, LegacySink};
+use super::{ExtendedSink, InstEnvValue, Instantiator, InstrSink};
 use crate::error::ProveIrError;
 use crate::extended::ExtendedInstruction;
 use crate::extended_program::ExtendedIrProgram;
@@ -40,61 +40,14 @@ use crate::types::ProveIR;
 use ir_core::{IrProgram, SsaVar, Visibility};
 
 impl ProveIR {
-    /// Instantiate this template with concrete capture values, producing a flat IrProgram.
-    ///
-    /// The resulting IrProgram is compatible with the existing optimize → R1CS/Plonkish
-    /// pipeline (same format as `IrLowering::lower_circuit()`).
-    pub fn instantiate<F: FieldBackend>(
-        &self,
-        captures: &HashMap<String, FieldElement<F>>,
-    ) -> Result<IrProgram<F>, ProveIrError> {
-        let mut program = IrProgram::<F>::new();
-        run_walk(
-            self,
-            captures,
-            Box::new(LegacySink::new(&mut program)),
-            None,
-        )?;
-        Ok(program)
-    }
-
-    /// Instantiate with public output support (Circom frontend).
-    ///
-    /// Output signals in Circom are always public R1CS wires. When the body
-    /// encounters a `WitnessHint` or `Let` for an output signal, it reuses
-    /// the public wire instead of creating a separate witness wire. This
-    /// avoids duplicate wires and ensures constraints reference the public wire
-    /// directly.
-    ///
-    /// `output_names` contains the base names of output signals (e.g. `{"c", "out"}`).
-    pub fn instantiate_with_outputs<F: FieldBackend>(
-        &self,
-        captures: &HashMap<String, FieldElement<F>>,
-        output_names: &HashSet<String>,
-    ) -> Result<IrProgram<F>, ProveIrError> {
-        if output_names.is_empty() {
-            return self.instantiate(captures);
-        }
-        let mut program = IrProgram::<F>::new();
-        run_walk(
-            self,
-            captures,
-            Box::new(LegacySink::new(&mut program)),
-            Some(output_names),
-        )?;
-        Ok(program)
-    }
-
-    /// Extended-IR variant of [`Self::instantiate`] — produces a
+    /// Extended-IR variant of [`Self::instantiate_lysis`] — produces a
     /// `Vec<ExtendedInstruction<F>>` body wrapped in an
     /// [`ExtendedIrProgram<F>`] for the Lysis lifter.
     ///
-    /// At commit 2.4, every emitted entry is
-    /// `ExtendedInstruction::Plain(_)`. Commit 2.5 introduces
-    /// `LoopUnroll` emission via the sink's `push_loop_unroll` hook
-    /// — until then, loops in the body get unrolled in-line just
-    /// like the legacy path, only wrapped as `Plain` per
-    /// instruction.
+    /// Internal step in the Lysis pipeline. Compile-time-known loops
+    /// emit a single `ExtendedInstruction::LoopUnroll` carrying the
+    /// body once with `iter_var` bound symbolically; the Walker
+    /// replays the body per-iteration.
     pub fn instantiate_extended<F: FieldBackend>(
         &self,
         captures: &HashMap<String, FieldElement<F>>,
@@ -110,8 +63,8 @@ impl ProveIR {
         Ok(assemble_extended(body, metadata))
     }
 
-    /// Extended-IR variant of [`Self::instantiate_with_outputs`].
-    /// Same Circom-frontend semantics, ExtendedInstruction body.
+    /// Extended-IR variant of [`Self::instantiate_lysis_with_outputs`].
+    /// Same Circom-frontend output semantics, ExtendedInstruction body.
     pub fn instantiate_with_outputs_extended<F: FieldBackend>(
         &self,
         captures: &HashMap<String, FieldElement<F>>,
@@ -131,16 +84,12 @@ impl ProveIR {
         Ok(assemble_extended(body, metadata))
     }
 
-    /// **Lysis path** — instantiate this template through the
-    /// `ExtendedInstruction` schema, then lower through Lysis
-    /// (Walker → InterningSink → materialize) to produce a flat
-    /// [`IrProgram<F>`] ready for the R1CS backend.
+    /// **Lysis path** — production entry point. Instantiate this
+    /// template through the `ExtendedInstruction` schema, then lower
+    /// through Lysis (Walker → InterningSink → materialize) to
+    /// produce a flat [`IrProgram<F>`] ready for the R1CS backend.
     ///
-    /// Differs from [`Self::instantiate`] in HOW the body is lowered,
-    /// not WHAT comes out: both return `IrProgram<F>` with the same
-    /// post-optimize R1CS multiset (validated by the
-    /// `zkc::lysis_oracle`). The win is structural — Lysis's
-    /// `LoopUnroll` opcode (commit 2.5) collapses N iterations of an
+    /// Lysis's `LoopUnroll` opcode collapses N iterations of an
     /// identical sub-tree into a single shared body, eliminating the
     /// SHA-256(64) multiplicative amplification (the Phase 3 HARD
     /// GATE in commit 3.1).
@@ -152,8 +101,10 @@ impl ProveIR {
         lower_extended_through_lysis(extended)
     }
 
-    /// Lysis variant of [`Self::instantiate_with_outputs`]. Same
-    /// Circom-frontend output semantics, Lysis-lowered body.
+    /// Lysis variant of [`Self::instantiate_lysis`] with public-output
+    /// support. Same Circom-frontend output semantics — `output_names`
+    /// keeps `signal output` wires on the public R1CS boundary instead
+    /// of duplicating them as witness wires.
     pub fn instantiate_lysis_with_outputs<F: FieldBackend>(
         &self,
         captures: &HashMap<String, FieldElement<F>>,
@@ -391,36 +342,6 @@ mod tests {
     use crate::test_utils::compile_circuit;
 
     type F = Bn254Fr;
-
-    /// Both pipelines should produce the same instruction stream when
-    /// the source has no Lysis-specific structure (every emission is
-    /// `Plain` at this commit).
-    #[test]
-    fn extended_matches_legacy_for_plain_only_source() {
-        let source = "public z\nwitness x\nlet s = x + x;\nlet p = s * x;\nassert(p == z)";
-        let prove_ir = compile_circuit(source).expect("compile_circuit");
-
-        let legacy = prove_ir
-            .instantiate::<F>(&HashMap::new())
-            .expect("instantiate");
-        let extended = prove_ir
-            .instantiate_extended::<F>(&HashMap::new())
-            .expect("instantiate_extended");
-
-        assert_eq!(legacy.len(), extended.body.len());
-        assert!(extended.is_fully_plain());
-        assert_eq!(legacy.next_var(), extended.next_var);
-
-        // `try_into_ir_program` should succeed and yield the same
-        // instruction shape as the legacy path.
-        let projected = extended
-            .try_into_ir_program()
-            .expect("all entries are Plain");
-        assert_eq!(projected.len(), legacy.len());
-        for (a, b) in projected.iter().zip(legacy.iter()) {
-            assert_eq!(format!("{a}"), format!("{b}"));
-        }
-    }
 
     #[test]
     fn extended_emits_loop_unroll_for_for_loops() {
