@@ -28,9 +28,10 @@
 //!   discriminates `Equivalent` correctly. Stage 2 wires metadata
 //!   through the sink.
 //! - **Walker coverage gaps surface as [`RoundTripError::Walk`].**
-//!   Inputs containing `Instruction::Div`, `IntDiv`, or `IntMod`
-//!   bubble up the walker error. These desugarings are deferred to
-//!   Phase 4.
+//!   `IntDiv` and `IntMod` shipped in Phase 1.5; field `Div` shipped
+//!   in Phase 1.B (BETA20-CLOSEOUT, 2026-04-30) via the new
+//!   `Opcode::EmitDiv`. Remaining gaps are tracked per variant in
+//!   `walker.rs::lift_*`.
 //! - **Walker desugarings break strict oracle equivalence on a
 //!   subset of variants.** This is the surprising Stage-1 finding —
 //!   the Walker rewrites `Assert(x)` → `AssertEq(x, one)` (with a

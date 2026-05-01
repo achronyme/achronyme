@@ -201,7 +201,8 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitSub { dst, lhs, rhs }
         | Opcode::EmitMul { dst, lhs, rhs }
         | Opcode::EmitIsEq { dst, lhs, rhs }
-        | Opcode::EmitIsLt { dst, lhs, rhs } => vec![*dst, *lhs, *rhs],
+        | Opcode::EmitIsLt { dst, lhs, rhs }
+        | Opcode::EmitDiv { dst, lhs, rhs } => vec![*dst, *lhs, *rhs],
         Opcode::EmitNeg { dst, operand } => vec![*dst, *operand],
         Opcode::EmitMux {
             dst,
@@ -420,7 +421,8 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitSub { lhs, rhs, .. }
         | Opcode::EmitMul { lhs, rhs, .. }
         | Opcode::EmitIsEq { lhs, rhs, .. }
-        | Opcode::EmitIsLt { lhs, rhs, .. } => vec![*lhs, *rhs],
+        | Opcode::EmitIsLt { lhs, rhs, .. }
+        | Opcode::EmitDiv { lhs, rhs, .. } => vec![*lhs, *rhs],
         Opcode::EmitNeg { operand, .. } => vec![*operand],
         Opcode::EmitMux {
             cond,
@@ -466,7 +468,8 @@ fn writes_of(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitIsEq { dst, .. }
         | Opcode::EmitIsLt { dst, .. }
         | Opcode::EmitIntDiv { dst, .. }
-        | Opcode::EmitIntMod { dst, .. } => vec![*dst],
+        | Opcode::EmitIntMod { dst, .. }
+        | Opcode::EmitDiv { dst, .. } => vec![*dst],
         Opcode::LoopUnroll { iter_var, .. }
         | Opcode::LoopRolled { iter_var, .. }
         | Opcode::LoopRange { iter_var, .. } => vec![*iter_var],

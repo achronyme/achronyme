@@ -519,6 +519,17 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             Ok(Step::Next)
         }
 
+        EmitDiv { dst, lhs, rhs } => {
+            let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
+            let id = sink.intern_pure(InstructionKind::Div {
+                result: PLACEHOLDER_ID,
+                lhs: l,
+                rhs: r,
+            });
+            frames[frame_idx].write(*dst, id);
+            Ok(Step::Next)
+        }
+
         EmitNeg { dst, operand } => {
             let op = read_reg(&frames[frame_idx], *operand, offset)?;
             let id = sink.intern_pure(InstructionKind::Neg {
