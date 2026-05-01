@@ -1184,14 +1184,17 @@ fn if_else_as_statement() {
 }
 
 #[test]
-fn for_range_literal() {
+fn for_range_literal_no_carry_stays_rolled() {
+    // Loop without mut accumulator — body has no outer-scope writes,
+    // so the rolled `CircuitNode::For` path is preserved (and the
+    // instantiate-time unroller handles iteration).
     let ir = compile_circuit(
         "public out\n\
-         mut acc = 0\n\
+         let arr = [1, 2, 3]\n\
          for i in 0..3 {\n\
-             acc = acc + i\n\
+             assert_eq(arr[i], arr[i])\n\
          }\n\
-         assert_eq(acc, out)",
+         assert_eq(out, out)",
     )
     .unwrap();
     assert!(
@@ -1202,13 +1205,46 @@ fn for_range_literal() {
                 ..
             }
         )),
-        "expected For node with Literal range, body: {:#?}",
+        "expected For node with Literal range when no carries; body: {:#?}",
         ir.body
     );
 }
 
 #[test]
-fn for_over_array() {
+fn for_range_literal_with_carry_eager_unrolls() {
+    // Mut accumulator: predicate detects `acc` as outer-mut + body-write
+    // and eager-unrolls at lower. No `CircuitNode::For` survives; the
+    // body's SSA chain is materialised inline as N `Let` instances per
+    // iteration.
+    let ir = compile_circuit(
+        "public out\n\
+         mut acc = 0\n\
+         for i in 0..3 {\n\
+             acc = acc + i\n\
+         }\n\
+         assert_eq(acc, out)",
+    )
+    .unwrap();
+    assert!(
+        !ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })),
+        "carry-set should eager-unroll — no For node should remain. body: {:#?}",
+        ir.body
+    );
+    // Three iter-bound `i` Lets (const 0, 1, 2) plus three `acc$vK`
+    // Lets — at minimum 6 Let nodes for the unrolled body.
+    let let_count = ir
+        .body
+        .iter()
+        .filter(|n| matches!(n, CircuitNode::Let { .. }))
+        .count();
+    assert!(
+        let_count >= 6,
+        "expected >= 6 Let nodes (3 loop-var binds + 3 acc rebinds), got {let_count}"
+    );
+}
+
+#[test]
+fn for_over_array_with_carry_eager_unrolls() {
     let ir = compile_circuit(
         "public out\n\
          let arr = [1, 2, 3]\n\
@@ -1220,15 +1256,40 @@ fn for_over_array() {
     )
     .unwrap();
     assert!(
-        ir.body.iter().any(|n| matches!(
-            n,
-            CircuitNode::For {
-                range: ForRange::Array(ref name),
-                ..
-            } if name == "arr"
-        )),
-        "expected For node with Array range"
+        !ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })),
+        "carry-set over array should eager-unroll — no For node should remain. \
+         body: {:#?}",
+        ir.body
     );
+}
+
+#[test]
+fn for_with_dynamic_bound_and_carry_rejected() {
+    // Phase 1.B fix invariant: dynamic bound (`0..n`) combined with a
+    // mutable accumulator can't be statically eager-unrolled at lower
+    // time, so the predicate forces a clear diagnostic instead of the
+    // silent miscompile that the rolled path would produce. Mirrors
+    // Noir / Leo / Zokrates rejecting non-constant loop bounds.
+    let err = compile_prove_block(
+        "public out\n\
+         mut acc = 0p0\n\
+         for i in 0..n {\n\
+             acc = acc + 0p1\n\
+         }\n\
+         assert_eq(acc, out)",
+        &["n", "out"],
+    )
+    .unwrap_err();
+    match err {
+        ProveIrError::UnsupportedOperation { description, .. } => {
+            assert!(
+                description.contains("mutable accumulator")
+                    && description.contains("statically-known"),
+                "expected dynamic-bound carry diagnostic, got: {description}"
+            );
+        }
+        other => panic!("expected UnsupportedOperation, got {other:?}"),
+    }
 }
 
 #[test]
@@ -1263,7 +1324,13 @@ fn block_expr() {
 
 #[test]
 fn for_with_accumulator_circuit() {
-    // Realistic pattern: accumulate witness array values
+    // Realistic pattern: accumulate witness array values. Post Phase 1.B
+    // fix, the carry-set predicate detects `sum` as an outer mut written
+    // in the body and eager-unrolls — no `CircuitNode::For` should
+    // survive. Each iter's `sum$vK` Let chains through env to the prior
+    // iter's output, so the constraint multiset reflects a real four-step
+    // accumulator (not the silent `sum$v1` collision the rolled path
+    // would produce).
     let ir = compile_circuit(
         "public total\n\
          witness vals[4]\n\
@@ -1277,8 +1344,12 @@ fn for_with_accumulator_circuit() {
     assert_eq!(ir.public_inputs.len(), 1);
     assert_eq!(ir.witness_inputs.len(), 1);
     assert_eq!(ir.witness_inputs[0].name, "vals");
-    // Should have: LetArray(arr), Let(sum=ZERO), For{...}, AssertEq
-    assert!(ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })));
+    assert!(
+        !ir.body.iter().any(|n| matches!(n, CircuitNode::For { .. })),
+        "post-fix: carry-set body should eager-unroll, no For node should \
+         survive. body: {:#?}",
+        ir.body
+    );
     assert!(ir
         .body
         .iter()
@@ -1809,22 +1880,27 @@ fn outer_scope_fn_overridden_by_local() {
 
 #[test]
 fn dynamic_loop_bound_capture() {
-    // `for i in 0..n` where n is a capture from outer scope
+    // `for i in 0..n` where n is a capture from outer scope. Body has
+    // no mut accumulator, so the rolled `WithCapture` path is preserved
+    // (instantiation resolves n from captures). Phase 1.B fix only
+    // diverts to eager-unroll when a carry-set is detected.
     let outer = OuterScope {
-        values: [("n", OuterScopeEntry::Scalar)]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
+        values: [
+            ("n", OuterScopeEntry::Scalar),
+            ("a", OuterScopeEntry::Scalar),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
         functions: vec![],
         ..Default::default()
     };
     let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
-        "public result\nmut sum = 0\nfor i in 0..n { sum = sum + i }\nassert_eq(sum, result)",
+        "public result\nfor i in 0..n { assert_eq(a, a) }\nassert_eq(result, result)",
         &outer,
     )
     .unwrap();
     assert!(!ir.captures.is_empty(), "n should be a capture");
-    // Should have a For node with WithCapture range
     assert!(
         ir.body.iter().any(|n| matches!(
             n,
@@ -1839,21 +1915,24 @@ fn dynamic_loop_bound_capture() {
 
 #[test]
 fn dynamic_loop_bound_expr() {
-    // `for i in 0..n+1` where n is a capture
+    // `for i in 0..n+1` where n is a capture. Body has no mut
+    // accumulator — same rationale as `dynamic_loop_bound_capture`.
     let outer = OuterScope {
-        values: [("n", OuterScopeEntry::Scalar)]
-            .into_iter()
-            .map(|(k, v)| (k.to_string(), v))
-            .collect(),
+        values: [
+            ("n", OuterScopeEntry::Scalar),
+            ("a", OuterScopeEntry::Scalar),
+        ]
+        .into_iter()
+        .map(|(k, v)| (k.to_string(), v))
+        .collect(),
         functions: vec![],
         ..Default::default()
     };
     let ir = ProveIrCompiler::<Bn254Fr>::compile_prove_block(
-        "public result\nmut sum = 0\nfor i in 0..n+1 { sum = sum + i }\nassert_eq(sum, result)",
+        "public result\nfor i in 0..n+1 { assert_eq(a, a) }\nassert_eq(result, result)",
         &outer,
     )
     .unwrap();
-    // Should have a For node with WithExpr range (n+1 is an expression)
     assert!(
         ir.body.iter().any(|n| matches!(
             n,
