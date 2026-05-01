@@ -1968,6 +1968,19 @@ impl<F: FieldBackend> Walker<F> {
         let mut pre_body_walker_const = self.walker_const.clone();
         pre_body_walker_const.remove(&iter_var);
 
+        // Pre-compute the set of SSA vars *defined* by `body`. Each
+        // iteration re-binds these to fresh values, so any heap entry
+        // they hold from a prior iter's spill is stale by the time
+        // this iter's mid-emit split runs. Without stripping, the
+        // dedup branch in `spill_cold_var` would skip the re-spill
+        // and `resolve()`'s heap fault-in would forward iter-0's
+        // value to every later iter — surfacing as the SymbolicShift
+        // / BitAnd / SymbolicIndexedEffect "all 64 LoadHeaps point at
+        // one stored value" failure mode. The set is invariant across
+        // iters because `body` is the same slice every time, so
+        // compute it once outside the loop.
+        let body_defined: HashSet<SsaVar> = collect_defined_ssa_vars(body);
+
         for i in start_u32..end_u32 {
             // Track current at iter start so we can detect any split
             // that fires during this iteration — including splits
@@ -1979,6 +1992,16 @@ impl<F: FieldBackend> Walker<F> {
 
             self.allocator.restore_to(pre_body_alloc_ckpt);
             self.ssa_to_reg = pre_body_bindings.clone();
+            // Strip body-defined SsaVars from `ssa_to_heap` so the
+            // next mid-iter split allocates a fresh slot for each
+            // (per-iter SSA-after-unroll: each iter's body-defined
+            // values are conceptually distinct). Iter-0 sees no such
+            // entries yet so this is a no-op there; iter-1+ rolls
+            // off iter-0's spilled body-defined slots, leaving
+            // outer/external cold spills intact for cheap dedup.
+            for v in &body_defined {
+                self.ssa_to_heap.remove(v);
+            }
             self.bind(iter_var, iter_reg);
             self.walker_const = pre_body_walker_const.clone();
             self.walker_const.insert(iter_var, i64::from(i));
@@ -2776,6 +2799,69 @@ fn collect_referenced_ssa_vars<F: FieldBackend>(
         collect_in_extinst(inst, &mut out);
     }
     out
+}
+
+/// Collect every `SsaVar` *defined* (as a `result` / output) anywhere in
+/// `body`. Mirrors [`collect_referenced_ssa_vars`] on the write side and
+/// recurses through nested `LoopUnroll` / `TemplateBody` bodies so a
+/// SsaVar produced N levels deep is still reported as body-defined at
+/// the top level.
+///
+/// Used by [`Walker::emit_loop_unroll_per_iter_inner`] to strip
+/// body-defined entries from `ssa_to_heap` at every iter restore: each
+/// per-iter walk re-binds these vars to fresh values, so any prior
+/// spill-and-dedup would silently forward iter-0's stale value to
+/// iter-1+. Stripping forces the next mid-iter split to allocate a
+/// fresh slot per iter, preserving validator rule 13's
+/// single-static-store invariant *and* the per-iter SSA-after-unroll
+/// semantics (each iter's body-defined values are distinct).
+fn collect_defined_ssa_vars<F: FieldBackend>(
+    body: &[ExtendedInstruction<F>],
+) -> HashSet<SsaVar> {
+    let mut out = HashSet::new();
+    for inst in body {
+        collect_defined_in_extinst(inst, &mut out);
+    }
+    out
+}
+
+fn collect_defined_in_extinst<F: FieldBackend>(
+    inst: &ExtendedInstruction<F>,
+    out: &mut HashSet<SsaVar>,
+) {
+    match inst {
+        ExtendedInstruction::Plain(i) => {
+            out.insert(i.result_var());
+            for v in i.extra_result_vars() {
+                out.insert(*v);
+            }
+        }
+        ExtendedInstruction::LoopUnroll { body, .. } => {
+            for nested in body {
+                collect_defined_in_extinst(nested, out);
+            }
+        }
+        ExtendedInstruction::TemplateBody { body, .. } => {
+            for nested in body {
+                collect_defined_in_extinst(nested, out);
+            }
+        }
+        ExtendedInstruction::TemplateCall { outputs, .. } => {
+            for v in outputs {
+                out.insert(*v);
+            }
+        }
+        ExtendedInstruction::SymbolicArrayRead { result_var, .. } => {
+            out.insert(*result_var);
+        }
+        ExtendedInstruction::SymbolicShift { result_var, .. } => {
+            out.insert(*result_var);
+        }
+        ExtendedInstruction::SymbolicIndexedEffect { .. } => {
+            // Side-effect-only — writes into a slot the parent template
+            // owns. No new SsaVar produced at this level.
+        }
+    }
 }
 
 /// Precompute, for every SSA var referenced anywhere in `body`, the
