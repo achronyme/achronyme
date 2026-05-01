@@ -2241,6 +2241,7 @@ dependencies = [
  "proptest",
  "proving",
  "serde_json",
+ "sha2",
  "tempfile",
  "zkc",
 ]

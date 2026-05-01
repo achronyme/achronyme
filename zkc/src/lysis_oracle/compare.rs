@@ -38,12 +38,12 @@
 use std::collections::HashMap;
 
 use constraints::poseidon::PoseidonParamsProvider;
-use constraints::r1cs::{Constraint, LinearCombination};
 use ir::passes::canonicalize_ssa;
-use ir::types::{Instruction, IrProgram, Visibility};
-use memory::{FieldBackend, FieldElement};
+use ir::types::IrProgram;
+use memory::FieldElement;
 
 use crate::r1cs_backend::R1CSCompiler;
+use crate::test_support::{constraint_multiset, extract_public_inputs};
 use crate::witness::WitnessGenerator;
 
 /// Outcome of [`semantic_equivalence`].
@@ -169,63 +169,16 @@ where
     OracleResult::Equivalent
 }
 
-/// Public inputs declared in `program.instructions`, in declaration
-/// order. Name collisions are preserved — duplicate public declarations
-/// would disagree just like any other I/O difference.
-fn extract_public_inputs<F: FieldBackend>(program: &IrProgram<F>) -> Vec<String> {
-    program
-        .iter()
-        .filter_map(|inst| match inst {
-            Instruction::Input {
-                name,
-                visibility: Visibility::Public,
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-/// Canonical positional key for a single `A * B = C` constraint.
-/// Coefficients are stored as canonical `[u64; 4]` limbs so the key
-/// carries `Ord` without leaking `F` into the sorted type.
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct CanonicalConstraint {
-    a: Vec<(usize, [u64; 4])>,
-    b: Vec<(usize, [u64; 4])>,
-    c: Vec<(usize, [u64; 4])>,
-}
-
-fn constraint_multiset<F: FieldBackend>(constraints: &[Constraint<F>]) -> Vec<CanonicalConstraint> {
-    let mut out: Vec<CanonicalConstraint> =
-        constraints.iter().map(canonicalize_constraint).collect();
-    out.sort();
-    out
-}
-
-fn canonicalize_constraint<F: FieldBackend>(c: &Constraint<F>) -> CanonicalConstraint {
-    CanonicalConstraint {
-        a: lc_to_terms(&c.a),
-        b: lc_to_terms(&c.b),
-        c: lc_to_terms(&c.c),
-    }
-}
-
-/// Simplify an LC (collapses duplicates, drops zero coefficients,
-/// sorts by wire index via BTreeMap) and project onto the portable
-/// `(wire_index, canonical_limbs)` representation.
-fn lc_to_terms<F: FieldBackend>(lc: &LinearCombination<F>) -> Vec<(usize, [u64; 4])> {
-    lc.simplify()
-        .terms()
-        .iter()
-        .map(|(v, coeff)| (v.index(), coeff.to_canonical()))
-        .collect()
-}
+// Canonicalization primitives moved to `crate::test_support` in Phase 2.B
+// so the same logic backs both this oracle (pending delete in Phase 2.A
+// once cross-path baselines migrate to frozen mode in Phase 2.C) and
+// the frozen-baseline pins. Re-imported above.
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use ir::types::SsaVar;
+    use crate::test_support::lc_to_terms;
+    use ir::types::{Instruction, SsaVar, Visibility};
     use memory::Bn254Fr;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
