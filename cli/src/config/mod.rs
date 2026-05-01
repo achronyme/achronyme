@@ -73,26 +73,6 @@ pub struct CircuitSection {
 #[serde(deny_unknown_fields)]
 pub struct CircomSection {
     pub libs: Option<Vec<String>>,
-    /// Which lowering + instantiation pipeline `ach circom` should use:
-    /// - `"lysis"` (default since Phase 1.A): keeps loops with
-    ///   loop-var-indexed signal writes rolled at lowering and walks
-    ///   them through `ProveIR::instantiate_lysis_with_outputs`. Same
-    ///   R1CS multiset as the legacy path on every benchmark template
-    ///   (validated by `cross_path_baseline_circom`) but avoids the
-    ///   eager-amplification OOM on at-scale circuits (SHA-256(64),
-    ///   Merkle depth >30).
-    /// - `"legacy"`: the eager-unroll `ProveIR::instantiate_with_outputs`
-    ///   path. Kept as a regression baseline / debug escape hatch.
-    pub frontend: Option<String>,
-}
-
-/// Resolved circom lowering + instantiation pipeline. See
-/// `CircomSection::frontend`.
-#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
-pub enum CircomFrontend {
-    Legacy,
-    #[default]
-    Lysis,
 }
 
 // ---------------------------------------------------------------------------
@@ -120,7 +100,6 @@ pub struct ProjectConfig {
     pub gc_stats: bool,
     pub circuit_stats: bool,
     pub circom_lib_dirs: Vec<PathBuf>,
-    pub circom_frontend: CircomFrontend,
 }
 
 // ---------------------------------------------------------------------------
