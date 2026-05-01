@@ -3872,6 +3872,55 @@ fn sha256_64_witness_matches_sha2_reference() {
     eprintln!("  [verified] digest = {}", hex_encode(&got));
 }
 
+/// SHA-256(64) full R1CS-verify-with-witness regression.
+///
+/// Companion to [`sha256_64_witness_matches_sha2_reference`] and
+/// [`sha256_64_lysis_hard_gate`]. Those two cover compile budget +
+/// witness-vs-FIPS bit-equivalence respectively, but neither runs the
+/// IR's `AssertEq` chain against a populated witness — the hard-gate
+/// stops at constraint counting and the witness-equivalence test reads
+/// the bit outputs directly out of `compute_witness_hints` (Lysis VM
+/// hints) without re-checking that those values satisfy every R1CS
+/// constraint produced from the compiled IR.
+///
+/// That blind spot let the per-iter Lysis Walker stale-spill bug
+/// (`var_postdecl_padding_e2e`) survive on SHA-256(64) for weeks: the
+/// 64 `paddedIn[..]` `AssertEq`s collapsed onto one shared RHS and the
+/// constraint-count budget drifted by less than the 15 % gate
+/// tolerance, so the hard-gate stayed green even while witness eval
+/// would have rejected the program. This test plugs the gap by running
+/// `compile_ir_with_witness` + `cs.verify` on the same fixed 8-byte
+/// input — any future spill / dataflow regression that produces
+/// witness-incompatible constraints surfaces here even if the
+/// constraint count remains within budget.
+///
+/// `#[ignore]`d because the SHA-256(64) compile path is ~13 s on this
+/// host. Run with `--ignored sha256_64_r1cs_verify_with_witness`
+/// before pushing changes that touch the Walker, instantiate, or
+/// witness-hint paths.
+#[test]
+#[ignore = "SHA-256(64) full R1CS-verify-with-witness regression — compile is ~13s on this host. Run with --ignored before pushing changes that touch the Lysis walker, instantiate, witness, or R1CS pipelines."]
+fn sha256_64_r1cs_verify_with_witness() {
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let message: [u8; 8] = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
+    for (byte_idx, byte) in message.iter().enumerate() {
+        for bit_idx in 0..8 {
+            let bit_val = u64::from((byte >> (7 - bit_idx)) & 1);
+            inputs.insert(
+                format!("in_{}", byte_idx * 8 + bit_idx),
+                FieldElement::<Bn254Fr>::from_u64(bit_val),
+            );
+        }
+    }
+
+    let n = circomlib_e2e_verify_fe(
+        "SHA-256(64)",
+        "test/circomlib/sha256_test.circom",
+        &inputs,
+    );
+    assert!(n > 0, "SHA-256(64) must produce non-empty constraint set");
+}
+
 fn hex_encode(bytes: &[u8]) -> String {
     let mut s = String::with_capacity(bytes.len() * 2);
     for b in bytes {
