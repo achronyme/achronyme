@@ -1,4 +1,4 @@
-//! `Opcode` — the 34 instructions Lysis understands, exactly matching
+//! `Opcode` — the 35 instructions Lysis understands, exactly matching
 //! the table in RFC §4.3.
 //!
 //! Each variant carries its operands inline so that after a successful
@@ -26,7 +26,7 @@
 
 use crate::intern::Visibility;
 
-/// All 34 Lysis opcodes, grouped per RFC §4.3 section.
+/// All 35 Lysis opcodes, grouped per RFC §4.3 section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     // -----------------------------------------------------------------
@@ -106,7 +106,7 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.5 IR emission (13)
+    // §4.3.5 IR emission (14)
     // -----------------------------------------------------------------
     EmitConst {
         dst: u8,
@@ -145,6 +145,24 @@ pub enum Opcode {
     EmitAssertEq {
         lhs: u8,
         rhs: u8,
+    },
+    /// `EmitAssertEq` variant carrying a user-authored failure message.
+    ///
+    /// The message lives in [`crate::bytecode::ConstPoolEntry::String`]
+    /// at index `msg_idx`. The executor reconstructs an
+    /// `InstructionKind::AssertEq { message: Some(_), .. }` so the IR
+    /// evaluator can surface the custom string through
+    /// `EvalError::AssertEqFailed.message` (see `ir/src/eval/mod.rs`).
+    ///
+    /// Two opcode tags (`EmitAssertEq` + `EmitAssertEqMsg`) instead of a
+    /// single optional-payload opcode keeps the wire format invariant
+    /// per opcode tag — old `EmitAssertEq` decoders never see this
+    /// variant, so the 2-byte payload of plain `EmitAssertEq` is
+    /// preserved across releases.
+    EmitAssertEqMsg {
+        lhs: u8,
+        rhs: u8,
+        msg_idx: u16,
     },
     EmitRangeCheck {
         var: u8,
@@ -312,6 +330,9 @@ pub mod code {
 
     // §4.3.7 (Phase 4 follow-up — heap-output WitnessCall)
     pub const EMIT_WITNESS_CALL_HEAP: u8 = 0x52;
+
+    // §4.3.5 follow-up — message-bearing AssertEq.
+    pub const EMIT_ASSERT_EQ_MSG: u8 = 0x53;
 }
 
 impl Opcode {
@@ -343,6 +364,7 @@ impl Opcode {
             Self::EmitMux { .. } => EMIT_MUX,
             Self::EmitDecompose { .. } => EMIT_DECOMPOSE,
             Self::EmitAssertEq { .. } => EMIT_ASSERT_EQ,
+            Self::EmitAssertEqMsg { .. } => EMIT_ASSERT_EQ_MSG,
             Self::EmitRangeCheck { .. } => EMIT_RANGE_CHECK,
             Self::EmitWitnessCall { .. } => EMIT_WITNESS_CALL,
             Self::EmitPoseidonHash { .. } => EMIT_POSEIDON_HASH,
@@ -385,6 +407,7 @@ impl Opcode {
             Self::EmitMux { .. } => "EmitMux",
             Self::EmitDecompose { .. } => "EmitDecompose",
             Self::EmitAssertEq { .. } => "EmitAssertEq",
+            Self::EmitAssertEqMsg { .. } => "EmitAssertEqMsg",
             Self::EmitRangeCheck { .. } => "EmitRangeCheck",
             Self::EmitWitnessCall { .. } => "EmitWitnessCall",
             Self::EmitPoseidonHash { .. } => "EmitPoseidonHash",
@@ -480,6 +503,12 @@ mod tests {
         }
         .writes_register());
         assert!(!Opcode::EmitAssertEq { lhs: 0, rhs: 0 }.writes_register());
+        assert!(!Opcode::EmitAssertEqMsg {
+            lhs: 0,
+            rhs: 0,
+            msg_idx: 0
+        }
+        .writes_register());
         assert!(!Opcode::EmitRangeCheck {
             var: 0,
             max_bits: 8
