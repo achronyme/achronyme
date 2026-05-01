@@ -1354,21 +1354,28 @@ impl<F: FieldBackend> Walker<F> {
                     }
                 }
             }
-            // Field division Div(x,y) = x * y^{-1} is witness-computed
-            // (inverse via WitnessCall) + one range-check constraint
-            // (y*inv == 1). Plumbing it here would require synthesizing
-            // an inline Artik blob that computes inv = y^{-1}, which
-            // has no current precedent in this walker.
+            // Field division `Div(lhs, rhs)` — emit `Opcode::EmitDiv`.
+            // The executor materialises that as `Instruction::Div` for
+            // the sink, and the R1CS backend (`zkc::r1cs_backend`)
+            // lowers it via `divide_lcs`, which handles the witness-
+            // side inverse hint and the `rhs * inv = 1` constraint.
             //
-            // Circom lowering does NOT emit Div (signals multiply
-            // only), and ProveIR's prove {} blocks rarely use field
-            // division. If 3.C.8 surfaces a real use case, the fix is:
-            //   1. Emit a WitnessCall with an Artik blob computing inv.
-            //   2. Emit AssertEq(Mul(y, inv), one) to constrain inv.
-            //   3. Emit Mul(x, inv) as the result.
-            // For now, surface the rejection with a clear error.
-            Instruction::Div { .. } => {
-                return Err(WalkError::UnsupportedInstruction { kind: "Div" });
+            // Phase 1.B (BETA20-CLOSEOUT, 2026-04-30) — gated the
+            // `prove {}` cross-path parity since LegacySink forwards
+            // `Instruction::Div` verbatim. The walker_const const-fold
+            // branch is intentionally skipped: field division has no
+            // compile-time meaningful result for the usize-shaped
+            // walker-side constants (which model loop indices, not
+            // field elements).
+            Instruction::Div { result, lhs, rhs } => {
+                let (l, r) = self.bin(*lhs, *rhs)?;
+                let dst = self.allocator.alloc()?;
+                self.push_op(Opcode::EmitDiv {
+                    dst,
+                    lhs: l,
+                    rhs: r,
+                });
+                self.bind(*result, dst);
             }
 
             // ---------- unary ----------
@@ -2235,11 +2242,15 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             out_regs: vec![0u8; outputs.len()],
         }),
 
-        // Div is still walker-rejected; the inline-Artik plumbing
-        // for `x / y = x * y^{-1}` has no precedent in this walker
-        // and circom signal-arith never emits it. IntDiv / IntMod
-        // shipped in Phase 1.5 to unblock SHA-256.
-        Instruction::Div { .. } => return Err(WalkError::UnsupportedInstruction { kind: "Div" }),
+        // Div shipped in Phase 1.B (BETA20-CLOSEOUT 2026-04-30):
+        // one 3-byte EmitDiv opcode, same shape as EmitMul. The
+        // R1CS backend handles field-div semantics downstream via
+        // `divide_lcs`.
+        Instruction::Div { .. } => bin(Opcode::EmitDiv {
+            dst: 0,
+            lhs: 0,
+            rhs: 0,
+        }),
         Instruction::IntDiv { max_bits, .. } => {
             if *max_bits > u32::from(u8::MAX) {
                 return Err(WalkError::OperandOutOfRange {
@@ -2374,6 +2385,7 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
             Instruction::IsLeBounded { .. } => "IsLeBounded".into(),
             Instruction::IntDiv { max_bits, .. } => format!("IntDiv(max_bits={max_bits})"),
             Instruction::IntMod { max_bits, .. } => format!("IntMod(max_bits={max_bits})"),
+            Instruction::Div { .. } => "Div".into(),
             other => std::any::type_name_of_val(other).to_string(),
         },
         ExtendedInstruction::LoopUnroll {
@@ -4182,7 +4194,12 @@ mod tests {
     }
 
     #[test]
-    fn refuses_div_with_clear_kind() {
+    fn lowers_div_to_emit_div() {
+        // Phase 1.B (BETA20-CLOSEOUT 2026-04-30) promoted field Div
+        // from "walker-rejected" to first-class output: `EmitDiv`
+        // emits `Instruction::Div` to the sink, which the R1CS
+        // backend lowers via `divide_lcs`. Required for `prove {}`
+        // cross-path parity (LegacySink forwards Div verbatim).
         let body = vec![
             plain(Instruction::Input {
                 result: ssa(0),
@@ -4200,9 +4217,12 @@ mod tests {
                 rhs: ssa(1),
             }),
         ];
-        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
-        assert_eq!(err, WalkError::UnsupportedInstruction { kind: "Div" });
+        let out = run(&body);
+        let divs = out
+            .iter()
+            .filter(|i| matches!(i, lysis::InstructionKind::Div { .. }))
+            .count();
+        assert_eq!(divs, 1, "Div survives the walker");
     }
 
     #[test]

@@ -266,6 +266,10 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         self.push(Opcode::EmitMul { dst, lhs, rhs })
     }
 
+    pub fn emit_div(&mut self, dst: u8, lhs: u8, rhs: u8) -> &mut Self {
+        self.push(Opcode::EmitDiv { dst, lhs, rhs })
+    }
+
     pub fn emit_neg(&mut self, dst: u8, operand: u8) -> &mut Self {
         self.push(Opcode::EmitNeg { dst, operand })
     }

@@ -181,6 +181,16 @@ pub enum Opcode {
         rhs: u8,
         max_bits: u8,
     },
+    /// Field division `dst = lhs / rhs` — emits `Instruction::Div`
+    /// to the sink. The downstream R1CS backend lowers it via
+    /// `divide_lcs`, which generates the witness-side inverse hint
+    /// and the `rhs * inv = 1` constraint. Phase 1.B unblocked the
+    /// `prove {}` cross-path baseline by adding this opcode.
+    EmitDiv {
+        dst: u8,
+        lhs: u8,
+        rhs: u8,
+    },
 
     // -----------------------------------------------------------------
     // §4.3.6 Heap spill (Phase 4) — captures-overflow escape valve.
@@ -294,6 +304,7 @@ pub mod code {
     pub const EMIT_IS_LT: u8 = 0x4C;
     pub const EMIT_INT_DIV: u8 = 0x4D;
     pub const EMIT_INT_MOD: u8 = 0x4E;
+    pub const EMIT_DIV: u8 = 0x4F;
 
     // §4.3.6 (Phase 4 — heap spill)
     pub const STORE_HEAP: u8 = 0x50;
@@ -339,6 +350,7 @@ impl Opcode {
             Self::EmitIsLt { .. } => EMIT_IS_LT,
             Self::EmitIntDiv { .. } => EMIT_INT_DIV,
             Self::EmitIntMod { .. } => EMIT_INT_MOD,
+            Self::EmitDiv { .. } => EMIT_DIV,
             Self::StoreHeap { .. } => STORE_HEAP,
             Self::LoadHeap { .. } => LOAD_HEAP,
             Self::EmitWitnessCallHeap { .. } => EMIT_WITNESS_CALL_HEAP,
@@ -380,6 +392,7 @@ impl Opcode {
             Self::EmitIsLt { .. } => "EmitIsLt",
             Self::EmitIntDiv { .. } => "EmitIntDiv",
             Self::EmitIntMod { .. } => "EmitIntMod",
+            Self::EmitDiv { .. } => "EmitDiv",
             Self::StoreHeap { .. } => "StoreHeap",
             Self::LoadHeap { .. } => "LoadHeap",
             Self::EmitWitnessCallHeap { .. } => "EmitWitnessCallHeap",
@@ -406,6 +419,7 @@ impl Opcode {
                 | Self::EmitIsLt { .. }
                 | Self::EmitIntDiv { .. }
                 | Self::EmitIntMod { .. }
+                | Self::EmitDiv { .. }
                 | Self::LoadHeap { .. }
         )
     }

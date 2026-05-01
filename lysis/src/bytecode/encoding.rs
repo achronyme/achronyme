@@ -145,7 +145,8 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
         | Opcode::EmitSub { dst, lhs, rhs }
         | Opcode::EmitMul { dst, lhs, rhs }
         | Opcode::EmitIsEq { dst, lhs, rhs }
-        | Opcode::EmitIsLt { dst, lhs, rhs } => {
+        | Opcode::EmitIsLt { dst, lhs, rhs }
+        | Opcode::EmitDiv { dst, lhs, rhs } => {
             buf.push(*dst);
             buf.push(*lhs);
             buf.push(*rhs);
@@ -504,7 +505,8 @@ fn decode_opcode_at(
         | code::EMIT_SUB
         | code::EMIT_MUL
         | code::EMIT_IS_EQ
-        | code::EMIT_IS_LT) => {
+        | code::EMIT_IS_LT
+        | code::EMIT_DIV) => {
             let dst = read_u8(bytes, pos)?;
             let lhs = read_u8(bytes, pos)?;
             let rhs = read_u8(bytes, pos)?;
@@ -514,7 +516,8 @@ fn decode_opcode_at(
                 code::EMIT_MUL => Opcode::EmitMul { dst, lhs, rhs },
                 code::EMIT_IS_EQ => Opcode::EmitIsEq { dst, lhs, rhs },
                 code::EMIT_IS_LT => Opcode::EmitIsLt { dst, lhs, rhs },
-                _ => unreachable!("match guard covers only these 5"),
+                code::EMIT_DIV => Opcode::EmitDiv { dst, lhs, rhs },
+                _ => unreachable!("match guard covers only these 6"),
             })
         }
         code::EMIT_NEG => {
@@ -757,6 +760,11 @@ mod tests {
             dst: 13,
             lhs: 14,
             rhs: 15,
+        });
+        roundtrip_opcode(Opcode::EmitDiv {
+            dst: 16,
+            lhs: 17,
+            rhs: 18,
         });
     }
 
