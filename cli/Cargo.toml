@@ -44,3 +44,8 @@ achronyme-std = { path = "../std" }
 
 [dev-dependencies]
 tempfile = "3"
+# `cross_path_prove_baseline` test imports `zkc::lysis_oracle::compare`,
+# which is gated behind `test-support` since Phase 2.B (the oracle has
+# no production callers). Activates the same feature for cli's own
+# integration tests.
+zkc = { path = "../zkc", features = ["test-support"] }

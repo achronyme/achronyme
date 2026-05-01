@@ -17,14 +17,20 @@ ir = { path = "../ir" }
 ir-core = { path = "../ir-core" }
 ir-forge = { path = "../ir-forge" }
 artik = { path = "../artik" }
+# `sha2` is only used inside `zkc::test_support` for canonical-multiset
+# hashing in frozen-baseline regression tests (Phase 2.B). Gated as
+# optional + activated by the `test-support` feature so production
+# builds of zkc don't pull it in.
+sha2 = { version = "0.10", optional = true }
 
 [features]
 # Re-export test helpers (see `zkc::test_support`) for crates that
 # need them outside `cargo test` — currently the cargo-fuzz harness
-# at `fuzz/fuzz_targets/fuzz_r1cs_preservation.rs` (Phase 0.4.C),
-# which shares the proptest's oracle. Mirrors the
+# at `fuzz/fuzz_targets/fuzz_r1cs_preservation.rs` (Phase 0.4.C) and
+# the frozen-baseline pins in `zkc/tests/frozen_baseline.rs` +
+# `circom/tests/cross_path_baseline.rs` (Phase 2.B/2.C). Mirrors the
 # `ir-forge::test-support` pattern.
-test-support = []
+test-support = ["dep:sha2"]
 
 [dev-dependencies]
 proptest = "1"

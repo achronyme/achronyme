@@ -64,10 +64,11 @@
 //!    extend via subs, verify R(w_ext) — but if subs is missing an
 //!    entry, ext is incomplete and the resulting w_ext still
 //!    happens to satisfy R for most random w'.
-//! Both are deferred to a future tightening pass. The
-//! "wrong LC" class is the most common kind of optimizer bug
-//! (Markowitz pivot picking the wrong elimination, off-by-one in
-//! linear extraction) and is what this test catches today.
+//!
+//! Both are deferred to a future tightening pass. The "wrong LC" class
+//! is the most common kind of optimizer bug (Markowitz pivot picking
+//! the wrong elimination, off-by-one in linear extraction) and is what
+//! this test catches today.
 
 use memory::FieldElement;
 use proptest::prelude::*;
