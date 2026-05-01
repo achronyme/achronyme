@@ -42,32 +42,10 @@ use memory::FieldBackend;
 
 use crate::extended::{ExtendedInstruction, IndexedEffectKind, ShiftDirection};
 
-/// How a sink wants the [`super::Instantiator::emit_range_loop`]
-/// caller to handle a `for i in start..end { body }` construct.
-///
-/// Returned by [`InstrSink::loop_unroll_mode`]. The default is
-/// [`Self::PerIteration`] (LegacySink behaviour); ExtendedSink
-/// overrides to [`Self::Symbolic`] so the body emits exactly once
-/// with `iter_var` bound symbolically and a single
-/// [`ExtendedInstruction::LoopUnroll`] node carries the bounds.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub(crate) enum LoopUnrollMode {
-    /// LegacySink — caller emits body once per iteration `start..end`,
-    /// binding the loop var to a fresh `Const(i)` SSA wire each time.
-    /// Byte-identical to the pre-trait pipeline.
-    PerIteration,
-    /// ExtendedSink — caller emits body once with the loop var bound
-    /// to a fresh symbolic SSA slot. Sink has internally swapped to a
-    /// sub-buffer; finalize via [`InstrSink::finish_symbolic_loop`].
-    Symbolic,
-}
-
 /// The emission boundary between [`super::Instantiator`] and its
 /// output stream. See module docs.
 pub(crate) trait InstrSink<F: FieldBackend> {
-    /// Allocate a fresh SSA var. Both sinks keep a parallel
-    /// monotonic counter so the var ids are stable across the
-    /// emission walk regardless of which sink is in use.
+    /// Allocate a fresh SSA var.
     fn fresh_var(&mut self) -> SsaVar;
 
     /// Append an instruction. Returns its result var (the same one
@@ -96,107 +74,65 @@ pub(crate) trait InstrSink<F: FieldBackend> {
     /// canonicaliser.
     fn next_var(&self) -> u32;
 
-    /// How `for i in start..end { body }` should be emitted. See
-    /// [`LoopUnrollMode`].
-    ///
-    /// Default: `PerIteration` (LegacySink path). ExtendedSink
-    /// overrides to `Symbolic`.
-    fn loop_unroll_mode(&self) -> LoopUnrollMode {
-        LoopUnrollMode::PerIteration
-    }
-
     /// Begin a symbolic loop body — switch the sink's active push
     /// target to a fresh sub-buffer that
     /// [`Self::finish_symbolic_loop`] will fold into a
-    /// [`ExtendedInstruction::LoopUnroll`]. Only called when the
-    /// preceding [`Self::loop_unroll_mode`] returned `Symbolic`.
-    ///
-    /// Default: `unreachable!` — `PerIteration` sinks never call this.
-    fn begin_symbolic_loop(&mut self) {
-        unreachable!("begin_symbolic_loop called on a sink whose loop_unroll_mode is PerIteration");
-    }
+    /// [`ExtendedInstruction::LoopUnroll`].
+    fn begin_symbolic_loop(&mut self);
 
     /// Finalise a symbolic loop body — pop the sub-buffer started by
     /// [`Self::begin_symbolic_loop`] and emit one
     /// [`ExtendedInstruction::LoopUnroll { iter_var, start, end, body }`]
     /// into the surrounding scope (the outer body, or the next-up loop
     /// if nested).
-    ///
-    /// Default: `unreachable!` — `PerIteration` sinks never call this.
-    fn finish_symbolic_loop(&mut self, _iter_var: SsaVar, _start: i64, _end: i64) {
-        unreachable!(
-            "finish_symbolic_loop called on a sink whose loop_unroll_mode is PerIteration"
-        );
-    }
+    fn finish_symbolic_loop(&mut self, iter_var: SsaVar, start: i64, end: i64);
 
     /// Push a [`ExtendedInstruction::SymbolicIndexedEffect`] into the
     /// active scope (the topmost loop sub-buffer if any, else the
-    /// outer body). Only callable when [`Self::loop_unroll_mode`]
-    /// returns `Symbolic`; the caller must have used `Symbolic` mode
-    /// to enter the surrounding loop. `array_slots` is the
-    /// pre-resolved list of element SSA wires so the walker can
-    /// per-iteration materialise without needing the instantiate-time
-    /// env (closes risk-audit invariant #4 in the Gap 1 plan).
-    ///
-    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    /// outer body). `array_slots` is the pre-resolved list of element
+    /// SSA wires so the walker can per-iteration materialise without
+    /// needing the instantiate-time env.
     fn push_symbolic_indexed_effect(
         &mut self,
-        _kind: IndexedEffectKind,
-        _array_slots: Vec<SsaVar>,
-        _index_var: SsaVar,
-        _value_var: Option<SsaVar>,
-        _span: Option<SpanRange>,
-    ) {
-        unreachable!(
-            "push_symbolic_indexed_effect called on a sink whose loop_unroll_mode is PerIteration"
-        );
-    }
+        kind: IndexedEffectKind,
+        array_slots: Vec<SsaVar>,
+        index_var: SsaVar,
+        value_var: Option<SsaVar>,
+        span: Option<SpanRange>,
+    );
 
     /// Push a [`ExtendedInstruction::SymbolicArrayRead`] into the
     /// active scope. The caller must have already minted `result_var`
     /// via [`Self::fresh_var`] and resolved `index_var` from the
-    /// index expression. `array_slots` is the pre-resolved list of
-    /// element SSA wires (mirrors
-    /// [`Self::push_symbolic_indexed_effect`]). The walker (Gap 1.5
-    /// Stage 3) will rebind `result_var` to `array_slots[idx]`'s
-    /// register per iteration, so no `Plain(Instruction)` is emitted
-    /// alongside.
-    ///
-    /// Default: `unreachable!` — `PerIteration` sinks never call this.
+    /// index expression. The walker (Gap 1.5 Stage 3) rebinds
+    /// `result_var` to `array_slots[idx]`'s register per iteration,
+    /// so no `Plain(Instruction)` is emitted alongside.
     fn push_symbolic_array_read(
         &mut self,
-        _result_var: SsaVar,
-        _array_slots: Vec<SsaVar>,
-        _index_var: SsaVar,
-        _span: Option<SpanRange>,
-    ) {
-        unreachable!(
-            "push_symbolic_array_read called on a sink whose loop_unroll_mode is PerIteration"
-        );
-    }
+        result_var: SsaVar,
+        array_slots: Vec<SsaVar>,
+        index_var: SsaVar,
+        span: Option<SpanRange>,
+    );
 
     /// Push a [`ExtendedInstruction::SymbolicShift`] into the active
     /// scope. The caller must have already minted `result_var` via
     /// [`Self::fresh_var`], emitted `operand_var` via the normal
     /// `emit_expr` path, and resolved `shift_var` from the shift
-    /// expression. The walker (Gap 3 Stage 3) will const-fold
-    /// `shift_var` per iteration and synthesise the equivalent
-    /// Decompose + recompose chain that
+    /// expression. The walker (Gap 3 Stage 3) const-folds `shift_var`
+    /// per iteration and synthesises the equivalent Decompose +
+    /// recompose chain that
     /// [`crate::instantiate::Instantiator::emit_shift_right`] /
     /// `emit_shift_left` would emit at instantiate time.
-    ///
-    /// Default: `unreachable!` — `PerIteration` sinks never call this.
     fn push_symbolic_shift(
         &mut self,
-        _result_var: SsaVar,
-        _operand_var: SsaVar,
-        _shift_var: SsaVar,
-        _num_bits: u32,
-        _direction: ShiftDirection,
-        _span: Option<SpanRange>,
-    ) {
-        unreachable!("push_symbolic_shift called on a sink whose loop_unroll_mode is PerIteration");
-    }
+        result_var: SsaVar,
+        operand_var: SsaVar,
+        shift_var: SsaVar,
+        num_bits: u32,
+        direction: ShiftDirection,
+        span: Option<SpanRange>,
+    );
 }
 
 // ---------------------------------------------------------------------
@@ -288,10 +224,6 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
 
     fn next_var(&self) -> u32 {
         self.metadata.next_var()
-    }
-
-    fn loop_unroll_mode(&self) -> LoopUnrollMode {
-        LoopUnrollMode::Symbolic
     }
 
     fn begin_symbolic_loop(&mut self) {
@@ -426,14 +358,6 @@ mod tests {
 
         assert_eq!(metadata.next_var(), 2);
         assert_eq!(body.len(), 2);
-    }
-
-    #[test]
-    fn extended_sink_loop_mode_is_symbolic() {
-        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
-        let mut metadata = IrProgram::<F>::new();
-        let sink = ExtendedSink::new(&mut body, &mut metadata);
-        assert_eq!(sink.loop_unroll_mode(), LoopUnrollMode::Symbolic);
     }
 
     #[test]
