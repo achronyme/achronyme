@@ -151,11 +151,10 @@ pub(crate) trait InstrSink<F: FieldBackend> {
 /// the IrProgram API for the metadata channels without duplicating
 /// HashMap bookkeeping.
 ///
-/// Loop emission (commit 2.5) is the only place ExtendedSink diverges
-/// from LegacySink — when the dedicated `push_loop_unroll` hook lands
-/// it will swap the active push target to a sub-buffer for the body
-/// builder, then emit a single `LoopUnroll { iter_var, start, end,
-/// body: sub_vec }` to the outer stream.
+/// Loop emission (commit 2.5) added the dedicated `push_loop_unroll`
+/// hook that swaps the active push target to a sub-buffer for the
+/// body builder, then emits a single `LoopUnroll { iter_var, start,
+/// end, body: sub_vec }` to the outer stream.
 pub(crate) struct ExtendedSink<'a, F: FieldBackend> {
     body: &'a mut Vec<ExtendedInstruction<F>>,
     /// Stack of nested-loop sub-buffers. Each [`begin_symbolic_loop`]

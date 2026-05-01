@@ -17,11 +17,11 @@ use ir_core::{Instruction, IrType, SsaVar, Visibility};
 
 impl<'a, F: FieldBackend> Instantiator<'a, F> {
     pub(super) fn push_inst(&mut self, inst: Instruction<F>) -> SsaVar {
-        // Delegates to the configured sink (LegacySink → IrProgram, or
-        // ExtendedSink → Vec<ExtendedInstruction::Plain>). The current
-        // span context is forwarded so the sink can attach it to the
-        // result var's span side-channel (LegacySink writes to
-        // IrProgram.var_spans; ExtendedSink writes to its metadata
+        // Delegates to `ExtendedSink`, which writes
+        // `Vec<ExtendedInstruction::Plain>` for the Lysis Walker to
+        // consume downstream. The current span context is forwarded
+        // so the sink can attach it to the result var's span side-
+        // channel (ExtendedSink writes spans to its metadata
         // skeleton).
         self.sink.push_inst(inst, self.current_span.as_ref())
     }

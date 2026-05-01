@@ -1375,13 +1375,13 @@ impl<F: FieldBackend> Walker<F> {
             // lowers it via `divide_lcs`, which handles the witness-
             // side inverse hint and the `rhs * inv = 1` constraint.
             //
-            // Phase 1.B (BETA20-CLOSEOUT, 2026-04-30) — gated the
-            // `prove {}` cross-path parity since LegacySink forwards
-            // `Instruction::Div` verbatim. The walker_const const-fold
-            // branch is intentionally skipped: field division has no
-            // compile-time meaningful result for the usize-shaped
-            // walker-side constants (which model loop indices, not
-            // field elements).
+            // Phase 1.B (BETA20-CLOSEOUT, 2026-04-30) promoted Div
+            // from "walker-rejected" to first-class output so `prove
+            // {}` blocks can use field division. The walker_const
+            // const-fold branch is intentionally skipped: field
+            // division has no compile-time meaningful result for the
+            // usize-shaped walker-side constants (which model loop
+            // indices, not field elements).
             Instruction::Div { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
@@ -4378,7 +4378,7 @@ mod tests {
         // from "walker-rejected" to first-class output: `EmitDiv`
         // emits `Instruction::Div` to the sink, which the R1CS
         // backend lowers via `divide_lcs`. Required for `prove {}`
-        // cross-path parity (LegacySink forwards Div verbatim).
+        // to use field division.
         let body = vec![
             plain(Instruction::Input {
                 result: ssa(0),

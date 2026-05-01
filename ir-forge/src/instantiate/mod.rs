@@ -76,10 +76,13 @@ pub(super) enum InstEnvValue {
 /// Converts a ProveIR template into a flat IrProgram given concrete capture values.
 ///
 /// Holds an `&'a mut`-borrowed [`InstrSink`] (boxed `dyn` to keep the
-/// struct non-generic over sink type) so the same emission walk can
-/// produce either flat `Vec<Instruction<F>>` (LegacySink) or
-/// `Vec<ExtendedInstruction<F>>` (ExtendedSink) — see Phase 3.C.6
-/// commit 2.1 for the trait definition and 2.2 for this wiring.
+/// struct non-generic over the concrete sink type) so the emission
+/// walk can target the production [`ExtendedSink`] that produces
+/// `Vec<ExtendedInstruction<F>>` for the Lysis Walker. The
+/// `Box<dyn>` shape is retained even though only one sink remains
+/// today — it keeps the door open for swapping in a fuzz-only sink
+/// or alternate emission target without re-monomorphising
+/// `Instantiator`.
 pub(super) struct Instantiator<'a, F: FieldBackend> {
     /// The emission target. Constructed by [`super::api`] and
     /// borrowed for the whole instantiation. Sink-internal state
