@@ -424,11 +424,17 @@ mod tests {
 
     #[test]
     fn extended_emits_loop_unroll_for_for_loops() {
-        // Post-2.5: loops emit a single LoopUnroll node containing
-        // the body, instead of N inlined copies. The extended program
-        // is no longer fully Plain.
-        let source =
-            "public sum\nwitness a\nmut acc = 0\nfor i in 0..4 {\n  acc = acc + a\n}\nassert(acc == sum)";
+        // Post-2.5: loops emit a single LoopUnroll node containing the
+        // body, instead of N inlined copies. The extended program is no
+        // longer fully Plain.
+        //
+        // Phase 1.B note: the body must NOT carry a mut accumulator,
+        // because carry-set loops eager-unroll at lower time and never
+        // produce a `CircuitNode::For` for the extended sink to lift.
+        // A body that just emits one assertion per iteration over a
+        // witness array is the canonical no-carry shape that still
+        // exercises the symbolic LoopUnroll path.
+        let source = "public out\nwitness arr[4]\nfor i in 0..4 { assert_eq(arr[i], arr[i]) }\nassert(out == out)";
         let prove_ir = compile_circuit(source).expect("compile_circuit");
         let extended = prove_ir
             .instantiate_extended::<F>(&HashMap::new())
