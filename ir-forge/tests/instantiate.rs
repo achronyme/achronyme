@@ -37,7 +37,7 @@ fn compile_and_instantiate_with_captures(
         .iter()
         .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
         .collect();
-    prove_ir.instantiate(&cap_map).unwrap()
+    prove_ir.instantiate_lysis(&cap_map).unwrap()
 }
 
 // --- Basic circuits ---
@@ -307,7 +307,7 @@ fn instantiate_with_capture_as_loop_bound() {
         [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(4))]
             .into_iter()
             .collect();
-    let ir = prove_ir.instantiate(&captures).unwrap();
+    let ir = prove_ir.instantiate_lysis(&captures).unwrap();
     // n=4 means 4 iterations → 4 Const instructions for i=0,1,2,3
     let consts: Vec<_> = ir
         .instructions
@@ -747,7 +747,7 @@ fn audit_capture_both_is_witness_input() {
         [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
             .into_iter()
             .collect();
-    let ir = prove_ir.instantiate(&captures).unwrap();
+    let ir = prove_ir.instantiate_lysis(&captures).unwrap();
     // n should be a witness Input (not just a Const)
     let witness_inputs: Vec<&str> = ir
         .instructions
@@ -818,9 +818,12 @@ fn audit_instantiate_rejects_huge_capture_loop() {
     )]
     .into_iter()
     .collect();
-    let err = prove_ir.instantiate(&captures).unwrap_err();
+    let err = prove_ir.instantiate_lysis(&captures).unwrap_err();
     assert!(
-        matches!(err, ProveIrError::RangeTooLarge { .. }),
+        matches!(
+            err,
+            ir_forge::LysisInstantiateError::Instantiate(ProveIrError::RangeTooLarge { .. })
+        ),
         "expected RangeTooLarge, got: {err}"
     );
 }
@@ -851,7 +854,7 @@ fn audit_both_capture_emits_assert_eq() {
         [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
             .into_iter()
             .collect();
-    let ir = prove_ir.instantiate(&captures).unwrap();
+    let ir = prove_ir.instantiate_lysis(&captures).unwrap();
     // Should have at least one AssertEq constraining capture n to its constant
     let assert_eqs = ir
         .instructions

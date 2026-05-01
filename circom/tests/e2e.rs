@@ -164,7 +164,7 @@ fn run_circom_test(circom_path: &Path) -> TestResult {
     }
 
     // Instantiate (with output support — outputs become public R1CS wires)
-    let mut program = match prove_ir.instantiate_with_outputs(&fe_captures, &output_names) {
+    let mut program = match prove_ir.instantiate_lysis_with_outputs(&fe_captures, &output_names) {
         Ok(p) => p,
         Err(e) => {
             return TestResult {
@@ -402,7 +402,7 @@ fn poseidon_real_circomlib() {
         .collect();
 
     let mut program =
-        match prove_ir.instantiate_with_outputs(&fe_captures, &compile_result.output_names) {
+        match prove_ir.instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names) {
             Ok(p) => p,
             Err(e) => panic!("Poseidon instantiation failed: {e}"),
         };
@@ -586,7 +586,7 @@ fn mimcsponge_real_circomlib() {
         .collect();
 
     let mut program =
-        match prove_ir.instantiate_with_outputs(&fe_captures, &compile_result.output_names) {
+        match prove_ir.instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names) {
             Ok(p) => p,
             Err(e) => panic!("MiMCSponge instantiation failed: {e}"),
         };
@@ -664,7 +664,7 @@ fn circomlib_e2e_verify(test_name: &str, circom_file: &str, inputs: &[(&str, u64
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -778,7 +778,7 @@ fn circomlib_e2e_verify_fe(
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -837,7 +837,7 @@ fn circomlib_e2e_optimized(
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -934,7 +934,7 @@ fn escalarmulany_groth16() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("instantiation failed: {e}"));
     ir::passes::optimize(&mut program);
 
@@ -1012,7 +1012,7 @@ fn eddsaposeidon_compile() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("EdDSAPoseidon instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -1623,7 +1623,7 @@ fn fn_witness_lift_array_param_e2e_groth16() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     ir::passes::optimize(&mut program);
 
@@ -1690,7 +1690,7 @@ fn fn_witness_lift_array_literal_e2e_groth16() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     ir::passes::optimize(&mut program);
 
@@ -1795,7 +1795,7 @@ fn sha256_64_r1cs_probe() {
     let t1 = Instant::now();
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     eprintln!(
         "  [instantiate] {:?}  instructions={}",
@@ -2482,7 +2482,7 @@ fn cluster_size_diagnostic() {
             .collect();
 
         let mut program = prove_ir
-            .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+            .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
             .unwrap_or_else(|e| panic!("instantiate {name} failed: {e}"));
         ir::passes::optimize(&mut program);
 
@@ -2677,7 +2677,7 @@ fn fn_witness_lift_e2e_groth16_triangle_sum() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     ir::passes::optimize(&mut program);
 
@@ -2743,7 +2743,7 @@ fn fn_witness_lift_e2e_r1cs_bitops_dispatch() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
 
     ir::passes::optimize(&mut program);
@@ -2805,7 +2805,7 @@ fn fn_witness_lift_e2e_r1cs_artik_dispatch() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
 
     ir::passes::optimize(&mut program);
@@ -3179,7 +3179,7 @@ fn pedersen_o2() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap();
     ir::passes::optimize(&mut program);
 
@@ -3249,7 +3249,7 @@ fn num2bits_optimization_diagnostic() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap();
     ir::passes::optimize(&mut program);
 
@@ -3460,7 +3460,7 @@ fn r1cs_optimization_benchmark() {
 
         let tp = std::time::Instant::now();
         let mut program = prove_ir
-            .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+            .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
             .unwrap_or_else(|e| panic!("{name} instantiation failed: {e}"));
         let t_inst = tp.elapsed();
 

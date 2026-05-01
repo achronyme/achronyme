@@ -105,7 +105,7 @@ fn achronyme_prove_snarkjs_verify(
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .map_err(|e| format!("instantiate failed: {e}"))?;
     ir::passes::optimize(&mut program);
 

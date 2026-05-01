@@ -789,10 +789,10 @@ mod tests {
         let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
 
         let ir_a = poc_prove_ir(body_hand_unrolled())
-            .instantiate_with_outputs::<Bn254Fr>(&captures, &outputs)
+            .instantiate_lysis_with_outputs::<Bn254Fr>(&captures, &outputs)
             .expect("hand-unrolled ProveIR should instantiate");
         let ir_b = poc_prove_ir(body_loop_var_then_substituted())
-            .instantiate_with_outputs::<Bn254Fr>(&captures, &outputs)
+            .instantiate_lysis_with_outputs::<Bn254Fr>(&captures, &outputs)
             .expect("substituted ProveIR should instantiate");
 
         // Same instruction count proves no extra wires/constraints

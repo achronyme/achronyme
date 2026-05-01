@@ -662,7 +662,7 @@ fn real_num2bits_e2e_instantiate() {
         .collect();
 
     let program = prove_ir
-        .instantiate(&fe_captures)
+        .instantiate_lysis(&fe_captures)
         .expect("instantiation failed");
 
     // Verify the IR program has instructions (loop was unrolled)
@@ -710,7 +710,7 @@ fn circom_prove_e2e(
     }
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
         .expect("instantiation failed");
 
     ir::passes::optimize(&mut program);
