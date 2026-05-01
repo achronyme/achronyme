@@ -1,0 +1,44 @@
+// Prove block: nested for-loops, both with mutable accumulators.
+//
+// Phase 1.B fix verification — cross-validates the carry-set predicate
+// under three nested-scope conditions:
+//
+//   1. Outer `mut total` is carried across outer iters.
+//   2. Inner `mut row_sum` is **declared inside** the outer body, so the
+//      outer loop's predicate must NOT include it as an outer-carry
+//      (body-local exclusion).
+//   3. The inner `for j` loop independently triggers eager-unroll
+//      because `row_sum` (declared in the outer body, before the inner
+//      loop) is an outer-carry from the inner loop's perspective.
+//
+// Expected: 1+2+3 + 4+5+6 = 21.
+
+let expected = 0p21
+
+prove(expected: Public) {
+    let m: Field[2] = [0p0, 0p0]   // 2 rows (placeholder; values from literals)
+    mut total: Field = 0p0
+    for i in 0..2 {
+        mut row_sum: Field = 0p0
+        for j in 0..3 {
+            // Constants per (i, j) so the asserts can be statically
+            // checked but the carries still exercise per-iter SSA.
+            let cell: Field = if i == 0p0 {
+                if j == 0p0 { 0p1 }
+                else if j == 0p1 { 0p2 }
+                else { 0p3 }
+            } else {
+                if j == 0p0 { 0p4 }
+                else if j == 0p1 { 0p5 }
+                else { 0p6 }
+            }
+            row_sum = row_sum + cell
+        }
+        total = total + row_sum
+    }
+    assert_eq(total, expected)
+    // Pin `m` so the array literal isn't dead-stripped pre-fold.
+    assert_eq(m[0] + m[1], 0p0)
+}
+
+print("PASS: prove_for_loop_nested")

@@ -155,6 +155,12 @@ const EXAMPLES: &[Example] = &[
         budget: Duration::from_secs(60),
     },
     Example {
+        label: "test/prove_for_loop_nested",
+        rel_path: "test/prove/prove_for_loop_nested.ach",
+        circom_libs: &[],
+        budget: Duration::from_secs(60),
+    },
+    Example {
         label: "test/prove_for_loop_dynamic",
         rel_path: "test/prove/prove_for_loop_dynamic.ach",
         circom_libs: &[],
