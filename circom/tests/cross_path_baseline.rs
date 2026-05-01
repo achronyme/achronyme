@@ -1,840 +1,468 @@
-//! Lysis-vs-Legacy cross-path equivalence baseline (circom templates).
+//! Frozen-baseline regression test for circom benchmark templates.
 //!
-//! Goal: for every benchmark circom template, verify that
-//! `instantiate_with_outputs` (Legacy frontend) and
-//! `instantiate_lysis_with_outputs` (Lysis frontend) produce
-//! byte-identical R1CS, both pre-O1 and post-O1.
+//! Phase 2.C — converted from a Lysis-vs-Legacy byte-identity gate
+//! (`38913753`, Phase 1.A) to a frozen-baseline regression gate.
+//! Each circom template is compiled through Lysis, hashed via
+//! `zkc::test_support::compute_frozen_baseline`, and compared against
+//! a pinned `FrozenBaseline` literal stored below.
 //!
-//! "Byte-identical" = canonical multiset equality on constraints
-//! (each constraint's A/B/C linear combinations sorted+simplified, then
-//! constraint vec sorted), matching variable count, matching
-//! public/private partition.
+//! ## Why frozen baseline replaces Lysis-vs-Legacy
 //!
-//! This is the gating data for Phase 1.A in BETA20-CLOSEOUT.md
-//! (Lysis as default for circom). See cross-path-baseline-2026-04-28
-//! plan dir for the report.
+//! With Lysis as default and the Legacy path scheduled for deletion in
+//! Phase 2.A, dual-path comparison becomes vacuous (Lysis-vs-Lysis).
+//! Frozen-baseline pins the structural identity of each template's
+//! R1CS at HEAD-of-Phase-2.B, surfacing any future drift — both
+//! intentional changes (re-pin via REGEN) and silent regressions
+//! (assertion fails with actionable diff).
 //!
-//! Pipeline per side, exactly mirroring `r1cs_optimization_benchmark`
-//! but without the witness verification (we want constraint identity,
-//! not witness identity, and the witness-hint pipeline can shape-
-//! diverge between frontends without affecting R1CS):
+//! The canonical-multiset hash is **sort-based**
+//! (`zkc::test_support::canonical_multiset_hash`), which neutralizes
+//! term-order permutations within a single linear combination. It
+//! does NOT neutralize wire-index permutations across constraints —
+//! and the EdDSAPoseidon HashMap iteration leak (flagged in Phase 1.A)
+//! produces exactly that pattern. EdDSAPoseidon is therefore pinned
+//! shape-only via `assert_frozen_baseline_shape_matches`: counts,
+//! variable count, and public partition are pinned, but hash drift
+//! is accepted. Tracked as a determinism follow-up post-tag.
 //!
-//! 1. `compile_file_with_frontend(path, libs, Frontend::{Legacy,Lysis})`
-//! 2. `instantiate_with_outputs` (legacy) or `instantiate_lysis_with_outputs` (lysis)
-//! 3. `ir::passes::optimize(&mut program)`
-//! 4. `canonicalize_ssa(&program)` — defensive; neutralises fresh-var counter drift
-//! 5. `R1CSCompiler::compile_ir(&program)`
-//! 6. snapshot constraints → pre-O1 multiset
-//! 7. `compiler.optimize_r1cs()` → post-O1 multiset
+//! ## Re-generating pinned values
 //!
-//! `canonicalize_constraint` / `lc_to_terms` are copied locally from
-//! `zkc::lysis_oracle::compare` (private). The oracle's
-//! `semantic_equivalence` does *only* pre-O1 comparison and returns a
-//! boolean variant — it can't surface the constraint diff or the
-//! post-O1 step the baseline needs.
+//! ```ignore
+//! REGEN_FROZEN_BASELINES=1 cargo test --release -p circom \
+//!     --test cross_path_baseline -- --nocapture
+//! ```
+//! Then copy each printed `FrozenBaseline { ... }` literal into the
+//! corresponding `PIN_*` constants below. Every re-pin is a
+//! documented intentional change — a passing test that later starts
+//! failing means a regression that needs root-cause, not a re-pin.
+//!
+//! ## SHA-256(64)
+//!
+//! Skipped here. SHA-256(64) has its own hard-gate in
+//! `circom/tests/e2e.rs::sha256_64_lysis_hard_gate` (and the (8/16/32)
+//! variants). Pinning it twice would only invite re-pin churn.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, Instant};
+use std::time::Instant;
 
-use circom::Frontend;
-use constraints::r1cs::{Constraint, LinearCombination};
 use ir::passes::canonicalize_ssa;
-use ir::types::{Instruction, IrProgram, Visibility};
-use memory::{Bn254Fr, FieldBackend, FieldElement};
-use zkc::r1cs_backend::R1CSCompiler;
+use ir::types::IrProgram;
+use memory::{Bn254Fr, FieldElement};
+use zkc::test_support::{
+    assert_frozen_baseline_matches, assert_frozen_baseline_shape_matches, compute_frozen_baseline,
+    FrozenBaseline,
+};
 
-// ── Canonicalisation helpers (copied from zkc::lysis_oracle::compare) ──
-
-#[derive(Debug, Clone, PartialEq, Eq, PartialOrd, Ord)]
-struct CanonicalConstraint {
-    a: Vec<(usize, [u64; 4])>,
-    b: Vec<(usize, [u64; 4])>,
-    c: Vec<(usize, [u64; 4])>,
-}
-
-fn lc_to_terms<F: FieldBackend>(lc: &LinearCombination<F>) -> Vec<(usize, [u64; 4])> {
-    lc.simplify()
-        .terms()
-        .iter()
-        .map(|(v, coeff)| (v.index(), coeff.to_canonical()))
-        .collect()
-}
-
-fn canonicalize_constraint<F: FieldBackend>(c: &Constraint<F>) -> CanonicalConstraint {
-    CanonicalConstraint {
-        a: lc_to_terms(&c.a),
-        b: lc_to_terms(&c.b),
-        c: lc_to_terms(&c.c),
-    }
-}
-
-fn constraint_multiset<F: FieldBackend>(constraints: &[Constraint<F>]) -> Vec<CanonicalConstraint> {
-    let mut out: Vec<CanonicalConstraint> =
-        constraints.iter().map(canonicalize_constraint).collect();
-    out.sort();
-    out
-}
-
-fn extract_public_inputs<F: FieldBackend>(program: &IrProgram<F>) -> Vec<String> {
-    program
-        .iter()
-        .filter_map(|inst| match inst {
-            Instruction::Input {
-                name,
-                visibility: Visibility::Public,
-                ..
-            } => Some(name.clone()),
-            _ => None,
-        })
-        .collect()
-}
-
-// ── Per-side compile + measure ────────────────────────────────────
+// ============================================================================
+// Pipeline (Lysis-only)
+// ============================================================================
 
 #[derive(Debug)]
-struct SideResult {
-    pre_o1: Vec<CanonicalConstraint>,
-    post_o1: Vec<CanonicalConstraint>,
-    constraints_pre: usize,
-    constraints_post: usize,
-    variables: usize,
-    public_inputs: Vec<String>,
-    elapsed: Duration,
-}
-
-#[derive(Debug)]
-enum Side {
-    Legacy,
-    Lysis,
-}
-
-#[derive(Debug)]
-enum SideOutcome {
-    Ok(SideResult),
+enum CompileOutcome {
+    Ok(FrozenBaseline),
     Failed(String),
 }
 
-fn run_side(side: Side, name: &str, path: &Path, lib_dirs: &[PathBuf]) -> SideOutcome {
+fn run_template_lysis(name: &str, path: &Path, lib_dirs: &[PathBuf]) -> CompileOutcome {
     let t0 = Instant::now();
 
-    // Step 1: compile (frontend-aware).
-    let frontend = match side {
-        Side::Legacy => Frontend::Legacy,
-        Side::Lysis => Frontend::Lysis,
-    };
-    let compile_result = match circom::compile_file_with_frontend(path, lib_dirs, frontend) {
+    let compile_result = match circom::compile_file(path, lib_dirs) {
         Ok(r) => r,
         Err(e) => {
-            return SideOutcome::Failed(format!("[{name}/{side:?}] compile failed: {e}"));
+            return CompileOutcome::Failed(format!("[{name}] compile failed: {e}"));
         }
     };
 
     let prove_ir = &compile_result.prove_ir;
-    let capture_values = &compile_result.capture_values;
-    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = compile_result
+        .capture_values
         .iter()
         .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
         .collect();
 
-    // Step 2: instantiate.
-    let mut program: IrProgram<Bn254Fr> = match side {
-        Side::Legacy => match prove_ir
-            .instantiate_with_outputs::<Bn254Fr>(&fe_captures, &compile_result.output_names)
-        {
-            Ok(p) => p,
-            Err(e) => {
-                return SideOutcome::Failed(format!(
-                    "[{name}/Legacy] instantiate_with_outputs failed: {e}"
-                ));
-            }
-        },
-        Side::Lysis => match prove_ir
-            .instantiate_lysis_with_outputs::<Bn254Fr>(&fe_captures, &compile_result.output_names)
-        {
-            Ok(p) => p,
-            Err(e) => {
-                return SideOutcome::Failed(format!(
-                    "[{name}/Lysis] instantiate_lysis_with_outputs failed: {e}"
-                ));
-            }
-        },
+    let mut program: IrProgram<Bn254Fr> = match prove_ir
+        .instantiate_lysis_with_outputs::<Bn254Fr>(&fe_captures, &compile_result.output_names)
+    {
+        Ok(p) => p,
+        Err(e) => {
+            return CompileOutcome::Failed(format!(
+                "[{name}] instantiate_lysis_with_outputs failed: {e}"
+            ));
+        }
     };
 
-    // Step 3: optimize (IR-level). Critical: we want any optimize-side
-    // asymmetry to surface, not be hidden.
     ir::passes::optimize(&mut program);
-
-    // Step 4: canonicalise SSA (defensive vs fresh-var counter drift).
+    // Defensive vs fresh-var counter drift across runs.
     let program = canonicalize_ssa(&program);
 
-    // Step 5: R1CS compile.
-    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
-    if let Err(e) = compiler.compile_ir(&program) {
-        return SideOutcome::Failed(format!("[{name}/{side:?}] R1CS compile_ir failed: {e}"));
-    }
-
-    // Step 6: snapshot pre-O1.
-    let pre_o1_raw: Vec<Constraint<Bn254Fr>> = compiler.cs.constraints().to_vec();
-    let pre_o1 = constraint_multiset(&pre_o1_raw);
-    let constraints_pre = compiler.cs.num_constraints();
-
-    // Step 7: O1.
-    let _stats = compiler.optimize_r1cs();
-    let post_o1 = constraint_multiset(compiler.cs.constraints());
-    let constraints_post = compiler.cs.num_constraints();
-    let variables = compiler.cs.num_variables();
-    let public_inputs = extract_public_inputs(&program);
-
-    SideOutcome::Ok(SideResult {
-        pre_o1,
-        post_o1,
-        constraints_pre,
-        constraints_post,
-        variables,
-        public_inputs,
-        elapsed: t0.elapsed(),
-    })
-}
-
-// ── Diff helpers ──────────────────────────────────────────────────
-
-/// Symmetric difference: returns (only_in_a, only_in_b). Both inputs
-/// must already be sorted (multisets).
-fn multiset_sym_diff(
-    a: &[CanonicalConstraint],
-    b: &[CanonicalConstraint],
-) -> (Vec<CanonicalConstraint>, Vec<CanonicalConstraint>) {
-    use std::collections::BTreeMap;
-
-    let mut count_a: BTreeMap<&CanonicalConstraint, i64> = BTreeMap::new();
-    for c in a {
-        *count_a.entry(c).or_default() += 1;
-    }
-    for c in b {
-        *count_a.entry(c).or_default() -= 1;
-    }
-
-    let mut only_a = Vec::new();
-    let mut only_b = Vec::new();
-    for (c, n) in count_a {
-        if n > 0 {
-            for _ in 0..n {
-                only_a.push(c.clone());
-            }
-        } else if n < 0 {
-            for _ in 0..(-n) {
-                only_b.push(c.clone());
-            }
-        }
-    }
-    (only_a, only_b)
-}
-
-fn fmt_term(term: &(usize, [u64; 4])) -> String {
-    let (wire, coeff) = term;
-    // Render coefficient compactly: if only the low limb is non-zero, print decimal;
-    // otherwise print full hex limbs (canonical Montgomery form, MSB last).
-    if coeff[1] == 0 && coeff[2] == 0 && coeff[3] == 0 {
-        format!("{}*w{}", coeff[0], wire)
-    } else {
-        format!(
-            "0x{:016x}{:016x}{:016x}{:016x}*w{}",
-            coeff[3], coeff[2], coeff[1], coeff[0], wire
-        )
-    }
-}
-
-fn fmt_lc(terms: &[(usize, [u64; 4])]) -> String {
-    if terms.is_empty() {
-        "0".into()
-    } else {
-        terms.iter().map(fmt_term).collect::<Vec<_>>().join(" + ")
-    }
-}
-
-fn fmt_constraint(c: &CanonicalConstraint) -> String {
-    format!(
-        "({}) * ({}) = ({})",
-        fmt_lc(&c.a),
-        fmt_lc(&c.b),
-        fmt_lc(&c.c)
-    )
-}
-
-// ── Per-template orchestration ────────────────────────────────────
-
-#[derive(Debug)]
-#[allow(clippy::large_enum_variant)]
-enum Verdict {
-    /// Both sides ran; constraint multisets compared.
-    Ran {
-        legacy: SideResult,
-        lysis: SideResult,
-        pre_eq: bool,
-        post_eq: bool,
-        pre_only_legacy: Vec<CanonicalConstraint>,
-        pre_only_lysis: Vec<CanonicalConstraint>,
-        post_only_legacy: Vec<CanonicalConstraint>,
-        post_only_lysis: Vec<CanonicalConstraint>,
-    },
-    /// One or both sides failed; diff impossible.
-    Failed {
-        legacy_err: Option<String>,
-        lysis_err: Option<String>,
-        legacy_constraints: Option<usize>,
-        lysis_constraints: Option<usize>,
-    },
-}
-
-#[derive(Debug)]
-#[allow(dead_code)]
-struct Row {
-    template: String,
-    file: String,
-    skipped_reason: Option<String>,
-    verdict: Option<Verdict>,
-    total_elapsed: Duration,
-}
-
-fn run_template(
-    name: &str,
-    file: &str,
-    inputs: HashMap<String, FieldElement<Bn254Fr>>,
-    skip_reason: Option<&str>,
-) -> Row {
-    let _ = inputs; // We don't run witness; inputs reserved for future witness step.
-    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
-    let path = manifest_dir.join(file);
-    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
-    let t0 = Instant::now();
-
-    if let Some(reason) = skip_reason {
-        eprintln!("|| {name:24}  SKIPPED: {reason}");
-        return Row {
-            template: name.into(),
-            file: file.into(),
-            skipped_reason: Some(reason.into()),
-            verdict: None,
-            total_elapsed: t0.elapsed(),
-        };
-    }
-
-    eprintln!("|| {name:24}  starting (file={file})…");
-
-    let legacy_outcome = run_side(Side::Legacy, name, &path, &lib_dirs);
-    let lysis_outcome = run_side(Side::Lysis, name, &path, &lib_dirs);
-
-    let verdict = match (legacy_outcome, lysis_outcome) {
-        (SideOutcome::Ok(legacy), SideOutcome::Ok(lysis)) => {
-            let pre_eq = legacy.pre_o1 == lysis.pre_o1
-                && legacy.public_inputs == lysis.public_inputs
-                && legacy.variables == lysis.variables;
-            let post_eq =
-                legacy.post_o1 == lysis.post_o1 && legacy.public_inputs == lysis.public_inputs;
-            let (pre_only_legacy, pre_only_lysis) =
-                multiset_sym_diff(&legacy.pre_o1, &lysis.pre_o1);
-            let (post_only_legacy, post_only_lysis) =
-                multiset_sym_diff(&legacy.post_o1, &lysis.post_o1);
-            eprintln!(
-                "||   legacy: pre={}, post={}, vars={}, pub={} | {:.0}ms",
-                legacy.constraints_pre,
-                legacy.constraints_post,
-                legacy.variables,
-                legacy.public_inputs.len(),
-                legacy.elapsed.as_secs_f64() * 1000.0
-            );
-            eprintln!(
-                "||   lysis : pre={}, post={}, vars={}, pub={} | {:.0}ms",
-                lysis.constraints_pre,
-                lysis.constraints_post,
-                lysis.variables,
-                lysis.public_inputs.len(),
-                lysis.elapsed.as_secs_f64() * 1000.0
-            );
-            eprintln!(
-                "||   pre-O1 byte-identical: {}, post-O1 byte-identical: {}",
-                pre_eq, post_eq
-            );
-            Some(Verdict::Ran {
-                legacy,
-                lysis,
-                pre_eq,
-                post_eq,
-                pre_only_legacy,
-                pre_only_lysis,
-                post_only_legacy,
-                post_only_lysis,
-            })
-        }
-        (legacy_o, lysis_o) => {
-            let (legacy_err, legacy_c) = match legacy_o {
-                SideOutcome::Ok(s) => (None, Some(s.constraints_post)),
-                SideOutcome::Failed(e) => {
-                    eprintln!("||   legacy FAILED: {e}");
-                    (Some(e), None)
-                }
-            };
-            let (lysis_err, lysis_c) = match lysis_o {
-                SideOutcome::Ok(s) => (None, Some(s.constraints_post)),
-                SideOutcome::Failed(e) => {
-                    eprintln!("||   lysis  FAILED: {e}");
-                    (Some(e), None)
-                }
-            };
-            Some(Verdict::Failed {
-                legacy_err,
-                lysis_err,
-                legacy_constraints: legacy_c,
-                lysis_constraints: lysis_c,
-            })
-        }
-    };
-
-    Row {
-        template: name.into(),
-        file: file.into(),
-        skipped_reason: None,
-        verdict,
-        total_elapsed: t0.elapsed(),
-    }
-}
-
-// ── Report rendering ──────────────────────────────────────────────
-
-fn render_report(rows: &[Row], total: Duration) {
-    eprintln!();
-    eprintln!("# Cross-path baseline report");
-    eprintln!();
+    let baseline = compute_frozen_baseline(&program);
     eprintln!(
-        "| Template | Legacy (post-O1) | Lysis (post-O1) | Pre-O1 ident? | Post-O1 ident? | Notes |"
-    );
-    eprintln!(
-        "|----------|------------------|-----------------|---------------|----------------|-------|"
+        "  {} compiled+pinned in {:.2}s ({} pre-O1 / {} post-O1 / {} vars)",
+        name,
+        t0.elapsed().as_secs_f64(),
+        baseline.pre_o1_count,
+        baseline.post_o1_count,
+        baseline.num_variables,
     );
 
-    let mut byte_identical_post = 0usize;
-    let mut diverged = 0usize;
-    let mut failed = 0usize;
-    let mut skipped = 0usize;
-
-    for row in rows {
-        if let Some(reason) = &row.skipped_reason {
-            eprintln!(
-                "| {} | n/a | n/a | n/a | n/a | SKIPPED: {} |",
-                row.template, reason
-            );
-            skipped += 1;
-            continue;
-        }
-        match &row.verdict {
-            Some(Verdict::Ran {
-                legacy,
-                lysis,
-                pre_eq,
-                post_eq,
-                ..
-            }) => {
-                let note = match (*pre_eq, *post_eq) {
-                    (true, true) => format!(
-                        "vars: legacy={} lysis={} | t: legacy={:.0}ms lysis={:.0}ms",
-                        legacy.variables,
-                        lysis.variables,
-                        legacy.elapsed.as_secs_f64() * 1000.0,
-                        lysis.elapsed.as_secs_f64() * 1000.0
-                    ),
-                    (false, true) => "pre-O1 differs but O1 erases it".into(),
-                    (true, false) => "DANGEROUS: pre-O1 identical but O1 diverges".into(),
-                    (false, false) => format!(
-                        "pre Δ={} (legacy={} lysis={}) | post Δ={} (legacy={} lysis={})",
-                        legacy.constraints_pre as i64 - lysis.constraints_pre as i64,
-                        legacy.constraints_pre,
-                        lysis.constraints_pre,
-                        legacy.constraints_post as i64 - lysis.constraints_post as i64,
-                        legacy.constraints_post,
-                        lysis.constraints_post
-                    ),
-                };
-                eprintln!(
-                    "| {} | {} | {} | {} | {} | {} |",
-                    row.template,
-                    legacy.constraints_post,
-                    lysis.constraints_post,
-                    if *pre_eq { "yes" } else { "no" },
-                    if *post_eq { "yes" } else { "no" },
-                    note
-                );
-                if *post_eq && *pre_eq {
-                    byte_identical_post += 1;
-                } else {
-                    diverged += 1;
-                }
-            }
-            Some(Verdict::Failed {
-                legacy_err,
-                lysis_err,
-                legacy_constraints,
-                lysis_constraints,
-            }) => {
-                let note = match (legacy_err.as_ref(), lysis_err.as_ref()) {
-                    (Some(e), Some(_)) => format!("BOTH FAILED — legacy: {}", truncate(e, 80)),
-                    (Some(e), None) => format!("LEGACY FAILED: {}", truncate(e, 80)),
-                    (None, Some(e)) => format!("LYSIS FAILED: {}", truncate(e, 80)),
-                    (None, None) => unreachable!(),
-                };
-                eprintln!(
-                    "| {} | {} | {} | n/a | n/a | {} |",
-                    row.template,
-                    legacy_constraints
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| "FAIL".into()),
-                    lysis_constraints
-                        .map(|n| n.to_string())
-                        .unwrap_or_else(|| "FAIL".into()),
-                    note
-                );
-                failed += 1;
-            }
-            None => {}
-        }
-    }
-
-    eprintln!();
-    eprintln!("Total wall-clock: {:.1}s", total.as_secs_f64());
-    eprintln!();
-    eprintln!("## Summary");
-    eprintln!();
-    eprintln!("- byte-identical (pre+post): {}", byte_identical_post);
-    eprintln!("- diverged                 : {}", diverged);
-    eprintln!("- failed (one or both)     : {}", failed);
-    eprintln!("- skipped                  : {}", skipped);
-    eprintln!(
-        "- TOTAL                    : {}",
-        byte_identical_post + diverged + failed + skipped
-    );
-    eprintln!();
-
-    // Detailed divergence dumps.
-    for row in rows {
-        if let Some(Verdict::Ran {
-            pre_eq,
-            post_eq,
-            pre_only_legacy,
-            pre_only_lysis,
-            post_only_legacy,
-            post_only_lysis,
-            ..
-        }) = &row.verdict
-        {
-            if !*pre_eq || !*post_eq {
-                eprintln!("### Divergence detail: {}", row.template);
-                eprintln!();
-                if !*pre_eq {
-                    eprintln!(
-                        "Pre-O1 sym-diff: {} only in legacy, {} only in lysis. Top 10 each:",
-                        pre_only_legacy.len(),
-                        pre_only_lysis.len()
-                    );
-                    eprintln!();
-                    eprintln!("```");
-                    eprintln!("# only in LEGACY (pre-O1)");
-                    for c in pre_only_legacy.iter().take(10) {
-                        eprintln!("  {}", fmt_constraint(c));
-                    }
-                    eprintln!("# only in LYSIS  (pre-O1)");
-                    for c in pre_only_lysis.iter().take(10) {
-                        eprintln!("  {}", fmt_constraint(c));
-                    }
-                    eprintln!("```");
-                    eprintln!();
-                }
-                if !*post_eq {
-                    eprintln!(
-                        "Post-O1 sym-diff: {} only in legacy, {} only in lysis. Top 10 each:",
-                        post_only_legacy.len(),
-                        post_only_lysis.len()
-                    );
-                    eprintln!();
-                    eprintln!("```");
-                    eprintln!("# only in LEGACY (post-O1)");
-                    for c in post_only_legacy.iter().take(10) {
-                        eprintln!("  {}", fmt_constraint(c));
-                    }
-                    eprintln!("# only in LYSIS  (post-O1)");
-                    for c in post_only_lysis.iter().take(10) {
-                        eprintln!("  {}", fmt_constraint(c));
-                    }
-                    eprintln!("```");
-                    eprintln!();
-                }
-            }
-        }
-    }
+    CompileOutcome::Ok(baseline)
 }
 
-fn truncate(s: &str, n: usize) -> String {
-    if s.len() <= n {
-        s.into()
-    } else {
-        format!("{}…", &s[..n])
+fn check_pin(name: &str, actual: &FrozenBaseline, expected: &FrozenBaseline) {
+    if std::env::var("REGEN_FROZEN_BASELINES").is_ok() {
+        println!("\n=== regen baseline for `{name}` ===");
+        println!("FrozenBaseline {{");
+        println!("    pre_o1_hash: {:?},", actual.pre_o1_hash);
+        println!("    pre_o1_count: {},", actual.pre_o1_count);
+        println!("    post_o1_hash: {:?},", actual.post_o1_hash);
+        println!("    post_o1_count: {},", actual.post_o1_count);
+        println!("    num_variables: {},", actual.num_variables);
+        println!("    public_inputs: {:?},", actual.public_inputs);
+        println!("}}\n");
+        return;
     }
+    assert_frozen_baseline_matches(actual, expected);
 }
 
-// ── Test entry ────────────────────────────────────────────────────
-
-fn fe_inputs(map: &[(&str, u64)]) -> HashMap<String, FieldElement<Bn254Fr>> {
-    map.iter()
-        .map(|(k, v)| ((*k).to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
-        .collect()
-}
+// ============================================================================
+// Test entry
+// ============================================================================
 
 #[test]
 fn cross_path_baseline_circom() {
     let t0 = Instant::now();
-    let mut rows: Vec<Row> = Vec::new();
 
     eprintln!();
-    eprintln!("=== Cross-path baseline: circom benchmark templates ===");
+    eprintln!("=== Cross-path baseline (frozen): circom benchmark templates ===");
     eprintln!();
 
-    // Each row is one of the BETA20 benchmark templates.
-    // Skipped templates are kept in the table for completeness.
+    let lib_dirs: Vec<PathBuf> = Vec::new();
+    // Manifest dir is `circom/`; templates live in `<workspace>/test/...`.
+    let workspace_root = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let mut violations: Vec<String> = Vec::new();
+    let mut pinned = 0usize;
 
-    rows.push(run_template(
-        "Num2Bits(8)",
-        "test/circom/num2bits_8.circom",
-        fe_inputs(&[("in", 13)]),
-        None,
-    ));
+    // Templates whose hash drifts non-deterministically across runs
+    // (HashMap iteration leak in wire allocation upstream — Phase 1.A
+    // noted). Sort-based canonicalization neutralizes term-order
+    // permutations *within* an LC but not wire-index permutations
+    // *across* LCs. For these, pin shape only (counts + vars + public)
+    // not hash. Tracked as a deterministic-allocation follow-up.
+    const HASH_NONDETERMINISTIC: &[&str] = &["EdDSAPoseidon"];
 
-    rows.push(run_template(
-        "IsZero",
-        "test/circom/iszero.circom",
-        fe_inputs(&[("in", 0)]),
-        None,
-    ));
-
-    rows.push(run_template(
-        "LessThan(8)",
-        "test/circom/lessthan_8.circom",
-        fe_inputs(&[("in_0", 3), ("in_1", 10)]),
-        None,
-    ));
-
-    rows.push(run_template(
-        "Pedersen(8)",
-        "test/circomlib/pedersen_test.circom",
-        (0..8)
-            .map(|i| (format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(i % 2)))
-            .collect(),
-        None,
-    ));
-
-    rows.push(run_template(
-        "EscalarMulFix(253)",
-        "test/circomlib/escalarmulfix_test.circom",
-        (0..253)
-            .map(|i| (format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0)))
-            .collect(),
-        None,
-    ));
-
-    {
-        let mut ema_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
-        for i in 0..254 {
-            ema_inputs.insert(format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
-        }
-        ema_inputs.insert("p_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
-        ema_inputs.insert("p_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
-        rows.push(run_template(
+    let templates: Vec<(&str, &str, FrozenBaseline)> = vec![
+        (
+            "Num2Bits(8)",
+            "test/circom/num2bits_8.circom",
+            pin_num2bits_8(),
+        ),
+        ("IsZero", "test/circom/iszero.circom", pin_iszero()),
+        (
+            "LessThan(8)",
+            "test/circom/lessthan_8.circom",
+            pin_lessthan_8(),
+        ),
+        (
+            "Pedersen(8)",
+            "test/circomlib/pedersen_test.circom",
+            pin_pedersen_8(),
+        ),
+        (
+            "EscalarMulFix(253)",
+            "test/circomlib/escalarmulfix_test.circom",
+            pin_escalarmulfix_253(),
+        ),
+        (
             "EscalarMulAny(254)",
             "test/circomlib/escalarmulany254_test.circom",
-            ema_inputs,
-            None,
-        ));
+            pin_escalarmulany_254(),
+        ),
+        (
+            "Poseidon(2)",
+            "test/circomlib/poseidon_test.circom",
+            pin_poseidon_2(),
+        ),
+        (
+            "MiMCSponge(2,220,1)",
+            "test/circomlib/mimcsponge_test.circom",
+            pin_mimcsponge(),
+        ),
+        (
+            "BabyJubjub",
+            "test/circomlib/babyjub_test.circom",
+            pin_babyjubjub(),
+        ),
+        (
+            "Pedersen_old(8)",
+            "test/circomlib/pedersen_old_test.circom",
+            pin_pedersen_old_8(),
+        ),
+        (
+            "EdDSAPoseidon",
+            "test/circomlib/eddsaposeidon_test.circom",
+            pin_eddsaposeidon(),
+        ),
+    ];
+
+    let regen = std::env::var("REGEN_FROZEN_BASELINES").is_ok();
+
+    for (name, path, expected) in &templates {
+        let path = workspace_root.join(path);
+        match run_template_lysis(name, &path, &lib_dirs) {
+            CompileOutcome::Ok(actual) => {
+                if regen {
+                    check_pin(name, &actual, expected); // prints regen literal
+                } else {
+                    let shape_only = HASH_NONDETERMINISTIC.contains(name);
+                    // Wrap assertion to capture violations rather than panic
+                    // mid-loop. Aggregate so the user sees all drift at once.
+                    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                        if shape_only {
+                            assert_frozen_baseline_shape_matches(&actual, expected);
+                        } else {
+                            assert_frozen_baseline_matches(&actual, expected);
+                        }
+                    }));
+                    if let Err(e) = result {
+                        let msg = if let Some(s) = e.downcast_ref::<String>() {
+                            s.clone()
+                        } else if let Some(s) = e.downcast_ref::<&str>() {
+                            (*s).to_string()
+                        } else {
+                            "<panic with non-string payload>".into()
+                        };
+                        violations.push(format!("{name}: {}", msg.lines().next().unwrap_or("")));
+                    } else {
+                        pinned += 1;
+                    }
+                }
+            }
+            CompileOutcome::Failed(err) => {
+                violations.push(format!("{name}: {err}"));
+            }
+        }
     }
 
-    rows.push(run_template(
-        "Poseidon(2)",
-        "test/circomlib/poseidon_test.circom",
-        fe_inputs(&[("inputs_0", 1), ("inputs_1", 2)]),
-        None,
-    ));
+    eprintln!();
+    eprintln!("Total wall-clock: {:.1}s", t0.elapsed().as_secs_f64());
+    eprintln!();
+    eprintln!("=== Summary ===");
+    eprintln!("- pinned + matching: {pinned}");
+    eprintln!("- violations:        {}", violations.len());
+    eprintln!();
 
-    rows.push(run_template(
-        "MiMCSponge(2,220,1)",
-        "test/circomlib/mimcsponge_test.circom",
-        fe_inputs(&[("ins_0", 1), ("ins_1", 2), ("k", 0)]),
-        None,
-    ));
-
-    rows.push(run_template(
-        "BabyJubjub",
-        "test/circomlib/babyjub_test.circom",
-        HashMap::new(),
-        None,
-    ));
-
-    rows.push(run_template(
-        "Pedersen_old(8)",
-        "test/circomlib/pedersen_old_test.circom",
-        (0..8)
-            .map(|i| (format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(i % 2)))
-            .collect(),
-        None,
-    ));
-
-    // EdDSAPoseidon — heavy template (~47s compile/legacy per memory).
-    // We still attempt it; if budget is tight the run will surface it
-    // as a slow row but won't crash the sweep.
-    rows.push(run_template(
-        "EdDSAPoseidon",
-        "test/circomlib/eddsaposeidon_test.circom",
-        HashMap::new(),
-        None,
-    ));
-
-    // SHA-256(64) — Legacy frontend OOMs on amplification (memory note,
-    // and is the canonical case the Lysis HARD GATE was built around).
-    // Skip outright per the task brief.
-    rows.push(run_template(
-        "SHA-256(64)",
-        "test/circomlib/sha256_test.circom",
-        HashMap::new(),
-        Some("Legacy OOMs on amplification — Lysis-only hard-gate (BETA20-CLOSEOUT line 39)"),
-    ));
-
-    let total = t0.elapsed();
-    render_report(&rows, total);
-
-    // Phase 1.A hard-gate. Every non-skipped template must either be
-    // byte-identical (pre-O1 + post-O1) or appear in the allowlist of
-    // known wire-id divergences below. Any unexpected skip, side-level
-    // failure, or unknown divergence aborts the test. For allowlisted
-    // entries, secondary shape invariants (constraint counts, variable
-    // counts, public-input counts) MUST still match exactly — the
-    // allowlist swallows wire-id permutation but NOT real shape drift.
-    //
-    // Known divergences:
-    //   * `EdDSAPoseidon`: wire-id pair-swap on four pre-O1 BabyAdd
-    //     witness pairs (w10395 ↔ w10403, w10397 ↔ w10405). Each
-    //     swapped pair shares its definition across the swap, so R1CS
-    //     satisfiability is preserved under the renaming. Same
-    //     constraint count (9719 → 3965), variables (10410), and
-    //     public partition (1) on both sides — only the canonical
-    //     wire IDs allocated to that pair differ.
-    //
-    //     The divergence is NON-DETERMINISTIC across runs (~60% no/no,
-    //     ~40% yes/yes on this host). Likely upstream HashMap iteration
-    //     order leaking into wire allocation. The README claim of
-    //     "11/12 byte-identical" landed during a yes/yes run and was
-    //     never re-verified — print-only baseline didn't surface it.
-    //     Tracked as a Phase 1.A follow-up; not a Phase 1.A regression.
-    //
-    // The SHA-256(64) row is permitted to skip (Legacy OOMs).
-    const ALLOW_DIVERGE: &[&str] = &["EdDSAPoseidon"];
-    const ALLOW_SKIP: &[&str] = &["SHA-256(64)"];
-
-    let mut violations: Vec<String> = Vec::new();
-    for row in &rows {
-        if let Some(reason) = &row.skipped_reason {
-            if !ALLOW_SKIP.contains(&row.template.as_str()) {
-                violations.push(format!(
-                    "{}: unexpected SKIP ({reason}) — not in ALLOW_SKIP",
-                    row.template
-                ));
-            }
-            continue;
-        }
-        match &row.verdict {
-            Some(Verdict::Ran {
-                legacy,
-                lysis,
-                pre_eq,
-                post_eq,
-                ..
-            }) => {
-                let identical = *pre_eq && *post_eq;
-                let allowed = ALLOW_DIVERGE.contains(&row.template.as_str());
-                if !identical && !allowed {
-                    violations.push(format!(
-                        "{}: divergence (pre_eq={pre_eq}, post_eq={post_eq}) and not in ALLOW_DIVERGE",
-                        row.template
-                    ));
-                }
-                if identical && allowed {
-                    // Allowlisted entries can flip to byte-identical
-                    // when the upstream non-determinism happens to
-                    // align. Print a notice but don't fail — turning
-                    // this into a hard violation makes the test flaky
-                    // for entries whose divergence is non-deterministic
-                    // (`EdDSAPoseidon`). When upstream wire allocation
-                    // becomes deterministic, reclassify per a separate
-                    // follow-up.
-                    eprintln!(
-                        "note: {} (ALLOW_DIVERGE) ran byte-identical this invocation; \
-                         keep monitoring for permanent fix to wire allocation non-determinism",
-                        row.template
-                    );
-                }
-                // Even for allowlisted entries, secondary invariants must
-                // hold: the divergence is allowed only when constraint
-                // counts, variable counts, and public partitions match
-                // exactly across sides. Anything else is a real shape
-                // regression that the allowlist must NOT swallow.
-                if allowed {
-                    if legacy.constraints_pre != lysis.constraints_pre {
-                        violations.push(format!(
-                            "{}: ALLOW_DIVERGE shape regression — pre-O1 constraint count drift (legacy={}, lysis={})",
-                            row.template, legacy.constraints_pre, lysis.constraints_pre
-                        ));
-                    }
-                    if legacy.constraints_post != lysis.constraints_post {
-                        violations.push(format!(
-                            "{}: ALLOW_DIVERGE shape regression — post-O1 constraint count drift (legacy={}, lysis={})",
-                            row.template, legacy.constraints_post, lysis.constraints_post
-                        ));
-                    }
-                    if legacy.variables != lysis.variables {
-                        violations.push(format!(
-                            "{}: ALLOW_DIVERGE shape regression — variable count drift (legacy={}, lysis={})",
-                            row.template, legacy.variables, lysis.variables
-                        ));
-                    }
-                    if legacy.public_inputs.len() != lysis.public_inputs.len() {
-                        violations.push(format!(
-                            "{}: ALLOW_DIVERGE shape regression — public-input count drift (legacy={}, lysis={})",
-                            row.template,
-                            legacy.public_inputs.len(),
-                            lysis.public_inputs.len()
-                        ));
-                    }
-                }
-            }
-            Some(Verdict::Failed {
-                legacy_err,
-                lysis_err,
-                ..
-            }) => {
-                let which = match (legacy_err.is_some(), lysis_err.is_some()) {
-                    (true, true) => "both",
-                    (true, false) => "Legacy",
-                    (false, true) => "Lysis",
-                    (false, false) => unreachable!(),
-                };
-                violations.push(format!("{}: {which} side failed", row.template));
-            }
-            None => {
-                violations.push(format!("{}: no verdict recorded", row.template));
-            }
-        }
+    if regen {
+        eprintln!("REGEN mode: skipping assertion. Copy printed literals into PIN_* constants.");
+        return;
     }
 
     if !violations.is_empty() {
         panic!(
-            "cross_path_baseline_circom: {} violation(s) — Phase 1.A gate not satisfied:\n  - {}",
+            "cross_path_baseline_circom: {} violation(s):\n  - {}",
             violations.len(),
             violations.join("\n  - ")
         );
+    }
+}
+
+// ============================================================================
+// Pinned canonical-multiset baselines
+// ============================================================================
+
+fn pin_num2bits_8() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            22, 170, 64, 81, 90, 153, 56, 218, 110, 128, 40, 166, 159, 78, 229, 120, 101, 110, 239,
+            140, 108, 198, 91, 188, 157, 170, 125, 164, 110, 92, 133, 175,
+        ],
+        pre_o1_count: 25,
+        post_o1_hash: [
+            9, 27, 54, 13, 204, 78, 211, 178, 34, 132, 195, 10, 254, 69, 169, 64, 236, 223, 211,
+            119, 35, 12, 234, 41, 4, 22, 42, 67, 202, 9, 243, 245,
+        ],
+        post_o1_count: 9,
+        num_variables: 26,
+        public_inputs: vec![
+            "in".into(),
+            "out_0".into(),
+            "out_1".into(),
+            "out_2".into(),
+            "out_3".into(),
+            "out_4".into(),
+            "out_5".into(),
+            "out_6".into(),
+            "out_7".into(),
+        ],
+    }
+}
+
+fn pin_iszero() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            52, 44, 65, 177, 195, 202, 234, 59, 202, 203, 18, 224, 74, 209, 11, 144, 20, 106, 123,
+            127, 74, 80, 9, 74, 225, 254, 88, 148, 197, 92, 247, 230,
+        ],
+        pre_o1_count: 4,
+        post_o1_hash: [
+            217, 70, 234, 155, 128, 234, 125, 16, 14, 196, 247, 114, 143, 130, 24, 228, 234, 171,
+            24, 209, 250, 87, 18, 189, 69, 214, 38, 122, 26, 222, 58, 25,
+        ],
+        post_o1_count: 2,
+        num_variables: 6,
+        public_inputs: vec!["in".into(), "out".into()],
+    }
+}
+
+fn pin_lessthan_8() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            138, 141, 86, 1, 5, 122, 166, 228, 14, 119, 185, 236, 203, 20, 255, 226, 102, 13, 193,
+            224, 19, 177, 162, 120, 225, 55, 93, 56, 43, 154, 31, 248,
+        ],
+        pre_o1_count: 30,
+        post_o1_hash: [
+            176, 242, 80, 176, 11, 255, 89, 7, 147, 126, 242, 169, 79, 161, 179, 147, 34, 211, 10,
+            69, 145, 106, 245, 103, 229, 89, 160, 115, 186, 173, 89, 126,
+        ],
+        post_o1_count: 9,
+        num_variables: 33,
+        public_inputs: vec!["in_0".into(), "in_1".into(), "out".into()],
+    }
+}
+
+fn pin_pedersen_8() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            83, 47, 226, 200, 86, 3, 177, 90, 255, 16, 70, 233, 97, 159, 132, 255, 26, 107, 74,
+            107, 118, 253, 129, 163, 146, 76, 110, 146, 102, 144, 209, 142,
+        ],
+        pre_o1_count: 30,
+        post_o1_hash: [
+            240, 198, 55, 137, 174, 219, 237, 91, 127, 203, 92, 102, 200, 22, 173, 135, 156, 228,
+            108, 143, 121, 81, 59, 187, 121, 133, 157, 72, 180, 34, 67, 72,
+        ],
+        post_o1_count: 13,
+        num_variables: 57,
+        public_inputs: vec!["out_0".into(), "out_1".into()],
+    }
+}
+
+fn pin_escalarmulfix_253() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            8, 52, 148, 216, 41, 153, 46, 152, 92, 155, 189, 54, 144, 227, 141, 190, 35, 124, 57,
+            106, 168, 142, 245, 176, 32, 41, 148, 92, 35, 75, 169, 169,
+        ],
+        pre_o1_count: 27,
+        post_o1_hash: [
+            228, 230, 80, 210, 118, 228, 106, 181, 76, 203, 19, 68, 189, 116, 36, 68, 99, 143, 30,
+            104, 138, 44, 36, 236, 246, 150, 16, 56, 131, 216, 21, 117,
+        ],
+        post_o1_count: 11,
+        num_variables: 44,
+        public_inputs: vec!["out_0".into(), "out_1".into()],
+    }
+}
+
+fn pin_escalarmulany_254() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            246, 160, 73, 112, 140, 17, 214, 216, 137, 204, 185, 102, 177, 17, 204, 234, 241, 250,
+            51, 134, 191, 164, 218, 93, 148, 62, 7, 122, 165, 211, 205, 231,
+        ],
+        pre_o1_count: 5325,
+        post_o1_hash: [
+            82, 93, 224, 100, 151, 59, 194, 221, 117, 131, 16, 31, 56, 85, 82, 144, 90, 28, 197,
+            137, 190, 28, 36, 80, 17, 61, 218, 228, 111, 53, 111, 43,
+        ],
+        post_o1_count: 2310,
+        num_variables: 5582,
+        public_inputs: vec!["out_0".into(), "out_1".into()],
+    }
+}
+
+fn pin_poseidon_2() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            10, 36, 63, 36, 171, 14, 78, 202, 254, 82, 238, 72, 249, 65, 129, 161, 53, 175, 58,
+            247, 57, 84, 45, 85, 122, 194, 235, 2, 168, 85, 53, 178,
+        ],
+        pre_o1_count: 491,
+        post_o1_hash: [
+            155, 15, 251, 46, 236, 19, 201, 89, 251, 223, 195, 198, 231, 90, 74, 111, 143, 180,
+            211, 114, 108, 97, 185, 104, 99, 19, 105, 1, 65, 75, 254, 155,
+        ],
+        post_o1_count: 240,
+        num_variables: 494,
+        public_inputs: vec!["inputs_0".into(), "inputs_1".into(), "out".into()],
+    }
+}
+
+fn pin_mimcsponge() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            21, 105, 6, 67, 74, 40, 158, 193, 201, 7, 18, 192, 184, 196, 52, 95, 74, 88, 34, 20,
+            154, 59, 164, 25, 222, 238, 171, 19, 106, 13, 234, 132,
+        ],
+        pre_o1_count: 2581,
+        post_o1_hash: [
+            238, 17, 118, 93, 21, 197, 216, 208, 114, 144, 10, 33, 217, 223, 240, 217, 182, 55,
+            139, 123, 225, 139, 26, 161, 163, 208, 247, 96, 185, 251, 94, 112,
+        ],
+        post_o1_count: 1317,
+        num_variables: 2585,
+        public_inputs: vec!["outs_0".into()],
+    }
+}
+
+fn pin_babyjubjub() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            94, 33, 189, 175, 173, 144, 34, 119, 31, 155, 206, 153, 226, 25, 118, 123, 4, 182, 67,
+            196, 110, 107, 245, 62, 191, 106, 20, 136, 13, 177, 210, 48,
+        ],
+        pre_o1_count: 30,
+        post_o1_hash: [
+            255, 1, 85, 58, 96, 215, 109, 91, 15, 212, 178, 94, 43, 27, 183, 11, 14, 102, 111, 132,
+            199, 103, 30, 0, 105, 117, 224, 248, 152, 95, 24, 38,
+        ],
+        post_o1_count: 15,
+        num_variables: 34,
+        public_inputs: vec!["xout".into(), "yout".into()],
+    }
+}
+
+fn pin_pedersen_old_8() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            211, 50, 45, 195, 124, 51, 201, 112, 210, 13, 114, 37, 146, 153, 121, 4, 236, 197, 96,
+            218, 94, 219, 58, 125, 48, 228, 72, 196, 96, 154, 254, 78,
+        ],
+        pre_o1_count: 37,
+        post_o1_hash: [
+            167, 177, 144, 32, 220, 107, 139, 158, 58, 130, 88, 180, 64, 88, 177, 232, 121, 185,
+            151, 38, 90, 166, 225, 161, 80, 55, 130, 139, 202, 138, 135, 65,
+        ],
+        post_o1_count: 18,
+        num_variables: 46,
+        public_inputs: vec!["out_0".into(), "out_1".into()],
+    }
+}
+
+fn pin_eddsaposeidon() -> FrozenBaseline {
+    FrozenBaseline {
+        pre_o1_hash: [
+            46, 60, 63, 224, 235, 241, 9, 142, 21, 20, 136, 59, 192, 205, 235, 241, 38, 31, 226,
+            81, 139, 249, 252, 4, 67, 3, 48, 16, 103, 117, 21, 224,
+        ],
+        pre_o1_count: 9719,
+        post_o1_hash: [
+            240, 149, 78, 219, 114, 124, 39, 198, 10, 186, 154, 82, 176, 223, 127, 71, 178, 235,
+            41, 124, 181, 152, 33, 150, 57, 189, 64, 229, 57, 205, 255, 189,
+        ],
+        post_o1_count: 3965,
+        num_variables: 10410,
+        public_inputs: vec!["dummy".into()],
     }
 }

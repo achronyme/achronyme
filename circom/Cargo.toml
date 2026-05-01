@@ -28,7 +28,9 @@ lysis-frontend = []
 
 [dev-dependencies]
 akronc = { path = "../akronc" }
-zkc = { path = "../zkc" }
+# `cross_path_baseline` test imports `zkc::test_support` for the
+# frozen-baseline machinery (Phase 2.C).
+zkc = { path = "../zkc", features = ["test-support"] }
 constraints = { path = "../constraints" }
 proving = { path = "../proving" }
 akron = { path = "../akron" }
