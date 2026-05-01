@@ -106,12 +106,16 @@ impl From<LysisError> for RoundTripError {
 /// 1. Drain the input's `Vec<Instruction<F>>` and wrap each entry as
 ///    [`ExtendedInstruction::Plain`].
 /// 2. Lower through [`Walker::lower`] into a Lysis `Program`.
-/// 3. Encode → decode → validate the bytecode (defensive — exercises
-///    the wire format on every call so future schema drift trips the
-///    smoke test, not a downstream gate).
-/// 4. Execute the bytecode against an [`InterningSink`].
-/// 5. Materialize the sink to a flat `Vec<Instruction<F>>`.
-/// 6. Reassemble into a fresh [`IrProgram`] with `next_var` set to
+/// 3. Encode → decode the bytecode (defensive — exercises the wire
+///    format on every call so future schema drift trips the smoke
+///    test, not a downstream gate).
+/// 4. In **debug builds**, run `lysis::bytecode::validate` on the
+///    decoded program (Phase 1.C — BETA20-CLOSEOUT). The validator
+///    is RFC §4.5 well-formedness, fully backstopped by the executor
+///    at runtime; release builds skip it for speed.
+/// 5. Execute the bytecode against an [`InterningSink`].
+/// 6. Materialize the sink to a flat `Vec<Instruction<F>>`.
+/// 7. Reassemble into a fresh [`IrProgram`] with `next_var` set to
 ///    the SSA watermark (max defined var + 1). Metadata is dropped
 ///    per the module-level note.
 pub fn lysis_roundtrip<F: FieldBackend>(
@@ -126,10 +130,15 @@ pub fn lysis_roundtrip<F: FieldBackend>(
     let walker = Walker::<F>::new(expected_family::<F>());
     let bytecode = walker.lower(&body)?;
 
-    // Defensive wire-format round-trip.
+    // Defensive wire-format round-trip. Validate is debug-only (the
+    // executor enforces well-formedness invariants at runtime, so
+    // release builds skip the static check — see `lower_extended_through_lysis`
+    // doc for the full rationale).
     let bytes = lysis::encode(&bytecode);
     let decoded = lysis::decode::<F>(&bytes)?;
-    lysis::bytecode::validate(&decoded, &LysisConfig::default())?;
+    if cfg!(debug_assertions) {
+        lysis::bytecode::validate(&decoded, &LysisConfig::default())?;
+    }
 
     let mut sink = InterningSink::<F>::new();
     execute(&decoded, &[], &LysisConfig::default(), &mut sink)?;
