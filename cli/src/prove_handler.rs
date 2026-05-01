@@ -84,9 +84,13 @@ impl ProveHandler for DefaultProveHandler {
         let (prove_ir, _prime_id) = ir_forge::ProveIR::from_bytes(prove_ir_bytes)
             .map_err(|e| ProveError::IrLowering(format!("ProveIR deserialization: {e}")))?;
 
-        // 2. Instantiate with scope values (captures resolved here)
+        // 2. Instantiate with scope values (captures resolved here).
+        //    Phase 1.B: route through Lysis (Walker → InterningSink →
+        //    materialise). Legacy `instantiate` stays available on
+        //    `ir-forge::ProveIR` as the regression escape hatch and as
+        //    the baseline in `cross_path_prove_baseline`.
         let mut program = prove_ir
-            .instantiate(scope_values)
+            .instantiate_lysis(scope_values)
             .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         // 3. Optimize

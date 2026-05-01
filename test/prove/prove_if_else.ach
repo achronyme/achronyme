@@ -1,0 +1,31 @@
+// Prove block: if-else as a value, lowered to a Mux at the constraint
+// level via `compile_if_expr` (see ir-forge/src/ast_lower/exprs.rs).
+//
+// Phase 1.B fixture — exercises `If { cond, then_block, else_branch }`
+// inside a prove {} body. The condition is a 1-bit witness; the
+// branches return distinct field constants. Cross-path baseline pins
+// Lysis-vs-Legacy byte-identity here.
+
+let flag = 0p1
+let a = 0p10
+let b = 0p20
+let expected = 0p10
+
+prove(expected: Public) {
+    range_check(flag, 1)
+    let result = if flag == 0p1 { a } else { b }
+    assert_eq(result, expected)
+}
+
+// Second prove with the opposite branch taken — pins both arms of the
+// Mux at value level.
+let flag_off = 0p0
+let expected_off = 0p20
+
+prove(expected_off: Public) {
+    range_check(flag_off, 1)
+    let result = if flag_off == 0p1 { a } else { b }
+    assert_eq(result, expected_off)
+}
+
+print("PASS: prove_if_else")

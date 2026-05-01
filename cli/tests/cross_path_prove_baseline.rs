@@ -147,6 +147,25 @@ const EXAMPLES: &[Example] = &[
         circom_libs: &[],
         budget: Duration::from_secs(60),
     },
+    // -- Phase 1.B fixtures: in-circuit `for` and `if/else` --
+    Example {
+        label: "test/prove_for_loop",
+        rel_path: "test/prove/prove_for_loop.ach",
+        circom_libs: &[],
+        budget: Duration::from_secs(60),
+    },
+    Example {
+        label: "test/prove_for_loop_dynamic",
+        rel_path: "test/prove/prove_for_loop_dynamic.ach",
+        circom_libs: &[],
+        budget: Duration::from_secs(60),
+    },
+    Example {
+        label: "test/prove_if_else",
+        rel_path: "test/prove/prove_if_else.ach",
+        circom_libs: &[],
+        budget: Duration::from_secs(60),
+    },
     Example {
         label: "test/prove_outer_fn",
         rel_path: "test/prove/prove_outer_fn.ach",
@@ -831,6 +850,18 @@ fn cross_path_prove_baseline() {
         "**{byte_identical} / {total_blocks} prove blocks byte-identical, {lysis_failures} fail Lysis, {divergences} diverge.**"
     );
     println!("Total runtime: {:.2}s.", total_elapsed.as_secs_f64());
+
+    // ---- hard-gate ------------------------------------------------
+    // Phase 1.B promoted this test from informational to assertion-
+    // style. Any divergence, Lysis failure, or unexpected skip fails
+    // the run. Mirrors `circom/tests/cross_path_baseline.rs` policy.
+    if byte_identical != total_blocks {
+        panic!(
+            "cross_path_prove_baseline: {byte_identical}/{total_blocks} byte-identical \
+             ({lysis_failures} Lysis failures, {divergences} divergences). \
+             Inspect table above for offending rows."
+        );
+    }
 }
 
 fn ok_cell(b: bool) -> &'static str {

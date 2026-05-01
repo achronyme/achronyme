@@ -1,0 +1,20 @@
+// Prove block: for-loop with a dynamic range bound (`0..n`).
+//
+// Phase 1.B fixture — exercises `ForRange::WithCapture`. The bound `n`
+// is a captured variable from outer scope; instantiation resolves it
+// to a literal and unrolls the body.
+
+let n = 0p3
+let secret = 0p7
+let target_sq = 0p49
+
+prove(target_sq: Public) {
+    let s: Field[3] = [secret, secret, secret]
+    let sq: Field[3] = [0p49, 0p49, 0p49]
+    for i in 0..n {
+        assert_eq(s[i] * s[i], sq[i])
+    }
+    assert_eq(target_sq, 0p49)
+}
+
+print("PASS: prove_for_loop_dynamic")
