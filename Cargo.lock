@@ -2242,6 +2242,7 @@ dependencies = [
  "proving",
  "serde_json",
  "tempfile",
+ "zkc",
 ]
 
 [[package]]

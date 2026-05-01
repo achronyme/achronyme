@@ -18,6 +18,14 @@ ir-core = { path = "../ir-core" }
 ir-forge = { path = "../ir-forge" }
 artik = { path = "../artik" }
 
+[features]
+# Re-export test helpers (see `zkc::test_support`) for crates that
+# need them outside `cargo test` — currently the cargo-fuzz harness
+# at `fuzz/fuzz_targets/fuzz_r1cs_preservation.rs` (Phase 0.4.C),
+# which shares the proptest's oracle. Mirrors the
+# `ir-forge::test-support` pattern.
+test-support = []
+
 [dev-dependencies]
 proptest = "1"
 serde_json = "1"
@@ -27,3 +35,10 @@ akronc = { path = "../akronc" }
 proving = { path = "../proving" }
 achronyme-parser = { path = "../achronyme-parser" }
 ir-forge = { path = "../ir-forge", features = ["test-support"] }
+# Self-reference activates `test-support` when zkc's own integration
+# tests compile under `cargo test -p zkc`. Without this,
+# `tests/r1cs_preservation_proptest.rs` cannot resolve
+# `zkc::test_support` because `cfg(test)` does not propagate from an
+# integration-test crate to its dependency. Mirrors the ir-forge
+# pattern.
+zkc = { path = ".", features = ["test-support"] }

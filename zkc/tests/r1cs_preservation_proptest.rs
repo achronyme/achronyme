@@ -69,60 +69,9 @@
 //! (Markowitz pivot picking the wrong elimination, off-by-one in
 //! linear extraction) and is what this test catches today.
 
-use std::collections::HashMap;
-
-use ir::IrLowering;
 use memory::FieldElement;
 use proptest::prelude::*;
-use zkc::r1cs_backend::R1CSCompiler;
-use zkc::witness::WitnessGenerator;
-
-// ============================================================================
-// Helpers
-// ============================================================================
-
-/// Compile a circuit source to R1CS, generate a satisfying witness,
-/// and verify it satisfies the pre-O1 system. Returns the compiler
-/// (with `cs` still in its pre-O1 state) and the witness vector.
-fn compile_and_solve(
-    source: &str,
-    public: &[(&str, FieldElement)],
-    witness_inputs: &[(&str, FieldElement)],
-) -> (R1CSCompiler, Vec<FieldElement>) {
-    let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
-    let wit_names: Vec<&str> = witness_inputs.iter().map(|(n, _)| *n).collect();
-    let mut program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
-    ir::passes::optimize(&mut program);
-
-    let mut compiler = R1CSCompiler::new();
-    compiler.compile_ir(&program).unwrap();
-
-    let wg = WitnessGenerator::from_compiler(&compiler);
-    let mut inputs = HashMap::new();
-    for (name, val) in public.iter().chain(witness_inputs.iter()) {
-        inputs.insert(name.to_string(), *val);
-    }
-    let w = wg.generate(&inputs).unwrap();
-    compiler
-        .cs
-        .verify(&w)
-        .expect("pre-O1 R1CS must verify on solved witness");
-
-    (compiler, w)
-}
-
-/// Apply the compiler's `substitution_map` to a witness vector,
-/// re-deriving each substituted wire's value from its LC. Returns
-/// the post-substitution witness.
-fn apply_substitutions(compiler: &R1CSCompiler, witness: &[FieldElement]) -> Vec<FieldElement> {
-    let mut w = witness.to_vec();
-    if let Some(subs) = &compiler.substitution_map {
-        for (var, lc) in subs {
-            w[*var] = lc.evaluate(&w).expect("substitution LC must evaluate");
-        }
-    }
-    w
-}
+use zkc::test_support::{apply_substitutions, compile_and_solve};
 
 // ============================================================================
 // Forward simulation: same witness verifies before and after optimize

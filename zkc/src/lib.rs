@@ -23,3 +23,6 @@ pub mod r1cs_backend;
 pub mod r1cs_gadgets;
 pub mod r1cs_witness;
 pub mod witness;
+
+#[cfg(any(test, feature = "test-support"))]
+pub mod test_support;
