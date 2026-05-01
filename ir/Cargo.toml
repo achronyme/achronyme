@@ -27,3 +27,4 @@ smallvec = "1"
 
 [dev-dependencies]
 ir-forge = { path = "../ir-forge", features = ["test-support"] }
+proptest = "1"
