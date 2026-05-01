@@ -1575,18 +1575,44 @@ impl<F: FieldBackend> Walker<F> {
                 result: _,
                 lhs,
                 rhs,
-                message: _,
+                message,
             } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
-                self.push_op(Opcode::EmitAssertEq { lhs: l, rhs: r });
+                match message {
+                    Some(msg) => {
+                        let msg_idx = self.builder.intern_string(msg.clone()) as u16;
+                        self.push_op(Opcode::EmitAssertEqMsg {
+                            lhs: l,
+                            rhs: r,
+                            msg_idx,
+                        });
+                    }
+                    None => {
+                        self.push_op(Opcode::EmitAssertEq { lhs: l, rhs: r });
+                    }
+                }
             }
             Instruction::Assert {
-                result: _, operand, ..
+                result: _,
+                operand,
+                message,
             } => {
                 // Desugar: assert operand == 1.
                 let one = self.one()?;
                 let op = self.resolve(*operand)?;
-                self.push_op(Opcode::EmitAssertEq { lhs: op, rhs: one });
+                match message {
+                    Some(msg) => {
+                        let msg_idx = self.builder.intern_string(msg.clone()) as u16;
+                        self.push_op(Opcode::EmitAssertEqMsg {
+                            lhs: op,
+                            rhs: one,
+                            msg_idx,
+                        });
+                    }
+                    None => {
+                        self.push_op(Opcode::EmitAssertEq { lhs: op, rhs: one });
+                    }
+                }
             }
             Instruction::RangeCheck {
                 result: _,
@@ -2165,7 +2191,15 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             dst: 0,
             in_regs: vec![0, 0],
         }),
-        Instruction::AssertEq { .. } => bin(Opcode::EmitAssertEq { lhs: 0, rhs: 0 }),
+        Instruction::AssertEq { message, .. } => bin(if message.is_some() {
+            Opcode::EmitAssertEqMsg {
+                lhs: 0,
+                rhs: 0,
+                msg_idx: 0,
+            }
+        } else {
+            Opcode::EmitAssertEq { lhs: 0, rhs: 0 }
+        }),
         Instruction::RangeCheck { bits, .. } => bin(Opcode::EmitRangeCheck {
             var: 0,
             max_bits: *bits as u8,
@@ -2204,7 +2238,15 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
                 rhs: 0,
             },
         ],
-        Instruction::Assert { .. } => bin(Opcode::EmitAssertEq { lhs: 0, rhs: 0 }),
+        Instruction::Assert { message, .. } => bin(if message.is_some() {
+            Opcode::EmitAssertEqMsg {
+                lhs: 0,
+                rhs: 0,
+                msg_idx: 0,
+            }
+        } else {
+            Opcode::EmitAssertEq { lhs: 0, rhs: 0 }
+        }),
 
         Instruction::IsNeq { .. } | Instruction::IsLe { .. } | Instruction::IsLeBounded { .. } => {
             let cmp = match inst {
