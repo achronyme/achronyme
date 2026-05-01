@@ -914,13 +914,15 @@ impl<F: FieldBackend> Walker<F> {
         let idx = idx_signed as usize;
         let slot_var = array_slots[idx];
 
-        let slot_reg = match self.ssa_to_reg.get(&slot_var).copied() {
-            Some(r) => r,
-            None => {
+        let slot_reg = match self.resolve(slot_var) {
+            Ok(reg) => reg,
+            Err(WalkError::UndefinedSsaVar(_)) => {
                 // Mirror `emit_symbolic_indexed_effect`'s on-demand
-                // synthesis. The slot becomes a witness `LoadInput`
-                // here; whichever side emits the matching write later
-                // reuses this binding and emits the constraint.
+                // synthesis. Reachable only for slots never backed
+                // by a `Plain(Input)` in any ancestor scope —
+                // input-backed slots resolve via heap fault-in
+                // (see live-set updates in `collect_in_extinst` /
+                // `record_last_use_in_extinst`).
                 let name = format!("__lysis_sym_slot_{}", slot_var.0);
                 let name_idx = self.builder.intern_string(name) as u16;
                 let reg = self.allocator.alloc()?;
@@ -932,6 +934,7 @@ impl<F: FieldBackend> Walker<F> {
                 self.bind(slot_var, reg);
                 reg
             }
+            Err(e) => return Err(e),
         };
         self.bind(result_var, slot_reg);
         Ok(())
@@ -1230,15 +1233,26 @@ impl<F: FieldBackend> Walker<F> {
         let idx = idx_signed as usize;
         let target_var = array_slots[idx];
 
-        // Resolve or synthesize the slot's reg. Internal-signal
-        // arrays leave their slots as un-emitted placeholders at
-        // instantiate time (see `instantiate/stmts.rs::emit_let_
-        // indexed_const`'s lazy-binding behaviour); the symbolic
-        // path can't rely on a prior `Plain(Input)` having bound
-        // them. Synthesize a witness wire on demand.
-        let target_reg = match self.ssa_to_reg.get(&target_var).copied() {
-            Some(r) => r,
-            None => {
+        // Resolve the slot's reg, faulting in from heap if a prior
+        // `perform_split` spilled the parent template's binding.
+        // `resolve()` returns `UndefinedSsaVar` for slots that were
+        // never bound by a `Plain(Input)` in any ancestor scope —
+        // canonically, internal signal arrays whose elements
+        // `instantiate/stmts.rs::emit_let_indexed_const` leaves as
+        // lazy placeholders. For those we fall back to synthesizing
+        // a fresh witness wire (the slot IS a witness signal by
+        // design). For input-backed slots (public outputs, witness
+        // inputs), `resolve()` succeeds because `collect_in_extinst`
+        // and `record_last_use_in_extinst` now include `array_slots`
+        // in the live-set, ensuring perform_split spills them to
+        // heap. Pre-Phase-2.A the synthesis path fired for
+        // input-backed slots too, silently downgrading
+        // `paddedIn_X (Public)` to a fresh `__lysis_sym_slot_X
+        // (Witness)` wire — the cause of the
+        // `var_postdecl_padding_e2e` regression.
+        let target_reg = match self.resolve(target_var) {
+            Ok(reg) => reg,
+            Err(WalkError::UndefinedSsaVar(_)) => {
                 let name = format!("__lysis_sym_slot_{}", target_var.0);
                 let name_idx = self.builder.intern_string(name) as u16;
                 let reg = self.allocator.alloc()?;
@@ -1250,6 +1264,7 @@ impl<F: FieldBackend> Walker<F> {
                 self.bind(target_var, reg);
                 reg
             }
+            Err(e) => return Err(e),
         };
 
         match kind {
@@ -2807,16 +2822,36 @@ fn record_last_use_in_extinst<F: FieldBackend>(
         }
         ExtendedInstruction::TemplateBody { .. } => {}
         ExtendedInstruction::SymbolicIndexedEffect {
+            array_slots,
             index_var,
             value_var,
             ..
         } => {
+            // Mirrors `collect_in_extinst`: every slot in
+            // `array_slots` is an enclosing-scope SsaVar (the parent
+            // template's signal-element wire) and must survive any
+            // top-level split between the LoopUnroll and its parent.
+            // Without this, the live-set drops them and
+            // `emit_symbolic_indexed_effect`'s synth-on-demand
+            // fallback fires inside the post-split template,
+            // creating a fresh witness wire that diverges from the
+            // parent's `Public`-visibility binding.
+            for slot in array_slots {
+                bump_last_use(out, *slot, idx);
+            }
             bump_last_use(out, *index_var, idx);
             if let Some(v) = value_var {
                 bump_last_use(out, *v, idx);
             }
         }
-        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
+        ExtendedInstruction::SymbolicArrayRead {
+            array_slots,
+            index_var,
+            ..
+        } => {
+            for slot in array_slots {
+                bump_last_use(out, *slot, idx);
+            }
             bump_last_use(out, *index_var, idx);
         }
         ExtendedInstruction::SymbolicShift {
@@ -2917,33 +2952,51 @@ fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut 
         // capture list (guaranteed by the lift), so the live-set scan
         // doesn't need to add them again here.
         ExtendedInstruction::TemplateBody { .. } => {}
-        // The variant references `index_var` and (for Let) `value_var`;
-        // both are SSA vars defined in the enclosing scope and must
-        // be carried as captures across any top-level split that
-        // happens to land between the LoopUnroll's parent template
-        // and the LoopUnroll itself. `array_slots` are NOT collected:
-        // top-level splits land at `body[next_idx..]` boundaries and
-        // the slots are sibling `Plain(Input)` emissions inside the
-        // same template, so the split never separates them from this
-        // effect. Mid-iter splits (`split_in_per_iter`) similarly
-        // don't need them — `emit_symbolic_array_read`'s
-        // synth-on-demand path lazily re-binds slots in the post-split
-        // template when their SsaVar is missing, so the live set stays
-        // small (load-bearing for SHA-256, where a single body has
-        // ~500 array_slot SsaVars and including them all would crash
-        // every top-level split with `LiveSetTooLarge`).
+        // The variant references `index_var`, (for Let) `value_var`,
+        // AND every SSA var in `array_slots` — the slots are sibling
+        // `Plain(Input)` emissions in the parent template (for public
+        // signal outputs the slots are pre-emitted; for internal
+        // signals the symbolic emit path synthesizes them) and must
+        // cross any top-level split that lands between the parent
+        // template and the LoopUnroll. Pre-Phase-2.A this collector
+        // omitted `array_slots` and relied on the synth-on-demand
+        // fallback at `emit_symbolic_indexed_effect`'s `ssa_to_reg.
+        // get(target).is_none()` branch to mint fresh `LoadInput`
+        // wires inside the post-split template — but the synthesis
+        // turned `paddedIn_X (Public)` into `__lysis_sym_slot_X
+        // (Witness)`, leaving the public output wire unconstrained
+        // and breaking witness eval (the witness map keyed by the
+        // original Public name no longer matches the synthesized
+        // Witness name). Carrying the slots through the live-set
+        // forces `perform_split` to spill them to heap; the post-
+        // split `resolve()` then auto-faults them via `LoadHeap` and
+        // the synthesis branch becomes unreachable for input-backed
+        // slots. (The synthesis path still survives as a fallback
+        // for genuinely-internal signal slots that were never backed
+        // by a `Plain(Input)` — those are witness wires by design.)
         ExtendedInstruction::SymbolicIndexedEffect {
+            array_slots,
             index_var,
             value_var,
             ..
         } => {
+            for slot in array_slots {
+                out.insert(*slot);
+            }
             out.insert(*index_var);
             if let Some(v) = value_var {
                 out.insert(*v);
             }
         }
         // Read-side mirrors the write-side rationale; see above.
-        ExtendedInstruction::SymbolicArrayRead { index_var, .. } => {
+        ExtendedInstruction::SymbolicArrayRead {
+            array_slots,
+            index_var,
+            ..
+        } => {
+            for slot in array_slots {
+                out.insert(*slot);
+            }
             out.insert(*index_var);
         }
         // Both `operand_var` and `shift_var` are enclosing-scope uses
