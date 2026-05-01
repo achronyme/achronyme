@@ -537,20 +537,34 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             }
 
             // ── Bitwise operations (expanded via Decompose) ────────
-            CircuitExpr::BitAnd { lhs, rhs, num_bits } => {
+            // The bitwise binop's `num_bits` is the **result width**
+            // (= `min(lhs_w, rhs_w)` for AND, `max` for OR/XOR), but
+            // each operand needs to be Decomposed at ITS OWN width
+            // — using the result width for the wider operand trips a
+            // range-check failure (e.g., `(64) & 1` would Decompose
+            // 64 into 1 bit). Derive each operand's width
+            // structurally so the two are plumbed separately into
+            // [`emit_bitwise_binop`].
+            CircuitExpr::BitAnd { lhs, rhs, .. } => {
+                let lhs_w = structural_op_width(lhs);
+                let rhs_w = structural_op_width(rhs);
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                self.emit_bitwise_binop(l, r, *num_bits, BitwiseOp::And)
+                self.emit_bitwise_binop(l, r, lhs_w, rhs_w, BitwiseOp::And)
             }
-            CircuitExpr::BitOr { lhs, rhs, num_bits } => {
+            CircuitExpr::BitOr { lhs, rhs, .. } => {
+                let lhs_w = structural_op_width(lhs);
+                let rhs_w = structural_op_width(rhs);
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                self.emit_bitwise_binop(l, r, *num_bits, BitwiseOp::Or)
+                self.emit_bitwise_binop(l, r, lhs_w, rhs_w, BitwiseOp::Or)
             }
-            CircuitExpr::BitXor { lhs, rhs, num_bits } => {
+            CircuitExpr::BitXor { lhs, rhs, .. } => {
+                let lhs_w = structural_op_width(lhs);
+                let rhs_w = structural_op_width(rhs);
                 let l = self.emit_expr(lhs)?;
                 let r = self.emit_expr(rhs)?;
-                self.emit_bitwise_binop(l, r, *num_bits, BitwiseOp::Xor)
+                self.emit_bitwise_binop(l, r, lhs_w, rhs_w, BitwiseOp::Xor)
             }
             CircuitExpr::BitNot { operand, num_bits } => {
                 let op = self.emit_expr(operand)?;
@@ -741,5 +755,60 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
         }
 
         Ok(result.unwrap_or(base))
+    }
+}
+
+/// Conservative upper bound on a bitwise-operand's required Decompose
+/// width, derived structurally from the [`CircuitExpr`] tree.
+///
+/// Bitwise lowering ([`Instantiator::emit_bitwise_binop`]) needs to
+/// Decompose each operand at the **operand's own** width, not at the
+/// op's result width. For variants that already carry an inferred
+/// `num_bits` field (Shifts, BitAnd/Or/Xor/Not) we read it directly;
+/// for [`CircuitExpr::Const`] we use the literal's bit count; for
+/// 1-bit-shaped variants (Comparisons, BoolOps, logical Not) we
+/// return 1; for everything else we conservatively return
+/// `FIELD_WIDTH` (BN254 = 254 bits — soundly accommodates any value
+/// the operand could carry, at the cost of a wider Decompose). The
+/// fallback rarely fires in practice — circom's bit-width inference
+/// pre-tightens the relevant operand variants.
+fn structural_op_width(expr: &CircuitExpr) -> u32 {
+    /// BN254 field width — conservative ceiling for unknown operands.
+    /// Smaller fields (Goldilocks, BLS12-381 Fr) all fit under this
+    /// bound, so the over-Decompose stays sound across backends.
+    const FIELD_WIDTH: u32 = 254;
+
+    match expr {
+        CircuitExpr::Const(fc) => {
+            // `bits` = position of the highest set bit + 1, scanning
+            // the LE byte string from the high end down. Returns 0
+            // for the zero constant.
+            let bytes = fc.bytes();
+            let mut w: u32 = 0;
+            for (i, &b) in bytes.iter().enumerate() {
+                if b != 0 {
+                    let high = 8 - b.leading_zeros();
+                    w = (i as u32) * 8 + high;
+                }
+            }
+            w
+        }
+        CircuitExpr::ShiftR { num_bits, .. }
+        | CircuitExpr::ShiftL { num_bits, .. }
+        | CircuitExpr::BitAnd { num_bits, .. }
+        | CircuitExpr::BitOr { num_bits, .. }
+        | CircuitExpr::BitXor { num_bits, .. }
+        | CircuitExpr::BitNot { num_bits, .. } => *num_bits,
+        CircuitExpr::Comparison { .. } | CircuitExpr::BoolOp { .. } => 1,
+        CircuitExpr::UnaryOp {
+            op: CircuitUnaryOp::Not,
+            ..
+        } => 1,
+        // Capture/Var/Input/Mux/BinOp/Pow/Hash/MerkleVerify/RangeCheck/
+        // ArrayIndex/ArrayLen/IntDiv/IntMod/LoopVar — no inferred-width
+        // field and no general structural answer that's tighter than
+        // the field. The conservative fallback over-Decomposes but
+        // stays sound.
+        _ => FIELD_WIDTH,
     }
 }

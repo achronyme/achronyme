@@ -80,26 +80,63 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
     }
 
     /// Emit a bitwise binary operation (AND, OR, XOR).
+    ///
+    /// `lhs_bits` and `rhs_bits` are the **operand decompose widths**
+    /// — each operand must fit in its own width — and may differ.
+    /// The result-bit count is `min(lhs_bits, rhs_bits)` for AND
+    /// (higher bits AND with 0 are 0) and `max(lhs_bits, rhs_bits)`
+    /// for OR/XOR (higher bits in the wider operand pass through with
+    /// the missing side padded as 0).
+    ///
+    /// Conflating the two widths under a single `num_bits` was the
+    /// pre-fix bug behind `var_postdecl_padding_e2e`: `(64) & 1`
+    /// inferred result width = 1 = `min(7, 1)`, which forced
+    /// `Decompose(64, 1)` and tripped a range-check failure during
+    /// witness eval. Using the wider width as a single `num_bits`
+    /// inflates the chain and triggers a Lysis perform_split hoist,
+    /// breaking AssertEq's RHS register binding across iterations.
+    /// Plumbing the widths separately is the only sound shape.
     pub(super) fn emit_bitwise_binop(
         &mut self,
         lhs: SsaVar,
         rhs: SsaVar,
-        num_bits: u32,
+        lhs_bits: u32,
+        rhs_bits: u32,
         op: BitwiseOp,
     ) -> Result<SsaVar, ProveIrError> {
-        let bits_l = self.emit_decompose_bits(lhs, num_bits)?;
-        let bits_r = self.emit_decompose_bits(rhs, num_bits)?;
+        let bits_l = self.emit_decompose_bits(lhs, lhs_bits)?;
+        let bits_r = self.emit_decompose_bits(rhs, rhs_bits)?;
 
-        let mut result_bits = Vec::with_capacity(num_bits as usize);
-        for i in 0..num_bits as usize {
+        let n_pairs = match op {
+            BitwiseOp::And => lhs_bits.min(rhs_bits) as usize,
+            BitwiseOp::Or | BitwiseOp::Xor => lhs_bits.max(rhs_bits) as usize,
+        };
+
+        // Pad the shorter operand with zero bits so OR/XOR can iterate
+        // over the wider range without out-of-bounds. AND truncates to
+        // the shorter side anyway, so the padding never gets read for
+        // that op.
+        let zero_lazy = |this: &mut Self| this.emit_const(FieldElement::<F>::zero());
+        let mut result_bits = Vec::with_capacity(n_pairs);
+        for i in 0..n_pairs {
+            let l_bit = if i < bits_l.len() {
+                bits_l[i]
+            } else {
+                zero_lazy(self)
+            };
+            let r_bit = if i < bits_r.len() {
+                bits_r[i]
+            } else {
+                zero_lazy(self)
+            };
             let bit = match op {
                 BitwiseOp::And => {
                     // AND: a * b
                     let v = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: v,
-                        lhs: bits_l[i],
-                        rhs: bits_r[i],
+                        lhs: l_bit,
+                        rhs: r_bit,
                     });
                     v
                 }
@@ -108,14 +145,14 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     let ab = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: ab,
-                        lhs: bits_l[i],
-                        rhs: bits_r[i],
+                        lhs: l_bit,
+                        rhs: r_bit,
                     });
                     let sum = self.fresh_var();
                     self.push_inst(Instruction::Add {
                         result: sum,
-                        lhs: bits_l[i],
-                        rhs: bits_r[i],
+                        lhs: l_bit,
+                        rhs: r_bit,
                     });
                     let v = self.fresh_var();
                     self.push_inst(Instruction::Sub {
@@ -130,8 +167,8 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     let ab = self.fresh_var();
                     self.push_inst(Instruction::Mul {
                         result: ab,
-                        lhs: bits_l[i],
-                        rhs: bits_r[i],
+                        lhs: l_bit,
+                        rhs: r_bit,
                     });
                     let two = self.emit_const(FieldElement::<F>::from_u64(2));
                     let two_ab = self.fresh_var();
@@ -143,8 +180,8 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     let sum = self.fresh_var();
                     self.push_inst(Instruction::Add {
                         result: sum,
-                        lhs: bits_l[i],
-                        rhs: bits_r[i],
+                        lhs: l_bit,
+                        rhs: r_bit,
                     });
                     let v = self.fresh_var();
                     self.push_inst(Instruction::Sub {
