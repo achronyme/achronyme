@@ -597,6 +597,35 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             Ok(Step::Next)
         }
 
+        EmitAssertEqMsg { lhs, rhs, msg_idx } => {
+            let (l, r) = read_binary(&frames[frame_idx], *lhs, *rhs, offset)?;
+            let entry = program.const_pool.get(*msg_idx as usize).ok_or(
+                LysisError::ConstIdxOutOfRange {
+                    at_offset: offset,
+                    idx: *msg_idx as u32,
+                    len: program.const_pool.len() as u32,
+                },
+            )?;
+            let message = match entry {
+                ConstPoolEntry::String(s) => s.clone(),
+                _ => {
+                    return Err(LysisError::ValidationFailed {
+                        rule: 4,
+                        location: offset,
+                        detail: "EmitAssertEqMsg msg_idx does not reference a string entry",
+                    });
+                }
+            };
+            let id = sink.fresh_id();
+            sink.emit_effect(InstructionKind::AssertEq {
+                result: id,
+                lhs: l,
+                rhs: r,
+                message: Some(message),
+            });
+            Ok(Step::Next)
+        }
+
         EmitRangeCheck { var, max_bits } => {
             let operand = read_reg(&frames[frame_idx], *var, offset)?;
             let id = sink.fresh_id();

@@ -114,6 +114,15 @@ fn check_const_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), Lysis
                     });
                 }
             }
+            Opcode::EmitAssertEqMsg { msg_idx, .. } => {
+                if (*msg_idx as u32) >= pool_len {
+                    return Err(LysisError::ConstIdxOutOfRange {
+                        at_offset: instr.offset,
+                        idx: *msg_idx as u32,
+                        len: pool_len,
+                    });
+                }
+            }
             Opcode::EmitWitnessCall {
                 bytecode_const_idx, ..
             } => {
@@ -212,6 +221,7 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         } => vec![*dst, *cond, *then_v, *else_v],
         Opcode::EmitDecompose { dst_arr, src, .. } => vec![*dst_arr, *src],
         Opcode::EmitAssertEq { lhs, rhs } => vec![*lhs, *rhs],
+        Opcode::EmitAssertEqMsg { lhs, rhs, .. } => vec![*lhs, *rhs],
         Opcode::EmitRangeCheck { var, .. } => vec![*var],
         Opcode::EmitWitnessCall {
             in_regs, out_regs, ..
@@ -432,6 +442,7 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
         } => vec![*cond, *then_v, *else_v],
         Opcode::EmitDecompose { src, .. } => vec![*src],
         Opcode::EmitAssertEq { lhs, rhs } => vec![*lhs, *rhs],
+        Opcode::EmitAssertEqMsg { lhs, rhs, .. } => vec![*lhs, *rhs],
         Opcode::EmitRangeCheck { var, .. } => vec![*var],
         Opcode::EmitWitnessCall { in_regs, .. } => in_regs.clone(),
         Opcode::EmitWitnessCallHeap { inputs, .. } => inputs

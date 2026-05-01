@@ -179,6 +179,11 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
             buf.push(*lhs);
             buf.push(*rhs);
         }
+        Opcode::EmitAssertEqMsg { lhs, rhs, msg_idx } => {
+            buf.push(*lhs);
+            buf.push(*rhs);
+            buf.extend_from_slice(&msg_idx.to_le_bytes());
+        }
         Opcode::EmitRangeCheck { var, max_bits } => {
             buf.push(*var);
             buf.push(*max_bits);
@@ -552,6 +557,12 @@ fn decode_opcode_at(
             let rhs = read_u8(bytes, pos)?;
             Ok(Opcode::EmitAssertEq { lhs, rhs })
         }
+        code::EMIT_ASSERT_EQ_MSG => {
+            let lhs = read_u8(bytes, pos)?;
+            let rhs = read_u8(bytes, pos)?;
+            let msg_idx = read_u16(bytes, pos)?;
+            Ok(Opcode::EmitAssertEqMsg { lhs, rhs, msg_idx })
+        }
         code::EMIT_RANGE_CHECK => {
             let var = read_u8(bytes, pos)?;
             let max_bits = read_u8(bytes, pos)?;
@@ -834,6 +845,16 @@ mod tests {
             n_bits: 8,
         });
         roundtrip_opcode(Opcode::EmitAssertEq { lhs: 11, rhs: 12 });
+        roundtrip_opcode(Opcode::EmitAssertEqMsg {
+            lhs: 11,
+            rhs: 12,
+            msg_idx: 0,
+        });
+        roundtrip_opcode(Opcode::EmitAssertEqMsg {
+            lhs: 200,
+            rhs: 201,
+            msg_idx: u16::MAX,
+        });
         roundtrip_opcode(Opcode::EmitRangeCheck {
             var: 13,
             max_bits: 64,
