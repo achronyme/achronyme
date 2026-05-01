@@ -50,8 +50,8 @@ pub use circom_interop::{
 };
 pub use error::{CircomDispatchErrorKind, ProveIrError};
 pub use extended::{ExtendedInstruction, TemplateId};
-pub use instantiate::LysisInstantiateError;
 pub use extended_program::ExtendedIrProgram;
+pub use instantiate::LysisInstantiateError;
 pub use lysis_bridge::{instruction_from_kind, ssa_var_from_node_id};
 pub use lysis_materialize::{materialize_interner, materialize_interning_sink};
 pub use lysis_roundtrip::{lysis_roundtrip, RoundTripError};

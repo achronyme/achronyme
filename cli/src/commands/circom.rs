@@ -315,11 +315,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
 
     if verbose {
-        eprintln!(
-            "    {}: {} instructions",
-            style.cyan("IR"),
-            program.len()
-        );
+        eprintln!("    {}: {} instructions", style.cyan("IR"), program.len());
     }
 
     // 3. Optimize

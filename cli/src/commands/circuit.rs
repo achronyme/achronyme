@@ -319,13 +319,12 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         anyhow::anyhow!("{rendered}")
     };
 
-    let render_lysis_instantiate_error =
-        |e: ir_forge::LysisInstantiateError| -> anyhow::Error {
-            match e {
-                ir_forge::LysisInstantiateError::Instantiate(inner) => render_prove_ir_error(inner),
-                other => anyhow::anyhow!("{other}"),
-            }
-        };
+    let render_lysis_instantiate_error = |e: ir_forge::LysisInstantiateError| -> anyhow::Error {
+        match e {
+            ir_forge::LysisInstantiateError::Instantiate(inner) => render_prove_ir_error(inner),
+            other => anyhow::anyhow!("{other}"),
+        }
+    };
 
     let file_name = std::path::Path::new(path)
         .file_name()
