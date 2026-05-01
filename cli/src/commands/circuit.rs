@@ -319,6 +319,14 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         anyhow::anyhow!("{rendered}")
     };
 
+    let render_lysis_instantiate_error =
+        |e: ir_forge::LysisInstantiateError| -> anyhow::Error {
+            match e {
+                ir_forge::LysisInstantiateError::Instantiate(inner) => render_prove_ir_error(inner),
+                other => anyhow::anyhow!("{other}"),
+            }
+        };
+
     let file_name = std::path::Path::new(path)
         .file_name()
         .unwrap_or(std::ffi::OsStr::new(path))
@@ -332,11 +340,13 @@ fn circuit_command_inner<F: FieldBackend + PoseidonParamsProvider + Bn254Ops>(
         );
     }
 
-    // 1. Compile to ProveIR and instantiate to IR SSA.
+    // 1. Compile to ProveIR and instantiate to IR SSA via Lysis.
     let source_path = std::path::Path::new(path);
-    let mut program = ProveIrCompiler::<F>::compile_circuit(&source, Some(source_path))
-        .and_then(|prove_ir| prove_ir.instantiate(&std::collections::HashMap::new()))
+    let prove_ir = ProveIrCompiler::<F>::compile_circuit(&source, Some(source_path))
         .map_err(render_prove_ir_error)?;
+    let mut program = prove_ir
+        .instantiate_lysis(&std::collections::HashMap::new())
+        .map_err(render_lysis_instantiate_error)?;
 
     if verbose {
         eprintln!("    {}: {} instructions", style.cyan("IR"), program.len());

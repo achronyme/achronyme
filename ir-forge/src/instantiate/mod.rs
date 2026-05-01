@@ -41,6 +41,7 @@ use memory::{FieldBackend, FieldElement};
 
 use ir_core::{IrType, SsaVar};
 
+pub use api::LysisInstantiateError;
 pub(super) use sink::{ExtendedSink, InstrSink, LegacySink, LoopUnrollMode};
 
 /// Maximum iterations allowed during instantiation (loop unrolling).

@@ -65,14 +65,21 @@ fn inspect_circuit(
         anyhow::anyhow!("{rendered}")
     };
 
+    let render_lysis_error = |e: ir_forge::LysisInstantiateError| -> anyhow::Error {
+        match e {
+            ir_forge::LysisInstantiateError::Instantiate(inner) => render_error(inner),
+            other => anyhow::anyhow!("{other}"),
+        }
+    };
+
     let prove_ir = ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(source, Some(source_path))
         .map_err(render_error)?;
     let prove_ir_text = format!("{prove_ir}");
     let circuit_name = prove_ir.name.clone();
 
     let mut program = prove_ir
-        .instantiate(&std::collections::HashMap::new())
-        .map_err(render_error)?;
+        .instantiate_lysis(&std::collections::HashMap::new())
+        .map_err(render_lysis_error)?;
 
     ir::passes::optimize(&mut program);
 
@@ -270,7 +277,7 @@ impl ProveHandler for InspectorProveHandler {
         let circuit_name = prove_ir.name.clone();
 
         let mut program = prove_ir
-            .instantiate(scope_values)
+            .instantiate_lysis(scope_values)
             .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         ir::passes::optimize(&mut program);
