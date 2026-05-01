@@ -1217,10 +1217,7 @@ fn walk_stmt_writes(
         Stmt::Assignment {
             target: Expr::Ident { name, .. },
             ..
-        } if name != loop_var
-            && ssa_versions.contains_key(name)
-            && !body_decls.contains(name) =>
-        {
+        } if name != loop_var && ssa_versions.contains_key(name) && !body_decls.contains(name) => {
             out.insert(name.clone());
         }
         Stmt::Expr(e) => walk_expr_writes(e, ssa_versions, body_decls, loop_var, out),
