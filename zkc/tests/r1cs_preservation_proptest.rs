@@ -39,11 +39,35 @@
 //!
 //! ## Discriminator (verified during development)
 //!
-//! Patching `optimize_linear_clustered` (in
-//! `constraints/src/r1cs_optimize/linear_cluster.rs`) to drop a
-//! substitution map entry mid-pass would cause `lc.evaluate(w) ≠
-//! w[var]` for that var — the substitution-map-consistency assertion
-//! catches this. See `optimize_substitution_map_is_consistent`.
+//! Patching `optimize_r1cs` in `zkc/src/r1cs_backend.rs` to corrupt
+//! the first substitution entry's LC (replace with constant zero)
+//! makes `optimize_substitution_map_is_consistent` fail at the very
+//! first proptest case — the consistency check catches the wrong-LC
+//! regression class.
+//!
+//! ## Discriminator coverage gap (intentional)
+//!
+//! The "wrong LC" discriminator is *one* class of optimizer regression.
+//! The advisor flagged a second class that this test does NOT cover:
+//! "drop a constraint without recording in `substitution_map`". For
+//! that class the substitution_map is *missing* an entry rather than
+//! holding a wrong one, so the consistency check has nothing to
+//! verify and trivially passes. The forward-simulation tests also
+//! pass vacuously because the dropped constraint was satisfiable to
+//! begin with — same witness still satisfies the smaller post-O1
+//! system. Catching this class requires either:
+//!  - Constraint-count accounting: assert subs.len() bounds the
+//!    constraint count delta within a known ratio for the input
+//!    shape; rejected here because optimizer fold-ratios are highly
+//!    input-dependent and a tight bound would false-positive.
+//!  - Adversarial witness sampling: generate a w' satisfying R',
+//!    extend via subs, verify R(w_ext) — but if subs is missing an
+//!    entry, ext is incomplete and the resulting w_ext still
+//!    happens to satisfy R for most random w'.
+//! Both are deferred to a future tightening pass. The
+//! "wrong LC" class is the most common kind of optimizer bug
+//! (Markowitz pivot picking the wrong elimination, off-by-one in
+//! linear extraction) and is what this test catches today.
 
 use std::collections::HashMap;
 
