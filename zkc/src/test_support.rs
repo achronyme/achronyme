@@ -167,6 +167,14 @@ pub fn extract_public_inputs<F: FieldBackend>(program: &IrProgram<F>) -> Vec<Str
 /// pin value (32 bytes) — full constraint detail surfaces only when
 /// an assertion fails (see `assert_frozen_baseline_matches`).
 ///
+/// Hash domain: wire indices and field-element coefficients only.
+/// Public-input *names* are intentionally **not** included — naming is
+/// checked separately via `FrozenBaseline::public_inputs` (a Vec
+/// captured by `extract_public_inputs`), so a public-input rename
+/// surfaces as a Vec diff rather than an opaque hash mismatch. This
+/// keeps drift messages actionable: count/var/name diffs print before
+/// the hash compare in `assert_frozen_baseline_matches`.
+///
 /// Only available with `feature = "test-support"` — the helper pulls
 /// in `sha2`, which we don't want in a production build of zkc.
 #[cfg(feature = "test-support")]
