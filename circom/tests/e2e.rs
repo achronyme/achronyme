@@ -1838,11 +1838,10 @@ fn sha256_64_r1cs_probe() {
 ///
 /// Implementation notes (apply identically to every variant):
 ///
-///   - **Lysis frontend.** `compile_file_with_frontend(.., Lysis)`
-///     keeps loop-var-indexed signal writes rolled inside
-///     `CircuitNode::For`, so the `SymbolicIndexedEffect` path can
-///     carry them through to walker-time per-iteration unfolding.
-///     Legacy `compile_file` unrolls at lowering and produces the
+///   - **Lysis frontend.** `compile_file(..)` keeps loop-var-indexed
+///     signal writes rolled inside `CircuitNode::For`, so the
+///     `SymbolicIndexedEffect` path can carry them through to
+///     walker-time per-iteration unfolding — avoiding the
 ///     6.4 GB OOM the gate exists to prevent.
 ///   - **`compile_ir` (witness-less).** This gate verifies structural
 ///     completion + constraint count, not witness validity. The
@@ -1877,9 +1876,8 @@ fn run_sha256_lysis_hard_gate(
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("{label} compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("{label} compile failed: {e}"));
     eprintln!("[{label}] [compile]       {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -2152,9 +2150,8 @@ fn sha256_64_constraint_breakdown() {
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("[compile]      {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -2366,9 +2363,8 @@ fn sha256_64_o2_sparse_probe() {
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("[compile]      {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -3819,9 +3815,8 @@ fn sha256_64_witness_matches_sha2_reference() {
     let message: [u8; 8] = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("  [compile]  {:?}", t0.elapsed());
 
     // Build inputs: in_{byte*8 + bit} = bit (7-bit) of message[byte], MSB-first.

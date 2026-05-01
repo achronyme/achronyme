@@ -13,7 +13,7 @@ use super::captures::classify_captures;
 use super::LowerTemplateResult;
 use crate::ast::{CircomProgram, TemplateDef};
 use crate::lowering::context::LoweringContext;
-use crate::lowering::env::{Frontend, LoweringEnv};
+use crate::lowering::env::LoweringEnv;
 use crate::lowering::error::LoweringError;
 use crate::lowering::statements::lower_stmts;
 use crate::lowering::{signals, utils};
@@ -34,28 +34,8 @@ pub fn lower_template_with_captures(
     public_signals: &[String],
     program: &CircomProgram,
 ) -> Result<LowerTemplateResult, LoweringError> {
-    lower_template_with_captures_and_frontend(
-        template,
-        captures,
-        public_signals,
-        program,
-        Frontend::Legacy,
-    )
-}
-
-/// Frontend-aware variant of [`lower_template_with_captures`]. Used by
-/// the Lysis-targeting compilation path so the loop classifier sees
-/// `Frontend::Lysis` and keeps loop-var-indexed signal-write loops
-/// rolled.
-pub fn lower_template_with_captures_and_frontend(
-    template: &TemplateDef,
-    captures: &HashMap<String, FieldConst>,
-    public_signals: &[String],
-    program: &CircomProgram,
-    frontend: Frontend,
-) -> Result<LowerTemplateResult, LoweringError> {
     let mut ctx = LoweringContext::from_program(program);
-    lower_template_with_ctx(template, captures, public_signals, &mut ctx, frontend)
+    lower_template_with_ctx(template, captures, public_signals, &mut ctx)
 }
 
 /// Lower a template against a caller-provided [`LoweringContext`].
@@ -71,7 +51,6 @@ pub(crate) fn lower_template_with_ctx<'a>(
     captures: &HashMap<String, FieldConst>,
     public_signals: &[String],
     ctx: &mut LoweringContext<'a>,
-    frontend: Frontend,
 ) -> Result<LowerTemplateResult, LoweringError> {
     for (name, &val) in captures {
         ctx.param_values.insert(name.clone(), val);
@@ -105,7 +84,7 @@ pub(crate) fn lower_template_with_ctx<'a>(
     }
 
     // 2. Build lowering environment
-    let mut env = LoweringEnv::with_frontend(frontend);
+    let mut env = LoweringEnv::new();
 
     // Input signals → env.inputs. Array-valued inputs (e.g.
     // `signal input hin[256]`) additionally register their length

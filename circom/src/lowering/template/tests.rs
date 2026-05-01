@@ -785,7 +785,6 @@ fn flush_tracker_records_pending_inline() {
         &std::collections::HashMap::new(),
         &[],
         &mut ctx,
-        crate::lowering::env::Frontend::Legacy,
     )
     .expect("lower_template failed");
 
@@ -851,7 +850,6 @@ fn flush_tracker_disabled_records_nothing() {
         &std::collections::HashMap::new(),
         &[],
         &mut ctx,
-        crate::lowering::env::Frontend::Legacy,
     )
     .expect("lower_template failed");
 
