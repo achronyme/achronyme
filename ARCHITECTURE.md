@@ -45,7 +45,7 @@ Source (.ach)                    Source (.circom)
 │ IR Lower │  ir/src/lower.rs        │  ProveIR
 └────┬─────┘                         │
      │  IrProgram (SSA)              ▼
-     │◄──────────────────── instantiate()
+     │◄──────────── instantiate_lysis_with_outputs()
      ▼
 ┌──────────┐    optimize()
 │  Passes  │    ir/src/passes/mod.rs
@@ -83,8 +83,8 @@ crates `ir-core`, `ir-forge`, `zkc`, `resolve`, `lysis`, `lysis-types`).
 | `akronc` | `akronc/` | Bytecode compiler for the Akron VM | `Compiler`, `CircomHandleInterner`, `CircomLibraryRegistry` |
 | `akron` | `akron/` | Register-based general-purpose bytecode VM (tagged values, tri-color GC) | `Vm`, `CircomWitnessHandler`, `CircomCallResult` |
 | `artik` | `artik/` | Witness-computation SSA VM (no heap, no GC) | `ArtikContext`, `Program`, `execute_with_budget` |
-| `lysis` | `lysis/` | **In-progress** third VM: structural template instantiator with hash-consing interner | `lysis::execute`, `IrSink`, `InterningSink` |
-| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, lowering, library-mode template API | `parse_circom`, `compile_to_prove_ir`, `compile_template_library`, `instantiate_template_into`, `evaluate_template_witness` |
+| `lysis` | `lysis/` | Third VM: structural template instantiator with hash-consing interner; sole production path for `instantiate_lysis*` | `lysis::execute`, `IrSink`, `InterningSink` |
+| `circom` | `circom/` | Circom 2.x frontend: lexer, parser, analysis, lowering, library-mode template API | `parse_circom`, `compile_to_prove_ir`, `compile_file`, `compile_template_library`, `instantiate_template_into`, `evaluate_template_witness` |
 | `proving` | `proving/` | Groth16 (arkworks), PlonK (halo2-KZG), Solidity verifier | `groth16_prove`, `halo2_prove` |
 | `achronyme-std` | `std/` | Standard library via `NativeModule` trait | `StdModule` |
 | `cli` | `cli/` | Command-line interface, prove handler, circom witness handler, project config | `DefaultProveHandler`, `DefaultCircomWitnessHandler`, `AchronymeToml`, `ProjectConfig` |
