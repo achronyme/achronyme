@@ -111,7 +111,7 @@ fn compile_valid_witness(
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
     ir::passes::optimize(&mut program);
 
@@ -874,7 +874,7 @@ fn compile_eddsaposeidon_constraint_count() -> usize {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("EdDSAPoseidon instantiate failed: {e}"));
     ir::passes::optimize(&mut program);
 

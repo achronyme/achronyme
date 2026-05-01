@@ -50,18 +50,6 @@ pub fn lower_template(
     main: Option<&MainComponent>,
     program: &CircomProgram,
 ) -> Result<LowerTemplateResult, LoweringError> {
-    lower_template_with_frontend(template, main, program, super::env::Frontend::Legacy)
-}
-
-/// Frontend-aware variant of [`lower_template`]. Threads the
-/// pipeline-target [`Frontend`] through so the loop classifier
-/// in `loops::classify_loop_body` can gate on it.
-pub fn lower_template_with_frontend(
-    template: &TemplateDef,
-    main: Option<&MainComponent>,
-    program: &CircomProgram,
-    frontend: super::env::Frontend,
-) -> Result<LowerTemplateResult, LoweringError> {
     // Extract captures from the main component's template args —
     // this is the only information lower_template_with_captures needs
     // from `main`, aside from the public_signals set.
@@ -77,13 +65,7 @@ pub fn lower_template_with_frontend(
     }
     let public_signals: Vec<String> = main.map(|m| m.public_signals.clone()).unwrap_or_default();
 
-    lower::lower_template_with_captures_and_frontend(
-        template,
-        &captures,
-        &public_signals,
-        program,
-        frontend,
-    )
+    lower::lower_template_with_captures(template, &captures, &public_signals, program)
 }
 
 #[cfg(test)]

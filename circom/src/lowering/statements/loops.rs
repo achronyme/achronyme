@@ -13,7 +13,7 @@ use crate::ast::{self, AssignOp, BinOp, CompoundOp, ElseBranch, Expr, PostfixOp,
 
 use super::super::compile_time::CompileTimeEnv;
 use super::super::context::LoweringContext;
-use super::super::env::{Frontend, LoweringEnv};
+use super::super::env::LoweringEnv;
 use super::super::env_footprint::EnvFootprint;
 use super::super::error::LoweringError;
 use super::super::expressions::lower_expr;
@@ -1593,42 +1593,52 @@ pub(super) fn classify_loop_body(
     // already preempted. SHA-256's nested sub-component wirings hit
     // `ComponentArrayOps` on the outer `for(i)` and never reach this
     // gate; do not reorder.
-    let writes_outer_var = env.frontend == Frontend::Lysis
-        && (body_writes_to_outer_scope_var(stmts, env, loop_var)
-            || body_writes_to_subcomponent_array(stmts, env, loop_var));
+    // Bodies that write outer-scope vars or sub-component arrays must
+    // still unroll at lowering: the SymbolicIndexedEffect / walker
+    // per-iter path can't carry those shapes through. See
+    // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-b.md`.
+    let writes_outer_var = body_writes_to_outer_scope_var(stmts, env, loop_var)
+        || body_writes_to_subcomponent_array(stmts, env, loop_var);
+
+    // Inlined sub-template bodies use a fresh `LoweringEnv` whose
+    // signal-array declarations and component bindings are not visible
+    // upstream (pre-Phase-2.A this was implicit via `LoweringEnv::
+    // default() → Frontend::Legacy → always-unroll`). The
+    // `SymbolicIndexedEffect` path requires the array to be in scope
+    // as a `WitnessArrayDecl` at the *outer* template's instantiation
+    // time, which doesn't hold across inline boundaries; force unroll
+    // for any indexed-assignment loop in an inlined env. The outer
+    // template's own loops are unaffected — they're classified with
+    // `is_inlined = false` and follow the env-aware
+    // `writes_outer_var` rule.
+    let must_unroll_for_inline = env.is_inlined;
 
     if body_has_loop_var_indexed_assignments(stmts, loop_var) {
-        // Gap 1 Stage 5: when targeting Lysis, the
-        // `SymbolicIndexedEffect` path (instantiate Stage 2 + walker
+        // The SymbolicIndexedEffect path (instantiate Stage 2 + walker
         // Stage 3) carries loop-var-indexed signal writes through to
         // bytecode without unrolling at lowering time. Keep the loop
-        // rolled and let `lower_for` emit a `CircuitNode::For`. Legacy
-        // R1CS compilation continues to unroll.
-        if env.frontend == Frontend::Lysis && !writes_outer_var {
-            return None;
+        // rolled and let `lower_for` emit a `CircuitNode::For` —
+        // unless the body also writes outer-scope vars / sub-component
+        // arrays, or we're in an inlined sub-template context, in
+        // which case the symbolic path can't represent the write
+        // (the array isn't a `WitnessArrayDecl` visible to the outer
+        // instantiator).
+        if must_unroll_for_inline || writes_outer_var {
+            return Some(LoopLowering::IndexedAssignmentLoop);
         }
-        return Some(LoopLowering::IndexedAssignmentLoop);
+        return None;
     }
     // Catch-all: any loop whose body emits signal work (constraints,
-    // witness hints, component wiring) is not safe for the Lysis
-    // Symbolic `LoopUnroll` path today — the walker's per-iteration
-    // register file is capped at 255 and heavy bodies overflow, and
-    // not every signal op in a loop body has a const-index shape the
-    // Symbolic emitter accepts. Phase 1 policy: if signal ops are
-    // present, unroll at lowering so downstream only sees
-    // `CircuitNode::Let` / assignments with concrete indices. Loops
-    // with only compile-time `var` arithmetic (accumulators,
-    // counters) remain as `CircuitNode::For` and still go through
-    // the Symbolic fast path.
+    // witness hints, component wiring) follows the same gate. Loops
+    // whose body is symbolic-clean stay rolled as `CircuitNode::For`
+    // and the walker handles them via `SymbolicIndexedEffect` +
+    // per-iter unrolling. Loops with only compile-time `var`
+    // arithmetic (accumulators, counters) likewise remain rolled.
     if body_has_any_signal_ops(stmts) {
-        // Gap 1 Stage 5: same gate as the indexed branch above. Lysis
-        // wants the rolled `CircuitNode::For`; the walker handles
-        // signal-op bodies via `SymbolicIndexedEffect` + per-iter
-        // unrolling. Legacy keeps the catch-all unroll.
-        if env.frontend == Frontend::Lysis && !writes_outer_var {
-            return None;
+        if must_unroll_for_inline || writes_outer_var {
+            return Some(LoopLowering::IndexedAssignmentLoop);
         }
-        return Some(LoopLowering::IndexedAssignmentLoop);
+        return None;
     }
     None
 }
@@ -2109,11 +2119,13 @@ mod tests {
     }
 
     #[test]
-    fn classify_num2bits_loop_is_indexed_assignment_loop() {
-        // Num2Bits-style loop: `out[i] <-- ...` is an indexed
-        // assignment whose target references the loop var `i`. The
-        // downstream Lysis Symbolic path cannot resolve `i` at
-        // instantiate time, so the loop must be unrolled here.
+    fn classify_num2bits_loop_with_outer_acc_unrolls() {
+        // Num2Bits-style loop with an outer-scope accumulator: the
+        // body writes both the indexed signal `out[i]` AND mutates
+        // the outer-scope `lc1`. The SymbolicIndexedEffect path can't
+        // carry the cross-iteration `lc1 += ...` shape, so the
+        // classifier escalates to `IndexedAssignmentLoop` (unroll at
+        // lowering).
         let stmts = extract_template_body(
             r#"
             template T(n) {
@@ -2134,7 +2146,7 @@ mod tests {
             Some(b) => b.clone(),
             None => panic!("expected a for loop"),
         };
-        let env = LoweringEnv::new();
+        let env = env_with_locals(&["lc1", "out"]);
         assert_eq!(
             classify_loop_body(&for_body, &env, "i"),
             Some(LoopLowering::IndexedAssignmentLoop),
@@ -2236,7 +2248,6 @@ mod tests {
 
     fn env_with_locals(locals: &[&str]) -> LoweringEnv {
         let mut env = LoweringEnv::new();
-        env.frontend = Frontend::Lysis;
         for n in locals {
             env.locals.insert((*n).to_string());
         }
@@ -2347,9 +2358,19 @@ mod tests {
     }
 
     #[test]
-    fn classify_sha256_padding_loop_is_indexed_assignment_loop() {
+    fn classify_sha256_padding_loop_stays_rolled() {
         // Reproduces SHA-256 padding: `paddedIn[k] <-- 0` in a
-        // for-loop whose index depends on the loop var.
+        // for-loop whose index depends on the loop var. The body has
+        // a single indexed-signal write, no outer-scope mutation —
+        // the SymbolicIndexedEffect path can carry it, so the
+        // classifier returns `None` (stay rolled as
+        // `CircuitNode::For`) and the walker handles per-iteration
+        // unfolding at bytecode emission time.
+        //
+        // Pre-Phase-2.A this returned `IndexedAssignmentLoop` under
+        // the deleted Legacy frontend; the SHA-256 hard gate's 6.4 GB
+        // OOM regression that the lowering keeps avoiding was driven
+        // by exactly that eager-unroll classification.
         let stmts = extract_template_body(
             r#"
             template T(nBits, nBlocks) {
@@ -2368,11 +2389,8 @@ mod tests {
             Some(b) => b.clone(),
             None => panic!("expected a for loop"),
         };
-        let env = LoweringEnv::new();
-        assert_eq!(
-            classify_loop_body(&for_body, &env, "k"),
-            Some(LoopLowering::IndexedAssignmentLoop),
-        );
+        let env = env_with_locals(&["paddedIn"]);
+        assert_eq!(classify_loop_body(&for_body, &env, "k"), None);
     }
 
     /// R1″ Phase 6 / Follow-up A — Edit 5.

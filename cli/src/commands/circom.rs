@@ -22,7 +22,6 @@ use zkc::plonkish_backend::PlonkishCompiler;
 use zkc::r1cs_backend::R1CSCompiler;
 
 use super::ErrorFormat;
-use crate::config::CircomFrontend;
 use crate::style::{format_number, Styler};
 
 // ---------------------------------------------------------------------------
@@ -139,7 +138,6 @@ pub fn circom_command(
     circuit_stats: bool,
     lib_dirs: &[String],
     error_format: ErrorFormat,
-    frontend: CircomFrontend,
 ) -> Result<()> {
     // Validate flag combinations early
     if solidity_path.is_some() && backend != "r1cs" {
@@ -189,7 +187,6 @@ pub fn circom_command(
             circuit_stats,
             lib_dirs,
             error_format,
-            frontend,
         ),
         PrimeId::Bls12_381 => circom_command_inner::<memory::Bls12_381Fr>(
             path,
@@ -207,7 +204,6 @@ pub fn circom_command(
             circuit_stats,
             lib_dirs,
             error_format,
-            frontend,
         ),
         other => Err(anyhow::anyhow!(
             "prime `{}` is not supported for Circom compilation (use bn254 or bls12-381)",
@@ -233,7 +229,6 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     circuit_stats: bool,
     lib_dirs: &[String],
     error_format: ErrorFormat,
-    frontend: CircomFrontend,
 ) -> Result<()> {
     let mut resolved_inputs: Option<HashMap<String, FieldElement<F>>> = if let Some(raw) = inputs {
         Some(parse_inputs::<F>(raw)?)
@@ -262,25 +257,17 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     }
 
     // 1. Compile .circom to ProveIR via Circom frontend (with include resolution).
-    //    Pair the lowering frontend with the instantiation frontend below so the
-    //    `--frontend=legacy` debug escape hatch produces a Legacy-lowered ProveIR
-    //    that the legacy LegacySink path consumes (and vice versa for Lysis).
     let lib_paths: Vec<std::path::PathBuf> =
         lib_dirs.iter().map(std::path::PathBuf::from).collect();
-    let circom_frontend = match frontend {
-        CircomFrontend::Legacy => circom::Frontend::Legacy,
-        CircomFrontend::Lysis => circom::Frontend::Lysis,
-    };
     // Read source for diagnostic rendering (best-effort; needed for both errors and warnings)
     let source = std::fs::read_to_string(file_path).unwrap_or_default();
-    let compile_result = circom::compile_file_with_frontend(file_path, &lib_paths, circom_frontend)
-        .map_err(|e| {
-            let diags = e.to_diagnostics();
-            for diag in &diags {
-                super::emit_diagnostic(diag, &source, error_format);
-            }
-            anyhow::anyhow!("circom compilation failed with {} error(s)", diags.len())
-        })?;
+    let compile_result = circom::compile_file(file_path, &lib_paths).map_err(|e| {
+        let diags = e.to_diagnostics();
+        for diag in &diags {
+            super::emit_diagnostic(diag, &source, error_format);
+        }
+        anyhow::anyhow!("circom compilation failed with {} error(s)", diags.len())
+    })?;
 
     // Render warnings with the same diagnostic renderer used for the rest of Achronyme
     for warning in &compile_result.warnings {
@@ -318,31 +305,17 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     all_inputs.extend(witness_values);
     resolved_inputs = Some(all_inputs);
 
-    // Instantiate ProveIR → SSA IR with captures from main component args
+    // Instantiate ProveIR → SSA IR with captures from main component args (Lysis path).
     let fe_captures: HashMap<String, FieldElement<F>> = capture_values
         .iter()
         .map(|(k, v)| (k.clone(), FieldElement::<F>::from_u64(*v)))
         .collect();
-    let mut program = match frontend {
-        CircomFrontend::Legacy => prove_ir
-            .instantiate_with_outputs(&fe_captures, &output_names)
-            .map_err(|e| anyhow::anyhow!("ProveIR instantiation error: {e}"))?,
-        CircomFrontend::Lysis => prove_ir
-            .instantiate_lysis_with_outputs(&fe_captures, &output_names)
-            .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?,
-    };
+    let mut program = prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &output_names)
+        .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
 
     if verbose {
-        let frontend_label = match frontend {
-            CircomFrontend::Legacy => "legacy",
-            CircomFrontend::Lysis => "lysis",
-        };
-        eprintln!(
-            "    {} ({}): {} instructions",
-            style.cyan("IR"),
-            frontend_label,
-            program.len()
-        );
+        eprintln!("    {}: {} instructions", style.cyan("IR"), program.len());
     }
 
     // 3. Optimize

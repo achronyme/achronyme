@@ -164,7 +164,7 @@ fn run_circom_test(circom_path: &Path) -> TestResult {
     }
 
     // Instantiate (with output support — outputs become public R1CS wires)
-    let mut program = match prove_ir.instantiate_with_outputs(&fe_captures, &output_names) {
+    let mut program = match prove_ir.instantiate_lysis_with_outputs(&fe_captures, &output_names) {
         Ok(p) => p,
         Err(e) => {
             return TestResult {
@@ -402,7 +402,7 @@ fn poseidon_real_circomlib() {
         .collect();
 
     let mut program =
-        match prove_ir.instantiate_with_outputs(&fe_captures, &compile_result.output_names) {
+        match prove_ir.instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names) {
             Ok(p) => p,
             Err(e) => panic!("Poseidon instantiation failed: {e}"),
         };
@@ -586,7 +586,7 @@ fn mimcsponge_real_circomlib() {
         .collect();
 
     let mut program =
-        match prove_ir.instantiate_with_outputs(&fe_captures, &compile_result.output_names) {
+        match prove_ir.instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names) {
             Ok(p) => p,
             Err(e) => panic!("MiMCSponge instantiation failed: {e}"),
         };
@@ -664,7 +664,7 @@ fn circomlib_e2e_verify(test_name: &str, circom_file: &str, inputs: &[(&str, u64
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -778,7 +778,7 @@ fn circomlib_e2e_verify_fe(
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -837,7 +837,7 @@ fn circomlib_e2e_optimized(
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("{test_name} instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -934,7 +934,7 @@ fn escalarmulany_groth16() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("instantiation failed: {e}"));
     ir::passes::optimize(&mut program);
 
@@ -1012,7 +1012,7 @@ fn eddsaposeidon_compile() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("EdDSAPoseidon instantiation failed: {e}"));
 
     ir::passes::optimize(&mut program);
@@ -1186,6 +1186,16 @@ fn mux4_circomlib() {
 /// scalars into `env.known_constants`, so `nBlocks` reached the ProveIR
 /// instantiator as `CircuitExpr::Var("nBlocks")` and indexing failed
 /// with "indexed assignment requires a compile-time constant index".
+///
+/// Also exercises the per-iter SSA-after-unroll spill discipline — the
+/// fourth padding loop (`paddedIn[nBlocks*512 - k - 1] <== (nBits >> k)
+/// & 1` for `k` in `0..64`) is wide enough that the walker engages the
+/// per-iter unroll path and a mid-emit split classifies the per-iter
+/// BitAnd recompose result as cold. Stripping body-defined SsaVars
+/// from `ssa_to_heap` at each iter restore (see
+/// `emit_loop_unroll_per_iter_inner`) gives each iter's body-defined
+/// values their own heap slot so the 64 `paddedIn[505..]` AssertEqs
+/// each see iter-fresh RHS bits instead of iter-0's stale value.
 #[test]
 fn var_postdecl_padding_e2e() {
     let n = circomlib_e2e_verify(
@@ -1193,20 +1203,9 @@ fn var_postdecl_padding_e2e() {
         "test/circomlib/var_postdecl_padding_test.circom",
         &[],
     );
-    // 512 slots = nBlocks*512 with nBlocks=1 for nBits=64, one
-    // constraint per signal assignment, plus one redundant optimization
-    // artifact from the rolled `CircuitNode::For` path that LegacySink
-    // unrolls at instantiation. Pre-Phase-1.A this template lowered
-    // through eager `IndexedAssignmentLoop` and produced the exact 512;
-    // post-flip the rolled-loop path emits 513 (the original historical
-    // count). The +1 doesn't fold under IR-O1 — the redundancy is in
-    // structural shape, not arithmetic equality. Worth investigating as
-    // a follow-up to make the Lysis path emit the same 512 the eager
-    // path did, but it's a known structural cost not a correctness
-    // regression.
     assert_eq!(
-        n, 513,
-        "expected 513 constraints (512 signal slots + 1 rolled-loop artifact)"
+        n, 631,
+        "expected 631 constraints (512 signal slots + per-iter constraints from the four padding loops)"
     );
 }
 
@@ -1623,7 +1622,7 @@ fn fn_witness_lift_array_param_e2e_groth16() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     ir::passes::optimize(&mut program);
 
@@ -1690,7 +1689,7 @@ fn fn_witness_lift_array_literal_e2e_groth16() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     ir::passes::optimize(&mut program);
 
@@ -1795,7 +1794,7 @@ fn sha256_64_r1cs_probe() {
     let t1 = Instant::now();
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     eprintln!(
         "  [instantiate] {:?}  instructions={}",
@@ -1834,11 +1833,10 @@ fn sha256_64_r1cs_probe() {
 ///
 /// Implementation notes (apply identically to every variant):
 ///
-///   - **Lysis frontend.** `compile_file_with_frontend(.., Lysis)`
-///     keeps loop-var-indexed signal writes rolled inside
-///     `CircuitNode::For`, so the `SymbolicIndexedEffect` path can
-///     carry them through to walker-time per-iteration unfolding.
-///     Legacy `compile_file` unrolls at lowering and produces the
+///   - **Lysis frontend.** `compile_file(..)` keeps loop-var-indexed
+///     signal writes rolled inside `CircuitNode::For`, so the
+///     `SymbolicIndexedEffect` path can carry them through to
+///     walker-time per-iteration unfolding — avoiding the
 ///     6.4 GB OOM the gate exists to prevent.
 ///   - **`compile_ir` (witness-less).** This gate verifies structural
 ///     completion + constraint count, not witness validity. The
@@ -1873,9 +1871,8 @@ fn run_sha256_lysis_hard_gate(
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("{label} compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("{label} compile failed: {e}"));
     eprintln!("[{label}] [compile]       {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -2148,9 +2145,8 @@ fn sha256_64_constraint_breakdown() {
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("[compile]      {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -2362,9 +2358,8 @@ fn sha256_64_o2_sparse_probe() {
     let total = Instant::now();
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("[compile]      {:?}", t0.elapsed());
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
@@ -2482,7 +2477,7 @@ fn cluster_size_diagnostic() {
             .collect();
 
         let mut program = prove_ir
-            .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+            .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
             .unwrap_or_else(|e| panic!("instantiate {name} failed: {e}"));
         ir::passes::optimize(&mut program);
 
@@ -2677,7 +2672,7 @@ fn fn_witness_lift_e2e_groth16_triangle_sum() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     ir::passes::optimize(&mut program);
 
@@ -2743,7 +2738,7 @@ fn fn_witness_lift_e2e_r1cs_bitops_dispatch() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
 
     ir::passes::optimize(&mut program);
@@ -2805,7 +2800,7 @@ fn fn_witness_lift_e2e_r1cs_artik_dispatch() {
 
     let mut program = compile_result
         .prove_ir
-        .instantiate_with_outputs(&captures, &output_names)
+        .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
 
     ir::passes::optimize(&mut program);
@@ -3179,7 +3174,7 @@ fn pedersen_o2() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap();
     ir::passes::optimize(&mut program);
 
@@ -3249,7 +3244,7 @@ fn num2bits_optimization_diagnostic() {
         .collect();
 
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap();
     ir::passes::optimize(&mut program);
 
@@ -3460,7 +3455,7 @@ fn r1cs_optimization_benchmark() {
 
         let tp = std::time::Instant::now();
         let mut program = prove_ir
-            .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+            .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
             .unwrap_or_else(|e| panic!("{name} instantiation failed: {e}"));
         let t_inst = tp.elapsed();
 
@@ -3815,9 +3810,8 @@ fn sha256_64_witness_matches_sha2_reference() {
     let message: [u8; 8] = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
 
     let t0 = Instant::now();
-    let compile_result =
-        circom::compile_file_with_frontend(&path, &lib_dirs, circom::Frontend::Lysis)
-            .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("SHA-256 compile failed: {e}"));
     eprintln!("  [compile]  {:?}", t0.elapsed());
 
     // Build inputs: in_{byte*8 + bit} = bit (7-bit) of message[byte], MSB-first.
@@ -3876,6 +3870,51 @@ fn sha256_64_witness_matches_sha2_reference() {
     );
 
     eprintln!("  [verified] digest = {}", hex_encode(&got));
+}
+
+/// SHA-256(64) full R1CS-verify-with-witness regression.
+///
+/// Companion to [`sha256_64_witness_matches_sha2_reference`] and
+/// [`sha256_64_lysis_hard_gate`]. Those two cover compile budget +
+/// witness-vs-FIPS bit-equivalence respectively, but neither runs the
+/// IR's `AssertEq` chain against a populated witness — the hard-gate
+/// stops at constraint counting and the witness-equivalence test reads
+/// the bit outputs directly out of `compute_witness_hints` (Lysis VM
+/// hints) without re-checking that those values satisfy every R1CS
+/// constraint produced from the compiled IR.
+///
+/// That blind spot let the per-iter Lysis Walker stale-spill bug
+/// (`var_postdecl_padding_e2e`) survive on SHA-256(64) for weeks: the
+/// 64 `paddedIn[..]` `AssertEq`s collapsed onto one shared RHS and the
+/// constraint-count budget drifted by less than the 15 % gate
+/// tolerance, so the hard-gate stayed green even while witness eval
+/// would have rejected the program. This test plugs the gap by running
+/// `compile_ir_with_witness` + `cs.verify` on the same fixed 8-byte
+/// input — any future spill / dataflow regression that produces
+/// witness-incompatible constraints surfaces here even if the
+/// constraint count remains within budget.
+///
+/// `#[ignore]`d because the SHA-256(64) compile path is ~13 s on this
+/// host. Run with `--ignored sha256_64_r1cs_verify_with_witness`
+/// before pushing changes that touch the Walker, instantiate, or
+/// witness-hint paths.
+#[test]
+#[ignore = "SHA-256(64) full R1CS-verify-with-witness regression — compile is ~13s on this host. Run with --ignored before pushing changes that touch the Lysis walker, instantiate, witness, or R1CS pipelines."]
+fn sha256_64_r1cs_verify_with_witness() {
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let message: [u8; 8] = [0xAB, 0xCD, 0xEF, 0x01, 0x23, 0x45, 0x67, 0x89];
+    for (byte_idx, byte) in message.iter().enumerate() {
+        for bit_idx in 0..8 {
+            let bit_val = u64::from((byte >> (7 - bit_idx)) & 1);
+            inputs.insert(
+                format!("in_{}", byte_idx * 8 + bit_idx),
+                FieldElement::<Bn254Fr>::from_u64(bit_val),
+            );
+        }
+    }
+
+    let n = circomlib_e2e_verify_fe("SHA-256(64)", "test/circomlib/sha256_test.circom", &inputs);
+    assert!(n > 0, "SHA-256(64) must produce non-empty constraint set");
 }
 
 fn hex_encode(bytes: &[u8]) -> String {

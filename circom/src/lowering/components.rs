@@ -186,8 +186,14 @@ fn inline_component_body_impl<'a>(
 
     // Cache miss — full lowering
 
-    // Build env for the sub-template (original signal names)
+    // Build env for the sub-template (original signal names). Mark
+    // it as inlined so the loop classifier knows the parent's
+    // signal-array declarations and component bindings aren't in
+    // scope here, and forces unroll for any indexed-assignment loop
+    // (the SymbolicIndexedEffect path can't see across the inline
+    // boundary).
     let mut env = LoweringEnv::new();
+    env.is_inlined = true;
 
     let signals = collect_signal_names(&template.body.stmts);
     for (name, sig_type) in &signals {

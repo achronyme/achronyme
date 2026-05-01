@@ -352,67 +352,6 @@ fn decompose_and_range_check_roundtrips() {
 // multiset compare.
 // ---------------------------------------------------------------------
 
-fn instantiate_source(source: &str) -> IrProgram<F> {
-    use std::collections::HashMap;
-    let prove_ir = ir_forge::test_utils::compile_circuit(source).expect("compile_circuit");
-    prove_ir
-        .instantiate::<F>(&HashMap::new())
-        .expect("instantiate")
-}
-
-fn assert_source_equivalent(label: &str, source: &str) {
-    let mut legacy = instantiate_source(source);
-    let mut lysis = lysis_roundtrip(instantiate_source(source))
-        .unwrap_or_else(|e| panic!("lysis_roundtrip failed for `{label}`: {e}"));
-    ir::passes::optimize(&mut legacy);
-    ir::passes::optimize(&mut lysis);
-    let outcome = semantic_equivalence(&legacy, &lysis, &[]);
-    assert_eq!(
-        outcome,
-        OracleResult::Equivalent,
-        "fixture `{label}` legacy/Lysis disagreement: {outcome:?}"
-    );
-}
-
-#[test]
-fn source_assert_eq_roundtrips() {
-    // `assert(x == y)` lowers to AssertEq(IsEq, one) post-Option-A.
-    assert_source_equivalent(
-        "source_assert_eq",
-        "public z\nwitness x\nlet s = x + x;\nlet p = s * x;\nassert(p == z)",
-    );
-}
-
-#[test]
-fn source_boolean_combinators_roundtrip() {
-    // `!a`, `a && b`, `a || b` all lowered to primitives.
-    assert_source_equivalent(
-        "source_boolean_combinators",
-        "public out\nwitness a\nwitness b\nlet na = !a;\nlet both = a && b;\nlet either = a || b;\nlet combined = na + both + either;\nassert(combined == out)",
-    );
-}
-
-#[test]
-fn source_neq_le_ge_roundtrip() {
-    // !=, <=, >= — the comparison desugarings.
-    assert_source_equivalent(
-        "source_neq_le_ge",
-        "public out\nwitness a\nwitness b\nlet ne = a != b;\nlet le = a <= b;\nlet ge = a >= b;\nlet combined = ne + le + ge;\nassert(combined == out)",
-    );
-}
-
-#[test]
-fn source_unrolled_loop_roundtrips() {
-    // Compile-time-known loop. Stage 1 wraps each unrolled
-    // iteration as Plain — no LoopUnroll yet (that's Stage 2 commit
-    // 2.5). Multiset must match because both pipelines emit the
-    // same flat instructions, modulo Walker dedup.
-    assert_source_equivalent(
-        "source_unrolled_loop",
-        "public sum\nwitness a\nmut acc = 0\nfor i in 0..4 {\n  acc = acc + a\n}\nassert(acc == sum)",
-    );
-}
-
 #[test]
 fn empty_program_roundtrips() {
     // Pathological: no instructions at all. Validate that the

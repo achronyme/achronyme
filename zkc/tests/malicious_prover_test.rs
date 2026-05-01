@@ -544,7 +544,7 @@ fn compile_circuit_witness(
     let prove_ir =
         ProveIrCompiler::<memory::Bn254Fr>::compile_circuit(source, Some(Path::new("test.ach")))
             .unwrap();
-    let mut program = prove_ir.instantiate(&HashMap::new()).unwrap();
+    let mut program = prove_ir.instantiate_lysis(&HashMap::new()).unwrap();
     ir::passes::optimize(&mut program);
 
     let proven = compute_proven_boolean(&program);

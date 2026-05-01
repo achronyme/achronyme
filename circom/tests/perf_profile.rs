@@ -47,7 +47,7 @@ fn profile_circuit(
 
     let t = Instant::now();
     let mut program = prove_ir
-        .instantiate_with_outputs(&fe_captures, &compile_result.output_names)
+        .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
         .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
     timings.push(("instantiate", t.elapsed().as_secs_f64() * 1000.0));
 

@@ -127,7 +127,7 @@ impl ProveHandler for RealProveHandler {
             .map_err(|e| ProveError::IrLowering(format!("ProveIR: {e}")))?;
 
         let mut program = prove_ir
-            .instantiate(scope_values)
+            .instantiate_lysis(scope_values)
             .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         ir::passes::optimize(&mut program);

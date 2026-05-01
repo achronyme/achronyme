@@ -180,14 +180,18 @@ fn lower_stmt<'a>(
         } => {
             for decl in declarations {
                 env.locals.insert(decl.name.clone());
-                // Gap 1 Stage 5: when targeting Lysis and the signal
-                // has dimensions, pre-allocate the array slots in the
-                // ProveIR body so a downstream `SymbolicIndexedEffect`
-                // can snapshot `array_slots` at instantiate time.
-                // Legacy lowering doesn't need this — it unrolls
-                // indexed assignments at lowering and `ensure_array_
-                // slot` lazily fills the env.
-                if env.frontend == super::env::Frontend::Lysis && !decl.dimensions.is_empty() {
+                // Pre-allocate array slots in the ProveIR body so a
+                // downstream `SymbolicIndexedEffect` can snapshot
+                // `array_slots` at instantiate time.
+                //
+                // Skip in inlined sub-template bodies: the
+                // SymbolicIndexedEffect path doesn't see across the
+                // inline boundary, and the classifier already forces
+                // unroll for these envs (see `LoweringEnv::is_inlined`).
+                // Emitting a WitnessArrayDecl here would attach a name
+                // that the outer instantiator can't bind to a slot
+                // anyway (post-mangle the name has changed).
+                if !env.is_inlined && !decl.dimensions.is_empty() {
                     if let Some(total) = total_dim_size(&decl.dimensions, ctx) {
                         env.register_array(decl.name.clone(), total as usize);
                         nodes.push(CircuitNode::WitnessArrayDecl {
@@ -196,12 +200,6 @@ fn lower_stmt<'a>(
                             span: Some(diagnostics::SpanRange::from_span(span)),
                         });
                     }
-                    // If we couldn't const-resolve the size at lowering
-                    // time, the legacy fallback (loop-time unrolling)
-                    // still fires for any `arr[k] <== ...` assignments
-                    // — `classify_loop_body`'s indexed branch is
-                    // `Lysis`-gated only for cases where the array
-                    // is reachable here.
                 }
             }
         }
