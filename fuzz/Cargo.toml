@@ -17,6 +17,7 @@ constraints = { path = "../constraints" }
 memory = { path = "../memory" }
 artik = { path = "../artik" }
 lysis = { path = "../lysis" }
+circom = { path = "../circom" }
 
 [workspace]
 members = ["."]
@@ -54,4 +55,9 @@ doc = false
 [[bin]]
 name = "fuzz_lysis_validate"
 path = "fuzz_targets/fuzz_lysis_validate.rs"
+doc = false
+
+[[bin]]
+name = "fuzz_circom_parser"
+path = "fuzz_targets/fuzz_circom_parser.rs"
 doc = false
