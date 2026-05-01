@@ -194,12 +194,14 @@ fn round_trip_instantiate_produces_same_result() {
         .unwrap();
 
     // Instantiate original
-    let program1 = ir.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
+    let program1 = ir.instantiate_lysis::<Bn254Fr>(&HashMap::new()).unwrap();
 
     // Round-trip and instantiate
     let bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
     let (restored, _) = ProveIR::from_bytes(&bytes).unwrap();
-    let program2 = restored.instantiate::<Bn254Fr>(&HashMap::new()).unwrap();
+    let program2 = restored
+        .instantiate_lysis::<Bn254Fr>(&HashMap::new())
+        .unwrap();
 
     // Both should produce identical instruction counts and types
     assert_eq!(
@@ -406,7 +408,7 @@ fn adversarial_invalid_field_const_rejected_at_instantiation() {
     let (restored, _) = ProveIR::from_bytes(&bytes).unwrap();
 
     // But instantiation fails because the bytes are >= BN254 modulus
-    let result = restored.instantiate::<Bn254Fr>(&std::collections::HashMap::new());
+    let result = restored.instantiate_lysis::<Bn254Fr>(&std::collections::HashMap::new());
     assert!(
         result.is_err(),
         "instantiation should reject FieldConst >= modulus"

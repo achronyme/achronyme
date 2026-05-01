@@ -155,7 +155,7 @@ fn stats_matches_actual_r1cs_count_for_merkle() {
     )
     .unwrap();
     let mut program = prove_ir
-        .instantiate::<memory::Bn254Fr>(&std::collections::HashMap::new())
+        .instantiate_lysis::<memory::Bn254Fr>(&std::collections::HashMap::new())
         .unwrap();
     ir::passes::optimize(&mut program);
 
