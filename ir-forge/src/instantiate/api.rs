@@ -204,9 +204,18 @@ impl From<RoundTripError> for LysisInstantiateError {
 /// pipeline: Walker → encode → decode → validate → execute against
 /// an [`InterningSink`] → materialize to flat [`IrProgram<F>`].
 ///
-/// The wire-format round-trip (encode → decode → validate) is
-/// defensive: it exercises the bytecode wire format on every call
-/// so any future schema drift trips here, not at a downstream gate.
+/// The wire-format round-trip (encode → decode) stays unconditional —
+/// it exercises the bytecode wire format on every call so any future
+/// schema drift trips here, not at a downstream gate. The semantic
+/// validator (`lysis::bytecode::validate`) is **debug-only** (Phase
+/// 1.C, BETA20-CLOSEOUT). It checks RFC §4.5 well-formedness rules
+/// (const bounds, jump targets, register bounds, dataflow,
+/// reachability, call graph, heap slots) — the executor backstops
+/// every one of those at runtime, so skipping in release trades a
+/// ~741 ms cost on SHA-256(64) for a debug-mode-only safety net.
+/// Schema drift detection moves to `cargo test --workspace` (which
+/// runs in debug mode unless `--release` is forced); the wire-format
+/// round-trip catches encode/decode drift in either build.
 fn lower_extended_through_lysis<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
 ) -> Result<IrProgram<F>, LysisInstantiateError> {
@@ -215,7 +224,10 @@ fn lower_extended_through_lysis<F: FieldBackend>(
 
     let bytes = lysis::encode(&bytecode);
     let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
-    lysis::bytecode::validate(&decoded, &LysisConfig::default()).map_err(RoundTripError::Lysis)?;
+    if cfg!(debug_assertions) {
+        lysis::bytecode::validate(&decoded, &LysisConfig::default())
+            .map_err(RoundTripError::Lysis)?;
+    }
 
     let mut sink = InterningSink::<F>::new();
     execute(&decoded, &[], &LysisConfig::default(), &mut sink).map_err(RoundTripError::Lysis)?;
