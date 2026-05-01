@@ -1187,21 +1187,49 @@ fn mux4_circomlib() {
 /// instantiator as `CircuitExpr::Var("nBlocks")` and indexing failed
 /// with "indexed assignment requires a compile-time constant index".
 //
-// Ignored 2026-05-01: `circomlib_e2e_verify` was migrated to
-// `instantiate_lysis_with_outputs` ahead of the legacy method
-// deletion. The rolled-loop body produces a `__lysis_sym_slot_0`
-// witness placeholder that `compute_witness_hints_with_captures`
-// doesn't populate (same gap class as the deleted
-// `array_indexed_bound`; see project_g3_discriminator_may01.md and
-// BETA20-CLOSEOUT.md follow-up backlog). The 513 constraint pin was
-// itself Legacy-instantiate-shaped and can't survive the gap closure
-// either — re-enable with an updated count once ir-forge's witness
-// eval covers Lysis sym slots. Verified pre-Phase-2.A `ach circom
-// test/circomlib/var_postdecl_padding_test.circom` already errored
-// with the same `__lysis_sym_slot_0` message; this test was simply
-// the only caller still routed through the masking Legacy path.
+// Ignored 2026-05-01: blocked on a Lysis Walker mid-emit-split bug
+// surfaced when this test was un-ignored after the Phase-2.A
+// `__lysis_sym_slot_0` synthesis fix landed. The fourth padding loop
+// (`paddedIn[nBlocks*512 - k - 1] <== (nBits >> k) & 1`) per-iter
+// unrolls; mid-emit `perform_split` fires inside the body to keep the
+// frame under cap. The split classifies the BitAnd's recompose
+// result as cold and `StoreHeap`s its iter-0 NodeId. Iterations 1..N
+// re-bind the SAME SsaVar to a freshly-computed reg, but
+// `perform_split`'s "skip if already in `ssa_to_heap`" branch never
+// re-stores the new value — so all 64 `LoadHeap`s on subsequent
+// iterations return iter-0's stale NodeId, and 64 `AssertEq`s point
+// at one shared RHS instead of 64 iter-fresh ones. The first wire
+// where the witness disagrees (paddedIn_505 = bit 6 of nBits = 1 for
+// nBits=64) trips the eval mismatch.
+//
+// Fix candidates (decision pending — see [project_walker_per_iter_
+// stale_spill.md] in MEMORY.md):
+//
+//  - **Strip `ssa_to_heap` per-iter for body-defined results.** At
+//    the per-iter restore point in `emit_loop_unroll_per_iter_inner`,
+//    drop every entry whose SsaVar is a body-internal result so the
+//    next mid-emit split re-spills the freshly-bound reg. Requires
+//    sizing `heap_size_hint` for `iter_count * spill_count`, not
+//    `unique_ssa`, and validator rule 13 must permit re-store to the
+//    same slot inside per-iter contexts (currently single-static-
+//    store).
+//
+//  - **Always emit `StoreHeap` in `perform_split`** (relax the dedup
+//    optimization). Soundest but inflates SHA-256(64)'s spill traffic
+//    — measure before committing.
+//
+// The Phase-2.A `__lysis_sym_slot_0` fix (collect_in_extinst /
+// record_last_use_in_extinst now include `array_slots`) is correct
+// and preserves the `paddedIn (Public)` wire identity across splits.
+// The bitwise-binop two-width refactor (`emit_bitwise_binop` now
+// takes `lhs_bits` / `rhs_bits` separately) is correct and shrinks
+// `(x) & 1`-shaped chains to a single `Mul`. Both ride independently
+// of this Walker bug; SHA-256(64) hard-gate + r1cs_optimization_
+// benchmark verified green with them. The 513-constraint pin is
+// kept as the post-fix expectation — re-enable once the Walker
+// per-iter spill bug closes.
 #[test]
-#[ignore = "Lysis witness-hint gap on rolled loops with symbolic indices"]
+#[ignore = "Lysis Walker mid-emit-split: per-iter unroll skips re-StoreHeap when SsaVar already in ssa_to_heap, so iter-0's stale value leaks to all 64 iters' AssertEq RHS — see test comment for fix candidates"]
 fn var_postdecl_padding_e2e() {
     let n = circomlib_e2e_verify(
         "VarPostDeclPadding(64)",
