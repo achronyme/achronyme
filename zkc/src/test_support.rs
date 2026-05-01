@@ -256,6 +256,41 @@ pub fn compute_frozen_baseline<F: PoseidonParamsProvider>(
     }
 }
 
+/// Assert two frozen baselines match on shape only (constraint counts,
+/// var count, public partition) — skips the canonical-multiset hash
+/// comparison. Use this for circuits with known wire-id permutation
+/// non-determinism that the sort-based canonicalization doesn't
+/// neutralize (sort handles term-order within an LC, not wire-index
+/// permutation across LCs). Documented escape hatch — every caller
+/// should cite the upstream determinism leak in a comment.
+#[cfg(feature = "test-support")]
+pub fn assert_frozen_baseline_shape_matches(actual: &FrozenBaseline, expected: &FrozenBaseline) {
+    if actual.public_inputs != expected.public_inputs {
+        panic!(
+            "frozen baseline (shape) public-input partition mismatch:\n  expected: {:?}\n  actual:   {:?}",
+            expected.public_inputs, actual.public_inputs,
+        );
+    }
+    if actual.num_variables != expected.num_variables {
+        panic!(
+            "frozen baseline (shape) variable-count mismatch: expected {}, actual {}",
+            expected.num_variables, actual.num_variables,
+        );
+    }
+    if actual.pre_o1_count != expected.pre_o1_count {
+        panic!(
+            "frozen baseline (shape) pre-O1 constraint-count mismatch: expected {}, actual {}",
+            expected.pre_o1_count, actual.pre_o1_count,
+        );
+    }
+    if actual.post_o1_count != expected.post_o1_count {
+        panic!(
+            "frozen baseline (shape) post-O1 constraint-count mismatch: expected {}, actual {}",
+            expected.post_o1_count, actual.post_o1_count,
+        );
+    }
+}
+
 /// Assert two frozen baselines match, with a useful diff message on
 /// mismatch (constraint counts, var count, public partition, then the
 /// hash). Failing prints actionable context, not just a hash mismatch.
