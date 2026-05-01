@@ -2815,9 +2815,7 @@ fn collect_referenced_ssa_vars<F: FieldBackend>(
 /// fresh slot per iter, preserving validator rule 13's
 /// single-static-store invariant *and* the per-iter SSA-after-unroll
 /// semantics (each iter's body-defined values are distinct).
-fn collect_defined_ssa_vars<F: FieldBackend>(
-    body: &[ExtendedInstruction<F>],
-) -> HashSet<SsaVar> {
+fn collect_defined_ssa_vars<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> HashSet<SsaVar> {
     let mut out = HashSet::new();
     for inst in body {
         collect_defined_in_extinst(inst, &mut out);

@@ -3913,11 +3913,7 @@ fn sha256_64_r1cs_verify_with_witness() {
         }
     }
 
-    let n = circomlib_e2e_verify_fe(
-        "SHA-256(64)",
-        "test/circomlib/sha256_test.circom",
-        &inputs,
-    );
+    let n = circomlib_e2e_verify_fe("SHA-256(64)", "test/circomlib/sha256_test.circom", &inputs);
     assert!(n > 0, "SHA-256(64) must produce non-empty constraint set");
 }
 
