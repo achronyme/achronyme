@@ -1375,13 +1375,10 @@ impl<F: FieldBackend> Walker<F> {
             // lowers it via `divide_lcs`, which handles the witness-
             // side inverse hint and the `rhs * inv = 1` constraint.
             //
-            // Phase 1.B (BETA20-CLOSEOUT, 2026-04-30) promoted Div
-            // from "walker-rejected" to first-class output so `prove
-            // {}` blocks can use field division. The walker_const
-            // const-fold branch is intentionally skipped: field
-            // division has no compile-time meaningful result for the
-            // usize-shaped walker-side constants (which model loop
-            // indices, not field elements).
+            // The walker_const const-fold branch is intentionally
+            // skipped: field division has no compile-time meaningful
+            // result for the usize-shaped walker-side constants
+            // (which model loop indices, not field elements).
             Instruction::Div { result, lhs, rhs } => {
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
@@ -2812,9 +2809,10 @@ fn collect_referenced_ssa_vars<F: FieldBackend>(
 /// per-iter walk re-binds these vars to fresh values, so any prior
 /// spill-and-dedup would silently forward iter-0's stale value to
 /// iter-1+. Stripping forces the next mid-iter split to allocate a
-/// fresh slot per iter, preserving validator rule 13's
-/// single-static-store invariant *and* the per-iter SSA-after-unroll
-/// semantics (each iter's body-defined values are distinct).
+/// fresh slot per iter, preserving the single-static-store invariant
+/// (one `StoreHeap` per slot, globally) *and* the per-iter
+/// SSA-after-unroll semantics (each iter's body-defined values are
+/// distinct).
 fn collect_defined_ssa_vars<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> HashSet<SsaVar> {
     let mut out = HashSet::new();
     for inst in body {
@@ -4374,11 +4372,10 @@ mod tests {
 
     #[test]
     fn lowers_div_to_emit_div() {
-        // Phase 1.B (BETA20-CLOSEOUT 2026-04-30) promoted field Div
-        // from "walker-rejected" to first-class output: `EmitDiv`
-        // emits `Instruction::Div` to the sink, which the R1CS
-        // backend lowers via `divide_lcs`. Required for `prove {}`
-        // to use field division.
+        // Field `Div` lowers to `Opcode::EmitDiv`, which the executor
+        // materialises as `Instruction::Div` for the sink; the R1CS
+        // backend then lowers that via `divide_lcs` (witness-side
+        // inverse hint + `rhs * inv = 1` constraint).
         let body = vec![
             plain(Instruction::Input {
                 result: ssa(0),

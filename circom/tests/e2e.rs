@@ -3883,16 +3883,15 @@ fn sha256_64_witness_matches_sha2_reference() {
 /// hints) without re-checking that those values satisfy every R1CS
 /// constraint produced from the compiled IR.
 ///
-/// That blind spot let the per-iter Lysis Walker stale-spill bug
-/// (`var_postdecl_padding_e2e`) survive on SHA-256(64) for weeks: the
-/// 64 `paddedIn[..]` `AssertEq`s collapsed onto one shared RHS and the
-/// constraint-count budget drifted by less than the 15 % gate
-/// tolerance, so the hard-gate stayed green even while witness eval
-/// would have rejected the program. This test plugs the gap by running
-/// `compile_ir_with_witness` + `cs.verify` on the same fixed 8-byte
-/// input — any future spill / dataflow regression that produces
-/// witness-incompatible constraints surfaces here even if the
-/// constraint count remains within budget.
+/// That coverage shape can hide regressions where the IR emits
+/// constraints that count correctly and produce a satisfying-looking
+/// witness on the hint side, yet collapse multiple iter-distinct
+/// `AssertEq`s onto a single shared RHS so witness eval rejects the
+/// program. This test plugs the gap by running
+/// `compile_ir_with_witness` + `cs.verify` on a fixed 8-byte input —
+/// any future spill / dataflow regression that produces witness-
+/// incompatible constraints surfaces here even when the constraint
+/// count stays within the hard-gate's tolerance.
 ///
 /// `#[ignore]`d because the SHA-256(64) compile path is ~13 s on this
 /// host. Run with `--ignored sha256_64_r1cs_verify_with_witness`
