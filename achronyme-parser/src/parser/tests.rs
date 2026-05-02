@@ -901,7 +901,7 @@ fn recovery_interleaved_good_and_bad() {
 }
 
 // ==========================================================================
-// ExprId allocation — Movimiento 2 Phase 3A
+// ExprId allocation
 // ==========================================================================
 
 /// Walk every `Expr` reachable from a `Program` and invoke `visit` for each.
