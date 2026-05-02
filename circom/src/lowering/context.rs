@@ -167,11 +167,16 @@ impl<'a> LoweringContext<'a> {
     /// Used by lowering functions that need to iterate over all constants or pass
     /// to expression evaluation. Prefer [`resolve_constant`] for single lookups.
     pub fn all_constants(&self, env: &super::env::LoweringEnv) -> HashMap<String, FieldConst> {
-        let mut all = HashMap::with_capacity(self.param_values.len() + env.known_constants.len());
+        let mut all = HashMap::with_capacity(
+            self.param_values.len() + env.known_constants.len() + env.bound_const_vars.len(),
+        );
         for (k, &v) in &self.param_values {
             all.insert(k.clone(), v);
         }
         for (k, &v) in &env.known_constants {
+            all.entry(k.clone()).or_insert(v);
+        }
+        for (k, &v) in &env.bound_const_vars {
             all.entry(k.clone()).or_insert(v);
         }
         all

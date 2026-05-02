@@ -3166,6 +3166,78 @@ fn binsub_circomlib() {
     assert!(n > 0, "expected constraints for BinSub(8)");
 }
 
+/// SMTVerifier(10): sparse Merkle tree inclusion/exclusion verifier
+/// at depth 10 (1024 leaves). Largest standalone circomlib template
+/// not yet covered. Exercises descending for-loops (`i != -1`),
+/// component arrays sized from template params, and compile-time
+/// `var n1 = n\2` propagation through `MultiAND`.
+///
+/// Run with `enabled=0` so the R1CS verification is a no-op — the
+/// frontend pipeline + constraint generation are the test surface;
+/// witness validity for inclusion/exclusion semantics is out of
+/// scope for this compile-coverage gate.
+#[test]
+fn smtverifier_circomlib() {
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("root".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("isOld0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("key".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("value".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    for i in 0..10 {
+        inputs.insert(
+            format!("siblings_{i}"),
+            FieldElement::<Bn254Fr>::from_u64(0),
+        );
+    }
+
+    let n = circomlib_e2e_verify_fe(
+        "SMTVerifier(10) (enabled=0)",
+        "test/circomlib/smtverifier_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for SMTVerifier(10)");
+}
+
+/// SMTProcessor(10): sparse Merkle tree state-transition processor at
+/// depth 10. Larger sibling of SMTVerifier — adds insert/update/delete
+/// state machines around the same core hash chain.
+///
+/// Run with `fnc=[0,0]` (no-op processor), so `enabled = 0` and the
+/// R1CS check passes with the trivial state transition (newRoot ==
+/// oldRoot). Same scope as the verifier test: compile-coverage gate.
+#[test]
+fn smtprocessor_circomlib() {
+    let mut inputs = HashMap::new();
+    inputs.insert("oldRoot".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newRoot".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("isOld0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc_1".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    for i in 0..10 {
+        inputs.insert(
+            format!("siblings_{i}"),
+            FieldElement::<Bn254Fr>::from_u64(0),
+        );
+    }
+
+    let n = circomlib_e2e_verify_fe(
+        "SMTProcessor(10) (fnc=[0,0])",
+        "test/circomlib/smtprocessor_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for SMTProcessor(10)");
+}
+
 /// Edwards2Montgomery: convert a Twisted-Edwards point to its
 /// Montgomery-form representation. Single-template test on the
 /// generator point — exercises the modular-inverse division

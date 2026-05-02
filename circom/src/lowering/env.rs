@@ -44,6 +44,16 @@ pub struct LoweringEnv {
     /// Known constants — loop variables during manual unrolling.
     /// When set, `lower_expr` for `Ident("i")` emits `Const(val)`.
     pub known_constants: HashMap<String, FieldConst>,
+    /// Compile-time-evaluable values seeded from `var name = expr;`
+    /// declarations whose RHS folds against the current `param_values
+    /// + known_constants` snapshot. Distinct from `known_constants`:
+    /// only `all_constants()` consults it (loop bound resolution +
+    /// component array sizing), so `lower_expr` keeps emitting the
+    /// var as `CircuitExpr::Var(name)` and a subsequent
+    /// reassignment (`x += ...`) is not silently folded into a stale
+    /// literal. Required for circomlib patterns like `var n1 = n\2;
+    /// for (i = 0; i < n1; i++) ...` (gates.circom MultiAND).
+    pub bound_const_vars: HashMap<String, FieldConst>,
     /// Known array constants — compile-time arrays from function calls
     /// like `var C[n] = POSEIDON_C(t)`.  Used to resolve `C[expr]`
     /// to a field constant during lowering.
@@ -69,6 +79,7 @@ impl LoweringEnv {
             strides: HashMap::new(),
             component_arrays: HashSet::new(),
             known_constants: HashMap::new(),
+            bound_const_vars: HashMap::new(),
             known_array_values: HashMap::new(),
             is_inlined: false,
         }
