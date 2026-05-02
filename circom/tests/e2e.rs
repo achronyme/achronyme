@@ -3133,6 +3133,39 @@ fn eddsamimcsponge_r1cs() {
     assert!(n > 0, "expected constraints for EdDSAMiMCSponge verifier");
 }
 
+/// BinSub(8): subtract two 8-bit binary inputs with borrow output.
+/// Exercises the `2**i` runtime-exponent rewrite (loop variable as
+/// exponent → left-shift) used throughout circomlib bit arithmetic.
+#[test]
+fn binsub_circomlib() {
+    // 5 - 3 = 2; LSB-first bit decomposition. The 2D `in[2][8]` array
+    // flattens to in_0..in_7 (operand 0) + in_8..in_15 (operand 1).
+    let n = circomlib_e2e_verify(
+        "BinSub(8)",
+        "test/circomlib/binsub_test.circom",
+        &[
+            ("in_0", 1),
+            ("in_1", 0),
+            ("in_2", 1),
+            ("in_3", 0),
+            ("in_4", 0),
+            ("in_5", 0),
+            ("in_6", 0),
+            ("in_7", 0),
+            ("in_8", 1),
+            ("in_9", 1),
+            ("in_10", 0),
+            ("in_11", 0),
+            ("in_12", 0),
+            ("in_13", 0),
+            ("in_14", 0),
+            ("in_15", 0),
+        ],
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for BinSub(8)");
+}
+
 /// Edwards2Montgomery: convert a Twisted-Edwards point to its
 /// Montgomery-form representation. Single-template test on the
 /// generator point — exercises the modular-inverse division
