@@ -38,18 +38,16 @@
 //! | `RangeCheck { result, operand, bits }`    | `RangeCheck`  |
 //! | `WitnessCall { outputs, inputs, program_bytes }` | `WitnessCall` |
 //!
-//! Side-effect classification (RFC §5.3 canonical list, minus
-//! Decompose/Assert which are side-effectful per downstream analysis
-//! but live under the same enum here in Phase 1):
+//! Side-effect classification:
 //! **side-effectful** = `Input`, `AssertEq`, `Assert`, `RangeCheck`,
 //! `Decompose`, `WitnessCall`. **pure** = everything else.
 //!
 //! `Decompose` is the borderline case: the bit results are pure
 //! values (hash-consable as NodeIds), but the emission itself implies
 //! a constraint `Σ bit_i · 2^i == operand` that must not be
-//! deduplicated. Phase 2's interner will expose both sides of that
-//! duality; Phase 1 simply records the whole instruction in emission
-//! order without dedup.
+//! deduplicated. `InterningSink` exposes both sides of that duality;
+//! `StubSink` records the whole instruction in emission order without
+//! dedup.
 
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
 

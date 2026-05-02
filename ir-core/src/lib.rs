@@ -1,9 +1,9 @@
 //! # `ir-core` — Flat-SSA IR vocabulary (leaf crate)
 //!
 //! Holds the shared SSA IR types that both `ir` and `ir-forge` need
-//! to name. Extracted during the structural cleanup phase 7 (see
-//! `.claude/plans/structural-cleanup.md` §9.bis) as a prerequisite to
-//! the `ir-forge` extraction.
+//! to name. The leaf-crate split exists to break what would otherwise
+//! be a Cargo cycle between `ir` and `ir-forge` — see "Why it exists"
+//! below.
 //!
 //! ## Why it exists
 //!

@@ -28,8 +28,8 @@ pub const TAG_BYTES: u64 = 14;
 /// referenced [`crate::heap::CircomHandle`] carries the library id
 /// plus template name + pre-evaluated template parameters. The
 /// actual library lives in the VM's `circom_handler`, not in the
-/// heap — Phase 4 keeps compile-time and run-time circom state on
-/// opposite sides of this opaque index.
+/// heap — compile-time and run-time circom state stay on opposite
+/// sides of this opaque index.
 pub const TAG_CIRCOM_HANDLE: u64 = 15;
 
 // i60 range constants

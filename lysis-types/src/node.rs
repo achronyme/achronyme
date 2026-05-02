@@ -1,8 +1,8 @@
 //! `NodeId` — handle into the node table produced by [`crate::execute`].
 //!
-//! Phase 1 uses a plain counter; Phase 2 replaces the counter with a
-//! hash-consing interner. The handle shape does not change between
-//! phases so downstream code can start consuming `NodeId` today.
+//! The handle shape is shared by both backends: the counter-based
+//! `StubSink` and the hash-consing `InterningSink`. Downstream code
+//! consumes `NodeId` without caring which sink minted it.
 
 use std::num::NonZeroU32;
 
@@ -66,8 +66,8 @@ impl std::fmt::Display for NodeId {
     }
 }
 
-/// Simple zero-based counter used by Phase 1's stub sink. Replaced by
-/// the hash-consing interner in Phase 2.
+/// Simple zero-based counter used by `StubSink`. The hash-consing
+/// `InterningSink` mints its own ids and ignores this generator.
 #[derive(Debug, Default)]
 pub struct NodeIdGen {
     next: u32,

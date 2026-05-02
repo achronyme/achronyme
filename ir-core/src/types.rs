@@ -511,14 +511,9 @@ impl std::fmt::Display for IrType {
 /// should prefer the accessor methods (`instructions()`,
 /// `next_var()`, `set_name()`, etc.) — they carry the stable API
 /// contract — but this is a convention, not a compile-time fence.
-/// The stronger `pub(crate)` encapsulation from P3 only made sense
-/// when IrProgram lived in the `ir` crate; after the Phase 7 split
-/// into `ir-core` + `ir` + `ir-forge`, accessor-only access would
-/// require duplicating the entire passes + evaluator + ProveIR
-/// walker infrastructure behind trait objects, for no real gain
-/// pre-1.0.
-/// accessor methods (`push`, `iter`, `len`, `set_name`, etc.) so the
-/// internal storage shape can evolve without breaking downstream code.
+/// Hiding the fields behind `pub(crate)` would force passes,
+/// evaluator, and ProveIR walker infrastructure across `ir` and
+/// `ir-forge` to go through trait objects, with no real gain pre-1.0.
 #[derive(Debug)]
 pub struct IrProgram<F: FieldBackend = Bn254Fr> {
     pub instructions: Vec<Instruction<F>>,

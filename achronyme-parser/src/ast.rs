@@ -8,8 +8,8 @@ pub use diagnostics::Span;
 
 /// Dense, unique identifier assigned to every `Expr` at parse time.
 ///
-/// `ExprId` is the key used by the resolver pass (Movimiento 2, Phase 3)
-/// to attach a `SymbolId` to each call site and identifier via a parallel
+/// `ExprId` is the key used by the resolver pass to attach a
+/// `SymbolId` to each call site and identifier via a parallel
 /// `HashMap<ExprId, SymbolId>` inside `resolve::SymbolTable`. Every
 /// parser-allocated id is unique within one `Program`; clones of an
 /// `Expr` preserve the original id (cloning is never a source of new
@@ -183,8 +183,8 @@ pub enum BigIntRadix {
 ///
 /// Every variant carries an [`ExprId`] assigned by the parser (or
 /// [`ExprId::SYNTHETIC`] for nodes constructed outside the parser).
-/// The resolver pass (Movimiento 2, Phase 3) uses this id to attach
-/// a `SymbolId` via a parallel `HashMap<ExprId, SymbolId>`.
+/// The resolver pass uses this id to attach a `SymbolId` via a
+/// parallel `HashMap<ExprId, SymbolId>`.
 #[derive(Clone, Debug)]
 pub enum Expr {
     Number {
