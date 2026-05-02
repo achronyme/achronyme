@@ -364,7 +364,7 @@ where
 {
     let constraints_before = constraints.len();
 
-    // Phase 1: O1 fixpoint (standard linear elimination)
+    // Step 1: O1 fixpoint (standard linear elimination)
     let (mut all_subs, o1_stats) = optimize_linear(constraints, num_pub_inputs);
 
     let mut total_vars_eliminated = o1_stats.variables_eliminated;
@@ -373,7 +373,7 @@ where
     let mut total_rounds = o1_stats.rounds;
     let mut all_round_details: Vec<(usize, usize)> = o1_stats.round_details;
 
-    // Phase 2: Decompose + DEDUCE + protected O1 + cleanup O1
+    // Step 2: Decompose + DEDUCE + protected O1 + cleanup O1
     //
     // 1. Decompose multi-term A/B in quadratic constraints into auxiliary wires
     // 2. DEDUCE finds linear constraints from the simplified monomials

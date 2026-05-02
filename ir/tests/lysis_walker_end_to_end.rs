@@ -1,16 +1,15 @@
-//! Phase 3.B.10 — end-to-end integration for the Walker + executor.
+//! End-to-end integration for the Walker + executor.
 //!
 //! Takes a hand-authored `ExtendedInstruction` program (no compiler,
 //! no ProveIR front-end), drives it through
 //! `Walker::lower → execute (InterningSink) → materialize`, and
-//! asserts the resulting `Vec<Instruction<Bn254Fr>>` matches what the
-//! eager `ir_forge::instantiate` path would produce for the same
-//! circuit — shape-level, not semantic equivalence.
+//! asserts the resulting `Vec<Instruction<Bn254Fr>>` matches what an
+//! eager instantiate path would produce for the same circuit —
+//! shape-level, not semantic equivalence.
 //!
 //! Also exercises BTA + extract on a Uniform loop to make sure the
 //! classifier / lifter chain agrees on the capture layout, even
-//! though the walker itself doesn't emit templates yet (that lives
-//! in Phase 3.C).
+//! though the walker itself doesn't emit templates here.
 
 use std::collections::BTreeSet;
 
@@ -36,9 +35,9 @@ fn plain(inst: Instruction<Bn254Fr>) -> ExtendedInstruction<Bn254Fr> {
     ExtendedInstruction::Plain(inst)
 }
 
-/// Build the Num2Bits(4) ExtendedInstruction skeleton. Matches what
-/// the Phase 3.A round-trip test expressed via raw bytecode; here
-/// we go through the walker instead.
+/// Build the Num2Bits(4) ExtendedInstruction skeleton. Same shape as
+/// `lysis_round_trip_num2bits` but routed through the walker instead
+/// of raw bytecode.
 fn num2bits_4() -> Vec<ExtendedInstruction<Bn254Fr>> {
     // Signals:
     //   ssa(0) = in (witness input)

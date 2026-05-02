@@ -4,14 +4,14 @@
 //! ## Public API
 //!
 //! - [`optimize_linear`] -- O1: linear constraint elimination to
-//!   fixpoint + dedup + trivial sweep. Phase 6 default: this is the
-//!   cluster-based driver (`linear_cluster::optimize_linear_clustered`)
-//!   which partitions linear constraints into connected components by
-//!   shared signal (Union-Find) and runs Gaussian elimination per
-//!   cluster with a size-conditional picker (max-frequency below 350,
-//!   min-occurrence in [350, 1M)). Clusters above
-//!   `CLUSTER_FALLBACK_THRESHOLD` fall back to the greedy iterative
-//!   eliminator (`linear::optimize_linear_with_protected`) which is
+//!   fixpoint + dedup + trivial sweep. Re-exported from
+//!   `linear_cluster::optimize_linear_clustered`, the cluster-based
+//!   driver that partitions linear constraints into connected
+//!   components by shared signal (Union-Find) and runs Gaussian
+//!   elimination per cluster with a size-conditional picker
+//!   (max-frequency below 350, min-occurrence in [350, 1M)). Clusters
+//!   above `CLUSTER_FALLBACK_THRESHOLD` fall back to the greedy
+//!   iterative eliminator (`linear::optimize_linear_with_protected`),
 //!   preserved as a private helper for that purpose.
 //! - [`optimize_o2`] -- O2: O1 followed by decompose + DEDUCE
 //!   (Gaussian elimination on a quadratic-monomial matrix) +
@@ -35,10 +35,9 @@
 //!   `apply_substitution_to_constraint`, `solve_for_variable`.
 //! - [`linear`] -- greedy iterative O1 fixpoint, retained as a
 //!   `pub(super)` helper (`optimize_linear_with_protected`) for use
-//!   as the per-cluster fallback in `linear_cluster`. The historical
-//!   public `optimize_linear` entry was removed in Phase 6; see the
-//!   re-export at the bottom of this file.
-//! - [`linear_cluster`] -- cluster-based O1 (Phase 6 default):
+//!   as the per-cluster fallback in `linear_cluster`. No longer the
+//!   public O1 entry — see the re-export at the bottom of this file.
+//! - [`linear_cluster`] -- cluster-based O1 (default driver):
 //!   `optimize_linear_clustered`, `build_clusters_by_signal`,
 //!   `solve_cluster_linear`, `Picker` enum.
 //! - [`deduce`] -- dense O2 pass (`expand_constraint_product`,
@@ -64,8 +63,8 @@ mod union_find;
 
 pub use deduce::optimize_o2;
 pub use deduce_sparse::optimize_o2_sparse;
-// Phase 6: optimize_linear is now the cluster-based driver. The
-// historical greedy implementation is preserved as a private helper
+// `optimize_linear` is the cluster-based driver. The greedy
+// implementation is preserved as a private helper
 // (`linear::optimize_linear_with_protected`) and called as the
 // per-cluster fallback for clusters above CLUSTER_FALLBACK_THRESHOLD.
 pub use linear_cluster::optimize_linear_clustered as optimize_linear;

@@ -1,4 +1,4 @@
-//! Runtime dispatch for circom template calls (Phase 4).
+//! Runtime dispatch for circom template calls.
 //!
 //! The `CallCircomTemplate` opcode needs to invoke a real circom
 //! template at VM execution time — but `vm` sits below the `circom`
@@ -49,9 +49,9 @@ pub enum CircomOutputValue {
     /// Single scalar output — one field element.
     Scalar(FieldElement),
     /// Array output in row-major order. `dims` records the shape
-    /// so the dispatcher can build a nested list if needed (for
-    /// multi-dimensional outputs it gets flattened into a single
-    /// list of field elements in Phase 4 MVP).
+    /// so the dispatcher can build a nested list if needed;
+    /// multi-dimensional outputs flatten into a single list of
+    /// field elements.
     Array {
         dims: Vec<u64>,
         values: Vec<FieldElement>,
@@ -231,7 +231,7 @@ impl VM {
         };
 
         // 4. Marshal the outputs into a single Value and write it
-        //    into R[A]. Phase 4 MVP projection rules:
+        //    into R[A]. Projection rules:
         //    - Single scalar output   → Value::field
         //    - Single 1D array output → Value::list of fields
         //    - Multi-output           → Value::map keyed by output name

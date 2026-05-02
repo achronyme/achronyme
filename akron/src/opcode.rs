@@ -113,7 +113,7 @@ pub enum OpCode {
     /// Method name is read from R[B-1] (LoadConst prior).
     MethodCall = 161,
 
-    // ===== Circom interop (Phase 4) =====
+    // ===== Circom interop =====
     /// Invoke a compile-time-registered circom template from VM mode.
     ///
     /// Layout: R[A] = CircomCall(R[B-1] as handle, R[B..B+C] as inputs)

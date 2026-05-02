@@ -1,9 +1,6 @@
 //! Frozen-baseline regression test for `prove {}` blocks across the
-//! `examples/` and `test/prove/` corpora.
-//!
-//! Phase 2.C-prove — converted from a Lysis-vs-Legacy byte-identity
-//! gate to a frozen-baseline regression gate. Sister sweep to
-//! `circom/tests/cross_path_baseline.rs` (Phase 2.C-circom).
+//! `examples/` and `test/prove/` corpora. Sister sweep to
+//! `circom/tests/cross_path_baseline.rs`.
 //!
 //! For every `.ach` example listed in [`EXAMPLES`], this test:
 //!
@@ -19,29 +16,24 @@
 //!    `format!("{file}/{block}")`. Drift surfaces as actionable
 //!    panic with the diff site (counts, public partition, hash).
 //!
-//! ## Why frozen baseline replaces Lysis-vs-Legacy
+//! ## Why a frozen baseline
 //!
-//! With Lysis as default and the Legacy path scheduled for deletion in
-//! Phase 2.A, dual-path comparison becomes vacuous (Lysis-vs-Lysis).
-//! Frozen-baseline pins the structural identity of each prove block at
-//! HEAD-of-Phase-2.C, surfacing both intentional changes (re-pin via
+//! With a single instantiation path, dual-path byte-identity is vacuous.
+//! Frozen-baseline pins the structural identity of each prove block,
+//! surfacing both intentional changes (re-pin via
 //! `REGEN_FROZEN_BASELINES=1`) and silent regressions (assertion fails
 //! with a diff that names the drift surface).
 //!
-//! ## Determinism precondition (verified empirically pre-refactor)
+//! ## Determinism precondition
 //!
-//! Before refactoring this test, five consecutive runs of the
-//! pre-refactor Lysis-vs-Legacy version (commit `da72e885`, prior to
-//! `2a06c551`) produced byte-identical output across every column
-//! except wall-clock time (measured 2026-05-01). All 34 captured prove
-//! blocks use hardcoded literal inputs (no `OsRng`, no time-based
-//! seeds, no HashMap-iteration leaks reaching scope_values).
-//! Sort-based canonicalization in
+//! All 34 captured prove blocks use hardcoded literal inputs (no
+//! `OsRng`, no time-based seeds, no HashMap-iteration leaks reaching
+//! scope_values). Sort-based canonicalization in
 //! `zkc::test_support::canonical_multiset_hash` handles the term-order
 //! axis. Full hash pinning is therefore safe; no shape-only allowlist
-//! needed (unlike circom's EdDSAPoseidon). To re-verify determinism on
-//! this refactored test, run it 5+ times and confirm the assertion
-//! body's printed counts and hashes match across runs.
+//! needed (unlike circom's EdDSAPoseidon). To verify determinism on
+//! this test, run it 5+ times and confirm the assertion body's
+//! printed counts and hashes match across runs.
 //!
 //! ## Re-generating pinned values
 //!

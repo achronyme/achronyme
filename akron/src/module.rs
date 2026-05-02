@@ -2,8 +2,8 @@
 //!
 //! Each stdlib module (core, string, bigint, collections) implements
 //! `NativeModule`, declaring its native functions in one place.
-//! External modules (IO, zkML, etc.) will implement the same trait
-//! in Phase 2 to extend the VM without modifying its internals.
+//! External modules (IO, zkML, etc.) implement the same trait to
+//! extend the VM without modifying its internals.
 
 use crate::native::NativeFn;
 

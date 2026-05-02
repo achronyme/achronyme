@@ -59,7 +59,7 @@ pub fn detect_bit_patterns<F: FieldBackend>(
         })
         .collect();
 
-    // Phase 1: Detect boolean-enforced variables via v*(v-1)=0 pattern
+    // Step 1: Detect boolean-enforced variables via v*(v-1)=0 pattern
     let mut booleans: HashSet<SsaVar> = proven_booleans.clone();
     let mut new_booleans = 0usize;
 
@@ -79,7 +79,7 @@ pub fn detect_bit_patterns<F: FieldBackend>(
         }
     }
 
-    // Phase 2: Detect weighted boolean sums → infer bitwidth bounds
+    // Step 2: Detect weighted boolean sums → infer bitwidth bounds
     let mut bounds: HashMap<SsaVar, u32> = HashMap::new();
 
     for inst in &program.instructions {

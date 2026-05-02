@@ -1,22 +1,20 @@
-//! Movimiento 2 Phase 3G — gap 2.4 regression test in circuit mode.
+//! Regression test for transitive private-fn resolution in
+//! `compile_circuit`.
 //!
-//! The standalone [`ProveIrCompiler::compile_circuit`] entry has
-//! historically used a surface-level `register_module_exports`
-//! mechanism that only registers exported fns from direct
-//! imports. As a result, gap 2.4 in circuit mode is
-//! fundamentally worse than in prove-block mode: an inlined
+//! The standalone [`ProveIrCompiler::compile_circuit`] entry used
+//! to call a surface-level `register_module_exports` that only
+//! registered exported fns from direct imports. An inlined
 //! `b::middle()` body that references its module-private
-//! `helper()` fails to compile with
-//! `UndeclaredVariable: helper`, because `b::helper` was never
-//! added to `fn_table`.
+//! `helper()` failed with `UndeclaredVariable: helper`, because
+//! `b::helper` was never added to `fn_table`.
 //!
-//! Phase 3G fix: auto-build a [`resolve::ResolverState`] from
-//! the parsed program + source directory, walk the full module
+//! The current path auto-builds a [`resolve::ResolverState`] from
+//! the parsed program + source directory, walks the full module
 //! graph to derive fn_table entries for every transitively
 //! reachable [`resolve::CallableKind::UserFn`] (exported *and*
-//! private), pre-populate the ProveIR compiler's fn_table, and
-//! install the resolver state so the annotation-driven dispatch
-//! picks up. This test documents the fix.
+//! private), pre-populates the ProveIR compiler's fn_table, and
+//! installs the resolver state so annotation-driven dispatch picks
+//! up. This test pins that path.
 
 use std::path::{Path, PathBuf};
 
@@ -39,7 +37,7 @@ fn transitive_bare_identifier_in_inlined_circuit_body_compiles() {
         ProveIrCompiler::<Bn254Fr>::compile_circuit(&source, Some(a_path.as_path() as &Path));
     assert!(
         result.is_ok(),
-        "circuit-mode gap 2.4 repro should compile cleanly post Phase 3G, got: {:?}",
+        "transitive-private-fn fixture should compile cleanly, got: {:?}",
         result.err()
     );
 
