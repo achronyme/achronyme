@@ -1925,16 +1925,24 @@ fn body_writes_to_subcomponent_array(stmts: &[Stmt], env: &LoweringEnv, loop_var
 
 fn stmt_writes_subcomp_array(stmt: &Stmt, env: &LoweringEnv, loop_var: &str) -> bool {
     match stmt {
+        // `<==`, `<--`, `=`: the syntactic LHS is the write destination.
         Stmt::Substitution {
             target,
-            op:
-                AssignOp::ConstraintAssign
-                | AssignOp::SignalAssign
-                | AssignOp::RConstraintAssign
-                | AssignOp::RSignalAssign
-                | AssignOp::Assign,
+            op: AssignOp::ConstraintAssign | AssignOp::SignalAssign | AssignOp::Assign,
             ..
         } => target_is_subcomp_array_with_loop_idx(target, env, loop_var),
+        // `==>`, `-->`: the destination is on the RHS — `value` —
+        // because lowering desugars `src ==> dest` to `dest <== src`.
+        // The classifier runs before that swap, so the predicate must
+        // mirror it here or sub-component writes through the reverse
+        // form (e.g. `S[i] ==> compConstant.in[i]`) slip past the gate
+        // and the loop stays rolled, hitting the symbolic-write path
+        // at instantiate time with no array decl in scope.
+        Stmt::Substitution {
+            value,
+            op: AssignOp::RConstraintAssign | AssignOp::RSignalAssign,
+            ..
+        } => target_is_subcomp_array_with_loop_idx(value, env, loop_var),
         Stmt::CompoundAssign { target, .. } => {
             target_is_subcomp_array_with_loop_idx(target, env, loop_var)
         }
@@ -2381,6 +2389,45 @@ mod tests {
         );
         let env = env_with_locals(&["ped", "ped.in", "in"]);
         assert!(body_writes_to_subcomponent_array(&body, &env, &var));
+    }
+
+    #[test]
+    fn class_b_predicate_fires_on_reverse_assignment_shape() {
+        // EdDSAVerifier wires sub-component inputs via `==>`:
+        //   for (i) { S[i] ==> compConstant.in[i]; }
+        // Parsed AST puts `S[i]` on `target` and `compConstant.in[i]`
+        // on `value`. The predicate must inspect `value` for the
+        // reverse-assignment ops, otherwise the sub-component write
+        // is invisible to the classifier and the loop stays rolled
+        // — the rolled-loop instantiator path then errors with
+        // `symbolic indexed write into compConstant.in but the array
+        // is not declared in this scope`.
+        let (body, var) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal input S[n];
+                for (var i = 0; i < n; i++) {
+                    S[i] ==> compConstant.in[i];
+                }
+            }
+            "#,
+        );
+        let env = env_with_locals(&["compConstant", "compConstant.in", "S"]);
+        assert!(body_writes_to_subcomponent_array(&body, &env, &var));
+
+        // `-->` (RSignalAssign) has the same destination flip.
+        let (body2, var2) = extract_first_for_body(
+            r#"
+            template T(n) {
+                signal input S[n];
+                for (var i = 0; i < n; i++) {
+                    S[i] --> compConstant.in[i];
+                }
+            }
+            "#,
+        );
+        let env2 = env_with_locals(&["compConstant", "compConstant.in", "S"]);
+        assert!(body_writes_to_subcomponent_array(&body2, &env2, &var2));
     }
 
     #[test]
