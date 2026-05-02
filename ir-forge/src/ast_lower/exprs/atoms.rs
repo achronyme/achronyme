@@ -68,11 +68,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         name: &str,
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
-        // Phase 3E.1 shadow dispatch: observation only. Real
-        // dispatch flip lands in Phase 3E.2/3. Records a hit only
-        // when the resolver state is installed AND the annotation
-        // map has an entry for the current `(root_module, expr_id)`
-        // pair. No effect on the lookup that follows.
+        // Record a resolver hit for the current expression so the
+        // annotation-driven dispatch trace stays observable here.
+        // No-op when resolver state isn't installed, when
+        // `current_expr_id` is unset, or when the annotation map has
+        // no entry for the current `(module, expr_id)` key. Has no
+        // effect on the env lookup that follows.
         self.record_resolver_hit();
         match self.env.get(name) {
             Some(CompEnvValue::Scalar(resolved)) => Ok(CircuitExpr::Var(resolved.clone())),
