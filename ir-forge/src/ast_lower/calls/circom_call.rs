@@ -43,7 +43,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
         // Expression-level calls can only return a single scalar.
         // Multi-output and array-output templates need the let +
-        // DotAccess machinery added in Phase 3.4.
+        // DotAccess machinery in `compile_let_for_circom_call`.
         let template_name = self
             .circom_table
             .get(key)
@@ -94,8 +94,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     ///
     /// For single-scalar-output templates the binding `r` itself is
     /// also registered (via a plain Let node) so `r` alone still
-    /// evaluates to the single output — this keeps Phase 3.3 code
-    /// that treats the call as a scalar expression working.
+    /// evaluates to the single output, letting callers treat the
+    /// call as a scalar expression.
     ///
     /// Returns `Ok(true)` when the let value was a circom template
     /// call and binding succeeded; `Ok(false)` when the value did not
