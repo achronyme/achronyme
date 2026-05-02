@@ -426,23 +426,24 @@ impl<F: FieldBackend> Walker<F> {
     /// the entry point and own the lifted result thereafter.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
         let mut registry = TemplateRegistry::<F>::new();
-        let lifted = lift_uniform_loops(body.to_vec(), &mut registry).map_err(|e| {
-            // The lift's frame/template-space errors are walker-relevant
-            // — surface them through the existing error channel rather
-            // than silently dropping the lift.
-            match e {
-                ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
-                    kind: "lift_uniform_loops.frame_size",
-                    limit: MAX_FRAME_SIZE,
-                    got: requested,
-                },
-                ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
-                    kind: "lift_uniform_loops.template_id",
-                    limit: u32::from(u16::MAX),
-                    got: u32::from(u16::MAX) + 1,
-                },
-            }
-        })?;
+        let lifted =
+            lift_uniform_loops(body.to_vec(), &mut registry, &HashSet::new()).map_err(|e| {
+                // The lift's frame/template-space errors are walker-relevant
+                // — surface them through the existing error channel rather
+                // than silently dropping the lift.
+                match e {
+                    ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
+                        kind: "lift_uniform_loops.frame_size",
+                        limit: MAX_FRAME_SIZE,
+                        got: requested,
+                    },
+                    ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
+                        kind: "lift_uniform_loops.template_id",
+                        limit: u32::from(u16::MAX),
+                        got: u32::from(u16::MAX) + 1,
+                    },
+                }
+            })?;
 
         // Lazy `one` loading: deferred to first desugaring that needs
         // it, so wide single-instruction templates (Decompose, Or)
@@ -1627,7 +1628,7 @@ impl<F: FieldBackend> Walker<F> {
                 }
             }
             Instruction::RangeCheck {
-                result: _,
+                result,
                 operand,
                 bits,
             } => {
@@ -1643,6 +1644,10 @@ impl<F: FieldBackend> Walker<F> {
                     var: op,
                     max_bits: *bits as u8,
                 });
+                // Result aliases operand once the bit-width constraint is
+                // enforced; downstream consumers (Mux, Bool propagation,
+                // IsLtBounded) read result, so bind it to operand's reg.
+                self.bind(*result, op);
             }
             Instruction::Decompose {
                 result: _,
@@ -2788,7 +2793,7 @@ fn partition_live_set<F: FieldBackend>(
 /// (canonical case: SHA-256(64), where ~250 vars span any do_split).
 /// Scanning the full body is O(N); the caller decides whether the
 /// result fits via `compute_live_set`.
-fn collect_referenced_ssa_vars<F: FieldBackend>(
+pub(crate) fn collect_referenced_ssa_vars<F: FieldBackend>(
     body: &[ExtendedInstruction<F>],
 ) -> HashSet<SsaVar> {
     let mut out = HashSet::new();
@@ -2813,7 +2818,9 @@ fn collect_referenced_ssa_vars<F: FieldBackend>(
 /// (one `StoreHeap` per slot, globally) *and* the per-iter
 /// SSA-after-unroll semantics (each iter's body-defined values are
 /// distinct).
-fn collect_defined_ssa_vars<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> HashSet<SsaVar> {
+pub(crate) fn collect_defined_ssa_vars<F: FieldBackend>(
+    body: &[ExtendedInstruction<F>],
+) -> HashSet<SsaVar> {
     let mut out = HashSet::new();
     for inst in body {
         collect_defined_in_extinst(inst, &mut out);
@@ -3012,7 +3019,10 @@ fn bump_last_use(out: &mut HashMap<SsaVar, usize>, v: SsaVar, idx: usize) {
         .or_insert(idx);
 }
 
-fn collect_in_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>, out: &mut HashSet<SsaVar>) {
+pub(crate) fn collect_in_extinst<F: FieldBackend>(
+    inst: &ExtendedInstruction<F>,
+    out: &mut HashSet<SsaVar>,
+) {
     match inst {
         ExtendedInstruction::Plain(i) => collect_in_instruction(i, out),
         ExtendedInstruction::LoopUnroll { body, .. } => {
