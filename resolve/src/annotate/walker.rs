@@ -1,4 +1,4 @@
-//! AST walker — the meat of the Phase 3C.2 annotate pass.
+//! AST walker — the meat of the annotate pass.
 //!
 //! Five visitors, each `pub(super)`:
 //!

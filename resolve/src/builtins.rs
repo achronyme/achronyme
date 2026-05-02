@@ -27,11 +27,11 @@
 //! registry shape. If the registry passes audit, every [`Availability`]
 //! is honored correctly.
 //!
-//! ## ⚠ CRITICAL FOR PHASE 2 — Dependency direction
+//! ## CRITICAL — Dependency direction
 //!
 //! The [`VmFnHandle`] and [`ProveIrLowerHandle`] types are **opaque
 //! u32 indices**, not raw function pointers. This is deliberate and
-//! must be preserved when Phase 2 wires the real implementations:
+//! must be preserved:
 //!
 //! - `compiler/` depends on `vm` AND `resolve` (natural).
 //! - `ir/` depends on `resolve` but **must not** depend on `vm` —
@@ -41,18 +41,17 @@
 //!   `resolve` would gain a hard `vm` dep, `ir` would pull it
 //!   transitively, and the architecture would silently collapse.
 //!
-//! **The fix, forever**: keep the handles as opaque indices. Each
+//! **The invariant**: keep the handles as opaque indices. Each
 //! backend owns its own `Vec<RealFn>` indexed by the handle. The
-//! registry stores only metadata + indices. Dispatch is a two-hop:
-//! name → handle → backend-owned fn. Zero dep cycle, zero trait
+//! registry stores only metadata and indices. Dispatch is a two-hop:
+//! name then handle then backend-owned fn. Zero dep cycle, zero trait
 //! objects, zero allocation.
 //!
-//! Phase 2 will extend this module with a `vm_table: Vec<NativeFn>`
-//! inside the VM compiler and a `prove_ir_table: Vec<ProveIrLowerFn>`
-//! inside the ProveIR compiler, both indexed by the handles stored
-//! in [`BuiltinEntry`]. Do **not** refactor the handles into concrete
-//! fn types — the dep-cycle risk is real and the indirection is
-//! virtually free (one extra slice index per dispatch).
+//! The VM compiler owns a `vm_table: Vec<NativeFn>` and the ProveIR
+//! compiler owns a `prove_ir_table: Vec<ProveIrLowerFn>`, both indexed
+//! by the handles stored in [`BuiltinEntry`]. Do **not** refactor the
+//! handles into concrete fn types — the dep-cycle risk is real and the
+//! indirection is virtually free (one extra slice index per dispatch).
 
 use crate::symbol::{Arity, Availability};
 use std::fmt;
@@ -61,17 +60,15 @@ use std::fmt;
 ///
 /// The handle is a u32 index into a backend-owned `Vec<NativeFn>`. See
 /// the module docs above for why this crate holds an index and not a
-/// raw function pointer — the TL;DR is "dep cycle with `vm`". Phase 1
-/// uses placeholder handle values (typically 0) because no real
-/// dispatch is wired yet; Phase 2 will populate real indices as it
-/// registers natives with the VM side.
+/// raw function pointer — the TL;DR is "dep cycle with `vm`". The VM
+/// side populates real indices as it registers natives.
 #[derive(Copy, Clone, Debug, Eq, PartialEq, Hash)]
 pub struct VmFnHandle(pub u32);
 
 impl VmFnHandle {
-    /// Sentinel used by tests and placeholder entries before Phase 2
-    /// wires real impls. Production code should never observe this
-    /// after Phase 2.
+    /// Sentinel used by tests and placeholder entries when no real
+    /// implementation has been wired yet. Production code should never
+    /// observe this once dispatch is live.
     pub const PLACEHOLDER: Self = VmFnHandle(0);
 
     /// Raw index view.
@@ -91,8 +88,8 @@ impl VmFnHandle {
 pub struct ProveIrLowerHandle(pub u32);
 
 impl ProveIrLowerHandle {
-    /// Sentinel used by tests and placeholder entries before Phase 2
-    /// wires real impls.
+    /// Sentinel used by tests and placeholder entries when no real
+    /// implementation has been wired yet.
     pub const PLACEHOLDER: Self = ProveIrLowerHandle(0);
 
     /// Raw index view.
@@ -230,7 +227,7 @@ impl Default for BuiltinRegistry {
     /// ## Inventory
     ///
     /// - **4 Both**: `poseidon`, `poseidon_many`, `assert`, `mux`
-    ///   (`mux` promoted in Phase 2C with a scalar VM fallback)
+    ///   (`mux` is dispatched in both backends with a scalar VM fallback)
     /// - **11 Vm-only**: `print`, `typeof`, `time`, `proof_json`,
     ///   `proof_public`, `proof_vkey`, `verify_proof`, `gc_stats`,
     ///   `bigint256`, `bigint512`, `from_bits`
@@ -285,8 +282,8 @@ impl Default for BuiltinRegistry {
 
 impl BuiltinRegistry {
     /// Create an empty registry. Useful for tests; production code should
-    /// use [`BuiltinRegistry::default()`] which (starting in Phase 2)
-    /// returns the populated production registry.
+    /// use [`BuiltinRegistry::default()`] which returns the populated
+    /// production registry.
     pub fn new() -> Self {
         Self {
             entries: Vec::new(),
@@ -336,7 +333,7 @@ impl BuiltinRegistry {
     /// Look up a builtin by name and return its index in the registry.
     ///
     /// This is the index [`CallableKind::Builtin::entry_index`] stores;
-    /// Phase 2's resolver pass will call this to construct
+    /// the resolver pass calls this to construct
     /// [`CallableKind::Builtin`] entries without a second lookup hop.
     ///
     /// [`CallableKind::Builtin`]: crate::symbol::CallableKind::Builtin
@@ -416,8 +413,8 @@ impl BuiltinRegistry {
 /// Errors produced by [`BuiltinRegistry::audit`] and [`BuiltinEntry::audit`].
 ///
 /// Every variant names the offending builtin and explains the violation.
-/// The compiler crate in Phase 2 will wrap these into full diagnostics
-/// with suggestions; Phase 1 keeps them as plain enum variants.
+/// Downstream compilers wrap these into full diagnostics with
+/// suggestions; this crate keeps them as plain enum variants.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuiltinAuditError {
     /// [`Availability::Both`] entry missing its VM implementation.
@@ -661,7 +658,7 @@ mod tests {
     fn default_registry_audits_ok() {
         // The ultimate test: the production registry must pass audit.
         // If this fails, no compilation can proceed — it's the
-        // foundational invariant Movimiento 2 relies on.
+        // foundational invariant unified dispatch relies on.
         let reg = BuiltinRegistry::default();
         assert!(
             reg.audit().is_ok(),
@@ -725,15 +722,14 @@ mod tests {
     }
 
     #[test]
-    fn default_registry_mux_is_both_after_2c() {
-        // Phase 2C promoted `mux` from ProveIr-only to Both with a
-        // scalar VM fallback in vm/src/stdlib/core.rs:native_mux.
-        // Closes gap 1.1 — modules calling `mux` can now be imported
-        // by VM-mode programs.
+    fn default_registry_mux_is_both() {
+        // `mux` is registered as `Both`, with a scalar VM fallback in
+        // `vm/src/stdlib/core.rs:native_mux`. This lets VM-mode programs
+        // import modules that call `mux`.
         let reg = BuiltinRegistry::default();
         let mux = reg.lookup("mux").expect("mux must be registered");
         assert_eq!(mux.availability, Availability::Both);
-        assert!(mux.vm_fn.is_some(), "mux must have VM fallback after 2C");
+        assert!(mux.vm_fn.is_some(), "mux must have VM fallback");
         assert!(mux.prove_ir_lower.is_some());
     }
 

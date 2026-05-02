@@ -1,19 +1,15 @@
 //! The unified symbol table — the single source of truth for every name
 //! both compilers can resolve.
 //!
-//! ## Phase 1 status
+//! ## Scope
 //!
-//! This file ships the skeleton only:
-//! - [`SymbolTable`] struct with the storage layout fixed.
+//! - [`SymbolTable`] struct with a fixed storage layout.
 //! - Empty constructor, lookup by qualified name, alias-chain resolver.
 //! - Ownership of a [`BuiltinRegistry`] with audit integration.
-//! - NO module graph walker, NO AST annotator, NO builtins installer —
-//!   those land in Phase 3 and Phase 2 respectively.
 //!
-//! The Phase 1 entry point is [`SymbolTable::new`], which produces an
-//! empty table wrapping an empty registry. Tests in this file verify the
-//! storage invariants; Phase 2 onwards will add the real population
-//! logic.
+//! [`SymbolTable::new`] produces an empty table wrapping an empty
+//! registry. The module-graph walker, the AST annotator, and the
+//! builtins installer live in their respective sibling modules.
 
 use crate::builtins::BuiltinRegistry;
 use crate::error::ResolveError;
@@ -31,9 +27,9 @@ use std::collections::HashMap;
 /// - The `builtin_registry` (its entries are referenced by
 ///   [`CallableKind::Builtin::entry_index`]).
 ///
-/// A [`SymbolTable`] is built once per compilation session by
-/// `resolve::resolve()` (Phase 3) and then passed by reference to both
-/// compilers. Neither compiler mutates the table.
+/// A [`SymbolTable`] is built once per compilation session and then
+/// passed by reference to both compilers. Neither compiler mutates the
+/// table.
 #[derive(Debug, Default, Clone)]
 pub struct SymbolTable {
     /// Flat storage of resolved symbols. A [`SymbolId`] is just an
@@ -52,9 +48,12 @@ pub struct SymbolTable {
 }
 
 impl SymbolTable {
-    /// Construct an empty table with an empty registry. Phase 1 entry
-    /// point; later phases will add a `build()` that takes a parsed
-    /// `Program` and a `ModuleLoader`.
+    /// Construct an empty table with an empty registry. Production
+    /// callers normally use the higher-level [`build_resolver_state`]
+    /// entry point, which wires this up with a parsed `Program` and a
+    /// `ModuleLoader`.
+    ///
+    /// [`build_resolver_state`]: crate::build_resolver_state
     pub fn new() -> Self {
         Self::default()
     }
@@ -64,7 +63,7 @@ impl SymbolTable {
     /// error is wrapped in [`ResolveError::BuiltinAudit`] and no table
     /// is produced.
     ///
-    /// Phase 2 will call this from `BuiltinRegistry::default()` to
+    /// Production callers go through `BuiltinRegistry::default()` to
     /// install the production builtin set.
     pub fn with_registry(registry: BuiltinRegistry) -> Result<Self, ResolveError> {
         registry.audit().map_err(ResolveError::BuiltinAudit)?;
@@ -76,8 +75,8 @@ impl SymbolTable {
     }
 
     /// Borrow the underlying builtin registry. Used by the audit tests
-    /// and (starting in Phase 2) by the compilers to look up a
-    /// [`CallableKind::Builtin`] entry by index.
+    /// and by the compilers to look up a [`CallableKind::Builtin`]
+    /// entry by index.
     pub fn builtin_registry(&self) -> &BuiltinRegistry {
         &self.builtin_registry
     }
@@ -87,7 +86,7 @@ impl SymbolTable {
         self.symbols.len()
     }
 
-    /// Is the table empty? (Phase 1 default state.)
+    /// Is the table empty? (Default state before population.)
     pub fn is_empty(&self) -> bool {
         self.symbols.is_empty()
     }
@@ -144,10 +143,10 @@ impl SymbolTable {
     }
 
     /// Iterate every `(SymbolId, &CallableKind)` pair in insertion
-    /// order. Consumers that need to derive per-symbol metadata (e.g.
-    /// Phase 3F's fn_table dispatch-key precomputation in the
-    /// `compiler` crate) use this to walk the whole table without
-    /// knowing which ids are valid.
+    /// order. Consumers that need to derive per-symbol metadata (such
+    /// as the `compiler` crate's `fn_table` dispatch-key precomputation)
+    /// use this to walk the whole table without knowing which ids are
+    /// valid.
     pub fn iter(&self) -> impl Iterator<Item = (SymbolId, &CallableKind)> + '_ {
         self.symbols
             .iter()
@@ -211,7 +210,7 @@ impl SymbolTable {
 
     /// Update the [`Availability`] of a [`CallableKind::UserFn`] entry.
     ///
-    /// No-op if `id` does not point at a `UserFn`. Used by the Phase 4
+    /// No-op if `id` does not point at a `UserFn`. Used by the
     /// availability inference pass to narrow functions from `Both` to
     /// `Vm` or `ProveIr` based on their call graph.
     pub fn set_user_fn_availability(
@@ -232,8 +231,8 @@ impl SymbolTable {
     /// table-level invariants (currently: every
     /// [`CallableKind::Builtin`]'s `entry_index` is in range).
     ///
-    /// Called once at the end of `resolve()` (Phase 3) — never during
-    /// normal compilation.
+    /// Called once at the end of resolution — never during normal
+    /// compilation.
     pub fn audit(&self) -> Result<(), ResolveError> {
         self.builtin_registry
             .audit()

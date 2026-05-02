@@ -198,14 +198,14 @@ fn duplicate_fn_vs_let_errors() {
 }
 
 // ======================================================================
-// annotate_program — Phase 3C.2
+// annotate_program
 // ======================================================================
 
 use crate::builtins::BuiltinRegistry;
 use achronyme_parser::ast::{Program, TypedParam};
 
 /// Walk every Expr in a Program, calling `f` on each. Used by the
-/// 3C.2 tests to hand-pick specific nodes (by kind + name) and
+/// annotate-pass tests to hand-pick specific nodes (by kind + name) and
 /// assert on their annotations without building a full visitor.
 fn visit_program<F: FnMut(&Expr)>(program: &Program, mut f: F) {
     for stmt in &program.stmts {
@@ -514,13 +514,12 @@ fn builtin_call_is_annotated_after_register_builtins() {
 
 #[test]
 fn annotates_against_definer_scope_not_caller_scope() {
-    // Gap 2.4 preview. The `c::deep()` call inside b::middle()
-    // must resolve to `mod0::deep` (c's fn) at annotation time,
-    // because we walk module `b` against `b`'s own imports. When
-    // Phase 3E inlines `middle` into `a.ach`, the annotation is
-    // already attached — `a.ach`'s scope never gets a chance to
-    // re-resolve `c::deep` against its own (non-existent) `c`
-    // import.
+    // The `c::deep()` call inside b::middle() must resolve to
+    // `mod0::deep` (c's fn) at annotation time, because we walk module
+    // `b` against `b`'s own imports. When the ProveIR compiler later
+    // inlines `middle` into `a.ach`, the annotation is already
+    // attached — `a.ach`'s scope never gets a chance to re-resolve
+    // `c::deep` against its own (non-existent) `c` import.
     let mut src = MockSource::default();
     src.add("c", "export fn deep() { 1 }");
     src.add("b", "import \"c\" as c\nexport fn middle() { c::deep() }");
@@ -581,11 +580,10 @@ fn nested_block_scope_tracks_shadowing() {
 
 #[test]
 fn exported_constant_is_resolved_inside_same_module() {
-    // Phase 3C.1 registered `PI` as a Constant. Inside the same
-    // module, a bare reference to `PI` should annotate against
-    // that Constant (not fall through to "local" — top-level
-    // lets are not tracked in the scope stack for exactly this
-    // reason).
+    // The register pass installed `PI` as a Constant. Inside the same
+    // module, a bare reference to `PI` should annotate against that
+    // Constant (not fall through to "local" — top-level lets are not
+    // tracked in the scope stack for exactly this reason).
     let mut src = MockSource::default();
     src.add("main", "export let PI = 3\nfn area(r) { PI }");
     let graph = ModuleGraph::build("main", &mut src).expect("build");
@@ -621,7 +619,7 @@ fn register_builtins_populates_bare_names() {
 fn _param_doc_marker(_: TypedParam) {}
 
 // ======================================================================
-// FnAlias + ProveBlockUnsupportedShape — Phase 3C.3
+// FnAlias + ProveBlockUnsupportedShape
 // ======================================================================
 
 use crate::error::UnsupportedShape;
@@ -629,8 +627,8 @@ use crate::error::UnsupportedShape;
 #[test]
 fn fn_alias_local_resolves_to_target() {
     // `let a = helper; a()` — the call-site `a` is annotated
-    // directly to helper's SymbolId, so Phase 3D/3E dispatch
-    // through the alias uniformly.
+    // directly to helper's SymbolId, so the downstream compilers
+    // dispatch through the alias uniformly.
     let mut src = MockSource::default();
     src.add(
         "main",
