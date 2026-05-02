@@ -338,10 +338,29 @@ pub fn extract_template<F: FieldBackend>(
 pub fn lift_uniform_loops<F: FieldBackend>(
     body: Vec<ExtendedInstruction<F>>,
     registry: &mut TemplateRegistry<F>,
+    outer_refs: &HashSet<SsaVar>,
 ) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
+    // Per-position suffix references: `suffix_refs[i]` holds the union
+    // of SsaVars referenced by `body[i+1..]`. Combined with the
+    // caller's `outer_refs`, this is exactly the set of vars whose
+    // bindings must survive past the i-th instruction in the enclosing
+    // walker frame. A Uniform candidate at position `i` may not seal
+    // any of those vars inside a sibling-invisible template frame.
+    let mut suffix_refs: Vec<HashSet<SsaVar>> = vec![HashSet::new(); body.len()];
+    let mut acc: HashSet<SsaVar> = HashSet::new();
+    for (i, inst) in body.iter().enumerate().rev() {
+        suffix_refs[i] = acc.clone();
+        super::walker::collect_in_extinst(inst, &mut acc);
+    }
+
     let mut out = Vec::with_capacity(body.len());
-    for inst in body {
-        out.extend(lift_one(inst, registry)?);
+    for (i, inst) in body.into_iter().enumerate() {
+        let total: HashSet<SsaVar> = suffix_refs[i]
+            .iter()
+            .chain(outer_refs.iter())
+            .copied()
+            .collect();
+        out.extend(lift_one(inst, registry, &total)?);
     }
     Ok(out)
 }
@@ -349,6 +368,7 @@ pub fn lift_uniform_loops<F: FieldBackend>(
 fn lift_one<F: FieldBackend>(
     inst: ExtendedInstruction<F>,
     registry: &mut TemplateRegistry<F>,
+    outer_refs: &HashSet<SsaVar>,
 ) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
     match inst {
         ExtendedInstruction::LoopUnroll {
@@ -359,8 +379,10 @@ fn lift_one<F: FieldBackend>(
         } => {
             // Bottom-up: lift inner body first so nested Uniform loops
             // become templates inside the outer body before the outer
-            // is itself classified.
-            let inner_lifted = lift_uniform_loops(body, registry)?;
+            // is itself classified. The inner pass threads `outer_refs`
+            // through unchanged so its own escape check sees this
+            // loop's enclosing-scope references too.
+            let inner_lifted = lift_uniform_loops(body, registry, outer_refs)?;
             let loop_unroll = ExtendedInstruction::LoopUnroll {
                 iter_var,
                 start,
@@ -377,6 +399,27 @@ fn lift_one<F: FieldBackend>(
                     skeleton,
                     captures: _slot_caps,
                 } => {
+                    // Escape check: if any SsaVar defined inside the
+                    // loop body is consumed by code in any enclosing
+                    // scope, lifting to TemplateBody + TemplateCall
+                    // with the current empty-`outputs` shape would
+                    // seal that var inside the template frame.
+                    // `emit_template_body` saves and restores
+                    // `ssa_to_reg` around the call, so the parent
+                    // frame would lose the binding on return and a
+                    // downstream `resolve` would fault with
+                    // `walker: undefined SsaVar`. Keep the loop
+                    // verbatim instead — the rolled-loop path
+                    // preserves bindings in the parent frame.
+                    let body_inner = match &loop_unroll {
+                        ExtendedInstruction::LoopUnroll { body, .. } => body.as_slice(),
+                        _ => unreachable!("loop_unroll constructed above as LoopUnroll"),
+                    };
+                    let body_defined = super::walker::collect_defined_ssa_vars(body_inner);
+                    if !body_defined.is_disjoint(outer_refs) {
+                        return Ok(vec![loop_unroll]);
+                    }
+
                     // Clone before the move — if the lift overflows the
                     // frame budget we fall back to the original loop.
                     let fallback = loop_unroll.clone();
@@ -741,7 +784,7 @@ mod tests {
             .into(),
         ];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body.clone(), &mut reg).unwrap();
+        let lifted = lift_uniform_loops(body.clone(), &mut reg, &HashSet::new()).unwrap();
         assert_eq!(lifted.len(), 2);
         assert!(matches!(lifted[0], ExtendedInstruction::Plain(_)));
         assert!(matches!(lifted[1], ExtendedInstruction::Plain(_)));
@@ -766,7 +809,7 @@ mod tests {
             .into()],
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
 
         assert_eq!(lifted.len(), 2, "expected TemplateBody + TemplateCall");
         let (id_in_body, body_inner) = match &lifted[0] {
@@ -841,7 +884,7 @@ mod tests {
             .into()],
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
 
         assert!(reg.is_empty(), "no template allocated for DataDependent");
         assert_eq!(lifted.len(), 1);
@@ -879,7 +922,7 @@ mod tests {
             body: inner_body,
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
 
         assert!(reg.is_empty(), "no template allocated when lift overflows");
         assert_eq!(lifted.len(), 1, "single inline LoopUnroll fallback");
@@ -922,7 +965,7 @@ mod tests {
             }],
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
 
         // Inner produced one template; outer may have produced
         // another depending on how its inner lifts.
@@ -960,7 +1003,7 @@ mod tests {
             },
         ];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
         assert_eq!(lifted.len(), 4, "two TemplateBody + two TemplateCall pairs");
         assert_eq!(reg.len(), 2, "two distinct template ids");
         let ids: Vec<TemplateId> = lifted
