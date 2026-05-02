@@ -291,13 +291,10 @@ pub mod core_impl {
     /// This lets `mux` work with Int, Field, or any heap value that
     /// fits in a `Value`.
     ///
-    /// ## Movimiento 2 Phase 2C
-    ///
-    /// This native was added to promote `mux` from `Availability::ProveIr`
-    /// to `Availability::Both` in `resolve::BuiltinRegistry`. Closes gap
-    /// 1.1 from `.claude/docs/compiler-gaps.md` — modules that call
-    /// `mux` can now be imported by VM-mode programs, even if the
-    /// actual `mux` call only executes inside a `prove {}` block.
+    /// `mux` is registered as `Availability::Both` in
+    /// `resolve::BuiltinRegistry` so VM-mode programs can import
+    /// modules that call it, even if the actual `mux` call only
+    /// executes inside a `prove {}` block.
     #[ach_native(name = "mux", arity = 3)]
     pub fn native_mux(vm: &mut VM, args: &[Value]) -> Result<Value, RuntimeError> {
         if args.len() != 3 {
