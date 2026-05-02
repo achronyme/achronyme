@@ -34,7 +34,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     suggestion: None,
                 })?;
 
-        // Phase 4: reject Vm-only functions inside prove/circuit blocks.
+        // Reject Vm-only functions inside prove/circuit blocks.
         if let Some(avail) = fn_def.availability {
             if !avail.includes_prove_ir() {
                 return Err(ProveIrError::VmOnlyFunction {
@@ -60,13 +60,13 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         }
         self.call_stack.insert(name.to_string());
 
-        // Phase 3F — gap 2.4 structural fix: push the definer's
-        // module onto the resolver module stack before compiling the
-        // inlined body. Both the annotation-driven dispatch path and
-        // the legacy name-based path land here, so all inlined bodies
-        // consistently resolve bare identifiers against their
-        // definer's scope. `owner_module` is embedded in FnDef at
-        // registration time from the dispatch maps.
+        // Push the definer's module onto the resolver module stack
+        // before compiling the inlined body so bare identifiers in the
+        // body resolve against the definer's scope rather than the
+        // caller's. Both the annotation-driven dispatch path and the
+        // legacy name-based path land here, so all inlined bodies
+        // share this scoping behaviour. `owner_module` is embedded in
+        // FnDef at registration time from the dispatch maps.
         let module_pushed = fn_def
             .owner_module
             .map(|module| {
@@ -141,10 +141,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }
         }
 
-        // Phase 3F: pop the definer's module we pushed above.
-        // Paired with the push so the stack stays balanced across
-        // nested inlinings. Only executes when we actually pushed —
-        // see the `module_pushed` discussion above.
+        // Pop the definer's module we pushed above. Paired with the
+        // push so the stack stays balanced across nested inlinings.
+        // Only executes when we actually pushed — see the
+        // `module_pushed` discussion above.
         if module_pushed {
             self.resolver_module_stack.pop();
         }
