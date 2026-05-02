@@ -216,5 +216,4 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             }),
         }
     }
-
 }
