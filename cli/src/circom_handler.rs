@@ -1,11 +1,11 @@
 //! Default `CircomWitnessHandler` used by `ach run` / `ach prove`.
 //!
-//! Phase 4.4 wiring: the compiler records every `.circom` library
-//! it encounters into `compiler.circom_library_registry` keyed by
-//! a `library_id`. The CLI moves that registry into this handler
-//! struct and injects it into the VM before `vm.interpret()` runs.
-//! At runtime the VM's `CallCircomTemplate` opcode resolves
-//! `handle.library_id → Arc<CircomLibrary>` here and delegates to
+//! The compiler records every `.circom` library it encounters into
+//! `compiler.circom_library_registry` keyed by a `library_id`. The
+//! CLI moves that registry into this handler struct and injects it
+//! into the VM before `vm.interpret()` runs. At runtime the VM's
+//! `CallCircomTemplate` opcode resolves `handle.library_id →
+//! Arc<CircomLibrary>` here and delegates to
 //! `circom::evaluate_template_witness` for the actual witness.
 
 use std::collections::HashMap;

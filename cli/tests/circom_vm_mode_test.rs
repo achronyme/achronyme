@@ -1,4 +1,4 @@
-//! End-to-end test for Phase 4: circom templates invoked from VM mode.
+//! End-to-end tests for circom templates invoked from VM mode.
 //!
 //! These tests drive the whole pipeline:
 //! 1. Write a real `.circom` file to a temp dir.
@@ -12,7 +12,7 @@
 //!    inputs, ran `evaluate_template_witness`, and marshalled the
 //!    result back into a VM value).
 //!
-//! Phase 4.5 scope: scalar single-output (Square), array single-output
+//! Coverage: scalar single-output (Square), array single-output
 //! (Num2Bits), and namespaced call form (`P.Square()(x)`). Witness
 //! correctness of the templates themselves is already covered by the
 //! circom crate's own library tests; these tests verify the
@@ -145,8 +145,8 @@ let h = Square()(0p3, 0p4)
 
 #[test]
 fn vm_mode_const_let_template_arg_accepted() {
-    // Phase 5: `let n = 4; Num2Bits(n)(x)` should work because the
-    // resolver's const evaluator proves `n` is a compile-time constant.
+    // `let n = 4; Num2Bits(n)(x)` should work because the resolver's
+    // const evaluator proves `n` is a compile-time constant.
     let fixture = write_fixture(
         r#"
         pragma circom 2.0.0;
