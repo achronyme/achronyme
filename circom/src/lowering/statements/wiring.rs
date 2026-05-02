@@ -396,6 +396,177 @@ fn collect_refs_recursive(
     }
 }
 
+/// Collect every pending component that is *only* read (never wired)
+/// across a sequence of statements. Used to hoist sub-component flushes
+/// out of loop and conditional bodies before they get replicated by an
+/// instantiate-time unroll.
+///
+/// The walker descends into nested for/if/while/do-while/block bodies
+/// so a read at any depth surfaces the component name.
+///
+/// Components that are also wired in the same body stay in `pending`:
+/// the demand-driven flush in `lower_stmt` triggers them mid-body once
+/// their inputs are bound, which preserves order. Only the
+/// read-without-wiring case is safe to hoist — for those the body's
+/// own statements never touch the pending component's input signals,
+/// so flushing at parent scope can't strand a wiring.
+pub(super) fn collect_pending_refs_in_stmts(
+    stmts: &[ast::Stmt],
+    pending: &HashMap<String, PendingComponent>,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+) -> Vec<String> {
+    let mut reads = Vec::new();
+    let mut wired = Vec::new();
+    for stmt in stmts {
+        collect_refs_in_stmt(stmt, pending, env, ctx, &mut reads, &mut wired);
+    }
+    reads.retain(|n| !wired.contains(n));
+    reads
+}
+
+/// Push `comp_name` onto `targets` if `expr` is a write-position pattern
+/// (`comp.signal`, `comp.signal[i]`, `comp[i].signal`, etc.) whose base
+/// resolves to a pending component.
+fn record_wired_target(
+    expr: &Expr,
+    pending: &HashMap<String, PendingComponent>,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+    targets: &mut Vec<String>,
+) {
+    if let Some((comp_name, _)) = extract_component_wiring_with_env(expr, env, ctx) {
+        if pending.contains_key(&comp_name) && !targets.contains(&comp_name) {
+            targets.push(comp_name);
+        }
+    }
+}
+
+fn collect_refs_in_stmt(
+    stmt: &ast::Stmt,
+    pending: &HashMap<String, PendingComponent>,
+    env: &LoweringEnv,
+    ctx: &LoweringContext,
+    reads: &mut Vec<String>,
+    wired: &mut Vec<String>,
+) {
+    match stmt {
+        ast::Stmt::SignalDecl { init, .. } => {
+            if let Some((_, expr)) = init {
+                collect_refs_recursive(expr, pending, env, ctx, reads);
+            }
+        }
+        ast::Stmt::VarDecl {
+            dimensions, init, ..
+        } => {
+            for dim in dimensions {
+                collect_refs_recursive(dim, pending, env, ctx, reads);
+            }
+            if let Some(expr) = init {
+                collect_refs_recursive(expr, pending, env, ctx, reads);
+            }
+        }
+        ast::Stmt::ComponentDecl { init, .. } => {
+            if let Some(expr) = init {
+                collect_refs_recursive(expr, pending, env, ctx, reads);
+            }
+        }
+        ast::Stmt::Substitution {
+            target, op, value, ..
+        } => {
+            // Right-flowing ops (`==>`, `-->`) put the read-side
+            // expression in `target` (the syntactic LHS) and the
+            // write-side wiring target in `value` (the syntactic RHS).
+            // Mirror the dispatch in `lower_stmt`'s demand-driven flush
+            // so we walk the actual read side, and record the wiring
+            // target so the caller can suppress hoisted flushes for
+            // components whose inputs are bound by this very body.
+            let (read_side, write_side) = match op {
+                ast::AssignOp::RConstraintAssign | ast::AssignOp::RSignalAssign => (target, value),
+                _ => (value, target),
+            };
+            collect_refs_recursive(read_side, pending, env, ctx, reads);
+            record_wired_target(write_side, pending, env, ctx, wired);
+        }
+        ast::Stmt::CompoundAssign { target, value, .. } => {
+            collect_refs_recursive(value, pending, env, ctx, reads);
+            record_wired_target(target, pending, env, ctx, wired);
+        }
+        ast::Stmt::ConstraintEq { lhs, rhs, .. } => {
+            collect_refs_recursive(lhs, pending, env, ctx, reads);
+            collect_refs_recursive(rhs, pending, env, ctx, reads);
+        }
+        ast::Stmt::IfElse {
+            condition,
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_refs_recursive(condition, pending, env, ctx, reads);
+            for s in &then_body.stmts {
+                collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+            }
+            match else_body {
+                Some(ast::ElseBranch::Block(b)) => {
+                    for s in &b.stmts {
+                        collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+                    }
+                }
+                Some(ast::ElseBranch::IfElse(s)) => {
+                    collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+                }
+                None => {}
+            }
+        }
+        ast::Stmt::For {
+            condition, body, ..
+        } => {
+            collect_refs_recursive(condition, pending, env, ctx, reads);
+            for s in &body.stmts {
+                collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+            }
+        }
+        ast::Stmt::While {
+            condition, body, ..
+        } => {
+            collect_refs_recursive(condition, pending, env, ctx, reads);
+            for s in &body.stmts {
+                collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+            }
+        }
+        ast::Stmt::DoWhile {
+            body, condition, ..
+        } => {
+            for s in &body.stmts {
+                collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+            }
+            collect_refs_recursive(condition, pending, env, ctx, reads);
+        }
+        ast::Stmt::Return { value, .. } => {
+            collect_refs_recursive(value, pending, env, ctx, reads);
+        }
+        ast::Stmt::Assert { arg, .. } => {
+            collect_refs_recursive(arg, pending, env, ctx, reads);
+        }
+        ast::Stmt::Log { args, .. } => {
+            for a in args {
+                if let ast::LogArg::Expr(e) = a {
+                    collect_refs_recursive(e, pending, env, ctx, reads);
+                }
+            }
+        }
+        ast::Stmt::Block(b) => {
+            for s in &b.stmts {
+                collect_refs_in_stmt(s, pending, env, ctx, reads, wired);
+            }
+        }
+        ast::Stmt::Expr { expr, .. } => {
+            collect_refs_recursive(expr, pending, env, ctx, reads);
+        }
+        ast::Stmt::Error { .. } => {}
+    }
+}
+
 /// If this substitution wires a component input, mark it as wired.
 /// When all inputs are wired, inline the component body.
 ///
