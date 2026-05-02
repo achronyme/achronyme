@@ -34,7 +34,7 @@ pub(super) fn lower_multi_index(
         )));
     }
 
-    // R1″ Phase 6 / Follow-up A: hard-skip both const-resolve fast paths
+    // placeholder index handling: hard-skip both const-resolve fast paths
     // when the active memoization placeholder loop variable appears in any
     // index slot. The loop var must stay symbolic (as `LoopVar(token)`)
     // until `substitute_loop_var` rewrites it per iteration; either fast
@@ -50,7 +50,7 @@ pub(super) fn lower_multi_index(
             }
         }
     }
-    // R1″ Phase 6 / Follow-up A → Option II: the previous E213 guard
+    // placeholder index handling: the previous E213 guard
     // here rejected `ArrayIndex { array: <kav-only name>, index:
     // <symbolic> }` emissions because they would dangle at instantiate.
     // Option II accepts that shape: the symbolic linearisation below
@@ -68,7 +68,7 @@ pub(super) fn lower_multi_index(
     let env_strides = env.strides.get(base_name);
     let n = indices.len();
 
-    // R1″ Phase 6 / Follow-up D: derive strides from a 2-D
+    // memoization admit/soundness check: derive strides from a 2-D
     // `known_array_values` entry when `env.strides` is missing.
     // Compile-time arrays (Mix's `M`, `POSEIDON_M`, BabyJubjub coefficient
     // tables, …) live in `env.known_array_values` and never get registered
@@ -186,7 +186,7 @@ pub(super) fn lower_multi_index(
 /// Handles 1D (`comp[i]` → `comp_0`) and multi-dim (`comp[i][j]` → `comp_0_1`).
 /// Merges `env.known_constants` + `ctx.param_values` for full resolution.
 ///
-/// Used on the *expression* (read) side. R1″ Phase 6 / Option D: when
+/// Used on the *expression* (read) side. memoized unroll: when
 /// the active memoization placeholder matches an index slot, the
 /// segment is emitted as `loop_var_placeholder(token)` so the resulting
 /// `Var` reference can be rewritten by `substitute_loop_var` per
@@ -266,7 +266,7 @@ fn resolve_component_array_expr_with_constants(
 
 /// Try to resolve a 1-D known array index `arr[expr]` to a `FieldConst`.
 ///
-/// R1″ Phase 6 / Follow-up A → Option II: returns `None` when the
+/// placeholder index handling: returns `None` when the
 /// active memoization placeholder loop variable appears in `index`.
 /// The placeholder loop var must stay symbolic (`LoopVar(token)`) until
 /// late substitution; the symbolic-fallthrough in `lower_index` /
@@ -323,7 +323,7 @@ pub(super) fn eval_index_expr(
 /// Derive row-major strides for an `n_dims`-dimensional access against
 /// a uniformly-shaped `EvalValue::Array(...)` value.
 ///
-/// R1″ Phase 6 / Follow-up D: compile-time arrays in
+/// memoization admit/soundness check: compile-time arrays in
 /// `env.known_array_values` (Mix's `M`, `POSEIDON_M`, BabyJubjub
 /// coefficient tables, …) never get registered in `env.strides` because
 /// strides are populated only for SIGNAL arrays via

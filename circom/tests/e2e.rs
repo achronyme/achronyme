@@ -1057,8 +1057,8 @@ fn eddsaposeidon_compile() {
 /// so any input values satisfy the constraints. This validates that
 /// the entire constraint system is well-formed and satisfiable.
 ///
-/// Unblocked by BigVal 256-bit evaluator (2026-04-04): CompConstant's
-/// `var b = (1 << 128) - 1` now evaluates correctly.
+/// Depends on the BigVal 256-bit evaluator: CompConstant's
+/// `var b = (1 << 128) - 1` evaluates correctly under it.
 #[test]
 fn eddsaposeidon_r1cs() {
     // BabyJubjub base point (Base8) — a valid curve point.
@@ -1901,11 +1901,11 @@ fn sha256_64_r1cs_probe() {
     }
 }
 
-/// Shared body of the `sha256_{8,16,32,64}_lysis_hard_gate` tests
-/// (Phase 0.5 — BETA20-CLOSEOUT). Each variant pins a specific
-/// `Sha256(nbits)` circuit against circom 2.2.3 `--O2` constraint
-/// counts with a wall-clock budget; the per-variant `#[test]`
-/// wrappers below select the fixture and tolerance.
+/// Shared body of the `sha256_{8,16,32,64}_lysis_hard_gate` tests.
+/// Each variant pins a specific `Sha256(nbits)` circuit against
+/// circom 2.2.3 `--O2` constraint counts with a wall-clock budget;
+/// the per-variant `#[test]` wrappers below select the fixture and
+/// tolerance.
 ///
 /// Implementation notes (apply identically to every variant):
 ///
@@ -2080,7 +2080,7 @@ fn sha256_32_lysis_hard_gate() {
     );
 }
 
-/// **Phase 3.C.6 Stage 3 HARD GATE** -- SHA-256(64) through the Lysis
+/// **SHA-256(64) HARD GATE.** SHA-256(64) through the Lysis
 /// pipeline (`ProveIR::instantiate_lysis_with_outputs`) must:
 ///
 /// 1. Complete end-to-end (compile + instantiate + IR-optimize +
@@ -2098,11 +2098,10 @@ fn sha256_32_lysis_hard_gate() {
 ///    matrix grows to tens of GB on SHA-256) so we accept the
 ///    residual.
 ///
-/// Reference numbers (Apr 2026, post Phase 1.C validate gate +
-/// walker do_split fix):
+/// Indicative numbers from current host:
 ///
 /// ```text
-///   [compile]       ~13s   (circom lowering -- separate perf work)
+///   [compile]       ~13s
 ///   [instantiate]   ~1.2s  instructions=207,332
 ///   [ir-optimize]   ~93ms  instructions=199,932
 ///   [r1cs build]    ~46ms  constraints=70,623   (40,337 linear + 29,972 quadratic)
@@ -2126,44 +2125,36 @@ fn sha256_32_lysis_hard_gate() {
 ///   circuit. The constraint benchmark `r1cs_optimization_benchmark`
 ///   exercises O2 on smaller circuits where it converges quickly.
 ///
-/// **Closed architectural blockers (cumulative 2026-04-25)**:
+/// **Architectural invariants this gate depends on**:
 ///
-///   1. **Lifted template frame overflow** -- *closed*
-///      (`9828dcbe` + `f42f3ce0`).
-///   2. **Live-set > 64 captures** -- *closed* (Phase 4,
-///      `feat/lysis-phase4-heap`).
-///   3. **`SymbolicIndexedEffectNotEmittable` after split** --
-///      *closed*: walker_const forwarded unfiltered across splits.
-///   4. **`Alloc(FrameOverflow)` from cold WitnessCall inputs** --
-///      *closed*: `EmitWitnessCallHeap` mixed reg/slot inputs.
-///   5. **`UninitializedRegister` from missing capture init** --
-///      *closed*: validator rule 9 pre-initialises template
-///      capture regs (`94a63693`).
-///   6. **`UninitializedRegister` from missing heap-op writes** --
-///      *closed*: rule 9 tracks `StoreHeap` reads and `LoadHeap`
-///      writes (`750171cf`).
-///   7. **`MaxCallDepthExceeded`** -- *closed*: default cap raised
-///      from 64 to 8192 to cover Phase 4 chain depth (`0160b073`).
-///   8. **`optimize` pass dangling SsaVar (issue #86)** --
-///      *closed*: const_fold expansion was keyed by `result_var`,
-///      ambiguous under alias-Decompose. Now keyed by instruction
-///      index.
-///   9. **R1CS constraint parity** -- *closed*: gap was the missing
-///      `optimize_r1cs()` call (40,337 linear constraints that O1
-///      eliminates). achronyme post-O1 = 29,790, within +/-4% of
-///      circom O2.
-///  10. **Validator latency** -- *closed* (Phase 1.C, 2026-04-30,
-///      `73d0ceff`): `lysis::bytecode::validate` gated behind
-///      `cfg(debug_assertions)`. Release-mode instantiate dropped
-///      from 1.96s to 1.22s on SHA-256(64).
+///   - Lifted-template frame overflow handling (the lifter splits
+///     captures across template boundaries).
+///   - Live-set > 64 captures supported via heap-backed slots.
+///   - `SymbolicIndexedEffectNotEmittable` does not fire after a
+///     mid-emission split (walker_const forwards across splits).
+///   - Cold WitnessCall inputs route through `EmitWitnessCallHeap`,
+///     mixing reg/slot operands.
+///   - Validator rule 9 pre-initialises template capture regs and
+///     tracks `StoreHeap` reads and `LoadHeap` writes.
+///   - Default `MaxCallDepth` is high enough for the round chain
+///     (currently 8192).
+///   - `const_fold` keys its expansion by instruction index, not
+///     `result_var`, so alias-Decompose doesn't produce dangling
+///     SsaVars.
+///   - The gate calls `optimize_r1cs()` — without it, the 40k+
+///     linear constraints that O1 eliminates inflate the count
+///     well beyond the +/-15% tolerance.
+///   - `lysis::bytecode::validate` is gated behind
+///     `cfg(debug_assertions)` so release-mode instantiate stays
+///     fast.
 ///
-/// **Remaining work (each independent of Phase 4 / this gate)**:
+/// **Remaining work (independent of this gate)**:
 ///
-///   - **Compile time** ~13s on this host (down from ~47s pre-perf
-///     work). Tracked as a separate workstream.
-///   - **Lazy-reload-without-recycling frame growth** -- v1.1
-///     placeholder (`ir-forge/tests/walker_adversarial.rs`); not
-///     hit by SHA-256(64), would surface for larger circuits.
+///   - **Compile time** ~13s on this host. Tracked as a separate
+///     workstream.
+///   - **Lazy-reload-without-recycling frame growth** — placeholder
+///     in `ir-forge/tests/walker_adversarial.rs`; not hit by
+///     SHA-256(64), would surface for larger circuits.
 #[test]
 #[ignore = "SHA-256 compile + instantiate + R1CS-O1 takes ~15s on this host (down from ~47s pre-perf work). Run with `--ignored sha256_64_lysis_hard_gate` locally before pushing changes that touch the Lysis walker, R1CS optimizer, or instantiate path. Once compile time drops further, this can become a CI-default gate."]
 fn sha256_64_lysis_hard_gate() {
@@ -2208,7 +2199,7 @@ fn sha256_64_constraint_breakdown() {
     use std::collections::HashSet;
     use std::time::Instant;
 
-    // circom 2.2.3 baseline captured 2026-04-25 from
+    // circom 2.2.3 baseline from
     // `circom test/circomlib/sha256_test.circom --r1cs --O{0,1,2}`.
     const CIRCOM_O0: usize = 204_576;
     const CIRCOM_O1: usize = 31_264;
@@ -2468,10 +2459,9 @@ fn sha256_64_o2_sparse_probe() {
     eprintln!("[r1cs build]   {:?}  constraints={pre_opt}", t3.elapsed());
     let num_pub_inputs = rc.cs.num_pub_inputs();
 
-    // Phase 6 default: optimize_r1cs is the cluster-based driver.
-    // The historical greedy implementation is preserved as the
-    // per-cluster fallback for clusters above
-    // CLUSTER_FALLBACK_THRESHOLD.
+    // optimize_r1cs is the cluster-based driver. The greedy
+    // implementation is preserved as the per-cluster fallback for
+    // clusters above CLUSTER_FALLBACK_THRESHOLD.
     let t4 = Instant::now();
     let stats = rc.optimize_r1cs();
     let post_o1 = rc.cs.num_constraints();

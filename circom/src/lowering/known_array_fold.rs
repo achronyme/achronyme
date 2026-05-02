@@ -1,8 +1,8 @@
-//! R1″ Phase 6 / Option II: post-substitute known-array index fold.
+//! fold-known-array-index pass: post-substitute known-array index fold.
 //!
 //! Sibling pass to [`crate::lowering::loop_var_subst`]. Where
-//! `substitute_loop_var` is strictly env-free (Phase 2 visitor), this
-//! pass is **env-coupled**: it consults a snapshot of
+//! `substitute_loop_var` is strictly env-free, this pass is
+//! **env-coupled**: it consults a snapshot of
 //! `LoweringEnv::known_array_values` to resolve `ArrayIndex` reads
 //! whose `array` is a compile-time `EvalValue::Array` (e.g. Poseidon's
 //! `C[i+r]`, BabyJubjub's coefficient tables, etc.) once their `index`
@@ -34,7 +34,7 @@
 //!   inner_len][linear % inner_len]`, mirroring `lower_multi_index`'s
 //!   row-major linearisation via row strides. Non-uniform 2-D shapes,
 //!   3-D+ shapes, and missing-key / non-foldable indices are passthrough.
-//! - **Why 2-D matters.** R1″ Phase 6 / Follow-up D admits Mix's outer-i
+//! - **Why 2-D matters.** memoization admit/soundness check admits Mix's outer-i
 //!   body for memoization, which reads `M[j][i]` with `M` a uniform t×t
 //!   matrix in `known_array_values` (no `env.strides` registered, but
 //!   `lower_multi_index` derives strides from the kav structure on the
@@ -489,7 +489,7 @@ mod tests {
         assert_eq!(expr, original);
     }
 
-    /// R1″ Phase 6 / Follow-up D: 2-D `EvalValue::Array(EvalValue::
+    /// memoization admit/soundness check: 2-D `EvalValue::Array(EvalValue::
     /// Array(_))` with a uniform inner length resolves via row-major
     /// flatten. `M[j*inner_len + i]` decomposes to `M[j][i]`.
     /// Mirrors `lower_multi_index`'s linearisation for kav-derived
@@ -510,7 +510,7 @@ mod tests {
         assert_eq!(expr, const_(6)); // M[1][2] = 6
     }
 
-    /// R1″ Phase 6 / Follow-up D: row-major flatten covers row-0 too —
+    /// memoization admit/soundness check: row-major flatten covers row-0 too —
     /// confirms the `(linear / inner_len, linear % inner_len)` decomp
     /// handles linear=0 correctly (row=0, col=0).
     #[test]

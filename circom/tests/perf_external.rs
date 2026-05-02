@@ -113,7 +113,7 @@ fn ensure_ptau(size: u32) -> PathBuf {
     let pot0 = cache.join(format!("pot{size}_0000.ptau"));
     let pot1 = cache.join(format!("pot{size}_0001.ptau"));
 
-    // Phase 1: new
+    // Powers-of-tau: new
     run_timed(
         Command::new("npx")
             .args(["snarkjs", "powersoftau", "new", "bn128", &size.to_string()])
@@ -128,7 +128,7 @@ fn ensure_ptau(size: u32) -> PathBuf {
             .arg(&pot1)
             .args(["--name=bench", "-e=bench_entropy_not_secure"]),
     );
-    // Phase 2 prep
+    // Circuit-specific prep (snarkjs' `prepare phase2` step)
     run_timed(
         Command::new("npx")
             .args(["snarkjs", "powersoftau", "prepare", "phase2"])

@@ -14,8 +14,8 @@
 //! Leaves with a *different* token are left untouched so an outer-loop
 //! placeholder can survive a nested-loop substitution pass.
 //!
-//! Phase 2 of the R1″ pipeline (visitor only). The lowering integration
-//! that actually emits `LoopVar` and the placeholder lives in Phase 3.
+//! Visitor only. The lowering integration that actually emits
+//! `LoopVar` and the placeholder lives in `lower_for_loop`.
 
 use ir_forge::types::{ArraySize, CircuitExpr, CircuitNode, FieldConst, ForRange};
 
@@ -56,10 +56,10 @@ pub fn loop_var_placeholder(token: u32) -> String {
 /// NOT walked. If a memoized for-loop body lifts a function whose
 /// behavior depends on the loop variable, those bytecode payloads
 /// retain iter-0 semantics across all memoized iterations and produce
-/// a wrong witness. The Phase 3 lowering integration is responsible
-/// for refusing to memoize any loop that emits an iter-dependent
-/// `WitnessCall`. SHA-256's round body emits no `WitnessCall`, which
-/// is why R1″ is safe for the target benchmark.
+/// a wrong witness. The lowering integration is responsible for
+/// refusing to memoize any loop that emits an iter-dependent
+/// `WitnessCall`. SHA-256's round body emits no `WitnessCall`, so
+/// memoization is safe there.
 pub fn substitute_loop_var(slice: &mut [CircuitNode], token: u32, value: u64) {
     let placeholder = loop_var_placeholder(token);
     let value_str = value.to_string();
@@ -678,15 +678,16 @@ mod tests {
         assert_eq!(flushed_node_count(20, 20, &[(0, 100)]), 0);
     }
 
-    // ── R1″ Phase 6 / Option D — proof of concept ────────────────────
+    // ── memoized unroll — proof of concept ────────────────────
     //
-    // Validates the architectural thesis that drives Option D: a
-    // `LetIndexed { index: LoopVar(t) }` body, after `substitute_loop_var`
-    // rewrites the placeholder to `Const(N)`, instantiates byte-identical
-    // to a hand-unrolled body that uses `Const(N)` directly. If this
-    // holds, the Phase 6 lowering integration can stop folding the loop
-    // variable to a flat name and instead lean on instantiate's existing
-    // `eval_const_expr` fast-path for `ArrayIndex` / `LetIndexed`.
+    // Validates the substitution invariant: a
+    // `LetIndexed { index: LoopVar(t) }` body, after
+    // `substitute_loop_var` rewrites the placeholder to `Const(N)`,
+    // instantiates byte-identical to a hand-unrolled body that uses
+    // `Const(N)` directly. The lowering integration relies on this
+    // to lean on instantiate's existing `eval_const_expr` fast-path
+    // for `ArrayIndex` / `LetIndexed` rather than folding the loop
+    // variable to a flat name.
 
     use std::collections::{HashMap, HashSet};
 
@@ -778,13 +779,13 @@ mod tests {
 
     #[test]
     fn poc_loopvar_substitute_then_instantiate_matches_hand_unroll() {
-        // The architectural claim under test: instantiate's existing
+        // The invariant under test: instantiate's existing
         // `ArrayIndex` / `LetIndexed` fast-path collapses
-        // `LoopVar(t) → Const(N)` substitutions to the same SSA shape
-        // a hand-unrolled body produces. If this passes, the Phase 6
-        // lowering integration is unblocked: emit `LoopVar`, substitute
-        // per iter, hand to instantiate. No string-mangling needed in
-        // the lowering for the dominant signal-array case.
+        // `LoopVar(t) → Const(N)` substitutions to the same SSA
+        // shape a hand-unrolled body produces. The lowering
+        // integration relies on this so it can emit `LoopVar`,
+        // substitute per iter, and hand to instantiate without any
+        // string-mangling for the dominant signal-array case.
         let outputs: HashSet<String> = std::iter::once("out".to_string()).collect();
         let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
 

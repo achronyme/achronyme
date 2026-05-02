@@ -65,12 +65,13 @@ pub fn lower_template_with_captures_and_arrays(
 
 /// Lower a template against a caller-provided [`LoweringContext`].
 ///
-/// Used by the public `lower_template_*` entry points (which build a
-/// fresh ctx) and by the R1″ Phase 3 tests, which need to enable the
+/// Used by the public `lower_template_*` entry points (which build
+/// a fresh ctx) and by tests that need to enable the
 /// [`crate::lowering::context::FlushTracker`] before lowering and
 /// inspect the recorded ranges afterwards. Mutating `ctx` lets the
-/// caller observe both the input configuration (e.g. `flush_tracker.enable()`)
-/// and the output side-effects (`flush_tracker.take()`).
+/// caller observe both the input configuration (e.g.
+/// `flush_tracker.enable()`) and the output side-effects
+/// (`flush_tracker.take()`).
 pub(crate) fn lower_template_with_ctx<'a>(
     template: &'a TemplateDef,
     captures: &HashMap<String, FieldConst>,

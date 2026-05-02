@@ -82,16 +82,17 @@ pub fn lower_expr(
 
         // ── Identifiers ─────────────────────────────────────────────
         Expr::Ident { name, span } => {
-            // R1″ memoization (Phase 6 / Option D): when the lowering
-            // is inside an iter-0 capture window, the loop variable is
-            // emitted as a `LoopVar(token)` placeholder so the captured
-            // node slice can be cloned + substituted for each remaining
+            // Memoization placeholder. When the lowering is inside
+            // an iter-0 capture window, the loop variable is emitted
+            // as a `LoopVar(token)` placeholder so the captured node
+            // slice can be cloned + substituted for each remaining
             // iteration. This branch fires *before* the
             // `known_constants` lookup so the unroll path that drives
             // the placeholder doesn't have to also delete the loop
             // variable from `env.known_constants` to suppress a const
-            // fold — keeping the two regimes' state-management symmetric
-            // makes the integration in `lower_for_loop` simpler.
+            // fold — keeping the two regimes' state-management
+            // symmetric makes the integration in `lower_for_loop`
+            // simpler.
             if let Some(token) = ctx.placeholder_token_for(name) {
                 return Ok(CircuitExpr::LoopVar(token));
             }
@@ -307,7 +308,7 @@ fn lower_index(
             }
         }
 
-        // R1″ Phase 6 / Follow-up A → Option II: previously this site
+        // placeholder index handling: previously this site
         // emitted E213 when `ctx.placeholder_appears_in(index)` AND the
         // base lived only in `known_array_values` (kav). Option II
         // accepts that shape — the IR carries `ArrayIndex { array:
@@ -435,7 +436,7 @@ mod tests {
 
     #[test]
     fn lower_placeholder_loop_var_emits_loopvar_node() {
-        // R1″ Phase 6 / Option D: when the lowering context carries an
+        // memoized unroll: when the lowering context carries an
         // active memoization placeholder, an `Ident` matching that name
         // resolves to `CircuitExpr::LoopVar(token)` regardless of what
         // `env.known_constants` or `env.resolve` would otherwise say.

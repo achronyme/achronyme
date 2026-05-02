@@ -8,12 +8,11 @@
 //!   - `ctx.param_values:    HashMap<String, FieldConst>`
 //!   - `eval_vars:           HashMap<String, BigVal>` (function-local)
 //!
-//! That triple bookkeeping has produced real bugs — the MiMCSponge
-//! loop-var pollution (2026-04-11) was a case where the write-back
-//! path failed to skip the loop variable, and the deep-inlining
-//! negative-index regression (2026-04-04) was caused by a `BigVal`
-//! being mirrored into `known_constants` as a `FieldConst` and
-//! losing its sign.
+//! That triple bookkeeping has produced real bugs — a MiMCSponge
+//! loop-var pollution where the write-back path failed to skip the
+//! loop variable, and a deep-inlining negative-index regression
+//! where a `BigVal` was mirrored into `known_constants` as a
+//! `FieldConst` and lost its sign.
 //!
 //! `CompileTimeEnv` replaces the triple: values are canonically stored
 //! as `BigVal` (256-bit two's complement) and projected down to
