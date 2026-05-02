@@ -783,6 +783,7 @@ fn flush_tracker_records_pending_inline() {
     let _ = super::lower::lower_template_with_ctx(
         outer,
         &std::collections::HashMap::new(),
+        &std::collections::HashMap::new(),
         &[],
         &mut ctx,
     )
@@ -847,6 +848,7 @@ fn flush_tracker_disabled_records_nothing() {
 
     let _ = super::lower::lower_template_with_ctx(
         outer,
+        &std::collections::HashMap::new(),
         &std::collections::HashMap::new(),
         &[],
         &mut ctx,

@@ -79,10 +79,30 @@ pub(super) fn lower_binop(
 
         ast::BinOp::Pow => match const_eval_circuit_expr(&r) {
             Some(exp) => Ok(CircuitExpr::Pow { base: l, exp }),
-            None => Err(LoweringError::new(
-                "exponent in `**` must be a compile-time constant in circuit context",
-                span,
-            )),
+            None => {
+                // `2 ** e` with non-const exponent rewrites to `1 << e`.
+                // The shift path already accepts a runtime `shift`
+                // expression (used elsewhere for `1 << i` inside loops),
+                // so loop-variable exponents like `2**i` lower without
+                // needing a const exponent. Only base=2 is folded this
+                // way; any other non-const `**` keeps the original
+                // error since field exponentiation with a runtime
+                // exponent has no closed-form circuit lowering.
+                if matches!(l.as_ref(), CircuitExpr::Const(c) if c.to_u64() == Some(2)) {
+                    Ok(CircuitExpr::ShiftL {
+                        operand: Box::new(CircuitExpr::Const(
+                            ir_forge::types::FieldConst::from_u64(1),
+                        )),
+                        shift: r,
+                        num_bits: DEFAULT_MAX_BITS,
+                    })
+                } else {
+                    Err(LoweringError::new(
+                        "exponent in `**` must be a compile-time constant in circuit context",
+                        span,
+                    ))
+                }
+            }
         },
 
         ast::BinOp::Eq => Ok(CircuitExpr::Comparison {

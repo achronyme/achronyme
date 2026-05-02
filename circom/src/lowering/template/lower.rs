@@ -16,6 +16,7 @@ use crate::lowering::context::LoweringContext;
 use crate::lowering::env::LoweringEnv;
 use crate::lowering::error::LoweringError;
 use crate::lowering::statements::lower_stmts;
+use crate::lowering::utils::EvalValue;
 use crate::lowering::{signals, utils};
 
 /// Library-mode entry point: lower a template directly against a
@@ -35,7 +36,31 @@ pub fn lower_template_with_captures(
     program: &CircomProgram,
 ) -> Result<LowerTemplateResult, LoweringError> {
     let mut ctx = LoweringContext::from_program(program);
-    lower_template_with_ctx(template, captures, public_signals, &mut ctx)
+    lower_template_with_ctx(
+        template,
+        captures,
+        &HashMap::new(),
+        public_signals,
+        &mut ctx,
+    )
+}
+
+/// Same as [`lower_template_with_captures`] but accepts an additional
+/// `array_captures` map for template parameters that the caller
+/// supplied as compile-time array literals (e.g.
+/// `component main = EscalarMul(8, [Gx, Gy])`). The values are
+/// injected into the template's `env.known_array_values` so function
+/// calls inside the body that take the array param as an argument
+/// (`EscalarMulW4Table(base, k)`) can resolve it at compile time.
+pub fn lower_template_with_captures_and_arrays(
+    template: &TemplateDef,
+    captures: &HashMap<String, FieldConst>,
+    array_captures: &HashMap<String, EvalValue>,
+    public_signals: &[String],
+    program: &CircomProgram,
+) -> Result<LowerTemplateResult, LoweringError> {
+    let mut ctx = LoweringContext::from_program(program);
+    lower_template_with_ctx(template, captures, array_captures, public_signals, &mut ctx)
 }
 
 /// Lower a template against a caller-provided [`LoweringContext`].
@@ -49,6 +74,7 @@ pub fn lower_template_with_captures(
 pub(crate) fn lower_template_with_ctx<'a>(
     template: &'a TemplateDef,
     captures: &HashMap<String, FieldConst>,
+    array_captures: &HashMap<String, EvalValue>,
     public_signals: &[String],
     ctx: &mut LoweringContext<'a>,
 ) -> Result<LowerTemplateResult, LoweringError> {
@@ -113,9 +139,15 @@ pub(crate) fn lower_template_with_ctx<'a>(
         env.locals.insert(inter.name.clone());
     }
 
-    // Template parameters → env.captures
+    // Template parameters → env.captures.
+    // Skip params that arrived as array literals — they're resolved via
+    // `env.known_array_values` (loaded below from `array_captures`); leaving
+    // them in `captures` would emit `CircuitExpr::Capture(name)` for indexed
+    // accesses that the instantiator cannot satisfy with a scalar value.
     for param in &template.params {
-        env.captures.insert(param.clone());
+        if !array_captures.contains_key(param) {
+            env.captures.insert(param.clone());
+        }
     }
 
     // Inject pre-computed scalar vars into `known_constants` for identifier
@@ -131,11 +163,26 @@ pub(crate) fn lower_template_with_ctx<'a>(
         env.known_array_values.insert(name, val);
     }
 
+    // Inject array template captures supplied by the caller (e.g. main
+    // component instantiated with an array literal as a template arg).
+    // Loaded after `precomputed.arrays` so a template-body `var X = ...`
+    // does not shadow the caller-supplied param value.
+    for (name, val) in array_captures {
+        env.known_array_values
+            .entry(name.clone())
+            .or_insert_with(|| val.clone());
+    }
+
     // 3. Lower body statements
     let body = lower_stmts(&template.body.stmts, &mut env, ctx)?;
 
-    // 4. Classify captures
-    let captures = classify_captures(&template.params, &body);
+    // 4. Classify captures.
+    // Pass the array-capture param names so they are excluded from the
+    // ProveIR captures list — they were resolved at lowering time via
+    // `env.known_array_values` and have no scalar value the instantiator
+    // could supply.
+    let array_skip: HashSet<String> = array_captures.keys().cloned().collect();
+    let captures = classify_captures(&template.params, &body, &array_skip);
 
     // 5. Convert output signals to public input declarations and collect names.
     //    In Circom, all `signal output` are public wires in the R1CS.

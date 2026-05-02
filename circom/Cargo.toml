@@ -16,6 +16,8 @@ ir = { path = "../ir" }
 ir-forge = { path = "../ir-forge" }
 memory = { path = "../memory" }
 artik = { path = "../artik" }
+num-bigint = "0.4"
+num-traits = "0.2"
 
 [features]
 # Emit `ExtendedInstruction<F>` instead of `Instruction<F>` where the

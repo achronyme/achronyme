@@ -58,6 +58,26 @@ pub fn const_eval_u64(expr: &Expr) -> Option<u64> {
     }
 }
 
+/// Try to evaluate a Circom AST expression as a signed `i64` constant.
+///
+/// Recognises plain decimal literals plus a leading unary negation
+/// (`-N`). Used for loop conditions like `i != -1` where the
+/// canonical descending bound is the literal -1.
+pub fn const_eval_signed(expr: &Expr) -> Option<i64> {
+    match expr {
+        Expr::Number { value, .. } => value.parse().ok(),
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Neg,
+            operand,
+            ..
+        } => {
+            let v: i64 = const_eval_u64(operand)?.try_into().ok()?;
+            Some(-v)
+        }
+        _ => None,
+    }
+}
+
 /// Evaluate a Circom expression as FieldConst by substituting known parameter values.
 ///
 /// Like `const_eval_u64` but also resolves identifiers from the param map

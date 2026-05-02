@@ -449,9 +449,20 @@ fn lower_var_decl(
                 // `var b = (1 << 128) - 1` in CompConstant — without this,
                 // the expression becomes a circuit-level ShiftL that fails
                 // range checks during R1CS compilation.
+                //
+                // When the eval succeeds, also seed `env.bound_const_vars`
+                // with the resolved value so a subsequent loop bound or
+                // component-array sizing expression that references this
+                // var (e.g. `var n1 = n\2; for (i = 0; i < n1; i++)` in
+                // gates.circom MultiAND) can resolve through `all_constants`.
+                // The dedicated field — distinct from `known_constants` —
+                // avoids folding subsequent mutations of the same name
+                // (e.g. `var lc1 = 0; lc1 += ...` in Num2Bits) into a
+                // stale literal.
                 let all = ctx.all_constants(env);
                 let lowered =
                     if let Some(fc) = crate::lowering::utils::const_eval_with_params(value, &all) {
+                        env.bound_const_vars.insert(names[0].clone(), fc);
                         CircuitExpr::Const(fc)
                     } else {
                         lower_expr(value, env, ctx)?

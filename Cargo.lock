@@ -555,6 +555,8 @@ dependencies = [
  "ir-core",
  "ir-forge",
  "memory",
+ "num-bigint",
+ "num-traits",
  "proving",
  "sha2",
  "tempfile",

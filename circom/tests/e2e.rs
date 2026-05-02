@@ -1364,6 +1364,59 @@ fn fn_witness_lift_unrolls_for_loop() {
         .expect("unrolled Artik payload must decode and validate");
 }
 
+/// Real `while` loops lift to Artik via slot-promoted scalars + a
+/// conditional back-edge. Validates the smallest interesting shape:
+/// `var i = start; while (i > 0) { i = i - 1; } return i;` returns
+/// 0 for any non-negative `start`. Decode + run the payload against
+/// `start = 5`; the program must end with witness slot 0 holding 0.
+#[test]
+fn fn_witness_lift_while_terminates() {
+    use ir_forge::types::CircuitNode;
+    use memory::field::{Bn254Fr, FieldElement};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_while_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("while lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("while payload must decode and validate");
+
+    // The lift must have emitted a back-edge jump pair — `Jump`
+    // (back to the loop header) and `JumpIf` (exit when cond is
+    // false). A regression that silently bails through the
+    // unrolled-for path or fails to wire the back-edge would leave
+    // the body straight-line.
+    let saw_jump = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::Jump { .. }));
+    let saw_jump_if = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::JumpIf { .. }));
+    assert!(saw_jump && saw_jump_if, "expected back-edge + exit jumps");
+
+    type FE = FieldElement<Bn254Fr>;
+    let sigs = [FE::from_u64(5)];
+    let mut slots = [FE::zero()];
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("while program must execute");
+    assert_eq!(slots[0], FE::zero(), "countdown_to_zero(5) should be 0");
+}
+
 /// Fase 2.1 lift extension: compile-time-folded `if / else` inside
 /// an unrolled loop selects the right branch per iteration without
 /// emitting any JumpIf. Runtime conditions still fall back to E212.
@@ -3091,6 +3144,282 @@ fn eddsamimc_r1cs() {
     );
     eprintln!("  Constraints: {n}");
     assert!(n > 0, "expected constraints for EdDSAMiMC verifier");
+}
+
+/// EdDSAMiMCSponge: same wiring as EdDSAMiMC but the message hash is
+/// MiMCSponge instead of MiMC. Sibling template — verifies the
+/// frontend handles the alternative hash through the same component
+/// composition pipeline.
+#[test]
+fn eddsamimcsponge_r1cs() {
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert(
+        "Ax".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "Ay".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("S".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    inputs.insert(
+        "R8x".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "R8y".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("M".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+
+    let n = circomlib_e2e_verify_fe(
+        "EdDSAMiMCSponge R1CS (enabled=0)",
+        "test/circomlib/eddsamimcsponge_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for EdDSAMiMCSponge verifier");
+}
+
+/// BinSub(8): subtract two 8-bit binary inputs with borrow output.
+/// Exercises the `2**i` runtime-exponent rewrite (loop variable as
+/// exponent → left-shift) used throughout circomlib bit arithmetic.
+#[test]
+fn binsub_circomlib() {
+    // 5 - 3 = 2; LSB-first bit decomposition. The 2D `in[2][8]` array
+    // flattens to in_0..in_7 (operand 0) + in_8..in_15 (operand 1).
+    let n = circomlib_e2e_verify(
+        "BinSub(8)",
+        "test/circomlib/binsub_test.circom",
+        &[
+            ("in_0", 1),
+            ("in_1", 0),
+            ("in_2", 1),
+            ("in_3", 0),
+            ("in_4", 0),
+            ("in_5", 0),
+            ("in_6", 0),
+            ("in_7", 0),
+            ("in_8", 1),
+            ("in_9", 1),
+            ("in_10", 0),
+            ("in_11", 0),
+            ("in_12", 0),
+            ("in_13", 0),
+            ("in_14", 0),
+            ("in_15", 0),
+        ],
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for BinSub(8)");
+}
+
+/// Bits2Point_Strict: 256-bit packed BabyJubjub point unpacker with
+/// alias check + sign-bit reconstruction. Compile + instantiate only —
+/// witness inputs require a valid packed point (254-bit y, 1-bit zero
+/// padding, 1-bit sign), and `out[0] <-- sqrt(...)` is filled by the
+/// Artik witness lift, so a bare `circomlib_e2e_verify_fe` call would
+/// need cross-field square-root setup that isn't worth the test
+/// complexity for a compile-time gate.
+#[test]
+fn bits2point_strict_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/pointbits_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib/circuits")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Bits2Point_Strict compilation failed: {e}"));
+
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("Bits2Point_Strict instantiation failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    eprintln!(
+        "  Bits2Point_Strict — {} nodes → {} instructions — INSTANTIATED ✓",
+        result.prove_ir.body.len(),
+        program.len()
+    );
+}
+
+/// EdDSAVerifier(1): the original EdDSA scheme using Pedersen-hash for
+/// the message and BabyJubjub for the curve. Wires sub-component
+/// inputs via the `==>` reverse-assignment shape:
+///
+///   for (i=0; i<254; i++) { S[i] ==> compConstant.in[i]; }
+///   for (i=0; i<256; i++) { bits2pointA.in[i] <== A[i]; }
+///
+/// The first form pins the Class B classifier's reverse-assign
+/// branch — pre-fix this template failed at instantiation with
+/// `symbolic indexed write into compConstant.in but the array is
+/// not declared in this scope`. Compile + instantiate is the test
+/// surface; full witness verification requires valid Pedersen-hash
+/// signature data which is out of scope for a compile-time gate.
+#[test]
+fn eddsa_verifier_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/eddsa_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib/circuits")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("EdDSAVerifier compilation failed: {e}"));
+
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("EdDSAVerifier instantiation failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    eprintln!(
+        "  EdDSAVerifier(1) — {} nodes → {} instructions — INSTANTIATED ✓",
+        result.prove_ir.body.len(),
+        program.len()
+    );
+}
+
+/// EscalarMul(8, base): generic scalar multiplication on BabyJubJub
+/// using the windowed-add algorithm. Exercises array-literal template
+/// arguments (`base = [Gx, Gy]`) propagating through nested template
+/// instantiations and into compile-time function calls
+/// (`EscalarMulW4Table(base, k)`) inside `EscalarMulWindow`.
+///
+/// Identity-point input (escalar = 0, inp = (0, 1)) — exercises the
+/// pipeline without forcing a specific math result; the constraint
+/// system is the test surface here, not curve correctness.
+#[test]
+fn escalarmul_circomlib() {
+    let mut inputs = HashMap::new();
+    for i in 0..8 {
+        inputs.insert(format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    inputs.insert("inp_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("inp_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+
+    let n = circomlib_e2e_verify_fe(
+        "EscalarMul(8, base)",
+        "test/circomlib/escalarmul_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for EscalarMul(8, base)");
+}
+
+/// SMTVerifier(10): sparse Merkle tree inclusion/exclusion verifier
+/// at depth 10 (1024 leaves). Largest standalone circomlib template
+/// not yet covered. Exercises descending for-loops (`i != -1`),
+/// component arrays sized from template params, and compile-time
+/// `var n1 = n\2` propagation through `MultiAND`.
+///
+/// Run with `enabled=0` so the R1CS verification is a no-op — the
+/// frontend pipeline + constraint generation are the test surface;
+/// witness validity for inclusion/exclusion semantics is out of
+/// scope for this compile-coverage gate.
+#[test]
+fn smtverifier_circomlib() {
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("root".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("isOld0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("key".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("value".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    for i in 0..10 {
+        inputs.insert(
+            format!("siblings_{i}"),
+            FieldElement::<Bn254Fr>::from_u64(0),
+        );
+    }
+
+    let n = circomlib_e2e_verify_fe(
+        "SMTVerifier(10) (enabled=0)",
+        "test/circomlib/smtverifier_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for SMTVerifier(10)");
+}
+
+/// SMTProcessor(10): sparse Merkle tree state-transition processor at
+/// depth 10. Larger sibling of SMTVerifier — adds insert/update/delete
+/// state machines around the same core hash chain.
+///
+/// Run with `fnc=[0,0]` (no-op processor), so `enabled = 0` and the
+/// R1CS check passes with the trivial state transition (newRoot ==
+/// oldRoot). Same scope as the verifier test: compile-coverage gate.
+#[test]
+fn smtprocessor_circomlib() {
+    let mut inputs = HashMap::new();
+    inputs.insert("oldRoot".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newRoot".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("isOld0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc_1".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    for i in 0..10 {
+        inputs.insert(
+            format!("siblings_{i}"),
+            FieldElement::<Bn254Fr>::from_u64(0),
+        );
+    }
+
+    let n = circomlib_e2e_verify_fe(
+        "SMTProcessor(10) (fnc=[0,0])",
+        "test/circomlib/smtprocessor_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for SMTProcessor(10)");
+}
+
+/// Edwards2Montgomery: convert a Twisted-Edwards point to its
+/// Montgomery-form representation. Single-template test on the
+/// generator point — exercises the modular-inverse division
+/// (`(1+y)/(1-y)`) the frontend lowers as a witness hint.
+#[test]
+fn montgomery_circomlib() {
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    // BabyJubJub generator point (Edwards form).
+    inputs.insert(
+        "in_0".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "in_1".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+
+    let n = circomlib_e2e_verify_fe(
+        "Edwards2Montgomery",
+        "test/circomlib/montgomery_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for Edwards2Montgomery");
 }
 
 /// Pedersen_old(8): hash 8 bits using the legacy Pedersen

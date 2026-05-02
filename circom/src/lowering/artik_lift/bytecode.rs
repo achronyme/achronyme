@@ -13,10 +13,13 @@
 //! - [`LiftState::push_int_const`] — materialize a compile-time integer
 //!   as a [`IntW::U32`] register for `LoadArr` / `StoreArr`.
 
-use artik::{IntBinOp, IntW, Reg};
+use artik::{ElemT, IntBinOp, IntW, Reg};
+use num_bigint::BigUint;
+use num_traits::Zero;
 
 use crate::ast::BinOp;
 
+use super::big_eval::big_to_le_bytes_trimmed;
 use super::{ConstInt, LiftState};
 
 impl<'f> LiftState<'f> {
@@ -38,7 +41,41 @@ impl<'f> LiftState<'f> {
             BinOp::BitXor => Some(self.apply_int_binop_u32(IntBinOp::Xor, a, b)),
             BinOp::ShiftL => Some(self.apply_int_binop_u32(IntBinOp::Shl, a, b)),
             BinOp::ShiftR => Some(self.apply_int_binop_u32(IntBinOp::Shr, a, b)),
+            // Ordered comparisons demote to `IntW::U32` and dispatch
+            // through `IntBinOp::CmpLt` (the only ordered int op
+            // Artik exposes), inverting where necessary. The U32
+            // domain covers loop counters and small integer
+            // accumulators; values exceeding `2^32` truncate
+            // unsoundly, but that's outside the lift's contract for
+            // ordered comparisons today.
+            BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => self.apply_field_compare(op, a, b),
             _ => None,
+        }
+    }
+
+    fn apply_field_compare(&mut self, op: BinOp, a: Reg, b: Reg) -> Option<Reg> {
+        let a_int = self.demote_to_u32(a);
+        let b_int = self.demote_to_u32(b);
+        let (lhs_int, rhs_int, invert) = match op {
+            BinOp::Lt => (a_int, b_int, false),
+            BinOp::Gt => (b_int, a_int, false),
+            BinOp::Le => (b_int, a_int, true),
+            BinOp::Ge => (a_int, b_int, true),
+            _ => unreachable!(),
+        };
+        // `IntBinOp::CmpLt` is classified boolean by the validator —
+        // its destination register is bound to `Int(U8)` regardless of
+        // the operand width passed to `IBin`. Promote back through U8
+        // to keep register types consistent.
+        let cmp_int = self
+            .builder
+            .ibin(artik::IntBinOp::CmpLt, IntW::U32, lhs_int, rhs_int);
+        let cmp_field = self.builder.field_from_int(cmp_int, IntW::U8);
+        if invert {
+            let one = self.push_const_unsigned(1)?;
+            Some(self.builder.fsub(one, cmp_field))
+        } else {
+            Some(cmp_field)
         }
     }
 
@@ -90,13 +127,80 @@ impl<'f> LiftState<'f> {
     }
 
     pub(super) fn push_const_dec(&mut self, text: &str) -> Option<Reg> {
-        let v: u128 = text.parse().ok()?;
-        self.push_const_unsigned(v)
+        let v: BigUint = text.parse().ok()?;
+        self.push_const_big(&v)
     }
 
     pub(super) fn push_const_hex(&mut self, text: &str) -> Option<Reg> {
-        let v = u128::from_str_radix(text, 16).ok()?;
-        self.push_const_unsigned(v)
+        let v = BigUint::parse_bytes(text.as_bytes(), 16)?;
+        self.push_const_big(&v)
+    }
+
+    /// Materialize a [`BigUint`] as a field register via the constant
+    /// pool. The value is encoded as up to 32 trimmed little-endian
+    /// bytes — the canonical representation for the BnLike256 family.
+    pub(super) fn push_const_big(&mut self, v: &BigUint) -> Option<Reg> {
+        let bytes = big_to_le_bytes_trimmed(v)?;
+        let cid = self.builder.intern_const(bytes);
+        Some(self.builder.push_const(cid))
+    }
+
+    /// Emit `base ^ exp` where `exp` is a compile-time-known
+    /// non-negative integer. Implements square-and-multiply on the
+    /// LSB-first bits of `exp`. `exp == 0` returns the constant `1`.
+    pub(super) fn pow_const_exp(&mut self, base: Reg, exp: &BigUint) -> Option<Reg> {
+        if exp.is_zero() {
+            return self.push_const_unsigned(1);
+        }
+        let bits = exp.bits();
+        let mut result: Option<Reg> = None;
+        let mut squared = base;
+        for i in 0..bits {
+            if exp.bit(i) {
+                result = match result {
+                    Some(r) => Some(self.builder.fmul(r, squared)),
+                    None => Some(squared),
+                };
+            }
+            if i + 1 < bits {
+                squared = self.builder.fmul(squared, squared);
+            }
+        }
+        result
+    }
+
+    /// Allocate a 1-element field array used as a mutable slot. The
+    /// `while` lift promotes locals reassigned across iterations into
+    /// these slots so the executor can read the updated value at each
+    /// loop entry.
+    pub(super) fn alloc_field_slot(&mut self) -> Reg {
+        self.builder.alloc_array(1, ElemT::Field)
+    }
+
+    /// Store `value` at index 0 of a slot allocated by
+    /// [`Self::alloc_field_slot`].
+    pub(super) fn store_field_slot(&mut self, slot: Reg, value: Reg) -> Option<()> {
+        let idx = self.push_int_const(0)?;
+        self.builder.store_arr(slot, idx, value);
+        Some(())
+    }
+
+    /// Load the current value held in a field slot.
+    pub(super) fn load_field_slot(&mut self, slot: Reg) -> Option<Reg> {
+        let idx = self.push_int_const(0)?;
+        Some(self.builder.load_arr(slot, idx))
+    }
+
+    /// Project a field register onto `{0, 1}` using the
+    /// "non-zero is true" convention. The result is a field register
+    /// holding `1` if the input was non-zero, `0` otherwise — suitable
+    /// for `&&` / `||` muxing or as an early-return predicate.
+    pub(super) fn field_to_bool(&mut self, src: Reg) -> Option<Reg> {
+        let zero = self.push_const_unsigned(0)?;
+        let is_zero_int = self.builder.feq(src, zero);
+        let is_zero_field = self.builder.field_from_int(is_zero_int, IntW::U8);
+        let one = self.push_const_unsigned(1)?;
+        Some(self.builder.fsub(one, is_zero_field))
     }
 
     /// Materialize a compile-time integer as a u32 int register for
