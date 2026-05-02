@@ -909,6 +909,29 @@ fn escalarmulany_r1cs() {
     assert!(n > 2000, "expected >2000 constraints, got {n}");
 }
 
+/// EscalarMulAny(149): multi-segment chaining variant. With n=149 the
+/// segment count is `(149-1)\148 + 1 = 2`, so this exercises the
+/// segment-stitching path that the n=254 fast path collapses into a
+/// single segment of 148 + 1 leftover bits. Identity point + zero
+/// scalar (zeropoint guard maps to G8 internally).
+#[test]
+fn escalarmulany_149_r1cs() {
+    let mut inputs = HashMap::new();
+    for i in 0..149 {
+        inputs.insert(format!("e_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    inputs.insert("p_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("p_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+
+    let n = circomlib_e2e_verify_fe(
+        "EscalarMulAny(149) R1CS",
+        "test/circomlib/escalarmulany_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for EscalarMulAny(149)");
+}
+
 /// EscalarMulAny(254): full Groth16 proof generation and verification.
 #[test]
 fn escalarmulany_groth16() {
@@ -3007,6 +3030,70 @@ fn fn_witness_lift_handles_bit_ops() {
             FE::from_u64(expected as u64),
             "σ0({:#010x}) mismatch: got {:?}, expected {:#010x}",
             x,
+            slots[0],
+            expected,
+        );
+    }
+}
+
+/// SHA-256 constant-table probe: a function-local `var k[4] = […]`
+/// returning `k[i]` with a runtime `i`. Pins the lift path that
+/// circomlib's `sha256K(t)` depends on — `var arr[N] = [literals]`
+/// inside a function body must reach the Artik VM as `AllocArray` +
+/// store-once + `LoadArr` keyed by a runtime register.
+#[test]
+fn fn_witness_lift_sha256k_constant_table() {
+    use ir_forge::types::CircuitNode;
+    use memory::field::FieldFamily;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_sha256k_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("sha256k lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(FieldFamily::BnLike256))
+        .expect("sha256k payload must decode and validate");
+
+    let mut seen_alloc = false;
+    let mut seen_load = false;
+    for instr in &prog.body {
+        match instr {
+            artik::Instr::AllocArray { .. } => seen_alloc = true,
+            artik::Instr::LoadArr { .. } => seen_load = true,
+            _ => {}
+        }
+    }
+    assert!(
+        seen_alloc,
+        "expected AllocArray for the 4-entry K table backing"
+    );
+    assert!(seen_load, "expected LoadArr for the runtime-indexed read");
+
+    // Execute with idx=0..3 and confirm the table lookup reproduces
+    // the SHA-256 first-four round constants.
+    const K: [u64; 4] = [0x428a2f98, 0x71374491, 0xb5c0fbcf, 0xe9b5dba5];
+    type FE = FieldElement<Bn254Fr>;
+    for (i, expected) in K.iter().enumerate() {
+        let signals = [FE::from_u64(i as u64)];
+        let mut slots = [FE::zero()];
+        let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&signals, &mut slots);
+        artik::execute(&prog, &mut ctx).expect("execute sha256K_tiny");
+        assert_eq!(
+            slots[0],
+            FE::from_u64(*expected),
+            "K[{i}] mismatch: got {:?}, expected {:#010x}",
             slots[0],
             expected,
         );
