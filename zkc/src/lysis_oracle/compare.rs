@@ -1,14 +1,12 @@
 //! `semantic_equivalence` — decide whether two `IrProgram<F>` describe
 //! the same circuit.
 //!
-//! The oracle is the Phase 3 correctness safety net: it compares the
-//! output of the legacy `ir_forge::instantiate` path against the
-//! output of the Lysis lifter for a growing set of fixtures. Any
-//! deviation surfaces as a concrete `OracleResult` variant — the CI
-//! matrix reads these to decide whether a Lysis change is safe to
-//! merge.
+//! Originally the A/B safety net for the Lysis migration; the
+//! canonicalization primitives are now also reused by the
+//! frozen-baseline regression machinery in `crate::test_support`.
+//! Any deviation surfaces as a concrete `OracleResult` variant.
 //!
-//! The full pipeline is four steps (RFC §9.1):
+//! The full pipeline is four steps:
 //!
 //! 1. **Canonicalize**. Rename SsaVars to their visitation index in
 //!    both programs (`ir::passes::canonicalize_ssa`). Defensive —
@@ -169,10 +167,9 @@ where
     OracleResult::Equivalent
 }
 
-// Canonicalization primitives moved to `crate::test_support` in Phase 2.B
-// so the same logic backs both this oracle (pending delete in Phase 2.A
-// once cross-path baselines migrate to frozen mode in Phase 2.C) and
-// the frozen-baseline pins. Re-imported above.
+// Canonicalization primitives live in `crate::test_support` so the
+// same logic backs both this oracle and the frozen-baseline pins.
+// Re-imported above.
 
 #[cfg(test)]
 mod tests {

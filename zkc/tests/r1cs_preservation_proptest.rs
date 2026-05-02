@@ -1,11 +1,11 @@
 //! Property-based test: `optimize_r1cs` preserves satisfying-assignment
-//! semantics (Phase 0.2.D).
+//! semantics.
 //!
-//! ## The narrowed property (advisor §2b)
+//! ## The property
 //!
-//! Closeout's original framing — "pre-O1 multiset = post-O1 multiset
-//! modulo elimination" — is wrong; multiset equality fails by
-//! definition (the optimizer eliminates constraints).
+//! "Pre-O1 multiset = post-O1 multiset modulo elimination" is too
+//! strong — multiset equality fails by definition (the optimizer
+//! eliminates constraints).
 //!
 //! The genuine property is the CompCert-style two-sided simulation
 //! (Leroy, CACM 2009):

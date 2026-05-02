@@ -1,22 +1,19 @@
-//! Phase 2.B — Frozen-baseline smoke pins.
+//! Frozen-baseline smoke pins.
 //!
 //! Validates the `zkc::test_support::compute_frozen_baseline` machinery
 //! by pinning canonical-multiset hashes for three small `.ach` circuits.
 //! These are smoke tests for the helper plumbing — the main pinning
-//! work for the 11 circomlib benchmark templates + 34 prove-block
-//! fixtures lives in `circom/tests/cross_path_baseline.rs` (Phase 2.C).
+//! work for the circomlib benchmark templates + prove-block fixtures
+//! lives in `circom/tests/cross_path_baseline.rs` and
+//! `cli/tests/cross_path_prove_baseline.rs`.
 //!
-//! ## Why pin smoke fixtures here vs only in Phase 2.C
+//! ## Why pin smoke fixtures here too
 //!
-//! Two reasons:
-//! 1. The `test_support` helpers themselves need a regression gate —
-//!    if `compute_frozen_baseline` ever changes its hash derivation
-//!    (e.g., a refactor of `canonical_multiset_hash`'s byte layout),
-//!    these smoke pins surface it before Phase 2.C's bigger fixture
-//!    set has to re-pin.
-//! 2. Phase 2.C inherits machinery validated here. If 2.C pins fail
-//!    on day one, we know the machinery (not the fixtures) is at
-//!    fault.
+//! The `test_support` helpers themselves need a regression gate —
+//! if `compute_frozen_baseline` ever changes its hash derivation
+//! (e.g., a refactor of `canonical_multiset_hash`'s byte layout),
+//! these smoke pins surface it before the larger fixture set has
+//! to re-pin.
 //!
 //! ## Re-generating pinned values
 //!
