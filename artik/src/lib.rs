@@ -56,9 +56,8 @@ pub use header::ArtikHeader;
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
 pub use program::{FieldConstEntry, Program};
 
-/// Forward-compat aliases. `Program` and `ProgramBuilder` collide
-/// with `lysis::Program` / `lysis::ProgramBuilder`; the post-cleanup
-/// rename (see `.claude/plans/structural-cleanup.md` §10 D5)
-/// disambiguates both crates. Use these names in new code.
+/// Disambiguating aliases. `Program` and `ProgramBuilder` collide
+/// with `lysis::Program` / `lysis::ProgramBuilder` when both crates
+/// are imported into the same scope. Prefer these names in new code.
 pub type ArtikProgram = Program;
 pub type ArtikProgramBuilder = ProgramBuilder;
