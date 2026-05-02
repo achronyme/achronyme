@@ -1,10 +1,11 @@
 //! Lift a circom function body into Artik witness bytecode.
 //!
-//! This is the replacement for the E212 "cannot be circuit-inlined"
-//! diagnostic at [`expressions::calls`]: instead of rejecting every
-//! function call with runtime-signal arguments and a non-trivial body, we
-//! attempt to compile the body to Artik bytecode and return a
-//! [`CircuitNode::WitnessCall`] to the caller.
+//! The lift returns a [`LiftedWitnessCall`] that the caller emits as
+//! [`CircuitNode::WitnessCall`] instead of failing with the
+//! "cannot be circuit-inlined" E212 diagnostic at
+//! [`expressions::calls`] for runtime-signal arguments. Function calls
+//! with runtime-signal arguments and a non-trivial body are compiled
+//! to Artik bytecode that runs at witness-generation time.
 //!
 //! ## Submodules
 //!
