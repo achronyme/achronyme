@@ -1,18 +1,19 @@
-//! Module graph builder — Movimiento 2 Phase 3B.
+//! Module graph builder.
 //!
 //! Walks a `.ach` source tree starting from a root file, loading every
 //! transitively-imported module exactly once and recording the import
 //! edges. The result is a [`ModuleGraph`] with nodes sorted in reverse
-//! topological order (dependencies before dependents) that Phase 3C
-//! will use to populate the [`SymbolTable`](crate::table::SymbolTable).
+//! topological order (dependencies before dependents); the annotate
+//! pass uses this ordering to populate the
+//! [`SymbolTable`](crate::table::SymbolTable).
 //!
-//! ## What this does *not* do (yet)
+//! ## What this does *not* do
 //!
 //! - No symbol resolution. Identifiers inside each module's AST remain
-//!   name-based until Phase 3C's annotate pass runs.
+//!   name-based until the annotate pass runs.
 //! - No bytecode emission. The legacy
-//!   `compiler/src/statements/mod.rs:compile_import` stays authoritative
-//!   until Phase 6 cleanup; Phase 3B is pure addition.
+//!   `compiler/src/statements/mod.rs:compile_import` is still
+//!   authoritative for import lowering; this builder is pure addition.
 //! - No circom-library handling. `import circuit "…"` statements are
 //!   ignored here — circom libraries live in the VM compiler's own
 //!   `CircomLibraryRegistry` and will be folded into the resolver only
@@ -24,7 +25,7 @@
 //! [`ModuleSource`] trait. Real use wires it to `ir::ModuleLoader` via
 //! a thin adapter; tests use an in-memory mock. Keeping the trait here
 //! means `resolve/` still has only one downstream dep
-//! (`achronyme-parser`), respecting the Phase 1 dep barrier.
+//! (`achronyme-parser`), respecting the dep barrier.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -37,15 +38,14 @@ use crate::error::ResolveError;
 ///
 /// Assigned in reverse topological order — a module's id is always
 /// **larger** than the ids of the modules it imports, because leaves
-/// are pushed to the node vector first during the DFS load. Phase 3C
-/// exploits this: iterating `0..graph.len()` yields each module with
-/// all of its dependencies already available in the
+/// are pushed to the node vector first during the DFS load. The
+/// annotate pass exploits this: iterating `0..graph.len()` yields each
+/// module with all of its dependencies already available in the
 /// [`SymbolTable`](crate::table::SymbolTable).
 ///
 /// Ids are stable within one graph and **not** comparable across
 /// graphs. They are not `SymbolId`s — those come from the resolver
-/// pass in Phase 3C and reference individual fns / lets, not whole
-/// modules.
+/// pass and reference individual fns / lets, not whole modules.
 #[derive(Copy, Clone, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
 pub struct ModuleId(u32);
 
@@ -97,7 +97,7 @@ pub struct ImportEdge {
     /// Namespace vs selective import.
     pub kind: ImportEdgeKind,
     /// Source span of the import statement that produced this edge —
-    /// used for diagnostics during Phase 3C annotation.
+    /// used for diagnostics during annotation.
     pub span: Span,
 }
 
@@ -107,7 +107,7 @@ pub struct ImportEdge {
 pub enum ImportEdgeKind {
     /// `import "path" as alias` — the whole module is exposed as a
     /// namespace under `alias`. Calls land via `alias::name` or
-    /// `alias.name` (Phase 3C handles both).
+    /// `alias.name` (the annotate pass handles both).
     Namespace,
     /// `import { a, b, c } from "path"` — individual names are
     /// copied into the importer's scope. The `names` vector is the
@@ -235,7 +235,7 @@ impl ModuleGraph {
     }
 
     /// Iterate over every module in reverse-topological order —
-    /// dependencies first. Phase 3C's annotate pass consumes this.
+    /// dependencies first. The annotate pass consumes this.
     pub fn iter(&self) -> impl Iterator<Item = &ModuleNode> {
         self.nodes.iter()
     }

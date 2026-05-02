@@ -6,7 +6,7 @@
 //! deduplicated DAG of `InstructionKind<F>`; the backend expects a
 //! flat `Vec<Instruction<F>>`. The two steps combined — consume the
 //! interner, flatten to the mirror enum, convert each node through
-//! the bridge — are what the Phase 3 lifter uses to close the
+//! the bridge — are what the lifter uses to close the
 //! `ProveIR-extended → ... → ir::Instruction<F>` pipeline.
 //!
 //! ## Memory handoff (RFC §5.6.1 route (c))

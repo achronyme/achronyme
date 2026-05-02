@@ -1,10 +1,10 @@
-//! Availability inference — Movimiento 2 Phase 4.
+//! Availability inference.
 //!
 //! Walks the call graph derived from the annotation pass and infers
 //! [`Availability`] for every [`CallableKind::UserFn`] in the
 //! [`SymbolTable`]. The result tells the VM compiler which functions
 //! to skip (ProveIr-only) and the ProveIR compiler which functions
-//! to reject (Vm-only), killing gap 1.2.
+//! to reject (Vm-only).
 //!
 //! ## Algorithm
 //!

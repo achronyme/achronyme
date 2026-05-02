@@ -3,10 +3,10 @@
 //!
 //! Two implementations:
 //!
-//! - [`crate::execute::StubSink`] (Phase 1) keeps every emission in a
-//!   plain `Vec<InstructionKind<F>>`, no dedup. Still used by tests
-//!   and benchmarks to measure the "no hash-consing" baseline.
-//! - [`crate::execute::InterningSink`] (Phase 2) is backed by a real
+//! - [`crate::execute::StubSink`] keeps every emission in a plain
+//!   `Vec<InstructionKind<F>>`, no dedup. Used by tests and
+//!   benchmarks to measure the "no hash-consing" baseline.
+//! - [`crate::execute::InterningSink`] is backed by a real
 //!   [`NodeInterner<F>`]. Pure ops that intern to the same
 //!   [`NodeKey<F>`] collapse to a single entry; side-effects flow
 //!   through a separate ordered channel that never dedups.
@@ -41,11 +41,11 @@ pub trait IrSink<F: FieldBackend> {
     fn fresh_id(&mut self) -> NodeId;
 
     /// Record an emitted instruction without interning. Kept so the
-    /// Phase 1 executor path (which mints a fresh id via `fresh_id`
+    /// legacy executor path (which mints a fresh id via `fresh_id`
     /// and then calls `emit` with the id embedded in `kind`) continues
     /// to compile while the dispatch loop is migrated to
-    /// [`Self::intern_pure`] / [`Self::emit_effect`] in a follow-up
-    /// commit. Scheduled for removal once the migration lands.
+    /// [`Self::intern_pure`] and [`Self::emit_effect`]. Scheduled for
+    /// removal once the migration is complete.
     fn emit(&mut self, kind: InstructionKind<F>);
 
     /// Intern a pure instruction.
@@ -59,9 +59,10 @@ pub trait IrSink<F: FieldBackend> {
     /// The `result` field of `kind` is ignored — the sink chooses the
     /// id. Implementors may `debug_assert!(!kind.is_side_effect())`.
     ///
-    /// Default implementation routes through `fresh_id` + `emit` with
-    /// the new id stamped in — that's Phase 1 semantics (no dedup).
-    /// `InterningSink` overrides this to do real hash-consing.
+    /// Default implementation routes through `fresh_id` plus `emit`
+    /// with the new id stamped in — no-dedup semantics, matching
+    /// `StubSink`. `InterningSink` overrides this to do real
+    /// hash-consing.
     fn intern_pure(&mut self, kind: InstructionKind<F>) -> NodeId {
         debug_assert!(
             !kind.is_side_effect(),

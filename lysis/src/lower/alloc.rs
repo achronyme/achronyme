@@ -8,21 +8,22 @@
 //!
 //! ## Strategy
 //!
-//! Phase 3 uses a **bump allocator** — every [`RegAllocator::alloc`]
-//! returns the next monotonically-increasing id and bumps the high
-//! water mark. Registers are never reused within a body.
+//! The current implementation is a **bump allocator** — every
+//! [`RegAllocator::alloc`] returns the next monotonically-increasing
+//! id and bumps the high water mark. Registers are never reused
+//! within a body.
 //!
 //! This is conservative: the true minimum frame size (maximum
 //! simultaneous live registers) is always ≤ the bump count. The
 //! downside is slightly larger frame_size values than a liveness-
-//! aware allocator would produce. Phase 4 can tighten with a proper
-//! linear-scan pass; the `release` hook is here so the switch-over
+//! aware allocator would produce. A future linear-scan pass can
+//! tighten the result; the `release` hook is here so the switch-over
 //! is API-compatible.
 //!
 //! ## Dep-direction note
 //!
 //! This module stays `ir`-free on purpose: `lysis` is the leaf crate,
-//! and the Phase 3.A bridge already uses `ir → lysis` direction. The
+//! and the lift bridge runs in the `ir → lysis` direction. The
 //! companion `compute_frame_size` that walks an
 //! `ir::ExtendedInstruction` body lives under
 //! `ir/src/prove_ir/lysis_lower/` with the rest of the lifter.
@@ -72,8 +73,8 @@ pub struct RegAllocator {
     /// Next slot to hand out (monotonic under bump allocation).
     next: u32,
     /// High water mark — the largest `next` value ever reached. Equal
-    /// to `next` under pure bump allocation; kept separate so Phase 4
-    /// reuse doesn't lose the peak.
+    /// to `next` under pure bump allocation; kept separate so a
+    /// future liveness-aware reuse pass doesn't lose the peak.
     max_used: u32,
 }
 
@@ -123,12 +124,12 @@ impl RegAllocator {
 
     /// Release a register so a future `alloc` can reuse it.
     ///
-    /// **Phase 3: no-op.** The hook exists so Phase 4's liveness-aware
-    /// allocator can slot in without rewriting call sites. Today the
-    /// allocator grows monotonically; release makes no observable
-    /// change.
+    /// **Currently a no-op.** The hook exists so a future
+    /// liveness-aware allocator can slot in without rewriting call
+    /// sites. Today the allocator grows monotonically; release makes
+    /// no observable change.
     pub fn release(&mut self, _reg: RegId) {
-        // Intentionally empty — see module docs and Phase 4 roadmap.
+        // Intentionally empty — see module docs.
     }
 
     /// Drop all state and restart at `r0`. Used when the same
@@ -159,11 +160,11 @@ impl RegAllocator {
     /// [`Self::frame_size`] reports the true maximum the body ever
     /// needed even if intermediate scopes restored.
     ///
-    /// Used by Gap 1 Stage 3's per-iteration walker unrolling: each
-    /// iteration restores to the pre-body checkpoint, re-emits with
-    /// fresh bindings, and lets the same body-internal slots be
-    /// reused across iterations rather than ballooning the frame
-    /// past the 255-slot cap.
+    /// Used by the walker's per-iteration unrolling: each iteration
+    /// restores to the pre-body checkpoint, re-emits with fresh
+    /// bindings, and lets the same body-internal slots be reused
+    /// across iterations rather than ballooning the frame past the
+    /// 255-slot cap.
     pub fn checkpoint(&self) -> u32 {
         self.next
     }
@@ -239,7 +240,7 @@ mod tests {
     }
 
     #[test]
-    fn release_is_a_noop_in_phase3() {
+    fn release_is_a_noop_under_bump_alloc() {
         let mut a = RegAllocator::new();
         let r = a.alloc().unwrap();
         a.release(r);

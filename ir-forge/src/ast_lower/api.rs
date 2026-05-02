@@ -10,12 +10,12 @@
 //!   circuit entries; runs the actual `compile_block_stmts` after
 //!   pre-loading outer scope, fns, and (optionally) resolver state.
 //! - [`compile_circuit`] — circuit-mode entry (file-based, supports
-//!   imports + `circuit { … }` blocks). Runs the M2 Phase 6E
-//!   resolver-state path when the source parses cleanly.
-//! - [`try_build_circuit_resolver_state`] — Phase 3G helper that
-//!   builds the (state, dispatch_by_symbol, module_by_key) bundle
-//!   from a parsed source + source dir. Returns `None` on any build
-//!   error so the caller can fall back to the legacy path.
+//!   imports + `circuit { … }` blocks). Runs the resolver-state path
+//!   when the source parses cleanly.
+//! - [`try_build_circuit_resolver_state`] — helper that builds the
+//!   (state, dispatch_by_symbol, module_by_key) bundle from a parsed
+//!   source + source dir. Returns `None` on any build error so the
+//!   caller can fall back to the legacy path.
 //! - [`compile_prove_block`] — prove-block entry (string-based, no
 //!   imports). Used by the .ach inline `prove { … }` lowering.
 //!
@@ -48,12 +48,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     }
 
     /// Like [`compile`] but also returns the resolver shadow-hit
-    /// trace that was recorded during the walk. Phase 3E.1 consumers
-    /// (integration tests under `ir/tests/prove_ir_resolver_dispatch.rs`)
-    /// use this to verify that the annotation-driven dispatch points
-    /// at the same symbol the legacy env/fn_table lookup is about to
-    /// pick. Not used by the production pipeline — the hit trace is
-    /// observation only until Phase 3E.2 flips dispatch.
+    /// trace that was recorded during the walk. Integration tests
+    /// (under `ir/tests/prove_ir_resolver_dispatch.rs`) use this to
+    /// verify that the annotation-driven dispatch points at the same
+    /// symbol the legacy env/fn_table lookup is about to pick. Not
+    /// used by the production pipeline — the hit trace is observation
+    /// only.
     pub fn compile_with_trace(
         block: &Block,
         outer_scope: &OuterScope,
@@ -202,14 +202,13 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     /// Convenience: parse source and compile as a self-contained circuit.
     ///
-    /// Movimiento 2 Phase 3G: if `source_path` is set and the
-    /// resolver's module-graph build succeeds, we pre-populate the
-    /// ProveIR compiler's `fn_table` from the full graph (every
-    /// transitively-reachable [`CallableKind::UserFn`]), precompute
-    /// the dispatch maps, and install the resolver state alongside.
-    /// This gives standalone circuit compiles the same cross-module
-    /// reach as the VM compiler's prove-block path, killing gap 2.4
-    /// in circuit mode as well.
+    /// If `source_path` is set and the resolver's module-graph build
+    /// succeeds, we pre-populate the ProveIR compiler's `fn_table`
+    /// from the full graph (every transitively-reachable
+    /// [`CallableKind::UserFn`]), precompute the dispatch maps, and
+    /// install the resolver state alongside. This gives standalone
+    /// circuit compiles the same cross-module reach as the VM
+    /// compiler's prove-block path.
     ///
     /// When the resolver auto-build fails (no source_path, unreadable
     /// transitive imports, etc.) the legacy path runs unchanged: the
@@ -228,11 +227,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             return Err(ProveIrError::ParseError(Box::new(errors[0].clone())));
         }
 
-        // Phase 3G: try to build the resolver state and dispatch
-        // maps upfront. Requires source_path so we can compute a
-        // base directory for transitive imports. Silently fails
-        // (returning None) if any step errors — the legacy path is
-        // always a valid fallback.
+        // Try to build the resolver state and dispatch maps upfront.
+        // Requires source_path so we can compute a base directory
+        // for transitive imports. Silently fails (returning None) if
+        // any step errors — the legacy path is always a valid
+        // fallback.
         let source_dir = source_path.and_then(|p| p.parent().map(|d| d.to_path_buf()));
         let canonical_source = source_path.and_then(|p| p.canonicalize().ok());
         let resolver_bundle = Self::try_build_circuit_resolver_state(&program, source_dir.clone());
@@ -330,11 +329,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 }
             }
 
-            // Phase 3G: if the resolver auto-build succeeded, swap
-            // the legacy outer_functions list for a graph-driven
-            // one (every transitive UserFn renamed to its fn_table
-            // key) and attach the resolver state so the ProveIR
-            // compiler's annotation path fires for dispatch.
+            // If the resolver auto-build succeeded, swap the legacy
+            // outer_functions list for a graph-driven one (every
+            // transitive UserFn renamed to its fn_table key) and
+            // attach the resolver state so the ProveIR compiler's
+            // annotation path fires for dispatch.
             let (functions_for_scope, resolver_state_for_scope) = match resolver_bundle {
                 Some(bundle) => {
                     let graph_functions =
@@ -388,8 +387,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    /// Phase 3G helper: attempt to build a resolver state from a
-    /// parsed circuit-file program and its source directory.
+    /// Attempt to build a resolver state from a parsed circuit-file
+    /// program and its source directory.
     ///
     /// Returns `Some(ResolverBundle)` on success or `None` on any
     /// failure (missing source_dir, graph build error, etc.) so
@@ -425,7 +424,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         // The root is served from the already-parsed program via the
         // in-memory-root override (no re-parsing). Transitive imports
         // fall through to the loader, which canonicalizes against
-        // source_dir via the Phase 3F adapter fix.
+        // source_dir.
         let root_path = std::path::PathBuf::from("<resolve-in-memory-root>");
         let mut local_loader = crate::module_loader::ModuleLoader::new();
         let mut source = crate::resolver_adapter::ModuleLoaderSource::with_root(
@@ -444,7 +443,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
         })
     }
 
-    // Phase 6E: `outer_functions_from_graph` moved to
+    // `outer_functions_from_graph` lives at
     // `resolve::build::build_outer_functions`.
 
     /// Convenience: parse source and compile as a prove block with outer scope.

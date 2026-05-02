@@ -16,9 +16,9 @@ use crate::module_graph::{ModuleGraph, ModuleNode};
 use crate::symbol::SymbolId;
 use crate::table::SymbolTable;
 
-/// What flavour of local binding a name represents. Enables Phase
-/// 3C.3's FnAlias + prove-block shape diagnostics — the walker stores
-/// extra metadata alongside the shadow set so later call sites can
+/// What flavour of local binding a name represents. Enables the
+/// FnAlias + prove-block shape diagnostics — the walker stores extra
+/// metadata alongside the shadow set so later call sites can
 /// re-classify references without re-walking the RHS.
 #[derive(Clone, Debug)]
 pub(super) enum LocalKind {
@@ -27,12 +27,12 @@ pub(super) enum LocalKind {
     Plain,
     /// `let a = p::fn` where the RHS const-resolved at annotation
     /// time to a single fn-valued [`SymbolId`]. Subsequent references
-    /// to `a` annotate directly to the target — Phase 3D/3E dispatch
-    /// through the target without ever creating a
+    /// to `a` annotate directly to the target — the downstream
+    /// compilers dispatch through the target without ever creating a
     /// [`CallableKind::FnAlias`](crate::symbol::CallableKind::FnAlias)
-    /// entry in the table (the plan-doc version lives in the table,
-    /// but the annotation-map approach gives both backends the same
-    /// observable behaviour with no extra mutation cost).
+    /// entry in the table (encoding the alias on the annotation map
+    /// instead gives both backends the same observable behaviour with
+    /// no extra mutation cost).
     Alias(SymbolId),
     /// `let a = if c { f } else { g }` where both branches const-
     /// resolve to fn symbols — a dynamic fn value. Calling `a()`
@@ -57,9 +57,9 @@ pub(super) struct AnnotateCtx<'a> {
     /// to look up the current module's own symbols in [`SymbolTable`].
     pub(super) prefix: String,
     pub(super) annotations: &'a mut HashMap<AnnotationKey, SymbolId>,
-    /// Accumulated diagnostics. Phase 3C.3 only pushes
-    /// [`ResolveError::ProveBlockUnsupportedShape`] variants; later
-    /// phases may add more.
+    /// Accumulated diagnostics. The walker currently only pushes
+    /// [`ResolveError::ProveBlockUnsupportedShape`] variants; future
+    /// extensions may add more.
     pub(super) diagnostics: &'a mut Vec<ResolveError>,
     /// Stack of lexical scopes. Each entry binds a name to its
     /// [`LocalKind`]; inner layers shadow outer layers. At module top

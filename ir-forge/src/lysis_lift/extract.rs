@@ -22,14 +22,14 @@
 //!
 //! - **Canonical bytecode hash-based dedup**: RFC §6.2 mentions
 //!   deduplicating two templates whose emitted bytecode is byte-
-//!   identical. Phase 3 allocates a fresh id for every extraction
-//!   instead; Phase 4 will hash the emitted bytecode and merge
-//!   matches. This is a size-not-correctness optimization — a pair
-//!   of redundant templates just costs extra metadata, they don't
-//!   produce wrong constraints.
+//!   identical. The current pass allocates a fresh id for every
+//!   extraction instead; a future pass will hash the emitted
+//!   bytecode and merge matches. This is a size-not-correctness
+//!   optimization — a pair of redundant templates just costs extra
+//!   metadata, they don't produce wrong constraints.
 //! - **True liveness-based frame sizing**: we over-allocate today
-//!   (one slot per producing node). Phase 4 does linear-scan
-//!   liveness.
+//!   (one slot per producing node). A future pass will do
+//!   linear-scan liveness.
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
@@ -213,9 +213,9 @@ impl<F: FieldBackend> TemplateSpec<F> {
 /// Registry that hands out fresh [`TemplateId`]s and stores the
 /// skeleton + metadata for each.
 ///
-/// Phase 3 has no structural dedup — every `extract_template` call
-/// allocates a fresh id. Phase 4 will add canonical-bytecode dedup
-/// as an optimization (see module docs).
+/// The current pass has no structural dedup — every
+/// `extract_template` call allocates a fresh id. A future pass will
+/// add canonical-bytecode dedup as an optimization (see module docs).
 #[derive(Debug, Clone)]
 pub struct TemplateRegistry<F: FieldBackend> {
     specs: HashMap<TemplateId, TemplateSpec<F>>,
@@ -322,8 +322,9 @@ pub fn extract_template<F: FieldBackend>(
 //   frame, with `walker_const[iter_var]` populated by the local
 //   iter_var. No runtime-indexed memory ops needed.
 // - Multiple Uniform loops with identical skeletons can share a
-//   template body via Phase 4 dedup (today every lift gets a fresh
-//   id; Phase 4 will hash bytecode and merge matches).
+//   template body via canonical-bytecode dedup (today every lift
+//   gets a fresh id; a future pass will hash bytecode and merge
+//   matches).
 
 /// Walk `body` bottom-up; replace each Uniform `LoopUnroll` with a
 /// `TemplateBody` + `TemplateCall` pair allocated in `registry`. Loops
@@ -436,7 +437,7 @@ fn lift_one<F: FieldBackend>(
                         // loop inline as if it had classified
                         // `DataDependent`. The walker's per-iter
                         // unroll path handles wide bodies via the
-                        // top-level `do_split` mechanism (Phase 1.5).
+                        // top-level `do_split` mechanism.
                         // Other lift errors (e.g.
                         // `TemplateSpaceExhausted`) are real failures
                         // and propagate.
@@ -487,7 +488,7 @@ fn lift_uniform_to_template<F: FieldBackend>(
     // own LoopUnroll arm allocates the actual iter_var slot at
     // emission time inside the template frame — that consumes one
     // additional slot, so reserve it here. This is over-approximate
-    // (live-set frame sizing is Phase 4) but tight enough that
+    // (true live-set frame sizing is future work) but tight enough that
     // SHA-256-shaped bodies fit within `MAX_FRAME_SIZE = 255`.
     let layout = CaptureLayout {
         entries: outer_refs
@@ -868,10 +869,10 @@ mod tests {
 
     #[test]
     fn lift_single_iteration_loop_stays_as_unroll() {
-        // BTA short-circuits `iterations < 2` to `DataDependent`
-        // (bta.rs Phase 3 v1.1). A `0..1` loop therefore never gets a
-        // template; it stays inline as a LoopUnroll. Verifies the
-        // DataDependent branch of the lift dispatch.
+        // BTA short-circuits `iterations < 2` to `DataDependent`.
+        // A `0..1` loop therefore never gets a template; it stays
+        // inline as a LoopUnroll. Verifies the DataDependent branch
+        // of the lift dispatch.
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::LoopUnroll {
             iter_var: ssa(0),
             start: 0,
@@ -976,8 +977,8 @@ mod tests {
     #[test]
     fn lift_independent_loops_get_distinct_template_ids() {
         // Two sibling Uniform loops should produce two TemplateBodies
-        // with different ids. (Phase 3 has no dedup; Phase 4 will hash
-        // skeletons and merge structurally identical ones.)
+        // with different ids. (No structural dedup yet; a future pass
+        // will hash skeletons and merge structurally identical ones.)
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![
             ExtendedInstruction::LoopUnroll {
                 iter_var: ssa(0),
@@ -1038,7 +1039,7 @@ mod tests {
         };
         let a = extract_template(&s1, &k1, &mut reg).unwrap();
         let b = extract_template(&s2, &k2, &mut reg).unwrap();
-        // Phase 3 doesn't dedup — even identical bodies get distinct ids.
+        // No structural dedup — even identical bodies get distinct ids.
         assert_ne!(a.id, b.id);
         assert_eq!(reg.len(), 2);
     }

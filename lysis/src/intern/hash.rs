@@ -5,7 +5,7 @@
 //! hashes for identical input — `std::collections::hash_map::RandomState`
 //! is seeded per-process and would make the `NodeMeta.hash` field
 //! differ between runs even on structurally identical DAGs, which
-//! breaks the determinism test that Phase 2 gates on.
+//! breaks the determinism the interner contract relies on.
 //!
 //! The key is not a secret. It's a salt that binds this particular
 //! interner to a stable hash space. Changing it would invalidate any

@@ -1265,9 +1265,9 @@ fn for_over_array_with_carry_eager_unrolls() {
 
 #[test]
 fn for_with_dynamic_bound_and_carry_rejected() {
-    // Phase 1.B fix invariant: dynamic bound (`0..n`) combined with a
-    // mutable accumulator can't be statically eager-unrolled at lower
-    // time, so the predicate forces a clear diagnostic instead of the
+    // Invariant: dynamic bound (`0..n`) combined with a mutable
+    // accumulator can't be statically eager-unrolled at lower time,
+    // so the predicate forces a clear diagnostic instead of the
     // silent miscompile that the rolled path would produce. Mirrors
     // Noir / Leo / Zokrates rejecting non-constant loop bounds.
     let err = compile_prove_block(
@@ -1324,13 +1324,13 @@ fn block_expr() {
 
 #[test]
 fn for_with_accumulator_circuit() {
-    // Realistic pattern: accumulate witness array values. Post Phase 1.B
-    // fix, the carry-set predicate detects `sum` as an outer mut written
-    // in the body and eager-unrolls — no `CircuitNode::For` should
-    // survive. Each iter's `sum$vK` Let chains through env to the prior
-    // iter's output, so the constraint multiset reflects a real four-step
-    // accumulator (not the silent `sum$v1` collision the rolled path
-    // would produce).
+    // Realistic pattern: accumulate witness array values. The
+    // carry-set predicate detects `sum` as an outer mut written in
+    // the body and eager-unrolls — no `CircuitNode::For` should
+    // survive. Each iter's `sum$vK` Let chains through env to the
+    // prior iter's output, so the constraint multiset reflects a
+    // real four-step accumulator (not the silent `sum$v1` collision
+    // the rolled path would produce).
     let ir = compile_circuit(
         "public total\n\
          witness vals[4]\n\
@@ -1882,8 +1882,9 @@ fn outer_scope_fn_overridden_by_local() {
 fn dynamic_loop_bound_capture() {
     // `for i in 0..n` where n is a capture from outer scope. Body has
     // no mut accumulator, so the rolled `WithCapture` path is preserved
-    // (instantiation resolves n from captures). Phase 1.B fix only
-    // diverts to eager-unroll when a carry-set is detected.
+    // (instantiation resolves n from captures). The carry-set
+    // detection only diverts to eager-unroll when a carry-set is
+    // present.
     let outer = OuterScope {
         values: [
             ("n", OuterScopeEntry::Scalar),
@@ -2022,7 +2023,7 @@ fn indexed_assignment_scalar_rejected() {
     );
 }
 
-// --- Circom interop: circom_table registration (Phase 3.1) ---
+// --- Circom interop: circom_table registration ---
 
 mod circom_table {
     use super::super::*;
@@ -2148,7 +2149,7 @@ mod circom_table {
     }
 }
 
-// --- Circom interop: compile_call dispatch (Phase 3.3) ---
+// --- Circom interop: compile_call dispatch ---
 
 mod circom_dispatch {
     use super::super::*;
@@ -2427,7 +2428,7 @@ mod circom_dispatch {
         );
     }
 
-    // --- Phase 3.4: let-binding + DotAccess ---
+    // --- let-binding + DotAccess ---
 
     /// Parse source as a Block and compile through compile_block_stmts.
     /// Useful for tests that need a let + dot-access sequence.
@@ -2615,7 +2616,7 @@ mod circom_dispatch {
         assert!(!compiler.env.contains_key("r"));
     }
 
-    // --- Phase 3.5: structured diagnostics ---
+    // --- structured diagnostics ---
 
     #[test]
     fn unknown_template_name_with_near_match_suggests_did_you_mean() {

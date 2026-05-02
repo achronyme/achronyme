@@ -1,12 +1,12 @@
 //! Bytecode: opcode enum + decoder + validator.
 //!
-//! Phase 1 delivers:
+//! Components:
 //!
-//! - [`opcode::Opcode`] — all 29 Lysis opcodes (RFC §4.3).
+//! - [`opcode::Opcode`] — all Lysis opcodes (RFC §4.3).
 //! - [`const_pool::ConstPool`] — the tagged constant pool (RFC §4.4).
 //! - [`encoding::encode`] / [`encoding::decode`] — round-trip the
 //!   whole program.
-//! - [`validate::validate`] — the 11 well-formedness rules (RFC §4.5).
+//! - [`validate::validate`] — the well-formedness rules (RFC §4.5).
 //!
 //! Downstream modules consume the decoded [`crate::program::Program`]
 //! and never touch raw bytes again.

@@ -279,9 +279,9 @@ fn display_with_for_loop() {
 
 #[test]
 fn display_with_for_loop_eager_unrolled() {
-    // Loop with a mut accumulator — Phase 1.B fix eager-unrolls at
-    // lower time, so no `CircuitNode::For` is in the IR. Display
-    // renders the inlined per-iter SSA chain instead.
+    // Loop with a mut accumulator — eager-unrolls at lower time, so
+    // no `CircuitNode::For` is in the IR. Display renders the
+    // inlined per-iter SSA chain instead.
     let ir = ir_forge::test_utils::compile_circuit(
         "public out\nmut acc = 0\nfor i in 0..3 { acc = acc + i }\nassert_eq(acc, out)",
     )

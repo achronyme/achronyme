@@ -1,5 +1,5 @@
-//! Phase 3C.1 register pass — populate the [`SymbolTable`] with one
-//! entry per top-level `fn` / exported `let` / builtin.
+//! Register pass — populate the [`SymbolTable`] with one entry per
+//! top-level `fn` / exported `let` / builtin.
 //!
 //! Runs **before** [`annotate_program`](super::annotate_program) so
 //! that per-expression annotation has a live symbol table to query.
@@ -25,17 +25,17 @@ use crate::table::SymbolTable;
 ///
 /// The symbol key is `"{alias}::{name}"` for non-root modules — where
 /// `alias` is the *canonical* module identifier, not the per-importer
-/// alias — and plain `"{name}"` for the root module. Phase 3E's
-/// annotate pass maps per-importer aliases onto these canonical keys.
+/// alias — and plain `"{name}"` for the root module. The annotate pass
+/// maps per-importer aliases onto these canonical keys.
 ///
 /// ## Key choice
 ///
-/// Phase 3C.1 uses `"modN::{name}"` (where `N = module.as_u32()`) for
-/// the non-root prefix because there is no single "canonical alias"
-/// yet — a module may be imported under many different aliases across
-/// the graph. The key just has to be unique per symbol; 3C.2 overlays
-/// a per-importer resolution map on top without needing this key to
-/// match anything user-facing.
+/// Non-root entries use `"modN::{name}"` (where `N = module.as_u32()`)
+/// because there is no single "canonical alias" — a module may be
+/// imported under many different aliases across the graph. The key just
+/// has to be unique per symbol; the per-expression walker overlays a
+/// per-importer resolution map on top without needing this key to match
+/// anything user-facing.
 pub fn register_module(
     table: &mut SymbolTable,
     graph: &ModuleGraph,
@@ -65,9 +65,9 @@ pub fn register_module(
                         qualified_name: qualified,
                         module: module_id,
                         stmt_index: idx as u32,
-                        // Phase 4 availability inference fills this in;
-                        // Phase 3C defaults to Both so both compilers
-                        // see every fn as a candidate.
+                        // The availability-inference pass narrows this
+                        // later; we default to Both so both compilers
+                        // see every fn as a candidate until then.
                         availability: Availability::Both,
                     },
                 );
@@ -81,9 +81,9 @@ pub fn register_module(
                 }
                 // Only *exported* lets become module-level
                 // `Constant` symbols. Private lets are local to the
-                // module body and don't need a SymbolTable entry
-                // (Phase 3C.2's per-expression walker handles them
-                // via its lexical scope).
+                // module body and don't need a SymbolTable entry —
+                // the per-expression walker handles them via its
+                // lexical scope.
                 if !is_exported(stmt) {
                     continue;
                 }
@@ -92,9 +92,9 @@ pub fn register_module(
                     qualified.clone(),
                     CallableKind::Constant {
                         qualified_name: qualified,
-                        // Phase 3C.1 can't infer the const kind without
-                        // evaluating the RHS; default to Field and
-                        // leave a TODO for Phase 6 when the constant
+                        // We can't infer the const kind here without
+                        // evaluating the RHS; default to Field. Refining
+                        // this is left as a TODO for when the constant
                         // store lands.
                         const_kind: ConstKind::Field,
                         value_handle: 0,
@@ -110,9 +110,9 @@ pub fn register_module(
 
 /// Convenience wrapper: register every module in the graph in
 /// reverse-topological order (the order [`ModuleGraph::iter_ids`]
-/// yields). Dependencies always register before dependents, so a
-/// Phase 3C.2 annotate pass can already see its imports in the table
-/// by the time it walks its own module.
+/// yields). Dependencies always register before dependents, so the
+/// annotate pass can already see its imports in the table by the time
+/// it walks its own module.
 pub fn register_all(table: &mut SymbolTable, graph: &ModuleGraph) -> Result<(), ResolveError> {
     for id in graph.iter_ids() {
         register_module(table, graph, id)?;
@@ -130,13 +130,13 @@ pub fn register_all(table: &mut SymbolTable, graph: &ModuleGraph) -> Result<(), 
 /// [`annotate_program`](super::annotate_program) simply won't emit
 /// annotations for builtin names in that case.
 ///
-/// ## Name-collision policy (Phase 3C.2)
+/// ## Name-collision policy
 ///
 /// Builtins go in under their bare name. If a root module also declares
 /// `fn poseidon() {...}`, the later [`register_module`] call will panic
-/// on duplicate insert. Phase 3C.3+ will refine the shadowing story
-/// (either reject user shadowing with a diagnostic or let it win).
-/// Until then, the production call order is:
+/// on duplicate insert. A future refinement may reject user shadowing
+/// with a diagnostic or let user-defined symbols win; until then, the
+/// production call order is:
 ///
 /// 1. `register_builtins(&mut table)` — populates bare builtin names.
 /// 2. `register_all(&mut table, &graph)` — populates module symbols.

@@ -91,8 +91,7 @@ impl ProveIR {
     ///
     /// Lysis's `LoopUnroll` opcode collapses N iterations of an
     /// identical sub-tree into a single shared body, eliminating the
-    /// SHA-256(64) multiplicative amplification (the Phase 3 HARD
-    /// GATE in commit 3.1).
+    /// SHA-256(64) multiplicative amplification.
     pub fn instantiate_lysis<F: FieldBackend>(
         &self,
         captures: &HashMap<String, FieldElement<F>>,
@@ -158,15 +157,15 @@ impl From<RoundTripError> for LysisInstantiateError {
 /// The wire-format round-trip (encode → decode) stays unconditional —
 /// it exercises the bytecode wire format on every call so any future
 /// schema drift trips here, not at a downstream gate. The semantic
-/// validator (`lysis::bytecode::validate`) is **debug-only** (Phase
-/// 1.C, BETA20-CLOSEOUT). It checks RFC §4.5 well-formedness rules
-/// (const bounds, jump targets, register bounds, dataflow,
-/// reachability, call graph, heap slots) — the executor backstops
-/// every one of those at runtime, so skipping in release trades a
-/// ~741 ms cost on SHA-256(64) for a debug-mode-only safety net.
-/// Schema drift detection moves to `cargo test --workspace` (which
-/// runs in debug mode unless `--release` is forced); the wire-format
-/// round-trip catches encode/decode drift in either build.
+/// validator (`lysis::bytecode::validate`) is **debug-only**. It
+/// checks RFC §4.5 well-formedness rules (const bounds, jump targets,
+/// register bounds, dataflow, reachability, call graph, heap slots)
+/// — the executor backstops every one of those at runtime, so
+/// skipping in release trades a ~741 ms cost on SHA-256(64) for a
+/// debug-mode-only safety net. Schema drift detection moves to
+/// `cargo test --workspace` (which runs in debug mode unless
+/// `--release` is forced); the wire-format round-trip catches
+/// encode/decode drift in either build.
 fn lower_extended_through_lysis<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
 ) -> Result<IrProgram<F>, LysisInstantiateError> {
@@ -345,12 +344,12 @@ mod tests {
 
     #[test]
     fn extended_emits_loop_unroll_for_for_loops() {
-        // Post-2.5: loops emit a single LoopUnroll node containing the
-        // body, instead of N inlined copies. The extended program is no
-        // longer fully Plain.
+        // Loops emit a single LoopUnroll node containing the body,
+        // instead of N inlined copies — the extended program is not
+        // fully Plain.
         //
-        // Phase 1.B note: the body must NOT carry a mut accumulator,
-        // because carry-set loops eager-unroll at lower time and never
+        // The body must NOT carry a mut accumulator, because
+        // carry-set loops eager-unroll at lower time and never
         // produce a `CircuitNode::For` for the extended sink to lift.
         // A body that just emits one assertion per iteration over a
         // witness array is the canonical no-carry shape that still

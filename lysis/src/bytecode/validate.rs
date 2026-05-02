@@ -13,27 +13,27 @@
 //! | Rule | Where |
 //! |-----:|---|
 //! |  1 | `LysisHeader::decode` (magic + version) |
-//! |  2 | caller passes `family` to `validate_against_runtime` (Phase 1: off by default; executor invokes it) |
+//! |  2 | caller passes `family` to `validate_against_runtime` (off by default; executor invokes it) |
 //! |  3 | `bytecode::decode` (`BodyLenMismatch`) |
 //! |  4 | [`check_const_bounds`] |
 //! |  5 | runtime — [`crate::execute`] (depends on captures slice) |
 //! |  6 | [`check_jump_targets`] |
 //! |  7 | [`check_templates_defined`] |
 //! |  8 | [`check_register_bounds`] |
-//! |  9 | [`check_forward_dataflow`] (linear-only; skipped when jumps present, flagged for Phase 2) |
+//! |  9 | [`check_forward_dataflow`] (linear-only; skipped when jumps present) |
 //! | 10 | [`check_reachable_return`] |
 //! | 11 | [`check_call_graph`] |
-//! | 12 | [`check_heap_slot_bounds`] (Phase 4 — slot < heap_size_hint) |
-//! | 13 | [`check_heap_single_static_store`] (Phase 4 — at most one StoreHeap per slot) |
+//! | 12 | [`check_heap_slot_bounds`] (slot < heap_size_hint) |
+//! | 13 | [`check_heap_single_static_store`] (at most one StoreHeap per slot) |
 //!
 //! Rules 1, 3 are enforced before this module even gets a chance to
 //! look at the program, so there is nothing here for them. Rule 5
 //! needs the runtime captures slice; it lives in the executor.
 //!
-//! # Phase 1 simplifications
+//! # Current simplifications
 //!
-//! Two rules admit rigorous implementations that the scaffolding
-//! Phase 1 defers:
+//! Two rules admit rigorous implementations that the current
+//! scaffolding approximates:
 //!
 //! - **Rule 9** (no uninitialized register use). Implemented as a
 //!   linear scan: a register is considered initialized once written
@@ -41,23 +41,23 @@
 //!   contains any `Jump`/`JumpIf`, the check bails out with `Ok(())`
 //!   — back-edges would require SSA-ish dataflow and the runtime
 //!   [`LysisError::ReadUndefinedRegister`] safety net backstops the
-//!   executor. Phase 2 replaces this with a proper forward
-//!   dataflow.
+//!   executor. A proper forward dataflow analysis is future work.
 //!
-//! - **Rule 10** (`Return` reachable from every code path). Phase 1
-//!   demands that the last instruction of every template body (and
-//!   the top-level stream) is a terminator (`Return` / `Halt` /
-//!   `Trap`). Bodies with forward jumps are still accepted — the
-//!   control-flow analysis that proves all paths reach the
-//!   terminator lands in Phase 2.
+//! - **Rule 10** (`Return` reachable from every code path). The
+//!   current check demands that the last instruction of every
+//!   template body (and the top-level stream) is a terminator
+//!   (`Return` / `Halt` / `Trap`). Bodies with forward jumps are
+//!   still accepted — a full control-flow analysis that proves all
+//!   paths reach the terminator is future work.
 //!
 //! - **Top-level frame size**. The RFC specifies `frame_size` only
 //!   for `DefineTemplate`; the top-level body has no explicit frame
-//!   size. Phase 1 treats the top-level body as having implicit
-//!   `frame_size = 256` (the maximum u8 can address), so rule 8 is a
-//!   tautology at top level. Inside a template body, rule 8 is
-//!   enforced against that template's declared `frame_size`. Phase 2
-//!   may thread an explicit `root_frame_size` through the header.
+//!   size. The validator treats the top-level body as having
+//!   implicit `frame_size = 256` (the maximum u8 can address), so
+//!   rule 8 is a tautology at top level. Inside a template body,
+//!   rule 8 is enforced against that template's declared
+//!   `frame_size`. A future header revision may thread an explicit
+//!   `root_frame_size`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -269,9 +269,9 @@ fn check_jump_targets<F: FieldBackend>(program: &Program<F>) -> Result<(), Lysis
         // Jump is relative to the end of the current opcode per RFC
         // §4.3.2 (`pc += offset`). We can compute the expected
         // absolute offset from the current instruction's offset plus
-        // its own encoded length. For this Phase 1 check we simply
-        // require the target to land on *some* opcode boundary
-        // inside the same template region.
+        // its own encoded length. The current check simply requires
+        // the target to land on *some* opcode boundary inside the
+        // same template region.
         let target = instr.offset as i64 + rel;
         if target < 0 {
             return Err(LysisError::BadJumpTarget {
@@ -352,7 +352,7 @@ fn check_templates_defined<F: FieldBackend>(program: &Program<F>) -> Result<(), 
 
 // ---------------------------------------------------------------------
 // Rule 9 — forward dataflow: no register read before it is written.
-// Linear approximation for Phase 1.
+// Linear approximation; full dataflow analysis is future work.
 // ---------------------------------------------------------------------
 
 fn check_forward_dataflow<F: FieldBackend>(program: &Program<F>) -> Result<(), LysisError> {
@@ -361,7 +361,7 @@ fn check_forward_dataflow<F: FieldBackend>(program: &Program<F>) -> Result<(), L
         .iter()
         .any(|i| matches!(i.opcode, Opcode::Jump { .. } | Opcode::JumpIf { .. }));
     if has_jumps {
-        return Ok(()); // Phase 2: full dataflow analysis.
+        return Ok(()); // Full dataflow analysis is future work.
     }
 
     // Per-template-body initialized-register tracking. Key = template
@@ -502,7 +502,7 @@ fn writes_of(op: &Opcode) -> Vec<u8> {
 
 // ---------------------------------------------------------------------
 // Rule 10 — `Return` reachable from every code path.
-// Phase 1: each body must end in a terminator.
+// Current approximation: each body must end in a terminator.
 // ---------------------------------------------------------------------
 
 fn check_reachable_return<F: FieldBackend>(program: &Program<F>) -> Result<(), LysisError> {
@@ -639,7 +639,7 @@ fn dfs_longest(
 }
 
 // ---------------------------------------------------------------------
-// Rule 12 — heap slot < heap_size_hint (Phase 4 §6.3).
+// Rule 12 — heap slot < heap_size_hint (heap-slot-bounds rule).
 // ---------------------------------------------------------------------
 
 fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), LysisError> {
@@ -687,16 +687,16 @@ fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), L
 }
 
 // ---------------------------------------------------------------------
-// Rule 13 — single-static-store invariant (Phase 4 §7.3).
+// Rule 13 — single-static-store invariant.
 //
 // Every heap slot is written exactly once before any read. The
-// SlotState lattice is binary in v1: `Unwritten → Written`. v1.1 will
-// add a `Sealed` state once `FreeHeap` is wired (research report
-// §7.3) — keeping the enum binary in v1 simplifies the validator
-// and avoids a "dead state" landmine for future readers.
+// SlotState lattice is binary in v1: `Unwritten → Written`. A future
+// `Sealed` state is reserved for when `FreeHeap` is wired — keeping
+// the enum binary in v1 simplifies the validator and avoids a "dead
+// state" landmine for future readers.
 //
 // Soundness of this forward linear scan depends on the **walker
-// emission-position invariant** (§6.4):
+// emission-position invariant**:
 //
 //  1. The walker emits zero `Jump` / `JumpIf` opcodes (zero matches
 //     in `ir-forge/src/lysis_lift/walker.rs`).
@@ -706,10 +706,10 @@ fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), L
 //
 // Together these mean "earlier in the byte stream" implies
 // "dominates in execution order"; a forward linear scan over the
-// body is path-safe by construction. **A future Phase 3 walker
-// change that introduces real conditional branches around
-// `StoreHeap` requires this validator to be upgraded to a CFG-based
-// dominance check** — v2 future work, not v1.
+// body is path-safe by construction. **A future walker change that
+// introduces real conditional branches around `StoreHeap` requires
+// this validator to be upgraded to a CFG-based dominance check** —
+// v2 future work, not v1.
 //
 // Slots that end the program in state `Unwritten` are legal: the
 // walker may legitimately reserve a slot via lookahead and then
@@ -955,8 +955,8 @@ mod tests {
     #[test]
     fn rule9_skipped_when_jumps_present() {
         // Linear dataflow bails out at the first Jump — rule 9 becomes
-        // a no-op when the program can branch. Phase 2 replaces this
-        // with a proper CFG-based analysis.
+        // a no-op when the program can branch. A proper CFG-based
+        // analysis is future work.
         let mut builder = b();
         builder.jump(3); // valid jump to halt at offset 3
         builder.halt();
@@ -1239,7 +1239,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // Phase 4 follow-up — rules 12 + 13 cover EmitWitnessCallHeap too.
+    // Heap-op coverage — rules 12 and 13 cover EmitWitnessCallHeap too.
     // -----------------------------------------------------------------
 
     #[test]

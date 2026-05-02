@@ -2,9 +2,8 @@
 //!
 //! This crate implements the shared symbol table consulted by both the VM
 //! bytecode compiler (`compiler/`) and the ProveIR compiler
-//! (`ir/src/prove_ir/`). It is the backbone of Movimiento 2 — the refactor
-//! that eliminates the two-table divergence problem where a name could
-//! resolve in one backend but fail in the other.
+//! (`ir/src/prove_ir/`). It eliminates the two-table divergence problem
+//! where a name could resolve in one backend but fail in the other.
 //!
 //! ## What lives here
 //!
@@ -17,39 +16,15 @@
 //!   from it after the resolver pass annotates the AST with
 //!   [`SymbolId`]s.
 //! - [`statics`] — the const array of static members (`Int::MAX`,
-//!   `Field::ZERO`, etc.). Consulted by both compilers; currently a stub
-//!   to be populated in Phase 6.
+//!   `Field::ZERO`, etc.). Consulted by both compilers.
 //! - [`error`] — [`ResolveError`] with the diagnostic variants the
 //!   resolver pass can emit.
 //!
-//! ## What does NOT live here (yet)
+//! ## Scope
 //!
-//! - The resolver pass itself (walks the AST annotating expressions with
-//!   [`SymbolId`]s). Landing in Phase 3C.
-//! - The builtin entries themselves. Landing in Phase 2.
-//!
-//! The module graph builder ([`module_graph`]) landed in Phase 3B.
-//!
-//! ## Movimiento 2 roadmap
-//!
-//! The refactor lands in six phases (0–6). This crate is part of the
-//! backbone added in Phase 1 onward. The **authoritative phase status**
-//! lives in `.claude/plans/movimiento-2-unified-dispatch.md` — that's
-//! the RFC. The phase sequence is:
-//!
-//! - **Phase 0** — extract `lower_builtin` in `ir/src/prove_ir/compiler.rs`.
-//! - **Phase 1** — this crate's skeleton: types + empty registry + audit.
-//! - **Phase 2** — populate [`BuiltinRegistry::default()`] and wire both
-//!   compilers to read from it.
-//! - **Phase 3** — resolver pass + [`SymbolId`] annotation on the AST.
-//! - **Phase 4** — lazy compilation driven by reachability + [`Availability`].
-//! - **Phase 5** — `ConstExpr` surfacing for template args.
-//! - **Phase 6** — registry-driven dispatch (`NATIVE_TABLE` deleted),
-//!   `FnDef` enrichment, graph-derived outer functions.
-//!
-//! Do not edit "current phase" markers here — they go stale. Consult
-//! the RFC instead. This doc block describes the crate's *scope*, not
-//! its *progress*.
+//! This doc block describes the crate's *scope*, not its *progress*.
+//! For historical context on how individual modules came to be, consult
+//! `git log` and `git blame`.
 
 #![deny(missing_docs)]
 #![deny(unsafe_code)]

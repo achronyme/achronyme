@@ -160,11 +160,10 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 // Lower at emission time: Not / And / Or / IsNeq / IsLe
                 // never appear in instantiate output. The Lysis lifter's
                 // Walker desugars them to the same primitive forms (Sub,
-                // Mul, Add+Mul-Sub, IsEq+Sub, IsLt+Sub) at lift time, so
-                // emitting them here would make the legacy and Lysis
-                // pipelines produce different R1CS multisets even though
-                // they are semantically equivalent. See
-                // `.claude/plans/lysis-phase-3c6.md` Stage-1 finding.
+                // Mul, Add and Mul minus Sub, IsEq and Sub, IsLt and
+                // Sub) at lift time, so emitting them here would make
+                // the legacy and Lysis pipelines produce different R1CS
+                // multisets even though they are semantically equivalent.
                 match op {
                     CircuitUnaryOp::Neg => {
                         let v = self.fresh_var();

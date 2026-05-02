@@ -64,10 +64,7 @@ impl std::fmt::Display for TemplateId {
 pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     /// A pre-existing SSA instruction — pass-through. Every
     /// callable / assert / input / arithmetic op that the current
-    /// `ir::prove_ir::instantiate` produces is wrapped here
-    /// when the compiler migrates to emit
-    /// `ExtendedInstruction<F>` (Phase 3.C.6 in the circom
-    /// frontend).
+    /// `ir::prove_ir::instantiate` produces is wrapped here.
     Plain(Instruction<F>),
 
     /// Declare a reusable template body. Produced by the BTA +
@@ -127,15 +124,15 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     /// the enclosing `LoopUnroll`'s `iter_var` rather than a
     /// compile-time constant.
     ///
-    /// **Phase 2 Gap 1.** Pre-Gap-1, every `paddedIn[i] <-- 0` /
-    /// `out[i] <-- ...` in a circom loop was force-unrolled at the
-    /// circom lowering layer (see
-    /// `circom/src/lowering/statements/loops.rs::LoopLowering::IndexedAssignmentLoop`).
-    /// That made the IR stream balloon to N inline copies of every
+    /// Without this variant, every `paddedIn[i] <-- 0` /
+    /// `out[i] <-- ...` in a circom loop would have to be
+    /// force-unrolled at the circom lowering layer (see
+    /// `circom/src/lowering/statements/loops.rs::LoopLowering::IndexedAssignmentLoop`),
+    /// making the IR stream balloon to N inline copies of every
     /// loop body. With `SymbolicIndexedEffect`, the IR keeps the
     /// loop rolled inside a `LoopUnroll`, BTA can probe-classify it
-    /// as `Uniform`, and Gap 2's structural extraction lifts the body
-    /// to a single `TemplateBody`.
+    /// as `Uniform`, and structural extraction lifts the body to a
+    /// single `TemplateBody`.
     ///
     /// # Field semantics
     ///
@@ -211,14 +208,14 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     /// expression — i.e. depends on the enclosing `LoopUnroll`'s
     /// `iter_var` rather than a compile-time constant.
     ///
-    /// **Phase 2 Gap 3.** Pre-Gap-3, every `(in >> i)` / `(in << i)`
-    /// where `i` is a loop-iter variable hit the `resolve_const_u32`
+    /// Without this variant, every `(in >> i)` / `(in << i)` where
+    /// `i` is a loop-iter variable would hit the `resolve_const_u32`
     /// gate in [`crate::instantiate`]'s `ShiftR`/`ShiftL` arms
-    /// (`exprs.rs:558-583`) and surfaced as
+    /// (`exprs.rs:558-583`) and surface as
     /// `ProveIrError::UnsupportedOperation "shift right amount must
     /// be a compile-time constant"`. SHA-256's padding loop
-    /// (`paddedIn[…] <== (nBits >> k) & 1` for `k = 0..nBits`)
-    /// triggered this even though `k` is a loop-iter constant — the
+    /// (`paddedIn[…] <== (nBits >> k) & 1` for `k = 0..nBits`) hits
+    /// this even though `k` is a loop-iter constant — the
     /// instantiator's symbolic mode treats `k` as an SSA value.
     ///
     /// With `SymbolicShift`, the IR keeps the shift rolled inside a

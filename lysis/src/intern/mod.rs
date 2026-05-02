@@ -1,13 +1,13 @@
 //! Hash-consing infrastructure: `NodeInterner` + `NodeId` + two-tier
 //! interning policy (per-instruction, per-template-body).
 //!
-//! Phase 2 lands the real interner: `NodeKey<F>` structural keys
+//! The real interner consists of: `NodeKey<F>` structural keys
 //! (`key` module), the `SideEffect<F>` / `EffectId` side-channel
 //! (`effect`), the span-list policy (`span`), and the `NodeInterner`
 //! itself (`interner`) with the per-instruction tier wired up.
 //! Materialization to a flat `Vec<InstructionKind>` lives in
-//! `materialize`. Phase 3 adds the per-template-body tier on top.
-//! See RFC §§5.1–5.6 for the contract.
+//! `materialize`. The per-template-body tier sits on top once
+//! template lifting is in play. See RFC §§5.1–5.6 for the contract.
 //!
 //! [`NodeId`], [`NodeIdGen`], [`InstructionKind`], [`Visibility`] live
 //! in the `lysis-types` leaf crate so they can be consumed by both

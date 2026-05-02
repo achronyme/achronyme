@@ -1,9 +1,5 @@
 //! [`ResolveError`] — every failure the resolver can produce.
 //!
-//! Phase 1 ships the structural variants (audit failures, table-invariant
-//! violations). Phase 3 will add the AST-annotation variants (undefined
-//! symbol, ambiguous resolution, [`ProveBlockUnsupportedShape`], etc.).
-//!
 //! These errors are **resolver errors** — they represent bugs in either
 //! the registry construction (audit failures) or in user source code
 //! (undefined symbol, unsupported shape). They are NOT
@@ -61,9 +57,9 @@ impl fmt::Display for UnsupportedShape {
 
 /// Every failure mode the resolver can produce.
 ///
-/// Phase 1 covers just the structural failures; Phase 3 will extend this
-/// enum with the AST-annotation failures (undefined symbol, ambiguous
-/// qualified name, unsupported shape inside a prove block).
+/// Covers both the structural failures (audit, invalid symbol id,
+/// alias cycles) and the AST-annotation failures (undefined symbol,
+/// ambiguous qualified name, unsupported shape inside a prove block).
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum ResolveError {
     /// The [`BuiltinRegistry`](crate::builtins::BuiltinRegistry) failed
@@ -120,7 +116,7 @@ pub enum ResolveError {
         registry_len: usize,
     },
 
-    // ----- Phase 3B: module graph builder -----
+    // ----- Module graph builder -----
     /// A relative module path could not be resolved to a canonical
     /// filesystem key. Typically wraps a "file not found" error from
     /// the underlying
@@ -150,7 +146,7 @@ pub enum ResolveError {
     /// A module imports itself (directly or transitively) while the
     /// graph builder is still descending its DFS stack — i.e. a true
     /// cycle, not a diamond re-use. Matches the semantics of the legacy
-    /// `CircularImport` error in `akronc::CompilerError`; Phase 6
+    /// `CircularImport` error in `akronc::CompilerError`; a future
     /// cleanup will collapse the two into this one.
     ModuleCycle {
         /// Canonical path of the module that completed the cycle.
@@ -160,9 +156,9 @@ pub enum ResolveError {
     /// A module declares two top-level symbols with the same name —
     /// usually two `fn foo` / `let foo` declarations in the same file,
     /// or a `fn foo` colliding with an `export let foo`. Surfaced by
-    /// [`register_module`](crate::annotate::register_module) during
-    /// Phase 3C.1; Phase 3E may extend this to catch cross-module
-    /// aliasing collisions when the importer's namespace merges.
+    /// [`register_module`](crate::annotate::register_module). A future
+    /// extension may catch cross-module aliasing collisions when the
+    /// importer's namespace merges.
     DuplicateModuleSymbol {
         /// Unqualified name that collided (the
         /// [`SymbolTable`](crate::table::SymbolTable) key would be
@@ -172,7 +168,7 @@ pub enum ResolveError {
         module: u32,
     },
 
-    // ----- Phase 3C.3: prove-block shape diagnostics -----
+    // ----- Prove-block shape diagnostics -----
     /// A construct inside a `prove {}` / `circuit {}` block uses a
     /// shape that resolves in VM mode but cannot be lowered to
     /// constraints. Emitted by the annotate pass
@@ -187,9 +183,9 @@ pub enum ResolveError {
         span: Span,
         /// Which of the four supported-shape rules fired.
         shape: UnsupportedShape,
-        /// Short explanation rendered next to the diagnostic. Phase
-        /// 3D/3E will wrap this inside a full diagnostic with a
-        /// "help" suggestion; 3C.3 stores the reason only.
+        /// Short explanation rendered next to the diagnostic. The
+        /// downstream compilers wrap this inside a full diagnostic
+        /// with a "help" suggestion; this enum stores the reason only.
         reason: &'static str,
     },
 }

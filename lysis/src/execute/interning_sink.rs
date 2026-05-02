@@ -1,4 +1,4 @@
-//! `InterningSink<F>` — the Phase 2 [`IrSink`] backed by a real
+//! `InterningSink<F>` — the [`IrSink`] backed by a real
 //! [`NodeInterner<F>`].
 //!
 //! Pure instructions flow through the interner's hash-consing table:

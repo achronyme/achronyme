@@ -1,28 +1,20 @@
 //! # `ir-forge` — Circuit IR front-half
 //!
-//! This crate holds the ProveIR layer and its lowering/interop
-//! infrastructure, extracted from `ir/src/prove_ir/` during the
-//! structural cleanup phase 7 (see
-//! `.claude/plans/structural-cleanup.md` §9.bis).
+//! This crate holds the ProveIR layer and its lowering / interop
+//! infrastructure.
 //!
-//! The extraction is performed in 11 incremental sub-stages on the
-//! `feat/ir-forge-crate` branch; this scaffold is sub-stage 0. Each
-//! subsequent sub-stage moves one leaf of the `ir::prove_ir::**`
-//! subtree into this crate, topologically bottom-up, updating external
-//! call-sites in the same commit (no shims, because `ir-forge → ir`
-//! would form a Cargo cycle with any shim `ir → ir-forge`).
-//!
-//! ## Target layout (post sub-stage 10)
+//! ## Layout
 //!
 //! - `error` — `ProveIrError`
-//! - `lysis_bridge` — `InstructionKind<F> ↔ Instruction<F>` conversions
+//! - `lysis_bridge` — `InstructionKind<F>` and `Instruction<F>` conversions
 //! - `extended` — `ExtendedInstruction<F>`, `ExtendedIrProgram<F>`, `TemplateId`
-//! - `lysis_materialize` — `NodeInterner<F> → Vec<Instruction<F>>` flattener
-//! - `types` — ProveIR AST (`CircuitExpr`, `CircuitNode`, `ProveIR`, …)
-//! - `capture`, `circom_interop` — capture defs + circom dispatch types
-//! - `instantiate` — eager instantiation (slated for deletion in Lysis Phase 5)
-//! - `ast_lower` — `ProveIrCompiler` + outer scope (was `ir::prove_ir::compiler`)
-//! - `lysis_lift` — Walker + BTA + diff + extract + symbolic (was `ir::prove_ir::lysis_lower`)
+//! - `lysis_materialize` — `NodeInterner<F>` to `Vec<Instruction<F>>` flattener
+//! - `types` — ProveIR AST (`CircuitExpr`, `CircuitNode`, `ProveIR`, ...)
+//! - `capture`, `circom_interop` — capture defs and circom dispatch types
+//! - `instantiate` — eager instantiation (slated for deletion once
+//!   the Lysis pipeline is the only consumer)
+//! - `ast_lower` — `ProveIrCompiler` and outer scope (was `ir::prove_ir::compiler`)
+//! - `lysis_lift` — Walker, BTA, diff, extract, symbolic (was `ir::prove_ir::lysis_lower`)
 
 pub mod ast_lower;
 pub mod capture;

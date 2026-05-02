@@ -51,7 +51,8 @@ pub(super) fn const_resolve_fn(ctx: &AnnotateCtx, expr: &Expr) -> Option<SymbolI
 }
 
 /// Decide what [`LocalKind`] a `let x = <rhs>` binding should produce.
-/// The classification drives Phase 3C.3's FnAlias + shape diagnostics:
+/// The classification drives the FnAlias and prove-block shape
+/// diagnostics:
 ///
 /// - a const-resolved fn reference → [`LocalKind::Alias`]
 /// - an `if` whose both branches const-resolve to fn references →

@@ -75,8 +75,8 @@ pub(super) fn resolve_ident(ctx: &AnnotateCtx, name: &str) -> Option<SymbolId> {
 /// Resolve `Type::member` syntax. Three possible outcomes:
 ///
 /// 1. The `Type` is a language-level static (`Int`, `Field`, …). The
-///    stub [`statics::lookup`](crate::statics::lookup) table is empty
-///    in Phase 3C.2, so this branch always falls through — the
+///    stub [`statics::lookup`](crate::statics::lookup) table is
+///    currently empty, so this branch always falls through — the
 ///    compilers keep their legacy static matches alive.
 /// 2. The `Type` is a namespace import alias. Resolve to the exported
 ///    name inside the target module.

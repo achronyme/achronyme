@@ -1,13 +1,12 @@
-//! Phase 0 hand-written bytecode fixtures for Lysis.
+//! Hand-written bytecode fixtures for Lysis.
 //!
 //! Three fixtures — `Num2Bits(8)`, a Poseidon round, and a SHA-256
-//! round — are built as raw `Vec<u8>` so the Phase 1 decoder + Phase 2
-//! validator have something credible to exercise from day one. The
-//! bodies are not executable yet (there is no interpreter yet), but
-//! they follow the opcode layout of RFC §4.3 so Phase 1 can decode
-//! them without rewriting the fixtures.
+//! round — are built as raw `Vec<u8>` so the decoder and validator
+//! have something credible to exercise. The bodies are not
+//! executable as-is, but they follow the opcode layout of RFC §4.3
+//! so the decoder can ingest them without rewriting the fixtures.
 //!
-//! What Phase 0 actually verifies here (per RFC §10 "Exit criteria:
+//! What this file actually verifies (per RFC §10 "Exit criteria:
 //! fixtures parse"):
 //!
 //! 1. Each fixture's 16-byte header decodes via `LysisHeader::decode`.
@@ -15,7 +14,7 @@
 //!    actually present (per the tag-dispatched reader below).
 //! 3. The declared `body_len` matches the remaining byte count.
 //!
-//! Full opcode-by-opcode validation is Phase 2 work.
+//! Full opcode-by-opcode validation lives elsewhere.
 
 use lysis::{LysisHeader, HEADER_SIZE};
 use memory::FieldFamily;
@@ -23,11 +22,10 @@ use memory::FieldFamily;
 // ---------------------------------------------------------------------
 // Opcode + tag constants (mirrors of RFC §4.3 + §4.4).
 //
-// These are duplicated here, not imported from `lysis`, because the
-// public `Opcode` enum lands in Phase 1. Keeping them as plain `u8`
-// constants here is intentional: it documents the byte layout of each
-// fixture and flags drift between this file and the eventual enum
-// (a compile-time consistency check will be added in Phase 1).
+// These are duplicated here, not imported from `lysis`, on purpose:
+// keeping them as plain `u8` constants documents the byte layout of
+// each fixture and flags drift between this file and the public
+// `Opcode` enum.
 // ---------------------------------------------------------------------
 
 // §4.3.1 Capture / environment
@@ -47,7 +45,7 @@ const OP_EMIT_RANGE_CHECK: u8 = 0x48;
 // §4.4 Const pool tags
 const TAG_FIELD_CONST: u8 = 0x00;
 const TAG_STRING: u8 = 0x01;
-// const TAG_ARTIK_BYTECODE: u8 = 0x02;  // unused in Phase 0 fixtures.
+// const TAG_ARTIK_BYTECODE: u8 = 0x02;  // unused by these fixtures.
 // const TAG_SPAN: u8 = 0x03;
 
 // Input visibility bits for OP_LOAD_INPUT (§4.3.1).
@@ -123,9 +121,9 @@ fn assemble(
 //   Halt
 //
 // The 8 output SSA vars produced by `EmitDecompose` are the 8
-// consecutive registers starting at `dst_arr` (r2..r9). Phase 1 may
-// refine this convention (e.g., explicit register allocation per
-// output); for Phase 0 it only needs to decode.
+// consecutive registers starting at `dst_arr` (r2..r9). A future
+// revision may refine this convention (e.g., explicit register
+// allocation per output); the fixture only needs to decode.
 #[rustfmt::skip]
 fn num2bits_8() -> Vec<u8> {
     let mut pool = Vec::new();
@@ -159,7 +157,8 @@ fn num2bits_8() -> Vec<u8> {
 //                              multiplications; omitted from this
 //                              fixture so the body stays readable.
 //                              The real Poseidon ends each round with
-//                              a linear mix; Phase 3 will emit that.
+//                              a linear mix; emitting that is future
+//                              work.
 //
 // Registers:
 //   r0,r1,r2       — current state slots s0,s1,s2
@@ -222,10 +221,10 @@ fn poseidon_round() -> Vec<u8> {
 //     h = g; g = f; f = e; e = d + T1; d = c; c = b; b = a; a = T1 + T2
 //
 // The full round needs rotations, bit decomposition, and bitwise logic
-// which have dedicated opcodes (Phase 1 will flesh those out). For
-// Phase 0 we encode a compressed stand-in: field-add chain over the 8
-// state words + K_t + W_t, enough to exercise register allocation +
-// const pool indexing without defining bit-level opcodes yet.
+// (handled by their dedicated opcodes elsewhere). The fixture encodes
+// a compressed stand-in: field-add chain over the 8 state words plus
+// K_t and W_t, enough to exercise register allocation and const pool
+// indexing without defining bit-level opcodes here.
 //
 // Registers:
 //   r0..r7   — current state (a..h)
@@ -267,7 +266,8 @@ fn sha256_round() -> Vec<u8> {
 }
 
 // ---------------------------------------------------------------------
-// Const-pool scanner (Phase 0 — replaced by `ConstPool::decode` in Phase 1)
+// Const-pool scanner (used here only for fixture sanity checks;
+// production code goes through `ConstPool::decode`).
 // ---------------------------------------------------------------------
 
 /// Walk the const pool by tag, returning the offset just past the last

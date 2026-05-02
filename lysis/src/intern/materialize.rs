@@ -13,9 +13,9 @@
 //! allocations are freed before the function returns. The caller
 //! sees only the newly-built `Vec<InstructionKind<F>>`, so peak
 //! RSS during the handoff is `max(sizeof(interner), sizeof(Vec))`
-//! rather than the sum — this is what Phase 4's `<2 GB peak` gate
-//! depends on, since SHA-256(64) would otherwise transiently hold
-//! both structures at ~5 GB.
+//! rather than the sum — this is what the `<2 GB peak` memory
+//! budget depends on, since SHA-256(64) would otherwise transiently
+//! hold both structures at ~5 GB.
 
 use memory::field::FieldBackend;
 

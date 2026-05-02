@@ -202,8 +202,7 @@ pub enum Opcode {
     /// Field division `dst = lhs / rhs` — emits `Instruction::Div`
     /// to the sink. The downstream R1CS backend lowers it via
     /// `divide_lcs`, which generates the witness-side inverse hint
-    /// and the `rhs * inv = 1` constraint. Phase 1.B unblocked the
-    /// `prove {}` cross-path baseline by adding this opcode.
+    /// and the `rhs * inv = 1` constraint.
     EmitDiv {
         dst: u8,
         lhs: u8,
@@ -211,16 +210,15 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.6 Heap spill (Phase 4) — captures-overflow escape valve.
+    // §4.3.6 Heap spill — captures-overflow escape valve.
     //
-    // Both opcodes operate on a program-global heap (RFC §4.3.6 +
-    // research report §6.2). `slot` is u16 → up to 65 535 distinct
-    // entries; the `heap_size_hint` field on the v2 bytecode header
-    // sizes the executor's heap vector at load time. The walker emits
-    // these only when a split's live set exceeds `MAX_CAPTURES_HOT`
-    // (Phase 4 §6.4); programs that fit in 64 captures emit zero
-    // heap opcodes and decode identically against v1 readers minus
-    // the version byte.
+    // Both opcodes operate on a program-global heap (RFC §4.3.6).
+    // `slot` is u16 → up to 65 535 distinct entries; the
+    // `heap_size_hint` field on the v2 bytecode header sizes the
+    // executor's heap vector at load time. The walker emits these
+    // only when a split's live set exceeds `MAX_CAPTURES_HOT`;
+    // programs that fit in 64 captures emit zero heap opcodes and
+    // decode identically against v1 readers minus the version byte.
     // -----------------------------------------------------------------
     StoreHeap {
         src_reg: u8,
@@ -232,7 +230,7 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.7 Heap-output WitnessCall (Phase 4 follow-up)
+    // §4.3.7 Heap-output WitnessCall
     //
     // `EmitWitnessCallHeap` is the heap-destination twin of
     // `EmitWitnessCall`. The walker emits this variant when the
@@ -324,11 +322,11 @@ pub mod code {
     pub const EMIT_INT_MOD: u8 = 0x4E;
     pub const EMIT_DIV: u8 = 0x4F;
 
-    // §4.3.6 (Phase 4 — heap spill)
+    // §4.3.6 — heap spill
     pub const STORE_HEAP: u8 = 0x50;
     pub const LOAD_HEAP: u8 = 0x51;
 
-    // §4.3.7 (Phase 4 follow-up — heap-output WitnessCall)
+    // §4.3.7 — heap-output WitnessCall
     pub const EMIT_WITNESS_CALL_HEAP: u8 = 0x52;
 
     // §4.3.5 follow-up — message-bearing AssertEq.

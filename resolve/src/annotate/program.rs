@@ -4,8 +4,8 @@
 //! `AnnotationKey` and `ResolvedProgram` are re-exported at the crate
 //! root (`resolve::AnnotationKey`, `resolve::ResolvedProgram`), so any
 //! change here has to stay observation-compatible with the two
-//! downstream consumers — the VM compiler's Phase 3D shadow dispatch
-//! and the ProveIR compiler's Phase 3E annotation-driven resolution.
+//! downstream consumers — the VM compiler's shadow dispatch and the
+//! ProveIR compiler's annotation-driven resolution.
 
 use std::collections::HashMap;
 
@@ -24,21 +24,20 @@ use crate::table::SymbolTable;
 /// [`ExprId`]s are dense *within one parsed [`Program`]*, not across
 /// modules — each call to the parser resets its counter to 1. Using
 /// the bare `ExprId` as a map key would therefore collide across
-/// modules. Phase 3C.2 prefixes with the owning [`ModuleId`] instead,
-/// which keeps the resolver pass cheap (no parser-level id remap) and
-/// gives Phase 3D/3E consumers an unambiguous handle: they know which
-/// module they are compiling, so supplying the pair is free.
+/// modules. The resolver prefixes with the owning [`ModuleId`] instead,
+/// which keeps the pass cheap (no parser-level id remap) and gives
+/// downstream consumers an unambiguous handle: they know which module
+/// they are compiling, so supplying the pair is free.
 pub type AnnotationKey = (ModuleId, ExprId);
 
 /// Output of the resolver pass: the `(ModuleId, ExprId) → SymbolId`
 /// annotation map plus any resolve-time diagnostics accumulated along
 /// the way.
 ///
-/// The `annotations` table mirrors the plan doc's `ResolvedProgram`
-/// sketch: each resolvable leaf in every module gets an entry.
-/// Consumers that only care about resolution (Phase 3D/3E compilers)
-/// read `annotations`; diagnostic pipelines read `diagnostics` and
-/// fold each [`ResolveError`] into the session's error report.
+/// Each resolvable leaf in every module gets an entry. Consumers that
+/// only care about resolution (the downstream compilers) read
+/// `annotations`; diagnostic pipelines read `diagnostics` and fold each
+/// [`ResolveError`] into the session's error report.
 #[derive(Debug, Default, Clone)]
 pub struct ResolvedProgram {
     /// `(module, expr_id) → symbol` for every successfully resolved
@@ -46,7 +45,7 @@ pub struct ResolvedProgram {
     /// [`Expr::StaticAccess`](achronyme_parser::ast::Expr::StaticAccess),
     /// and [`Expr::DotAccess`](achronyme_parser::ast::Expr::DotAccess)
     /// node in every module. Unresolved nodes are silently omitted —
-    /// the Phase 3D/3E consumers fall back to their legacy lookup for
+    /// downstream consumers fall back to their legacy lookup for
     /// anything not in the map.
     pub annotations: HashMap<AnnotationKey, SymbolId>,
     /// Resolve-time diagnostics accumulated by the walker — currently
@@ -54,9 +53,9 @@ pub struct ResolvedProgram {
     /// emitted inside `prove {}` / `circuit {}` scopes. Empty for
     /// well-formed programs.
     pub diagnostics: Vec<ResolveError>,
-    /// Phase 5: `(module, expr_id) → i64` for every expression that
-    /// the compile-time const evaluator proved constant. The VM
-    /// compiler's circom template dispatcher reads this to accept
+    /// `(module, expr_id) → i64` for every expression that the
+    /// compile-time const evaluator proved constant. The VM compiler's
+    /// circom template dispatcher reads this to accept
     /// `let n = 4; Num2Bits(n)(x)` — not just `Num2Bits(4)(x)`.
     pub const_values: crate::const_eval::ConstValues,
 }
@@ -65,15 +64,15 @@ pub struct ResolvedProgram {
 /// emit an annotation map from `(ModuleId, ExprId)` to [`SymbolId`] for
 /// each resolvable reference.
 ///
-/// This is the resolver pass proper — Phase 3C.2. For every
+/// This is the resolver pass proper. For every
 /// [`Expr::Ident`](achronyme_parser::ast::Expr::Ident),
 /// [`Expr::StaticAccess`](achronyme_parser::ast::Expr::StaticAccess), and
 /// [`Expr::DotAccess`](achronyme_parser::ast::Expr::DotAccess) the walker
 /// tries to resolve the name against:
 ///
 /// 1. the current lexical scope (params + let/mut bindings inside the
-///    enclosing function/block) — a match **skips** annotation so
-///    Phase 3D/3E's compilers keep using their local-variable storage.
+///    enclosing function/block) — a match **skips** annotation so the
+///    downstream compilers keep using their local-variable storage.
 /// 2. the current module's own symbols in the [`SymbolTable`] (private
 ///    + exported fns registered by [`register_module`](super::register_module)).
 /// 3. selective imports (`import { foo } from "lib"`) — the importer's
@@ -89,29 +88,27 @@ pub struct ResolvedProgram {
 ///    function.
 ///
 /// Unresolvable names are **silently omitted** from the returned map.
-/// Phase 3D/3E consumers fall back to their legacy lookup for any
+/// Downstream consumers fall back to their legacy lookup for any
 /// `ExprId` not present in the map, so the resolver can ship
 /// incrementally without breaking existing behaviour.
 ///
-/// ## What 3C.2 deliberately skips
+/// ## What this pass deliberately skips
 ///
 /// - `Expr::Call`'s own annotation. The callee is already walked and
 ///   annotated; the `Call` node itself doesn't need a separate entry
 ///   (callers follow the callee's id).
-/// - [`FnAlias`](crate::symbol::CallableKind::FnAlias) creation. Phase
-///   3C.3 handles `let a = p::fn` const-folding.
-/// - [`ProveBlockUnsupportedShape`](crate::error::ResolveError::ProveBlockUnsupportedShape)
-///   diagnostics. Phase 3C.3.
+/// - [`FnAlias`](crate::symbol::CallableKind::FnAlias) creation —
+///   `let a = p::fn` const-folding lives elsewhere.
 /// - Static members (`Int::MAX`, `Field::ZERO`). The
-///   [`statics::lookup`](crate::statics::lookup) table is empty until
-///   Phase 6; for now we just fall through to the namespace-import
-///   check and the compilers keep their legacy static resolution.
-/// - `ConstKind` refinement. Phase 3C.1 parks every exported let as
-///   `ConstKind::Field`; 3C.2 does not touch that.
+///   [`statics::lookup`](crate::statics::lookup) table is currently
+///   empty; for now we fall through to the namespace-import check and
+///   the compilers keep their legacy static resolution.
+/// - `ConstKind` refinement. Exported lets are parked as
+///   `ConstKind::Field`; this walker does not touch that.
 /// - Module graph audit. The caller should run [`SymbolTable::audit`]
-///   separately after registration + annotation finish.
+///   separately after registration and annotation finish.
 ///
-/// ## Gap 2.4 and the definer's scope
+/// ## Definer's scope
 ///
 /// The walker annotates each expression **against the module that
 /// declares it**, not the module that eventually inlines it at lowering
@@ -120,8 +117,7 @@ pub struct ResolvedProgram {
 /// `hash::hash_node`'s `SymbolId` now, so by the time the ProveIR
 /// compiler inlines `merkle_step` into a `prove {}` block in `main.ach`,
 /// there are no bare names left for it to re-resolve against the wrong
-/// scope. Phase 3E wires the consumer side; 3C.2 just plants the
-/// annotations.
+/// scope.
 pub fn annotate_program(graph: &ModuleGraph, table: &SymbolTable) -> ResolvedProgram {
     let mut out = ResolvedProgram::default();
     for module in graph.iter() {

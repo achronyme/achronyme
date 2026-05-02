@@ -6,7 +6,7 @@
 //!
 //! ## Scope
 //!
-//! Phase 3.B.7 (augmented by the 3.C-era deuda clearing) handles:
+//! The walker handles:
 //!
 //! - `Plain(Instruction<F>)` — every arithmetic, boolean, comparison,
 //!   hash, constraint, and side-effect variant. Several lower via
@@ -24,18 +24,17 @@
 //!   The `one` register is lazily allocated at the top of `lower` only
 //!   when the body contains at least one desugaring that needs it.
 //! - `LoopUnroll` — emits the Lysis `LoopUnroll` opcode with an
-//!   inline body. The executor's Phase 3.B.8 loop machinery takes
-//!   care of iteration binding and hash-cons dedup within the body.
+//!   inline body. The executor's loop machinery takes care of
+//!   iteration binding and hash-cons dedup within the body.
 //!
-//! Not handled (Phase 4):
+//! Not handled:
 //!
 //! - `TemplateBody` / `TemplateCall` — template extraction is wired
 //!   through `extract.rs`, but the bytecode emission of
 //!   `DefineTemplate` + `InstantiateTemplate` flows through a
-//!   different path that Phase 3.C will connect to the oracle gate.
-//!   Walkers that hit these variants in Phase 3 return
-//!   `WalkError::TemplateNotSupported`; the walker driver
-//!   (future work) falls back to inline unrolling when that error
+//!   different path connected to the oracle gate. Walkers that hit
+//!   these variants return `WalkError::TemplateNotSupported`; the
+//!   walker driver falls back to inline unrolling when that error
 //!   appears.
 //! - `Div` — field division `x / y = x * y^{-1}`. Requires emitting
 //!   an inline Artik blob for the inverse + a range constraint. No
@@ -55,22 +54,21 @@
 //! mapping persists for the whole program (no release). Frame size
 //! is the high water mark.
 //!
-//! ## Phase 1.5 — top-level template wrapping
+//! ## Top-level template wrapping
 //!
-//! Earlier walker revisions emitted the entire body into the root
-//! frame. The Lysis bytecode caps a frame at 255 registers (RFC §5.1
-//! "dense bytecode" — frame_size is `u8`), so any program whose
-//! lowered SSA exceeds that width tripped `FrameOverflow` even though
-//! the underlying memory was nowhere near the limit. SHA-256(64) is
-//! the canonical case.
+//! The Lysis bytecode caps a frame at 255 registers (RFC §5.1 "dense
+//! bytecode" — frame_size is `u8`), so emitting an entire body into
+//! the root frame would trip `FrameOverflow` whenever the lowered SSA
+//! exceeds that width even if the underlying memory is nowhere near
+//! the limit. SHA-256(64) is the canonical case.
 //!
-//! Phase 1.5 fixes this by always wrapping the body in Template 0.
-//! The root body is the trivial sequence `InstantiateTemplate(0, [], [])`
+//! The walker therefore always wraps the body in Template 0. The
+//! root body is the trivial sequence `InstantiateTemplate(0, [], [])`
 //! followed by `Halt`, and all real work happens inside the template's
 //! frame. Programs that fit in 255 regs see no behavioural change (the
 //! materialized `InstructionKind` stream is identical), and programs
-//! that don't will be split across multiple chained templates by the
-//! M2-M4 split machinery layered on top of this wrapping.
+//! that don't get split across multiple chained templates by the split
+//! machinery layered on top of this wrapping.
 
 use std::collections::{HashMap, HashSet};
 
@@ -91,39 +89,37 @@ use ir_core::{Instruction, SsaVar, Visibility};
 /// the per-emit cost estimator that informs the split decision.
 const FRAME_CAP: u32 = 255;
 /// Margin of slack reserved on top of the cap so that the executor
-/// always has room for the worst-case Phase-1.5 emission (Decompose
-/// can allocate up to 255 slots in one go; a runaway single emit
-/// surfaces as a clean `FrameOverflow` error rather than a corrupt
-/// constraint stream).
+/// always has room for the worst-case single emission (Decompose can
+/// allocate up to 255 slots in one go; a runaway single emit surfaces
+/// as a clean `FrameOverflow` error rather than a corrupt constraint
+/// stream).
 const FRAME_MARGIN: u32 = 4;
 
 /// Hard cap on the total live-set size handled by a single
 /// `compute_live_set` call, including spilled cold vars. Anything
 /// beyond this is a structural overflow (~MB-scale program); the
-/// walker errors out cleanly with `LiveSetTooLarge`. The 64-cap
-/// inherited from Phase 3.B was the *capture* limit; in Phase 4 it
-/// is the *hot-partition* limit instead — see [`MAX_CAPTURES_HOT`].
-/// Total live sets up to ~65535 fit naturally because heap slots
-/// are u16-indexed.
+/// walker errors out cleanly with `LiveSetTooLarge`. This is the
+/// *hot-partition* limit — see [`MAX_CAPTURES_HOT`]. Total live sets
+/// up to ~65535 fit naturally because heap slots are u16-indexed.
 const MAX_CAPTURES: usize = u16::MAX as usize;
 
-/// Phase 4 hot-partition budget. The first `MAX_CAPTURES_HOT`
-/// live SSA vars (sorted by *first-use* in the upcoming body window,
-/// not by `SsaVar.0`) are passed as `capture_regs`; the remainder
-/// are spilled to the program-global heap and reloaded lazily on
-/// first use in the callee body. Setting this lower than
-/// `FRAME_CAP - FRAME_MARGIN` reserves headroom for emit-time
-/// scratch allocations in the new frame. See research report §6.4.
+/// Hot-partition budget. The first `MAX_CAPTURES_HOT` live SSA vars
+/// (sorted by *first-use* in the upcoming body window, not by
+/// `SsaVar.0`) are passed as `capture_regs`; the remainder are
+/// spilled to the program-global heap and reloaded lazily on first
+/// use in the callee body. Setting this lower than
+/// `FRAME_CAP - FRAME_MARGIN` reserves headroom for emit-time scratch
+/// allocations in the new frame.
 const MAX_CAPTURES_HOT: usize = 48;
 
-/// Phase 4 follow-up — switch threshold between
-/// `Opcode::EmitWitnessCall` (classic, register outputs) and
-/// `Opcode::EmitWitnessCallHeap` (heap outputs). When a `WitnessCall`
-/// produces more than this many outputs, the walker emits the heap
-/// variant because the classic path would need `outputs.len()` fresh
-/// regs and exceed `FRAME_CAP = 255` structurally — a single
-/// instruction whose own cost is greater than the cap can't fit in
-/// any frame, no matter how much split logic is layered on top.
+/// Switch threshold between `Opcode::EmitWitnessCall` (classic,
+/// register outputs) and `Opcode::EmitWitnessCallHeap` (heap outputs).
+/// When a `WitnessCall` produces more than this many outputs, the
+/// walker emits the heap variant because the classic path would need
+/// `outputs.len()` fresh regs and exceed `FRAME_CAP = 255` structurally
+/// — a single instruction whose own cost is greater than the cap
+/// can't fit in any frame, no matter how much split logic is layered
+/// on top.
 ///
 /// Threshold rationale: SHA-256 emits `WitnessCall(out=256)`; this
 /// constant catches that case while leaving headroom (200) for
@@ -136,13 +132,11 @@ const MAX_WITNESS_OUTPUTS_INLINE: usize = 200;
 pub enum WalkError {
     /// Register file ran out.
     Alloc(AllocError),
-    /// The body contains a `TemplateCall` or `TemplateBody`; Phase
-    /// 3.B.7 only emits inline + `LoopUnroll`.
+    /// The body contains a `TemplateCall` or `TemplateBody`; the
+    /// walker only emits inline + `LoopUnroll`.
     TemplateNotSupported,
-    /// An instruction variant is not emittable by the walker. Phase 3
-    /// punts field-division and integer-arithmetic variants that
-    /// require Phase-4 opcode extensions; other variants use this for
-    /// genuine "not implemented yet" surface.
+    /// An instruction variant is not emittable by the walker. Used
+    /// for variants the walker has not yet been taught to lower.
     UnsupportedInstruction { kind: &'static str },
     /// A `RangeCheck` / `Decompose` bit count exceeded what the
     /// Lysis opcode can carry (u8 — max 255 bits).
@@ -161,17 +155,17 @@ pub enum WalkError {
     /// A `LoopUnroll` body exceeded the `u16` byte-length field.
     LoopBodyTooLong { bytes: u32 },
     /// A top-level split was triggered but the live set exceeded
-    /// [`MAX_CAPTURES`]. Forwarding more than 64 SSA vars across a
-    /// single split would defeat the point of the split (the new
-    /// template starts with 64 reserved capture regs already). The
-    /// fix is BTA + structural extraction (Phase 2 Gap 2), which
+    /// [`MAX_CAPTURES`]. Forwarding more than the cap of SSA vars
+    /// across a single split would defeat the point of the split
+    /// (the new template starts with the reserved capture regs
+    /// already). The fix is BTA and structural extraction, which
     /// avoids the wide live set in the first place.
     LiveSetTooLarge { count: usize, max: usize },
     /// A `SymbolicIndexedEffect` reached the walker but its
     /// `index_var` could not be const-folded to a literal `usize` at
-    /// walker time. Gap 1 Stage 3 const-folds Add/Sub/Mul/Neg over
+    /// walker time. The const-folder handles Add/Sub/Mul/Neg over
     /// loop-iter constants; anything outside that surface (Decompose
-    /// indices, runtime witness reads) needs Phase 4 memory-op
+    /// indices, runtime witness reads) needs runtime memory-op
     /// support and is rejected here rather than miscompiled.
     SymbolicIndexedEffectNotEmittable,
     /// `SymbolicIndexedEffect.index_var` const-folded but pointed at
@@ -198,8 +192,7 @@ pub enum WalkError {
     /// could not be const-folded to a non-negative integer at walker
     /// time. Same surface limitation as
     /// [`Self::SymbolicArrayReadNotEmittable`] — the walker's
-    /// const-prop only sees Add/Sub/Mul/Neg over loop-iter
-    /// constants. (Gap 3 Stage 3.)
+    /// const-prop only sees Add/Sub/Mul/Neg over loop-iter constants.
     SymbolicShiftNotEmittable,
     /// `SymbolicShift.shift_var` const-folded but to a negative
     /// integer. The legacy `emit_shift_right`/`emit_shift_left`
@@ -209,12 +202,12 @@ pub enum WalkError {
     SymbolicShiftNegativeAmount { shift: i64 },
     /// `TemplateBody.captures.len()` did not match the declared
     /// `n_params`. The lift always sets them equal; a mismatch is a
-    /// pipeline corruption. (Gap 2.)
+    /// pipeline corruption.
     TemplateCapturesMismatch { n_params: u8, captures_len: usize },
-    /// `TemplateCall.outputs` is non-empty. Phase 3 lift uses
+    /// `TemplateCall.outputs` is non-empty. The lift uses
     /// **Option B** (loop runs inside the template, no return values
     /// — side-effects flow through the shared sink). Output wiring
-    /// via `Opcode::TemplateOutput` is a Phase 4 deliverable.
+    /// via `Opcode::TemplateOutput` is not yet supported.
     TemplateOutputsNotSupported,
     /// `TemplateCall.template_id` references a `TemplateId` whose
     /// matching `TemplateBody` was never emitted. Either the IR
@@ -230,10 +223,10 @@ impl std::fmt::Display for WalkError {
         match self {
             Self::Alloc(e) => write!(f, "walker: {e}"),
             Self::TemplateNotSupported => f.write_str(
-                "walker: TemplateCall/TemplateBody not emitted yet (Phase 3 MVP uses LoopUnroll only)",
+                "walker: TemplateCall/TemplateBody not emitted yet (walker uses LoopUnroll only)",
             ),
             Self::UnsupportedInstruction { kind } => {
-                write!(f, "walker: instruction variant `{kind}` not supported (Phase 4)")
+                write!(f, "walker: instruction variant `{kind}` not supported")
             }
             Self::OperandOutOfRange { kind, limit, got } => {
                 write!(
@@ -250,10 +243,10 @@ impl std::fmt::Display for WalkError {
             }
             Self::LiveSetTooLarge { count, max } => write!(
                 f,
-                "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — Phase 2 BTA needed"
+                "walker: live set across top-level split has {count} SSA vars, exceeding MAX_CAPTURES={max} — BTA needed"
             ),
             Self::SymbolicIndexedEffectNotEmittable => f.write_str(
-                "walker: SymbolicIndexedEffect index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+                "walker: SymbolicIndexedEffect index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (runtime memory ops would lift this)",
             ),
             Self::SymbolicIndexedEffectIndexOutOfRange { idx, len } => write!(
                 f,
@@ -263,14 +256,14 @@ impl std::fmt::Display for WalkError {
                 "walker: SymbolicIndexedEffect kind=Let but value_var=None — instantiator bug",
             ),
             Self::SymbolicArrayReadNotEmittable => f.write_str(
-                "walker: SymbolicArrayRead index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+                "walker: SymbolicArrayRead index could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (runtime memory ops would lift this)",
             ),
             Self::SymbolicArrayReadIndexOutOfRange { idx, len } => write!(
                 f,
                 "walker: SymbolicArrayRead resolved to index {idx} but array has {len} slots"
             ),
             Self::SymbolicShiftNotEmittable => f.write_str(
-                "walker: SymbolicShift amount could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (Phase 4 memory ops would lift this)",
+                "walker: SymbolicShift amount could not be const-folded at walker time — only Add/Sub/Mul/Neg over loop-iter constants are supported (runtime memory ops would lift this)",
             ),
             Self::SymbolicShiftNegativeAmount { shift } => write!(
                 f,
@@ -281,7 +274,7 @@ impl std::fmt::Display for WalkError {
                 "walker: TemplateBody declares n_params={n_params} but captures.len()={captures_len} (lift pipeline bug)"
             ),
             Self::TemplateOutputsNotSupported => f.write_str(
-                "walker: TemplateCall.outputs is non-empty (Option B lift uses side-effects only; output wiring is Phase 4)",
+                "walker: TemplateCall.outputs is non-empty (Option B lift uses side-effects only; output wiring is not yet supported)",
             ),
             Self::UndefinedTemplateId(id) => write!(
                 f,
@@ -299,8 +292,8 @@ impl From<AllocError> for WalkError {
     }
 }
 
-/// One pending template body. Phase 1.5 always opens at least one
-/// (Template 0); Phase 2 split machinery will append more.
+/// One pending template body. The wrapper always opens at least one
+/// (Template 0); the split machinery appends more as needed.
 struct TemplateBuf {
     opcodes: Vec<Opcode>,
     /// Frame size = high-water mark of the allocator at close time.
@@ -332,12 +325,13 @@ pub struct Walker<F: FieldBackend> {
     builder: ProgramBuilder<F>,
     /// Per-template opcode buffers. `templates[0]` is Template 0,
     /// always present and always the body the root frame instantiates.
-    /// Phase 2 split logic appends more.
+    /// The split logic appends more buffers as needed.
     templates: Vec<TemplateBuf>,
     /// Index of the template the walker is currently emitting into.
     current: usize,
-    /// One allocator per template — reset at split boundaries. Phase
-    /// 1.5 keeps a single template so the allocator never resets.
+    /// One allocator per template — reset at split boundaries. With
+    /// no split the wrapper keeps a single template so the allocator
+    /// never resets.
     allocator: RegAllocator,
     /// SsaVar → RegId mapping for the **current** template's frame.
     /// At a split boundary this is rebuilt for the new frame.
@@ -375,14 +369,14 @@ pub struct Walker<F: FieldBackend> {
     /// `walker_const` keys: it pinpoints exactly the iter_vars that
     /// must survive, not every compile-time-folded SsaVar.
     enclosing_iter_vars: Vec<SsaVar>,
-    /// Phase 4 — bump allocator for heap slots. Program-global
-    /// (never reset between templates). Each `StoreHeap` emission
-    /// claims the next free slot id and increments this counter.
-    /// `finalize()` writes the final value into the v2 header's
-    /// `heap_size_hint` field so the executor pre-sizes its heap.
+    /// Bump allocator for heap slots. Program-global (never reset
+    /// between templates). Each `StoreHeap` emission claims the next
+    /// free slot id and increments this counter. `finalize()` writes
+    /// the final value into the v2 header's `heap_size_hint` field so
+    /// the executor pre-sizes its heap.
     heap_alloc: u16,
-    /// Phase 4 — `SsaVar` → heap slot for vars that were spilled at
-    /// any prior split. Persists across template boundaries (unlike
+    /// `SsaVar` → heap slot for vars that were spilled at any prior
+    /// split. Persists across template boundaries (unlike
     /// `ssa_to_reg`, which is wiped at every `perform_split`). A var
     /// is in this map iff it was emitted as `StoreHeap` somewhere in
     /// the program; subsequent uses produce one `LoadHeap` per
@@ -544,10 +538,10 @@ impl<F: FieldBackend> Walker<F> {
         let live =
             self.compute_live_set(|v| last_use_idx.get(v).is_some_and(|&j| j >= next_idx))?;
         dump_live_set_trace("top_level", live.len(), body.len() - next_idx, self.current);
-        // Partition by first-use ordering in the upcoming body.
-        // Phase 4 §6.4: the first MAX_CAPTURES_HOT (≤ 48) referenced
-        // earliest stay as captures; the rest spill to the heap and
-        // reload lazily on first use.
+        // Partition by first-use ordering in the upcoming body. The
+        // first MAX_CAPTURES_HOT (<= 48) referenced earliest stay as
+        // captures; the rest spill to the heap and reload lazily on
+        // first use.
         let upcoming = &body[next_idx..];
         let (hot, cold) = partition_live_set(&live, upcoming, &HashSet::new());
         self.perform_split(&hot, &cold)
@@ -572,7 +566,7 @@ impl<F: FieldBackend> Walker<F> {
         // regardless of first-use ordering — outer loops' iter_vars
         // must survive every inner split cheaply, and the inner
         // loop's iter_var binding is also load-bearing for the next
-        // iteration's restore (Gap 4 invariant).
+        // iteration's restore.
         let (hot, cold) = partition_live_set(&live, body, &enclosing);
         self.perform_split(&hot, &cold)
     }
@@ -623,10 +617,9 @@ impl<F: FieldBackend> Walker<F> {
     }
 
     /// Common post-live-set machinery shared by [`Self::do_split`]
-    /// (Phase 1.5 top-level) and [`Self::split_in_per_iter`] (Gap 4
-    /// mid-iter).
+    /// (top-level) and [`Self::split_in_per_iter`] (mid-iter).
     ///
-    /// Phase 4 spill discipline (research report §6.4):
+    /// Spill discipline:
     ///
     ///  1. **Spill cold vars first** — for every cold var not already
     ///     in `ssa_to_heap`, allocate a slot via `heap_alloc`, emit
@@ -694,7 +687,7 @@ impl<F: FieldBackend> Walker<F> {
         // with `SymbolicIndexedEffectNotEmittable`.
         //
         // SHA-256(64) is the canonical witness: 4 top-level splits
-        // succeed (Phase 4 heap path works), then a downstream
+        // succeed (heap path works), then a downstream
         // `SymbolicIndexedEffect` whose `index_var` was a folded
         // literal trips the assertion in `emit_symbolic_indexed_effect`
         // because the new template's `walker_const` is empty.
@@ -712,12 +705,12 @@ impl<F: FieldBackend> Walker<F> {
         Ok(())
     }
 
-    /// Phase 4 — spill a cold var to the program-global heap. Idempotent
-    /// per `SsaVar`: if the var was already spilled at an earlier
-    /// split (`ssa_to_heap.contains_key(&var)`), no new `StoreHeap` is
+    /// Spill a cold var to the program-global heap. Idempotent per
+    /// `SsaVar`: if the var was already spilled at an earlier split
+    /// (`ssa_to_heap.contains_key(&var)`), no new `StoreHeap` is
     /// emitted. This enforces the **single-static-store invariant**
-    /// (research report §6.4 + validator rule 13) at the walker
-    /// level, before the validator catches it.
+    /// (one StoreHeap per slot) at the walker level, before the
+    /// validator catches it.
     ///
     /// Pre-condition: `ssa_to_reg[&var]` is bound — the caller (which
     /// is always `perform_split`) has just computed the live set
@@ -818,8 +811,8 @@ impl<F: FieldBackend> Walker<F> {
                 self.builder.push_opcode(op);
             }
         }
-        // Phase 4: stamp the heap size hint so the executor pre-sizes
-        // its heap to fit every slot allocated by `spill_cold_var`.
+        // Stamp the heap size hint so the executor pre-sizes its heap
+        // to fit every slot allocated by `spill_cold_var`.
         self.builder.set_heap_size_hint(self.heap_alloc);
         Ok(self.builder.finish())
     }
@@ -879,7 +872,7 @@ impl<F: FieldBackend> Walker<F> {
     /// [`Self::emit_symbolic_indexed_effect`]: const-fold the index,
     /// pick the slot, rebind `result_var` to the slot's register.
     /// Requires `walker_const[index_var]` populated; the per-iteration
-    /// walker is the only producer in Phase 2.
+    /// walker is the only producer.
     ///
     /// If the slot has no register binding yet, synthesise a witness
     /// wire on demand — same pattern the write-side uses. This handles
@@ -943,7 +936,7 @@ impl<F: FieldBackend> Walker<F> {
 
     /// Resolve a `SymbolicShift` at walker time. Requires
     /// `walker_const[shift_var]` populated — the per-iteration loop
-    /// unroll is the only producer in Phase 2.
+    /// unroll is the only producer.
     ///
     /// Mirrors [`crate::instantiate::Instantiator::emit_shift_right`] /
     /// `emit_shift_left` once `shift_var` is known to be a literal
@@ -1088,7 +1081,7 @@ impl<F: FieldBackend> Walker<F> {
     /// register ids in the caller's frame; the executor copies them
     /// into the callee's `regs[0..n_params]` before the body runs
     /// (see `lysis::execute::dispatch`'s InstantiateTemplate handler).
-    /// Outputs are not supported in the Phase 3 lift (Option B uses
+    /// Outputs are not supported by the lift (Option B uses
     /// side-effects only — see `WalkError::TemplateOutputsNotSupported`).
     fn emit_template_call(
         &mut self,
@@ -1165,7 +1158,7 @@ impl<F: FieldBackend> Walker<F> {
         // Open a fresh template buffer at the tail of `templates`.
         // Record the lift-id → buffer-index mapping BEFORE emitting
         // the body so a recursive TemplateCall referencing this id
-        // (e.g. self-recursive templates, though Phase 3 lift never
+        // (e.g. self-recursive templates, though the lift never
         // emits them) resolves correctly.
         let walker_idx =
             u16::try_from(self.templates.len()).map_err(|_| WalkError::OperandOutOfRange {
@@ -1211,8 +1204,8 @@ impl<F: FieldBackend> Walker<F> {
     }
 
     /// Resolve a `SymbolicIndexedEffect` at walker time. Requires
-    /// `walker_const[index_var]` populated — Stage 3's per-iteration
-    /// loop unroll is the only producer in Phase 2.
+    /// `walker_const[index_var]` populated — the per-iteration loop
+    /// unroll is the only producer.
     fn emit_symbolic_indexed_effect(
         &mut self,
         kind: IndexedEffectKind,
@@ -1244,13 +1237,13 @@ impl<F: FieldBackend> Walker<F> {
         // a fresh witness wire (the slot IS a witness signal by
         // design). For input-backed slots (public outputs, witness
         // inputs), `resolve()` succeeds because `collect_in_extinst`
-        // and `record_last_use_in_extinst` now include `array_slots`
+        // and `record_last_use_in_extinst` include `array_slots`
         // in the live-set, ensuring perform_split spills them to
-        // heap. Pre-Phase-2.A the synthesis path fired for
-        // input-backed slots too, silently downgrading
+        // heap. Without that inclusion the synthesis path would fire
+        // for input-backed slots too, silently downgrading e.g.
         // `paddedIn_X (Public)` to a fresh `__lysis_sym_slot_X
-        // (Witness)` wire — the cause of the
-        // `var_postdecl_padding_e2e` regression.
+        // (Witness)` wire — covered by the `var_postdecl_padding_e2e`
+        // regression test.
         let target_reg = match self.resolve(target_var) {
             Ok(reg) => reg,
             Err(WalkError::UndefinedSsaVar(_)) => {
@@ -1529,10 +1522,10 @@ impl<F: FieldBackend> Walker<F> {
                 });
                 self.bind(*result, dst);
             }
-            // Desugar: IsLtBounded(x,y,bits) ignores `bits` in Phase 3;
-            // the bound is a soundness-preserving optimization hint
-            // (upstream already range-checked operands to fit in
-            // `bits`). Emit plain IsLt; Phase 4 adds a bounded opcode.
+            // Desugar: IsLtBounded(x,y,bits) ignores `bits`; the bound
+            // is a soundness-preserving optimization hint (upstream
+            // already range-checked operands to fit in `bits`). Emit
+            // plain IsLt; a bounded opcode is not yet wired through.
             Instruction::IsLtBounded {
                 result, lhs, rhs, ..
             } => {
@@ -1680,15 +1673,14 @@ impl<F: FieldBackend> Walker<F> {
             }
 
             // ---------- integer div/mod ----------
-            // Phase 1.5 promotes IntDiv/IntMod from "deferred to Phase
-            // 4" to first-class walker output: SHA-256(64) emits
-            // IntDiv from `int_div(...)` calls in `padBlocks`, and
-            // the HARD GATE can't close without it. The Lysis
-            // bytecode carries `EmitIntDiv` / `EmitIntMod` (codes
-            // 0x4D / 0x4E) with `max_bits: u8`; programs whose
-            // semantic max_bits exceeds 255 surface as
-            // `OperandOutOfRange` so callers learn the limit at
-            // walker time rather than as a silent constraint bug.
+            // SHA-256(64) emits IntDiv from `int_div(...)` calls in
+            // `padBlocks`, so the walker emits IntDiv/IntMod as
+            // first-class output. The Lysis bytecode carries
+            // `EmitIntDiv` / `EmitIntMod` (codes 0x4D / 0x4E) with
+            // `max_bits: u8`; programs whose semantic max_bits
+            // exceeds 255 surface as `OperandOutOfRange` so callers
+            // learn the limit at walker time rather than as a silent
+            // constraint bug.
             Instruction::IntDiv {
                 result,
                 lhs,
@@ -1740,7 +1732,7 @@ impl<F: FieldBackend> Walker<F> {
             // Intern the Artik bytecode blob, resolve input regs,
             // allocate fresh output destinations, and emit.
             //
-            // Two emit paths based on output count (Phase 4 follow-up):
+            // Two emit paths based on output count:
             //
             //  - **Classic** (`EmitWitnessCall`): outputs ≤
             //    `MAX_WITNESS_OUTPUTS_INLINE`. Each output gets a
@@ -1838,24 +1830,23 @@ impl<F: FieldBackend> Walker<F> {
             return Err(WalkError::NegativeLoopBound { start, end });
         }
 
-        // Gap 1/1.5 Stage 3: when the body (recursively, through
-        // nested LoopUnrolls) contains a `SymbolicIndexedEffect` or
-        // `SymbolicArrayRead`, the runtime `LoopUnroll` opcode can't
-        // carry either — both need a literal `iter_var = i` on every
-        // iteration so the walker can const-fold the index. Per-iter
-        // unroll the body at walker time. Loops without symbolic ops
-        // keep the rolled `LoopUnroll` opcode + InterningSink dedup —
-        // Phase 1.5's value isn't sacrificed for the rest of the
-        // program.
+        // When the body (recursively, through nested LoopUnrolls)
+        // contains a `SymbolicIndexedEffect` or `SymbolicArrayRead`,
+        // the runtime `LoopUnroll` opcode can't carry either — both
+        // need a literal `iter_var = i` on every iteration so the
+        // walker can const-fold the index. Per-iter unroll the body
+        // at walker time. Loops without symbolic ops keep the rolled
+        // `LoopUnroll` opcode and InterningSink dedup — the wrapper's
+        // value isn't sacrificed for the rest of the program.
         //
-        // Gap 4 follow-up: also fall back to per-iter unroll when the
-        // body is wide enough that a single rolled emission would
-        // exhaust the frame cap. Rolled emit allocs sequentially; a
-        // body needing >250 slots can't fit even in a fresh-after-split
-        // frame. Per-iter unroll engages mid-iter `split_in_per_iter`
-        // and chains chunks under cap. SHA-256(64)'s outer round loop
-        // (~1779 estimated regs in a single rolled emission) hits this
-        // path post-fallback.
+        // Also fall back to per-iter unroll when the body is wide
+        // enough that a single rolled emission would exhaust the
+        // frame cap. Rolled emit allocs sequentially; a body needing
+        // >250 slots can't fit even in a fresh-after-split frame.
+        // Per-iter unroll engages mid-iter `split_in_per_iter` and
+        // chains chunks under cap. SHA-256(64)'s outer round loop
+        // (~1779 estimated regs in a single rolled emission) hits
+        // this path.
         if body_has_symbolic_op(body) || body_too_wide_for_rolled(body) {
             return self.emit_loop_unroll_per_iter(iter_var, start, end, body);
         }
@@ -1908,16 +1899,16 @@ impl<F: FieldBackend> Walker<F> {
     /// regs get reused across iterations rather than ballooning past
     /// the 255-slot frame cap.
     ///
-    /// **Gap 4 — mid-iter split**: when a single iteration's body
-    /// would itself overflow the available frame slots, we apply a
-    /// `split_in_per_iter` mid-emission, mirroring Phase 1.5's
-    /// top-level split but with a live set computed against the
-    /// **whole** body (because subsequent iterations re-emit
-    /// `body[0..N]` from the post-split frame and need every outer
-    /// SsaVar reference to remain bound). The split chains a fresh
-    /// template, body emission resumes there, and `pre_body_*`
-    /// snapshots refresh so the next iteration's restore-and-emit
-    /// cycle works against the new frame's state.
+    /// **Mid-iter split**: when a single iteration's body would
+    /// itself overflow the available frame slots, we apply a
+    /// `split_in_per_iter` mid-emission, mirroring the top-level
+    /// split but with a live set computed against the **whole** body
+    /// (because subsequent iterations re-emit `body[0..N]` from the
+    /// post-split frame and need every outer SsaVar reference to
+    /// remain bound). The split chains a fresh template, body
+    /// emission resumes there, and `pre_body_*` snapshots refresh so
+    /// the next iteration's restore-and-emit cycle works against the
+    /// new frame's state.
     fn emit_loop_unroll_per_iter(
         &mut self,
         iter_var: SsaVar,
@@ -2071,8 +2062,8 @@ impl<F: FieldBackend> Walker<F> {
     }
 
     /// Resolve a `SsaVar` to the reg it currently lives in. Hot path:
-    /// `ssa_to_reg.get(&var)` returns `Some`. Phase 4 cold path: when
-    /// a split spilled this var to the heap (`ssa_to_heap.contains(&var)`)
+    /// `ssa_to_reg.get(&var)` returns `Some`. Cold path: when a split
+    /// spilled this var to the heap (`ssa_to_heap.contains(&var)`)
     /// but the new template hasn't yet materialised it, emit a
     /// `LoadHeap` into a fresh reg, cache the (var, reg) binding so
     /// subsequent uses inside the same template body see it as hot,
@@ -2324,10 +2315,9 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             out_regs: vec![0u8; outputs.len()],
         }),
 
-        // Div shipped in Phase 1.B (BETA20-CLOSEOUT 2026-04-30):
-        // one 3-byte EmitDiv opcode, same shape as EmitMul. The
-        // R1CS backend handles field-div semantics downstream via
-        // `divide_lcs`.
+        // Field Div: one 3-byte EmitDiv opcode, same shape as
+        // EmitMul. The R1CS backend handles field-div semantics
+        // downstream via `divide_lcs`.
         Instruction::Div { .. } => bin(Opcode::EmitDiv {
             dst: 0,
             lhs: 0,
@@ -2387,12 +2377,12 @@ fn body_has_symbolic_op<F: FieldBackend>(body: &[ExtendedInstruction<F>]) -> boo
 }
 
 /// Returns `true` when emitting `body` as a single rolled
-/// `LoopUnroll` opcode would exceed the frame cap (≥ `FRAME_CAP -
-/// FRAME_MARGIN` slots in one body emission). Used to force the
-/// per-iter unroll path (`emit_loop_unroll_per_iter`) for loops
+/// `LoopUnroll` opcode would exceed the frame cap (>= `FRAME_CAP
+/// minus FRAME_MARGIN` slots in one body emission). Used to force
+/// the per-iter unroll path (`emit_loop_unroll_per_iter`) for loops
 /// whose bodies are too wide for the rolled form even when they
 /// don't carry symbolic ops. Per-iter unroll then chains the body
-/// across post-Gap-4 mid-iter splits, keeping each chunk under cap.
+/// across mid-iter splits, keeping each chunk under cap.
 ///
 /// Threshold is `FRAME_CAP - FRAME_MARGIN`: a body whose estimated
 /// reg cost crosses that line would trigger `Alloc(FrameOverflow)`
@@ -2587,13 +2577,13 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
 /// Count the operand SsaVars that will trigger a `LoadHeap` emit
 /// plus a fresh reg alloc inside [`Walker::resolve`] when this
 /// instruction is emitted. Each cold operand costs 1 reg on top of
-/// the instruction's own [`reg_cost_of_extinst`] (Phase 4 follow-up).
+/// the instruction's own [`reg_cost_of_extinst`].
 ///
 /// Without this count, the split-trigger underestimates: a single
 /// emit can pull 3 cold operands and a result, costing 4 regs while
-/// `reg_cost_of_extinst` reports 1. That mismatch is what surfaced
-/// SHA-256(64)'s `FrameOverflow { requested: 255 }` after the first
-/// 9 splits succeeded (research report §7.7 + Phase 4 follow-up).
+/// `reg_cost_of_extinst` reports 1. That mismatch is what surfaces
+/// as SHA-256(64)'s `FrameOverflow { requested: 255 }` after a few
+/// successful splits.
 ///
 /// "Cold" means: in `ssa_to_heap` (was spilled at some prior split)
 /// and not in `ssa_to_reg` (not currently materialised in the frame).
@@ -2610,12 +2600,11 @@ fn cold_load_cost<F: FieldBackend>(
         // operand can be cold. Shortcut for the corpus baseline.
         return 0;
     }
-    // Phase 4 follow-up: heap-output `WitnessCall` reads its inputs
-    // directly from heap slots via `InputSrc::Slot` — no `LoadHeap`
-    // is emitted for cold inputs, so cold operands cost 0 frame regs.
-    // Mirror the walker's emit-time branch in `emit_plain` so the
-    // split-trigger doesn't over-estimate and fragment the program
-    // unnecessarily.
+    // Heap-output `WitnessCall` reads its inputs directly from heap
+    // slots via `InputSrc::Slot` — no `LoadHeap` is emitted for cold
+    // inputs, so cold operands cost 0 frame regs. Mirror the walker's
+    // emit-time branch in `emit_plain` so the split-trigger doesn't
+    // over-estimate and fragment the program unnecessarily.
     if let ExtendedInstruction::Plain(Instruction::WitnessCall { outputs, .. }) = inst {
         if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
             return 0;
@@ -2661,10 +2650,9 @@ fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
         Instruction::Decompose { num_bits, .. } => *num_bits,
         Instruction::WitnessCall { outputs, .. } => {
             // Outputs above the threshold land in heap slots, not
-            // regs (Phase 4 follow-up). The cost estimator must
-            // mirror the walker's emit-time branch: heap-output
-            // variant is `cost = 0` for the frame, classic variant is
-            // `cost = outputs.len()`.
+            // regs. The cost estimator must mirror the walker's
+            // emit-time branch: heap-output variant is `cost = 0`
+            // for the frame, classic variant is `cost = outputs.len()`.
             if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
                 0
             } else {
@@ -2698,10 +2686,9 @@ fn instruction_needs_one<F: FieldBackend>(inst: &Instruction<F>) -> bool {
 /// [walker] live_set kind=rejected  live=250 cap=64
 /// ```
 ///
-/// Intended for the Phase 4 research corpus pass: pipe a test run's
-/// stderr through `grep '\[walker\] live_set' | awk '{print $3}' |
-/// sort | uniq -c` to build the histogram referenced in
-/// `.claude/plans/lysis-phase4-research-report.md` §2.7.1.
+/// Intended for corpus analysis: pipe a test run's stderr through
+/// `grep '\[walker\] live_set' | awk '{print $3}' | sort | uniq -c`
+/// to build a per-corpus histogram of accepted/rejected splits.
 fn dump_live_set_trace(kind: &str, live_count: usize, body_len: usize, template_id: usize) {
     if std::env::var("LYSIS_DUMP_LIVESET").is_ok() {
         eprintln!(
@@ -2710,17 +2697,17 @@ fn dump_live_set_trace(kind: &str, live_count: usize, body_len: usize, template_
     }
 }
 
-/// Phase 4 — partition a sorted live set into (hot, cold) by
-/// **first-use index** in the upcoming body window. Vars referenced
-/// earliest in the body are hot (passed as captures); vars referenced
-/// later (or never within the scanned window) are cold (spilled to
-/// the heap, reloaded lazily).
+/// Partition a sorted live set into (hot, cold) by **first-use
+/// index** in the upcoming body window. Vars referenced earliest in
+/// the body are hot (passed as captures); vars referenced later (or
+/// never within the scanned window) are cold (spilled to the heap,
+/// reloaded lazily).
 ///
 /// `force_hot` collects vars that must ride in the hot partition
 /// regardless of first-use ordering — for `split_in_per_iter`, the
-/// enclosing loop's iter_vars (Gap 4 invariant: outer iter_var must
-/// survive every inner split cheaply, since the next-iteration
-/// restore re-binds it from `ssa_to_reg`).
+/// enclosing loop's iter_vars (outer iter_var must survive every
+/// inner split cheaply, since the next-iteration restore re-binds it
+/// from `ssa_to_reg`).
 ///
 /// Tie-break: vars with equal first-use index sort by `SsaVar.0`
 /// (the input order). This keeps capture slot ids deterministic
@@ -3050,22 +3037,18 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
         // signal outputs the slots are pre-emitted; for internal
         // signals the symbolic emit path synthesizes them) and must
         // cross any top-level split that lands between the parent
-        // template and the LoopUnroll. Pre-Phase-2.A this collector
-        // omitted `array_slots` and relied on the synth-on-demand
-        // fallback at `emit_symbolic_indexed_effect`'s `ssa_to_reg.
-        // get(target).is_none()` branch to mint fresh `LoadInput`
-        // wires inside the post-split template — but the synthesis
-        // turned `paddedIn_X (Public)` into `__lysis_sym_slot_X
-        // (Witness)`, leaving the public output wire unconstrained
-        // and breaking witness eval (the witness map keyed by the
-        // original Public name no longer matches the synthesized
-        // Witness name). Carrying the slots through the live-set
-        // forces `perform_split` to spill them to heap; the post-
-        // split `resolve()` then auto-faults them via `LoadHeap` and
-        // the synthesis branch becomes unreachable for input-backed
-        // slots. (The synthesis path still survives as a fallback
-        // for genuinely-internal signal slots that were never backed
-        // by a `Plain(Input)` — those are witness wires by design.)
+        // template and the LoopUnroll. The collector therefore
+        // includes `array_slots` so `perform_split` spills them to
+        // heap and the post-split `resolve()` auto-faults them via
+        // `LoadHeap`. Without this, the synth-on-demand fallback at
+        // `emit_symbolic_indexed_effect`'s `ssa_to_reg.get(target)
+        // .is_none()` branch would mint a fresh `LoadInput` wire
+        // inside the post-split template, turning e.g.
+        // `paddedIn_X (Public)` into `__lysis_sym_slot_X (Witness)`
+        // and leaving the public output wire unconstrained. The
+        // synthesis branch still survives as a fallback for
+        // genuinely-internal signal slots that were never backed by
+        // a `Plain(Input)` — those are witness wires by design.
         ExtendedInstruction::SymbolicIndexedEffect {
             array_slots,
             index_var,
@@ -3930,10 +3913,10 @@ mod tests {
 
     #[test]
     fn refuses_template_call_with_outputs() {
-        // Phase 3 Option B lift uses side-effects only — non-empty
-        // outputs are reserved for Phase 4 (Opcode::TemplateOutput
-        // wiring). Verify the walker rejects them rather than
-        // silently miscompiling.
+        // The Option B lift uses side-effects only — non-empty
+        // outputs would require `Opcode::TemplateOutput` wiring,
+        // which is not implemented. Verify the walker rejects them
+        // rather than silently miscompiling.
         let body = vec![ExtendedInstruction::TemplateCall {
             template_id: crate::TemplateId(0),
             captures: vec![],
@@ -4283,7 +4266,7 @@ mod tests {
 
     #[test]
     fn desugars_is_lt_bounded_ignores_bitwidth_hint() {
-        // In Phase 3 IsLtBounded lowers to plain IsLt; no extra Const/Sub.
+        // IsLtBounded lowers to plain IsLt; no extra Const/Sub.
         let body = vec![
             plain(Instruction::Input {
                 result: ssa(0),
@@ -4413,10 +4396,9 @@ mod tests {
 
     #[test]
     fn lowers_int_div_and_int_mod() {
-        // Phase 1.5 promoted IntDiv/IntMod from "rejected" to walker
-        // output: SHA-256 needs them, so the bytecode now carries
-        // EmitIntDiv / EmitIntMod opcodes. Verify materialized stream
-        // contains both.
+        // SHA-256 emits IntDiv/IntMod, so the bytecode carries
+        // EmitIntDiv / EmitIntMod opcodes. Verify the materialized
+        // stream contains both.
         let body = vec![
             plain(Instruction::Input {
                 result: ssa(0),
@@ -4863,7 +4845,7 @@ mod tests {
     }
 
     // ---------------------------------------------------------------
-    // Phase 4 — partition_live_set unit tests + heap-emission smoke.
+    // partition_live_set unit tests and heap-emission smoke.
     // ---------------------------------------------------------------
 
     #[test]
@@ -4955,27 +4937,22 @@ mod tests {
         }
     }
 
-    /// Phase 4 §6.5 Commit 5.5 — heuristic vs naive comparison.
+    /// First-use heuristic vs naive comparison.
     ///
     /// Builds a synthetic post-split body where the live set has 100
     /// vars and the body references ssa(60..=99) earliest, then
     /// ssa(0..=59). With `MAX_CAPTURES_HOT=48`, the **first-use
-    /// heuristic** picks ssa(60..=99) + 8 more (the 48 hot) and
+    /// heuristic** picks ssa(60..=99) plus 8 more (the 48 hot) and
     /// spills 52 cold; the **naive ordering** picks ssa(0..=47) hot
     /// and spills ssa(48..=99) cold.
     ///
     /// Observed metric: `LoadHeap` emissions in the first half of
     /// the body (the "early window"). The heuristic should always
-    /// produce ≤ naive count there, since vars referenced earliest
-    /// stay hot.
+    /// produce a count less than or equal to naive there, since vars
+    /// referenced earliest stay hot.
     ///
-    /// Decision rule from research report §6.5: if the win is
-    /// < 5 % the simpler naive ordering replaces the heuristic; if
-    /// ≥ 20 % the heuristic is justified. This test prints the
-    /// numbers so the user can read them during the Commit 5.5 sign-off
-    /// without needing a separate criterion harness, and asserts the
-    /// monotonicity property (heuristic never *worse* than naive on
-    /// this fixture).
+    /// This test prints the numbers and asserts the monotonicity
+    /// property (heuristic never *worse* than naive on this fixture).
     #[test]
     fn heuristic_vs_naive_first_use_advantage() {
         let live: Vec<SsaVar> = (0..100).map(ssa).collect();
@@ -5026,8 +5003,8 @@ mod tests {
         let heur_loads = count_loads_first_half(&heur_cold);
         let naive_loads = count_loads_first_half(&naive_cold);
 
-        // Visible report — captured by `cargo test -- --nocapture` for
-        // the §6.5 sign-off.
+        // Visible report — captured by `cargo test -- --nocapture`
+        // for benchmark sign-off.
         eprintln!(
             "[lysis-spill-bench] heuristic_loads={heur_loads} \
              naive_loads={naive_loads} \
@@ -5046,7 +5023,7 @@ mod tests {
         // Monotonicity: heuristic must not produce *more* LoadHeaps
         // in the early window than naive ordering. If this fails,
         // the heuristic has regressed and we should investigate
-        // before keeping it (research report §6.5 + Reviewer 1.2).
+        // before keeping it.
         assert!(
             heur_loads <= naive_loads,
             "heuristic emitted {heur_loads} LoadHeaps in early window vs naive {naive_loads}; \

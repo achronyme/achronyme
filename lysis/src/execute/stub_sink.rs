@@ -1,10 +1,10 @@
-//! `StubSink<F>` — the Phase 1 implementation of [`IrSink`].
+//! `StubSink<F>` — the no-op implementation of [`IrSink`].
 //!
 //! Stores every emitted `InstructionKind` in a plain `Vec` in the
 //! order received. No hash-consing, no deduplication, no
-//! side-effect separation — those land in Phase 2 (RFC §5.1-5.3).
-//! The stub exists so the executor has something concrete to write
-//! to today, and so the Phase 1 tests can assert exact emission
+//! side-effect separation — those features live in [`InterningSink`]
+//! (RFC §5.1-5.3). The stub exists so the executor has something
+//! concrete to write to and so tests can assert exact emission
 //! sequences.
 
 use memory::field::{Bn254Fr, FieldBackend};
@@ -95,10 +95,10 @@ mod tests {
     }
 
     #[test]
-    fn no_deduplication_in_phase1() {
+    fn no_deduplication_in_stub_sink() {
         // Two textually identical Add instructions must both land in
-        // the sink — the interner in Phase 2 will dedup them; Phase 1
-        // is deliberately naïve.
+        // the sink — the interning sink dedups them; the stub is
+        // deliberately naïve.
         let mut sink = StubSink::<Bn254Fr>::new();
         let a = sink.fresh_id();
         let b = sink.fresh_id();

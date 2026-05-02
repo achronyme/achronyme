@@ -58,8 +58,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Record a shadow resolver hit for the current expression, if
     /// any. No-op when the resolver state isn't installed, when
     /// `current_expr_id` is unset, or when the annotation table has
-    /// no entry for this key. Phase 3E.1 only records — Phase 3E.2
-    /// flips dispatch.
+    /// no entry for this key. The shadow path only records hits;
+    /// the legacy lookup is what drives dispatch.
     pub(super) fn record_resolver_hit(&mut self) {
         let Some(expr_id) = self.current_expr_id else {
             return;
@@ -90,14 +90,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     /// Which module the resolver-shadow hooks should consult.
     ///
-    /// Phase 3E.1 used [`resolver_root_module`] directly — every
-    /// annotation was keyed by `(root_module, expr_id)`. Phase 3E.3
-    /// maintains a stack of active module ids so that when
+    /// Maintains a stack of active module ids so that when
     /// [`compile_user_fn_call`] inlines a user fn defined in another
     /// module, the annotations for [`Expr`]s inside the inlined body
     /// are keyed by the **definer's** module, not the caller's. This
-    /// is the structural fix for gap 2.4 (transitive name
-    /// resolution inside inlined prove-block helpers).
+    /// is the structural fix for transitive name resolution inside
+    /// inlined prove-block helpers.
     ///
     /// When the stack is empty, falls back to the root module
     /// installed at OuterScope handoff.
@@ -142,16 +140,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             return DispatchDecision::NoAnnotation;
         };
         // Follow FnAlias chain. A malformed alias cycle is
-        // impossible in a well-formed SymbolTable (Phase 3C caps
+        // impossible in a well-formed SymbolTable (the resolver caps
         // depth via FN_ALIAS_MAX_DEPTH), but we still swallow the
-        // error and fall back to legacy dispatch — defensive,
-        // since Phase 3E is an extension path, not a hard cutover.
+        // error and fall back to legacy dispatch — defensive, since
+        // the annotation path is an extension, not a hard cutover.
         let Ok(sid) = table.resolve_alias(start) else {
             return DispatchDecision::NoAnnotation;
         };
         // Record the hit for the shadow trace — both the
         // annotation path AND the legacy path land here, so the
-        // hit trace remains observable-equivalent to Phase 3E.1.
+        // hit trace remains observable-equivalent across modes.
         self.resolver_hits.push((key, sid));
         match table.get(sid) {
             CallableKind::Builtin { entry_index } => table
@@ -172,8 +170,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // Constants, circom templates, and stray FnAlias (can't
             // happen after `resolve_alias` — it either terminates at
             // a non-alias or errors out) are not dispatchable from a
-            // Call site in Phase 3E/3F. Fall back to legacy so the
-            // compiler's existing error paths run.
+            // Call site via the annotation path. Fall back to legacy
+            // so the compiler's existing error paths run.
             _ => DispatchDecision::NoAnnotation,
         }
     }

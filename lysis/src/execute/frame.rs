@@ -55,7 +55,7 @@ pub struct Frame {
 }
 
 impl Frame {
-    /// Top-level frame with a 256-register file (matches the Phase 1
+    /// Top-level frame with a 256-register file (matches the
     /// implicit-root frame size documented in `bytecode::validate`).
     pub fn root(body_end_idx: usize) -> Self {
         Self {

@@ -1,23 +1,21 @@
-//! Shared resolver-state construction — Movimiento 2 Phase 3E.
+//! Shared resolver-state construction.
 //!
 //! Both the VM bytecode compiler and the ProveIR compiler need to
-//! build a [`ModuleGraph`] → [`SymbolTable`] → [`ResolvedProgram`]
-//! chain for the same program. Before Phase 3E each backend grew its
-//! own ad-hoc copy of that sequence (see
-//! `akronc::Compiler::try_auto_build_resolver_state`); this module
-//! is the single entry point they both call now.
+//! build a [`ModuleGraph`] then [`SymbolTable`] then [`ResolvedProgram`]
+//! chain for the same program. This module is the single entry point
+//! they both call (see `akronc::Compiler::try_auto_build_resolver_state`
+//! for the VM-side wrapper).
 //!
 //! The helper is intentionally thin — it owns the call order
-//! (`register_builtins` → `register_all` → `annotate_program`) and
+//! (`register_builtins` then `register_all` then `annotate_program`) and
 //! nothing else. Everything upstream (which [`ModuleSource`] adapter,
 //! which root path, whether to even build a resolver state at all) is
 //! still the caller's call.
 //!
 //! ## Why a struct instead of a tuple
 //!
-//! Callers historically stored the three outputs as separate
-//! `Option<T>` fields (see Phase 3D's [`Compiler`] in the compiler
-//! crate). A struct makes the install-vs-build split explicit:
+//! Callers store the three outputs as separate `Option<T>` fields on
+//! the compiler. A struct makes the install-vs-build split explicit:
 //! [`ResolverState`] is the "built" shape; the compiler destructures
 //! it into its own fields at install time.
 
@@ -43,16 +41,16 @@ use crate::table::SymbolTable;
 /// sharing via `Arc` or building once per compile.
 pub struct ResolverState {
     /// Flat symbol table indexed by [`SymbolId`](crate::symbol::SymbolId).
-    /// After Phase 4, every `UserFn` entry has its `availability`
-    /// field inferred from the call graph.
+    /// Every `UserFn` entry has its `availability` field inferred
+    /// from the call graph.
     pub table: SymbolTable,
     /// Annotations keyed by `(module_id, expr_id)`.
     pub resolved: ResolvedProgram,
     /// The graph the resolver walked. Kept around because downstream
     /// passes need to map [`ModuleId`] back to paths / imports.
     pub graph: ModuleGraph,
-    /// Phase 4 availability inference result — restriction reasons
-    /// for every function narrowed from `Both`.
+    /// Availability inference result — restriction reasons for every
+    /// function narrowed from `Both`.
     pub availability: AvailabilityResult,
 }
 
@@ -76,9 +74,9 @@ impl ResolverState {
 /// 5. [`annotate_program`] walks every module and fills the
 ///    annotation map.
 ///
-/// Any of those steps can fail and the error is propagated — Phase 3E
-/// callers that want to run in shadow mode (observation only) should
-/// swallow the error at the call site, not inside this helper.
+/// Any of those steps can fail and the error is propagated — callers
+/// that want to run in shadow mode (observation only) should swallow
+/// the error at the call site, not inside this helper.
 pub fn build_resolver_state(
     root_relative_path: &str,
     source: &mut dyn ModuleSource,
@@ -98,8 +96,8 @@ pub fn build_resolver_state(
     })
 }
 
-/// Precompute the fn_table dispatch maps from a
-/// [`SymbolTable`] + [`ModuleGraph`] for Movimiento 2 Phase 3F/3G.
+/// Precompute the fn_table dispatch maps from a [`SymbolTable`] and
+/// a [`ModuleGraph`].
 ///
 /// Returns `(dispatch_by_symbol, module_by_key)`:
 ///
@@ -115,8 +113,8 @@ pub fn build_resolver_state(
 /// - `module_by_key`: the inverse lookup the ProveIR
 ///   `compile_user_fn_call` consults to push the definer's module
 ///   onto the resolver stack before inlining. Both the annotation
-///   path and the legacy StaticAccess path go through this push —
-///   gap 2.4 dies here.
+///   path and the legacy StaticAccess path go through this push,
+///   so the definer's-scope invariant is enforced uniformly.
 ///
 /// ## Alias derivation
 ///
@@ -132,7 +130,7 @@ pub fn build_resolver_state(
 /// Selective imports (`import { a, b } from "./x"`) have an empty
 /// `alias` string in their edge; their [`CallableKind::UserFn`]
 /// entries are skipped (they'd use bare names that collide with
-/// the root). Phase 3F/3G's scope is namespace imports only;
+/// the root). This helper covers namespace imports only;
 /// selective-import symbols fall through to legacy dispatch
 /// unchanged.
 ///

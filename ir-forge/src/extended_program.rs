@@ -23,12 +23,12 @@
 //!   with `LoopUnroll` inline their body at bytecode-emit time;
 //!   the span lives with the inlined body, not in the interner).
 //!
-//! With (b), the Lysis interner's `SpanList` (Phase 2) is still
-//! useful — it handles the N-occurrences-per-dedup'd-node case
-//! that a `HashMap<SsaVar, _>` cannot represent. The interner's
-//! span list is the per-node record; `ExtendedIrProgram.var_spans`
-//! is the per-SSA-var record emitted by the *compiler* before
-//! Lysis ever sees the tree.
+//! With (b), the Lysis interner's `SpanList` is still useful — it
+//! handles the N-occurrences-per-dedup'd-node case that a
+//! `HashMap<SsaVar, _>` cannot represent. The interner's span list
+//! is the per-node record; `ExtendedIrProgram.var_spans` is the
+//! per-SSA-var record emitted by the *compiler* before Lysis ever
+//! sees the tree.
 //!
 //! [`ExtendedInstruction`]: crate::prove_ir::ExtendedInstruction
 //! [`IrProgram<F>`]: crate::types::IrProgram

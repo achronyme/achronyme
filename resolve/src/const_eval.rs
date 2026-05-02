@@ -1,4 +1,4 @@
-//! Compile-time constant evaluation — Movimiento 2 Phase 5.
+//! Compile-time constant evaluation.
 //!
 //! A lightweight AST-level evaluator that resolves expressions to
 //! integer constants when all operands are statically known. The

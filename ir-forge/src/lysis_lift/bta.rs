@@ -70,9 +70,9 @@ impl<F: FieldBackend> BindingTime<F> {
 }
 
 /// Outcome reported by [`classify`] including the three probe-pair
-/// diff results. Kept separate from [`BindingTime`] because Phase 4
-/// may want to react to specific patterns (e.g. period-2) that Phase
-/// 3 lumps as `DataDependent`.
+/// diff results. Kept separate from [`BindingTime`] because future
+/// callers may want to react to specific patterns (e.g. period-2)
+/// that the current pass lumps as `DataDependent`.
 #[derive(Debug, Clone)]
 pub struct ClassificationDetails<F: FieldBackend> {
     pub binding_time: BindingTime<F>,
@@ -310,7 +310,7 @@ mod tests {
         // se, they just prevent BTA from recursing.
         //
         // (The enclosing loop's lifter respects this by NOT recursing
-        // into the nested body. Phase 4 can change this to recurse.)
+        // into the nested body. Recursion is future work.)
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::LoopUnroll {
             iter_var: ssa(10),
             start: 0,

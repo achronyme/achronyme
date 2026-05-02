@@ -42,8 +42,8 @@ impl fmt::Display for SymbolId {
 ///
 /// Used by [`BuiltinEntry`](crate::builtins::BuiltinEntry) to declare
 /// whether a builtin has a VM implementation, a ProveIR lowering, or
-/// both. User functions derive their availability from their body (see
-/// Phase 4 availability inference in the RFC).
+/// both. User functions derive their availability from their body
+/// during the availability-inference pass.
 ///
 /// The [`BuiltinRegistry::audit`](crate::builtins::BuiltinRegistry::audit)
 /// method enforces that every [`Availability::Both`] entry actually
@@ -167,8 +167,8 @@ pub enum CallableKind {
     /// clones function bodies. The RFC §3.2 sketch of `ast: Arc<FnDecl>`
     /// lands as this indirection.
     ///
-    /// `availability` is computed during Phase 4 availability inference
-    /// and defaults to [`Availability::Both`] until that pass runs.
+    /// `availability` is computed during the availability-inference
+    /// pass and defaults to [`Availability::Both`] until that pass runs.
     UserFn {
         /// Fully qualified name. `"foo"` for a top-level fn in
         /// `main.ach`, `"math::add"` for an exported fn in an imported
@@ -182,7 +182,7 @@ pub enum CallableKind {
         /// [`ModuleGraph`](crate::module_graph::ModuleGraph); stale if
         /// the graph is rebuilt.
         stmt_index: u32,
-        /// Derived from the body during Phase 4 availability inference.
+        /// Derived from the body during the availability-inference pass.
         availability: Availability,
     },
 
@@ -204,12 +204,13 @@ pub enum CallableKind {
     /// unchanged from the current path — this variant just lets the
     /// resolver know the symbol exists so `::` lookups succeed uniformly.
     ///
-    /// Phase 3 will refine the payload with an `Arc<dyn CircomLibraryHandle>`
-    /// once the dependency direction is finalized.
+    /// A future refinement may replace the payload with an
+    /// `Arc<dyn CircomLibraryHandle>` once the dependency direction is
+    /// finalized.
     CircomTemplate {
         /// Template name as declared in the `.circom` source.
         template_name: String,
-        /// Phase-3 placeholder: opaque handle into the library registry.
+        /// Placeholder: opaque handle into the library registry.
         library_handle: u32,
     },
 
@@ -221,20 +222,20 @@ pub enum CallableKind {
     /// decisions section of the RFC. `Constant` is only for user-
     /// exported module constants.
     ///
-    /// `value_handle` is a Phase 1 placeholder mirroring the original
-    /// `UserFn::ast_handle` opaque token: it pins the shape so Phase
-    /// 3/6 must explicitly fill in the value reference and can't
-    /// accidentally treat the field as optional. Unlike `UserFn`, the
-    /// `Constant` variant still needs module-constant support in
-    /// Phase 6 before it can cite a real value source.
+    /// `value_handle` is a placeholder mirroring the
+    /// `UserFn::ast_handle` opaque token: it pins the shape so future
+    /// work must explicitly fill in the value reference and cannot
+    /// accidentally treat the field as optional. The `Constant`
+    /// variant still needs module-constant support before it can cite
+    /// a real value source.
     Constant {
         /// Fully qualified name, e.g. `"math::PI"`.
         qualified_name: String,
         /// What kind of constant this is. Determines how each backend
         /// renders it.
         const_kind: ConstKind,
-        /// Phase-1 placeholder: opaque handle into the constant store.
-        /// Phase 6 replaces this with a real
+        /// Placeholder: opaque handle into the constant store. A
+        /// future migration replaces this with a real
         /// `resolve::statics::ConstValue` reference. Until then, the
         /// field exists to force callers to decide how to render the
         /// constant rather than silently treating it as absent.
