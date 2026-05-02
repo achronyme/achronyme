@@ -5,11 +5,11 @@
 //! per opcode, chained via `&mut self`, plus const-pool interners
 //! that return indices usable in later opcode arguments.
 //!
-//! This is the *only* way the Phase 1 test surface constructs
-//! programs. Fixture files (`tests/bytecode/*`) land in Phase 1 as a
-//! migration from the raw-byte fixtures of Phase 0 to builder-based
-//! fixtures; the raw bytes are still emitted (encoder produces them),
-//! but the test source describes programs semantically.
+//! This is the canonical way the test surface constructs programs.
+//! Fixture files (`tests/bytecode/*`) describe programs through this
+//! builder rather than as hand-typed bytes; the raw bytes are still
+//! emitted (the encoder produces them), but the test source reads
+//! semantically.
 //!
 //! A `ProgramBuilder` finishes into a [`Program`] whose header
 //! accurately reports the const pool length, body length, flags, and
@@ -333,22 +333,22 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         })
     }
 
-    /// Emit a `StoreHeap { src_reg, slot }` opcode (Phase 4 §6.2).
+    /// Emit a `StoreHeap { src_reg, slot }` opcode.
     /// The receiving program must declare `heap_size_hint > slot` —
     /// see [`Self::with_heap_size_hint`].
     pub fn store_heap(&mut self, src_reg: u8, slot: u16) -> &mut Self {
         self.push(Opcode::StoreHeap { src_reg, slot })
     }
 
-    /// Emit a `LoadHeap { dst_reg, slot }` opcode (Phase 4 §6.2).
+    /// Emit a `LoadHeap { dst_reg, slot }` opcode.
     /// Pairs with a prior `StoreHeap` to the same slot.
     pub fn load_heap(&mut self, dst_reg: u8, slot: u16) -> &mut Self {
         self.push(Opcode::LoadHeap { dst_reg, slot })
     }
 
     /// Emit an `EmitWitnessCallHeap { bytecode_const_idx, inputs,
-    /// out_slots }` opcode (Phase 4 follow-up). Inputs may come from
-    /// regs (`InputSrc::Reg`) or heap slots (`InputSrc::Slot`);
+    /// out_slots }` opcode. Inputs may come from regs
+    /// (`InputSrc::Reg`) or heap slots (`InputSrc::Slot`);
     /// outputs always land in heap slots. Used when the Artik
     /// program produces more outputs than fit alongside hot captures
     /// in a u8 frame, or when too many inputs are heap-resident to

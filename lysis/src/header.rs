@@ -18,13 +18,13 @@ use crate::error::LysisError;
 /// The 4-byte magic identifier for Lysis bytecode: ASCII `LYSI`.
 pub const MAGIC: [u8; 4] = *b"LYSI";
 
-/// Current Lysis bytecode version. Phase 4 added v2 to carry
-/// `heap_size_hint`; the v1 layout (16 bytes, no heap field) is still
-/// accepted by the decoder but `encode()` always emits v2.
+/// Current Lysis bytecode version. v2 carries `heap_size_hint`; the
+/// v1 layout (16 bytes, no heap field) is still accepted by the
+/// decoder but `encode()` always emits v2.
 pub const VERSION: u16 = 2;
 
-/// Legacy version tag. Streams written before Phase 4 are still
-/// readable; the decoder treats their absent `heap_size_hint` as 0.
+/// Legacy version tag. v1 streams are still readable; the decoder
+/// treats their absent `heap_size_hint` as 0.
 pub const VERSION_V1: u16 = 1;
 
 /// Header size for the current version (v2: 18 bytes).
@@ -59,7 +59,7 @@ pub const FLAGS_DEFINED_MASK: u8 = FLAG_HAS_WITNESS_CALLS;
 /// 7       flags                    u8 (bit 0: has_witness_calls)
 /// 8..12   const_pool_len           u32 LE (number of entries)
 /// 12..16  body_len                 u32 LE (bytes after const pool)
-/// 16..18  heap_size_hint           u16 LE (Phase 4 spill heap entries)
+/// 16..18  heap_size_hint           u16 LE (spill heap entries)
 /// ```
 ///
 /// Layout v1 (16 bytes) is identical to v2 minus `heap_size_hint`; a
@@ -75,17 +75,17 @@ pub struct LysisHeader {
     /// Length in bytes of the opcode stream that follows the const pool.
     pub body_len: u32,
     /// Number of slots the executor must pre-allocate in the
-    /// program-global heap (Phase 4 §6.2). For v1 streams the field is
-    /// absent and decodes as 0; for v2 streams that don't use heap
-    /// opcodes the writer also leaves this 0.
+    /// program-global heap. For v1 streams the field is absent and
+    /// decodes as 0; for v2 streams that don't use heap opcodes the
+    /// writer also leaves this 0.
     pub heap_size_hint: u16,
 }
 
 impl LysisHeader {
     /// Construct a fresh header with the current magic + version.
     /// `heap_size_hint` defaults to 0; chain `.with_heap_size_hint(n)`
-    /// to set it. The default matches existing call sites that
-    /// predate Phase 4.
+    /// to set it. The default matches call sites that don't use the
+    /// spill heap.
     pub fn new(family: FieldFamily, flags: u8, const_pool_len: u32, body_len: u32) -> Self {
         Self {
             version: VERSION,

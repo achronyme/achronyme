@@ -1,9 +1,9 @@
-//! Phase 1 microbenchmark: SHA-256 round body through the Lysis
-//! pipeline vs. equivalent emit-into-vec straight-line Rust.
+//! Microbenchmark: SHA-256 round body through the Lysis pipeline
+//! vs. equivalent emit-into-vec straight-line Rust.
 //!
-//! RFC §10 Phase 1 exit criterion: "SHA-256 round microbenchmark
-//! within 2× of inline Rust (validates VM dispatch overhead is
-//! acceptable)." This bench measures three costs:
+//! Per RFC §10's exit criterion ("SHA-256 round microbenchmark
+//! within 2× of inline Rust"), this bench validates VM dispatch
+//! overhead is acceptable. It measures three costs:
 //!
 //! 1. Pure decode — bytes → `Program` (no execution).
 //! 2. Decode + execute — bytes → `Program` → `StubSink` stream.
@@ -139,10 +139,10 @@ fn bench(c: &mut Criterion) {
         });
     });
 
-    // Same hot path, but with the Phase 2 hash-consing sink. On a
-    // single SHA-256 round there's no structural duplication to
-    // collapse, so the curve measures pure interning overhead — useful
-    // to track how much the IndexMap lookup costs on a worst-case
+    // Same hot path, but with the hash-consing sink. On a single
+    // SHA-256 round there's no structural duplication to collapse,
+    // so the curve measures pure interning overhead — useful to
+    // track how much the IndexMap lookup costs on a worst-case
     // (all-unique) workload.
     c.bench_function("lysis_execute_only_interning_sink", |b| {
         let p = decode::<Bn254Fr>(&bytes).unwrap();

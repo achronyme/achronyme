@@ -14,11 +14,11 @@ pub struct LysisConfig {
     /// (RFC §4.5 rule 11) and re-checked at runtime as a safety net.
     ///
     /// The RFC's nominal default was 64, which assumed walker output
-    /// where each split chained at most a handful of templates. Phase 4
-    /// changed that assumption: SHA-256(64) emits ~1287 chained
-    /// templates and a longest-path of ~870 because each split
-    /// instantiates the next template tail-call style. The default
-    /// here was raised to 8192 to cover SHA-256-class circuits with
+    /// where each split chained at most a handful of templates. The
+    /// heap-spill walker invalidates that: SHA-256(64) emits ~1287
+    /// chained templates and a longest-path of ~870 because each
+    /// split instantiates the next template tail-call style. The
+    /// default here is 8192 to cover SHA-256-class circuits with
     /// margin. Lower it via `achronyme.toml` when tighter bounds
     /// matter (e.g. `[lysis] max_call_depth = 128` for small
     /// circuits to catch recursion bugs early).

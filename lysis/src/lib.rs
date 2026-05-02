@@ -14,10 +14,10 @@
 //!
 //! ## Status
 //!
-//! Phase 1 (bytecode + executor skeleton) is in progress. The RFC in
-//! `.claude/plans/lysis-vm.md` is the authoritative design; crate layout
-//! follows RFC §3.2 and the opcode/const-pool/validator details follow
-//! RFC §4.
+//! Bytecode, executor, lifter and walker integration are in place;
+//! template-body lifting and the heap spill path land progressively.
+//! Crate layout follows the Lysis RFC §3.2 and the
+//! opcode/const-pool/validator details follow RFC §4.
 
 pub mod builder;
 pub mod bytecode;
@@ -47,9 +47,8 @@ pub use program::{Instr, Program, Template};
 /// Forward-compat aliases. `Program` and `ProgramBuilder` collide
 /// with `artik::Program` / `artik::ProgramBuilder`; `Visibility`
 /// collides with `ir::Visibility` (signals) and the parser's AST
-/// visibility. The post-cleanup rename (see
-/// `.claude/plans/structural-cleanup.md` §10 D5) disambiguates. Use
-/// these names in new code.
+/// visibility. These aliases disambiguate at call sites — use them
+/// in new code.
 pub type LysisProgram<F> = Program<F>;
 pub type LysisProgramBuilder<F> = ProgramBuilder<F>;
 pub type BindingVisibility = Visibility;

@@ -1,4 +1,4 @@
-//! Integration tests for Phase 2's two structural invariants.
+//! Integration tests for the interner's two structural invariants.
 //!
 //! 1. **Structural dedup**: running a program through an
 //!    [`InterningSink`] collapses equivalent pure nodes; the
@@ -10,7 +10,7 @@
 //!    each with its own fresh `InterningSink` — produce identical
 //!    output (same NodeIds, same order, same cached hashes). This
 //!    is what the fixed-key SipHash-2-4 buys us; it is the
-//!    invariant the Phase 2 oracle harness depends on.
+//!    invariant the oracle harness depends on.
 
 use lysis::{
     decode, encode, execute, InstructionKind, InterningSink, IrSink, LysisConfig, NodeId,

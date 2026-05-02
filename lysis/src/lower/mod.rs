@@ -5,8 +5,8 @@
 //! Everything that consumes `ir_forge::ExtendedInstruction<F>` —
 //! the walker, BTA, symbolic emission, structural diff, template
 //! extraction — lives under `ir_forge::lysis_lower` because the
-//! Phase 3.A bridge already points `ir → lysis`; a `lysis → ir` edge
-//! would create a dependency cycle.
+//! lift bridge runs in the `ir → lysis` direction and a `lysis → ir`
+//! edge would create a dependency cycle.
 //!
 //! What stays here:
 //!
@@ -14,7 +14,7 @@
 //!   Tarjan-stack semantics (RFC §6.4).
 //! - [`alloc`] — frame register allocator (RFC §6.2).
 //!
-//! What lives on the `ir` side (landing through Phase 3.B.3–3.B.7):
+//! What lives on the `ir` side:
 //!
 //! - symbolic emission + structural diff
 //! - binding-time classifier

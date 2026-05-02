@@ -3,8 +3,8 @@
 //! Each test builds a realistic little program with
 //! [`ProgramBuilder`], runs it through the whole pipeline — encode →
 //! decode → validate → execute — and asserts the emission shape is
-//! what we expected. This complements the Phase 0 raw-byte fixtures
-//! in `bytecode_fixtures.rs` with a semantic-level check of the
+//! what we expected. This complements the raw-byte fixtures in
+//! `bytecode_fixtures.rs` with a semantic-level check of the
 //! pipeline.
 
 use lysis::{
@@ -76,7 +76,8 @@ fn num2bits_4_runs_through_full_pipeline() {
 // Poseidon round (t=3, α=5)
 // ---------------------------------------------------------------------
 // One pseudo-round: add 3 round constants, then raise each slot to
-// the 5th power. MDS mix is omitted; Phase 3 adds the linear layer.
+// the 5th power. MDS mix is omitted; the linear layer is future
+// work.
 
 #[test]
 fn poseidon_pseudo_round_runs() {

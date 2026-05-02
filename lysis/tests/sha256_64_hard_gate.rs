@@ -1,7 +1,6 @@
-//! Phase 2 HARD GATE — per-instruction hash-consing must shrink a
+//! HARD GATE — per-instruction hash-consing must shrink a
 //! SHA-256(64)-shaped skeleton by at least 10× on the pure channel
-//! (RFC §11.2). Failure here invalidates the hash-consing premise
-//! and Q3 has to be revisited.
+//! (RFC §11.2). Failure here invalidates the hash-consing premise.
 //!
 //! ## What the skeleton is (and isn't)
 //!
@@ -12,13 +11,13 @@
 //! It is **not** a semantically-faithful SHA-256: the σ/Σ
 //! functions are not the real rotates+XOR, the message schedule
 //! does not evolve, and the constants `K[i]` are absent. The only
-//! property we exercise here is the one Phase 2 owns: when the
+//! property we exercise here is per-instruction interning: when the
 //! same `(opcode, operand_ids)` shape is emitted N times through
 //! the executor, the interner must collapse it to one node.
 //!
-//! The real SHA-256 "at scale" OOM fix relies on Phase 3
-//! (template-body lifting) to dedup *across varying operands*;
-//! this skeleton is the Phase 2 precondition.
+//! The real SHA-256 "at scale" OOM fix relies on template-body
+//! lifting to dedup *across varying operands*; this skeleton is
+//! the precondition that lifting then builds on top of.
 //!
 //! ## The gate
 //!
@@ -145,7 +144,7 @@ fn hard_gate_pure_channel_reduction_at_least_10x() {
     // Pure-channel reduction HARD GATE (RFC §11.2).
     assert!(
         ratio >= 10.0,
-        "Phase 2 HARD GATE failed: pure reduction {ratio:.1}× < 10× required"
+        "HARD GATE failed: pure reduction {ratio:.1}× < 10× required"
     );
 }
 

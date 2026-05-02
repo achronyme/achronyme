@@ -1,24 +1,23 @@
-//! Phase 4 — synthetic 250-var fixture that exercises the heap path
-//! end-to-end (builder → validator → executor) without going through
-//! the circom frontend or the lysis_lift walker. Decouples the
-//! Phase 4 success signal from the unrelated 250 s
-//! circom-lowering blocker tracked in `circom-lowering-perf.md`
-//! (research report §6.5 + §6.6).
+//! Synthetic 250-var fixture that exercises the heap path
+//! end-to-end (builder, validator, executor) without going through
+//! the circom frontend or the lysis_lift walker. This decouples the
+//! heap-path success signal from the circom-lowering performance
+//! work tracked separately.
 //!
-//! Tested scenarios (per Reviewer E.2):
+//! Tested scenarios:
 //!
 //!   (A) **Realistic SHA-like**: 250 distinct heap slots, each
 //!       written exactly once and read at least once. Frame size
 //!       stays comfortably below the 255-reg cap because the test
 //!       reuses dst_regs across LoadHeap reloads (mimicking what
-//!       lazy-reload + scratch-reg recycling will do once v1.1
-//!       lands). This is the **Phase 4 done gate**.
+//!       lazy-reload and scratch-reg recycling will do once v1.1
+//!       lands). This is the canonical heap-path success case.
 //!
 //!   (B) **Adversarial sequential** is implemented in
 //!       `ir-forge/tests/walker_adversarial.rs` because it needs the
 //!       Walker to drive frame growth past 255 — that scenario exists
 //!       to document the v1.1 escalation path (scratch-reg
-//!       recycling), not to gate Phase 4.
+//!       recycling).
 
 use lysis::{bytecode::validate, execute, IrSink, LysisConfig, ProgramBuilder, StubSink};
 use memory::{Bn254Fr, FieldElement, FieldFamily};
@@ -40,18 +39,18 @@ fn build_sha_like_fixture() -> lysis::Program<Bn254Fr> {
     for i in 0..N_SLOTS {
         builder.intern_field(fe(u64::from(i)));
     }
-    // Phase 1: load each constant into a temporary reg, then spill
+    // Step 1: load each constant into a temporary reg, then spill
     // to its heap slot. We reuse regs in 50-wide chunks so the high
-    // water mark on the frame is 50 + a small margin, not 250. This
-    // is the "scratch-reg recycling" pattern v1.1 will derive
-    // automatically; here we encode it by hand to make the realistic
-    // success path explicit.
+    // water mark on the frame is around 50, not 250. This is the
+    // "scratch-reg recycling" pattern v1.1 will derive automatically;
+    // here we encode it by hand to make the realistic success path
+    // explicit.
     for i in 0..N_SLOTS {
         let scratch = (i % 50) as u8;
         builder.load_const(scratch, i);
         builder.store_heap(scratch, i);
     }
-    // Phase 2: read each heap slot back into a recycled scratch reg
+    // Step 2: read each heap slot back into a recycled scratch reg
     // (different chunk to keep the test honest about reg overlap
     // with the writer side).
     for i in 0..N_SLOTS {
@@ -77,11 +76,11 @@ fn sha_like_250_slot_program_executes_without_error() {
     let mut sink = StubSink::<Bn254Fr>::new();
     execute(&program, &[], &LysisConfig::default(), &mut sink).expect("execute");
     // Each LoadConst emits one `InstructionKind::Const` to the sink.
-    // The fixture has 250 LoadConsts (in Phase 1 above). The
+    // The fixture has 250 LoadConsts (in step 1 above). The
     // StoreHeap / LoadHeap opcodes themselves emit nothing — they
     // only manipulate executor state. The contract under test is:
-    // validate + execute return Ok and the executor reads each of
-    // the 250 slots without surfacing `LoadFromUnwrittenSlot` /
+    // validate plus execute return Ok and the executor reads each of
+    // the 250 slots without surfacing `LoadFromUnwrittenSlot` or
     // `ValidationFailed`.
     assert_eq!(
         sink.count(),
@@ -111,8 +110,8 @@ fn sha_like_250_slot_program_emits_500_heap_ops() {
 #[test]
 fn double_store_to_same_slot_is_caught_by_validator() {
     // Manually-crafted programs that violate single-static-store
-    // must surface as Rule 13 — defends the contract that Commit 4
-    // documented.
+    // must surface as Rule 13 — defends the validator's
+    // single-static-store contract.
     let mut builder = ProgramBuilder::<Bn254Fr>::new(FieldFamily::BnLike256).with_heap_size_hint(4);
     builder.intern_field(fe(7));
     builder
@@ -150,8 +149,8 @@ fn slot_beyond_heap_size_hint_is_caught_by_validator() {
 fn full_pipeline_round_trips_through_encode_decode() {
     // The 250-slot program survives a bytecode round-trip
     // (encode → decode → validate → execute). This is the smoke
-    // that confirms the v2 header byte layout (Commit 2) and the
-    // heap opcode encoding (Commit 1) compose correctly under load.
+    // that confirms the v2 header byte layout and the heap-opcode
+    // encoding compose correctly under load.
     let program = build_sha_like_fixture();
     let bytes = lysis::encode(&program);
     let redecoded = lysis::decode::<Bn254Fr>(&bytes).expect("decode");

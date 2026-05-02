@@ -1,12 +1,12 @@
 //! Bytecode executor — register-based dispatch loop that emits IR
 //! into an [`IrSink`].
 //!
-//! The Phase 1 executor is a straight interpreter on the decoded
+//! The current executor is a straight interpreter on the decoded
 //! [`Program`]: every opcode dispatches through a single big `match`
 //! and every emission goes through the sink. It is deliberately
 //! naïve — no hash-consing, no optimization, no lazy evaluation —
-//! because Phase 2 will replace the sink with a real interner while
-//! keeping this same dispatch shape.
+//! the dispatch shape is designed so a future interning sink can
+//! replace [`StubSink`] without touching this loop.
 //!
 //! ## Contract with the validator
 //!
@@ -111,15 +111,15 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
         loop_stack: Vec::new(),
     }];
 
-    // Program-global heap for Phase 4 spill opcodes (StoreHeap /
-    // LoadHeap). Sized exactly to header.heap_size_hint so that Rule
-    // 12 (slot < heap_size_hint) is enforced as a bounds check. v1
-    // streams arrive with heap_size_hint = 0 and never emit heap
-    // opcodes; the empty Vec is the right shape.
+    // Program-global heap for spill opcodes (StoreHeap / LoadHeap).
+    // Sized exactly to header.heap_size_hint so that the
+    // heap-slot-bounds rule (slot < heap_size_hint) is enforced as a
+    // bounds check. v1 streams arrive with heap_size_hint = 0 and
+    // never emit heap opcodes; the empty Vec is the right shape.
     //
     // `vec![None; n]` not `with_capacity(n)`: StoreHeap writes via
     // direct index, so len() must include the addressable range up
-    // front. Research report §6.3.
+    // front.
     let mut heap: Vec<Option<NodeId>> = vec![None; program.header.heap_size_hint as usize];
 
     let mut instructions_executed: u64 = 0;
@@ -316,9 +316,9 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         }
 
         EnterScope | ExitScope => {
-            // Phase 1: scopes are informational. The lowering pass
-            // (Phase 3) is what actually constructs the scoped
-            // environment; the executor currently carries no env.
+            // Scopes are informational at this layer: the lowering
+            // pass is what actually constructs the scoped environment;
+            // the executor currently carries no env.
             Ok(Step::Next)
         }
 
@@ -330,12 +330,11 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             resolve_jump(target, offset_to_idx).map(Step::JumpToIndex)
         }
         JumpIf { cond, offset: _rel } => {
-            // Phase 1 conservative semantics: the executor does not
-            // interpret field-element truth values, so it always
-            // falls through. Real conditional branching lands in
-            // Phase 3 along with the BTA — at that point JumpIf will
-            // only appear in loop bodies where the condition is a
-            // compile-time-known NodeId.
+            // Conservative semantics: the executor does not interpret
+            // field-element truth values, so it always falls through.
+            // Real conditional branching is future work — once a BTA
+            // pass is wired in, JumpIf will only appear in loop bodies
+            // where the condition is a compile-time-known NodeId.
             let _ = read_reg(&frames[frame_idx], *cond, offset)?; // rule 9 backstop
             Ok(Step::Next)
         }
@@ -372,11 +371,11 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             offset_to_idx,
         ),
         LoopRolled { .. } | LoopRange { .. } => {
-            // Phase 3.B.8 lands LoopUnroll only. LoopRolled /
-            // LoopRange need the opcode schema to carry capture
-            // plumbing (currently missing from the bytecode layout);
-            // revisit in Phase 3.B.9 or Phase 4 once
-            // InstantiateTemplate's capture flow is proven in-loop.
+            // Only LoopUnroll is wired today. LoopRolled / LoopRange
+            // need the opcode schema to carry capture plumbing
+            // (currently missing from the bytecode layout); they
+            // remain future work until InstantiateTemplate's capture
+            // flow is proven in-loop.
             Err(LysisError::ValidationFailed {
                 rule: 0,
                 location: offset,
@@ -685,12 +684,12 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 .collect::<Result<_, _>>()?;
             // RFC §4.3.5 shows `PoseidonHash(result, left, right)` — the
             // mirror enum matches, so we treat the first two inputs as
-            // left/right. Hashes with arity ≠ 2 are left to Phase 3.
+            // left/right. Hashes with arity ≠ 2 are future work.
             if inputs.len() != 2 {
                 return Err(LysisError::ValidationFailed {
                     rule: 0,
                     location: offset,
-                    detail: "Phase 1 PoseidonHash supports arity 2 only",
+                    detail: "PoseidonHash supports arity 2 only",
                 });
             }
             let id = sink.intern_pure(InstructionKind::PoseidonHash {
@@ -758,11 +757,12 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             Ok(Step::Next)
         }
 
-        // Phase 4 heap opcodes. The validator (rules 12 & 13) is the
-        // primary gatekeeper for slot bounds and single-static-store;
-        // the runtime checks here are defensive — a programmer running
-        // execute() without first calling validate() must still get a
-        // structured error rather than UB.
+        // Heap opcodes. The validator (heap-slot-bounds and
+        // single-static-store rules) is the primary gatekeeper for
+        // slot bounds and single-static-store; the runtime checks
+        // here are defensive — a programmer running execute() without
+        // first calling validate() must still get a structured error
+        // rather than UB.
         StoreHeap { src_reg, slot } => {
             let id = read_reg(&frames[frame_idx], *src_reg, offset)?;
             let slot_idx = *slot as usize;
@@ -794,8 +794,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             Ok(Step::Next)
         }
 
-        // Heap-output WitnessCall (Phase 4 follow-up). Mirrors
-        // `EmitWitnessCall` but reads inputs from regs OR heap slots
+        // Heap-output WitnessCall. Mirrors `EmitWitnessCall` but
+        // reads inputs from regs OR heap slots
         // (per `InputSrc` tag) and writes outputs to heap[slot]
         // instead of frame.regs[reg]. Used when input or output
         // counts exceed the u8 reg cap (canonical: SHA-256 with
@@ -1372,7 +1372,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // LoopUnroll (Phase 3.B.8)
+    // LoopUnroll
     // -----------------------------------------------------------------
 
     /// Body of the loop below:
@@ -1442,7 +1442,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // InstantiateTemplate + TemplateOutput (Phase 3.B.9)
+    // InstantiateTemplate + TemplateOutput
     // -----------------------------------------------------------------
 
     /// Build a program that declares one 1-capture template, calls it
@@ -1587,11 +1587,10 @@ mod tests {
 
     #[test]
     fn template_call_does_not_infinite_loop() {
-        // Regression test for the Phase 3.B.9 pop_frame PC fix: before
-        // the fix, returning from InstantiateTemplate left caller.pc
-        // on the template-call opcode, re-invoking it forever until
-        // BudgetExhausted fired. A correct implementation halts
-        // before the default budget.
+        // Regression test for the pop_frame PC fix: a stale caller.pc
+        // sitting on the template-call opcode would re-invoke it
+        // forever until BudgetExhausted fired. A correct implementation
+        // halts before the default budget.
         let program = program_with_one_template_call();
         let cfg = LysisConfig {
             instruction_budget: 1024,
@@ -1632,7 +1631,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // §4.3.6 Heap spill (Phase 4)
+    // §4.3.6 Heap spill
     // -----------------------------------------------------------------
 
     #[test]
@@ -1725,7 +1724,7 @@ mod tests {
     #[test]
     fn store_overwrites_slot_then_load_returns_latest() {
         // The executor itself does not enforce single-static-store;
-        // that is the validator's job (rule 13, Phase 4 Commit 4).
+        // that is the validator's job (single-static-store rule).
         // At the executor level, two stores to the same slot
         // overwrite, and a subsequent LoadHeap returns the latest.
         // This test guarantees that runtime semantics match the
@@ -1747,7 +1746,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // §4.3.7 EmitWitnessCallHeap (Phase 4 follow-up)
+    // §4.3.7 EmitWitnessCallHeap
     // -----------------------------------------------------------------
 
     #[test]

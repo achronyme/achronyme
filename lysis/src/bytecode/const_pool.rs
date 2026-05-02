@@ -13,10 +13,10 @@
 //!
 //! Duplicate entries are *not* required to be merged at encode time;
 //! the pool acts like an append-only list, and `LoadConst idx` or
-//! `EmitConst` refers to the entry by index. Phase 2 may grow a
-//! dedup pass that collapses equal field constants before serializing
-//! (see RFC §4.4, final paragraph: "duplicate field constants map to
-//! the same index").
+//! `EmitConst` refers to the entry by index. A future dedup pass
+//! could collapse equal field constants before serializing (see
+//! RFC §4.4, final paragraph: "duplicate field constants map to the
+//! same index").
 
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
 use memory::FieldFamily;

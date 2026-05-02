@@ -26,9 +26,9 @@ use smallvec::SmallVec;
 
 /// Byte-offset range in a source program. `start` inclusive, `end`
 /// exclusive. `UNKNOWN` is a placeholder used when the emitter has
-/// not yet been wired to a source location (Phase 1-2 executor
-/// emits everything with `UNKNOWN`; Phase 3 frontend fills real
-/// spans as it lowers ProveIR).
+/// not yet been wired to a source location: the executor emits with
+/// `UNKNOWN` until the frontend fills real spans as it lowers
+/// ProveIR.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub struct SpanRange {
     pub start: u32,
