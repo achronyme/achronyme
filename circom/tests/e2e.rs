@@ -3219,6 +3219,80 @@ fn binsub_circomlib() {
     assert!(n > 0, "expected constraints for BinSub(8)");
 }
 
+/// Bits2Point_Strict: 256-bit packed BabyJubjub point unpacker with
+/// alias check + sign-bit reconstruction. Compile + instantiate only —
+/// witness inputs require a valid packed point (254-bit y, 1-bit zero
+/// padding, 1-bit sign), and `out[0] <-- sqrt(...)` is filled by the
+/// Artik witness lift, so a bare `circomlib_e2e_verify_fe` call would
+/// need cross-field square-root setup that isn't worth the test
+/// complexity for a compile-time gate.
+#[test]
+fn bits2point_strict_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/pointbits_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib/circuits")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Bits2Point_Strict compilation failed: {e}"));
+
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("Bits2Point_Strict instantiation failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    eprintln!(
+        "  Bits2Point_Strict — {} nodes → {} instructions — INSTANTIATED ✓",
+        result.prove_ir.body.len(),
+        program.len()
+    );
+}
+
+/// EdDSAVerifier(1): the original EdDSA scheme using Pedersen-hash for
+/// the message and BabyJubjub for the curve. Wires sub-component
+/// inputs via the `==>` reverse-assignment shape:
+///
+///   for (i=0; i<254; i++) { S[i] ==> compConstant.in[i]; }
+///   for (i=0; i<256; i++) { bits2pointA.in[i] <== A[i]; }
+///
+/// The first form pins the Class B classifier's reverse-assign
+/// branch — pre-fix this template failed at instantiation with
+/// `symbolic indexed write into compConstant.in but the array is
+/// not declared in this scope`. Compile + instantiate is the test
+/// surface; full witness verification requires valid Pedersen-hash
+/// signature data which is out of scope for a compile-time gate.
+#[test]
+fn eddsa_verifier_compile() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/eddsa_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib/circuits")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("EdDSAVerifier compilation failed: {e}"));
+
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("EdDSAVerifier instantiation failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    eprintln!(
+        "  EdDSAVerifier(1) — {} nodes → {} instructions — INSTANTIATED ✓",
+        result.prove_ir.body.len(),
+        program.len()
+    );
+}
+
 /// EscalarMul(8, base): generic scalar multiplication on BabyJubJub
 /// using the windowed-add algorithm. Exercises array-literal template
 /// arguments (`base = [Gx, Gy]`) propagating through nested template
