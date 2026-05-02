@@ -180,25 +180,48 @@ fn lower_stmt<'a>(
         } => {
             for decl in declarations {
                 env.locals.insert(decl.name.clone());
-                // Pre-allocate array slots in the ProveIR body so a
-                // downstream `SymbolicIndexedEffect` can snapshot
-                // `array_slots` at instantiate time.
+                // Two concerns, two conditionals.
                 //
-                // Skip in inlined sub-template bodies: the
-                // SymbolicIndexedEffect path doesn't see across the
-                // inline boundary, and the classifier already forces
-                // unroll for these envs (see `LoweringEnv::is_inlined`).
-                // Emitting a WitnessArrayDecl here would attach a name
-                // that the outer instantiator can't bind to a slot
-                // anyway (post-mangle the name has changed).
-                if !env.is_inlined && !decl.dimensions.is_empty() {
+                // (1) `env.register_array` is lowering-internal state:
+                //     it lets `lower_expr` resolve `arr[k]` to
+                //     `Var("arr_k")` via `env.resolve_array_element`
+                //     in subsequent statements *within this same body*.
+                //     Always register when the dim is resolvable —
+                //     including in inlined sub-template bodies. Without
+                //     this, an indexed read inside the body falls
+                //     through to `CircuitExpr::ArrayIndex` emission,
+                //     which at instantiate time can mint fresh
+                //     unconstrained wires when the array binding hasn't
+                //     been populated by an upstream `Let`/`WitnessHint`.
+                //     `extract_signal_array_sizes` (called from
+                //     `components.rs` at inline-time) covers most cases
+                //     but fails for dims computed via user-defined
+                //     functions (e.g. `signal output out[nout]` where
+                //     `nout = nbits((2**n-1)*ops)`); by the time
+                //     lowering reaches this site the preceding `var`
+                //     statements have populated `env.known_constants`,
+                //     so `total_dim_size` resolves cleanly.
+                //
+                // (2) The `WitnessArrayDecl` IR node is the binding
+                //     point for upstream slot allocation (the
+                //     `SymbolicIndexedEffect` walker path snapshots
+                //     `array_slots` from this declaration). Emitting
+                //     it inside an inlined sub-template attaches a
+                //     pre-mangle name that the outer instantiator
+                //     can't bind to a slot, so skip the emission in
+                //     inlined bodies — the classifier already forces
+                //     unroll for inlined envs and the `WitnessHintIndexed`
+                //     emit handles slot population at instantiate time.
+                if !decl.dimensions.is_empty() {
                     if let Some(total) = total_dim_size(&decl.dimensions, ctx) {
                         env.register_array(decl.name.clone(), total as usize);
-                        nodes.push(CircuitNode::WitnessArrayDecl {
-                            name: decl.name.clone(),
-                            size: ArraySize::Literal(total as usize),
-                            span: Some(diagnostics::SpanRange::from_span(span)),
-                        });
+                        if !env.is_inlined {
+                            nodes.push(CircuitNode::WitnessArrayDecl {
+                                name: decl.name.clone(),
+                                size: ArraySize::Literal(total as usize),
+                                span: Some(diagnostics::SpanRange::from_span(span)),
+                            });
+                        }
                     }
                 }
             }
