@@ -712,40 +712,70 @@ fn mux4_forge_output_rejected() {
 }
 
 // ============================================================================
-// Known coverage gap — BinSum / Multiplexer
+// BinSum(4, 2) — sum-violation forgery
 // ============================================================================
 //
-// `BinSum` and the general `Multiplexer(wIn, nIn)` template compile to
-// ProveIR but their R1CS path is incomplete today.
+// Honest case: a = [1, 1, 0, 1] (LE bits, value = 11), b = [0, 1, 1, 0]
+// (value = 6), sum = 17 = 0b10001 (LE) → out = [1, 0, 0, 0, 1].
 //
-// **BinSum — structural re-inlining bug** (empirically diagnosed by
-// dumping the post-instantiate IR for `BinSum(4, 2)` wrapped in a
-// 5-iteration output-wiring loop). Each `bs.out[i]` reference in the
-// wrapper's `for (i = 0; i < nout; i++) { out[i] <== bs.out[i]; }`
-// triggers a full re-inlining of the BinSum template body. The IR
-// contains five separate `lin === lout` AssertEqs (one per wrapper
-// output-wiring iteration), each preceded by a freshly-allocated
-// `bs.out_0..4` Input set. The instantiator's name → wire HashMap
-// overwrites by name across emissions, so only the last emission's
-// wires receive witness values from the witness evaluator; the
-// earlier emissions' constraints reference dangling wires that stay
-// zero. The honest witness gets rejected at the first dangling-wire
-// constraint (the lin-side LC evaluates to 8, the lout-side LC
-// evaluates to 0 against the orphan wires). The deeper root is
-// component-output-wiring re-inlining, not "var-as-linear-combination
-// tracking" as the surface symptom initially suggested. The same
-// shape may contribute to the EdDSAPoseidon wire-id non-determinism
-// and the `var_postdecl_padding +1` rolled-loop artifact tracked
-// elsewhere.
+// Attack: flip `out_0` from 1 to 0, leaving the rest of the witness
+// alone. The boolean check `out_0 * (out_0 - 1) === 0` still passes
+// (`0 * -1 = 0`), so the only constraint that can catch this forgery
+// is the sum equation `Σ a_i * 2^i + Σ b_i * 2^i === Σ out_i * 2^i`.
 //
-// **Multiplexer** — feeds a 2-D signal input `inp[nIn][wIn]` through a
-// Decoder + EscalarProduct. The witness evaluator lacks the
-// flattened-naming pass for 2-D signal arrays — distinct surface from
-// BinSum's re-inlining bug.
+// If Achronyme's lowered constraint set were missing the sum equation
+// (or had it wired against dangling output wires — the historical
+// component-output-wiring re-inlining pattern), this forgery would
+// slip through. The test pins both the soundness property and the
+// re-inlining fix simultaneously: a regression in either would let
+// `out_0 = 0` verify against an honest 17-sum.
+#[test]
+fn binsum_forge_sum_violation_rejected() {
+    // `optimize = false`: the linear sum equation folds `out_0` away as
+    // a substituted wire under O1 (it's pinned by `lin === lout`), so a
+    // direct mutation against the optimised constraint set is invisible.
+    // Keeping the unoptimised constraints exposes the wire and the
+    // sum-violation constraint that catches the forgery.
+    let (compiler, mut witness) = compile_valid_witness(
+        "test/circomlib/binsum_test.circom",
+        &[
+            ("a_0", 1),
+            ("a_1", 1),
+            ("a_2", 0),
+            ("a_3", 1),
+            ("b_0", 0),
+            ("b_1", 1),
+            ("b_2", 1),
+            ("b_3", 0),
+        ],
+        false,
+    );
+
+    let w_out_0 = wire(&compiler, "out_0");
+    assert_eq!(witness[w_out_0.index()], Fe::from_u64(1));
+
+    witness[w_out_0.index()] = Fe::from_u64(0);
+
+    assert!(
+        compiler.cs.verify(&witness).is_err(),
+        "BinSum(4, 2): clearing out_0 drops the LE sum from 17 to 16. \
+         Only the `lin === lout` linear equation can catch this — the \
+         booleanity check still passes. Rejecting this forgery proves \
+         the sum constraint survived lowering and is wired against \
+         the live output wires (no component-output-wiring re-inlining \
+         residue)."
+    );
+}
+
+// ============================================================================
+// Known coverage gap — Multiplexer
+// ============================================================================
 //
-// Both adversarial soundness tests stay deferred. A forgery probe
-// against either template's current constraint set would conflate
-// the frontend bug with a real soundness oracle.
+// `Multiplexer(wIn, nIn)` feeds a 2-D signal input `inp[nIn][wIn]`
+// through a Decoder + EscalarProduct. The witness evaluator lacks the
+// flattened-naming pass for 2-D signal arrays. Distinct surface from
+// BinSum's (now fixed) re-inlining bug — pinning a soundness test
+// requires the 2-D naming pass first.
 
 // ============================================================================
 // Placeholder-aware lower_multi_index — cross-mode pin
