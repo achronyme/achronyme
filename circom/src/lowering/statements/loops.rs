@@ -1569,46 +1569,40 @@ pub(super) fn classify_loop_body(
     if body_references_known_arrays(stmts, env) {
         return Some(LoopLowering::KnownArrayRefs);
     }
-    // Bug Class A + Class B guard. The Lysis rolled-loop path below
-    // cannot soundly represent two patterns:
+    // The rolled-loop path below cannot soundly represent two
+    // body shapes; both must fall through to unrolling here.
     //
-    // **Class A** — a `var` accumulator that escapes the loop. The
-    // instantiator's body-once symbolic walk collapses the
-    // accumulator's SSA chain (e.g. `0 + x*1 → x`) and leaks the
-    // body-local SsaVar into the outer env, producing a stream the
-    // walker rejects with `UndefinedSsaVar`. See
-    // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-a.md`.
+    // **Outer-scope `var` accumulator** — a `var` declared outside
+    // the loop and updated inside (`acc += body[i] * coef`) escapes
+    // the loop. The instantiator's body-once symbolic walk
+    // collapses the accumulator's SSA chain (e.g. `0 + x*1 → x`)
+    // and leaks the body-local SsaVar into the outer env, producing
+    // a stream the walker rejects with `UndefinedSsaVar`.
     //
-    // **Class B** — a write `<comp>.<arr>[i] <== ...` to a scalar
-    // sub-component's input array. Sub-component arrays are
-    // registered in `LoweringEnv` at component-decl lowering but
-    // never emitted as `WitnessArrayDecl` IR nodes, so the
+    // **Sub-component array write** — `<comp>.<arr>[i] <== ...` to
+    // a scalar sub-component's input array. Sub-component arrays
+    // are registered in `LoweringEnv` at component-decl lowering
+    // but never emitted as `WitnessArrayDecl` IR nodes, so the
     // instantiator's `snapshot_array_slots` returns None and the
-    // emit fails with "symbolic indexed write into <comp>.<arr> but
-    // the array is not declared in this scope". See
-    // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-b.md`.
+    // emit fails with "symbolic indexed write into <comp>.<arr>
+    // but the array is not declared in this scope".
     //
     // Classifier-ordering invariant: BOTH predicates run *after*
-    // `MixedSignalVar` / `ComponentArrayOps` / `KnownArrayRefs` have
-    // already preempted. SHA-256's nested sub-component wirings hit
-    // `ComponentArrayOps` on the outer `for(i)` and never reach this
-    // gate; do not reorder.
-    // Bodies that write outer-scope vars or sub-component arrays must
-    // still unroll at lowering: the SymbolicIndexedEffect / walker
-    // per-iter path can't carry those shapes through. See
-    // `.claude/plans/cross-path-baseline-2026-04-28/fix-class-b.md`.
+    // `MixedSignalVar` / `ComponentArrayOps` / `KnownArrayRefs`
+    // have already preempted. SHA-256's nested sub-component
+    // wirings hit `ComponentArrayOps` on the outer `for(i)` and
+    // never reach this gate; do not reorder.
     let writes_outer_var = body_writes_to_outer_scope_var(stmts, env, loop_var)
         || body_writes_to_subcomponent_array(stmts, env, loop_var);
 
     // Inlined sub-template bodies use a fresh `LoweringEnv` whose
-    // signal-array declarations and component bindings are not visible
-    // upstream (pre-Phase-2.A this was implicit via `LoweringEnv::
-    // default() → Frontend::Legacy → always-unroll`). The
-    // `SymbolicIndexedEffect` path requires the array to be in scope
-    // as a `WitnessArrayDecl` at the *outer* template's instantiation
-    // time, which doesn't hold across inline boundaries; force unroll
-    // for any indexed-assignment loop in an inlined env. The outer
-    // template's own loops are unaffected — they're classified with
+    // signal-array declarations and component bindings are not
+    // visible upstream. The `SymbolicIndexedEffect` path requires
+    // the array to be in scope as a `WitnessArrayDecl` at the
+    // *outer* template's instantiation time, which doesn't hold
+    // across inline boundaries; force unroll for any indexed-
+    // assignment loop in an inlined env. The outer template's own
+    // loops are unaffected — they're classified with
     // `is_inlined = false` and follow the env-aware
     // `writes_outer_var` rule.
     let must_unroll_for_inline = env.is_inlined;

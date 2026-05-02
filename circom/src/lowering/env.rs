@@ -56,12 +56,6 @@ pub struct LoweringEnv {
     /// preventing `SymbolicIndexedEffect` emissions that the outer
     /// instantiator can't resolve (the array isn't a `WitnessArrayDecl`
     /// visible across the inline boundary).
-    ///
-    /// Pre-Phase-2.A this same fall-back was implicit: `LoweringEnv::
-    /// default()` set `frontend = Frontend::Legacy`, and the
-    /// classifier's Lysis-only gate fell through to "always unroll"
-    /// under Legacy. With the `Frontend` enum deleted, this explicit
-    /// flag preserves the inline-context semantics.
     pub is_inlined: bool,
 }
 
