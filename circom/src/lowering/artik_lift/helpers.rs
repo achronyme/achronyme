@@ -175,6 +175,153 @@ fn expr_is_mux_compatible(expr: &Expr) -> bool {
     }
 }
 
+/// Collect the names of identifiers reassigned in `stmts`. Used by the
+/// `while` lift to decide which scalars need slot-promotion across
+/// loop iterations. Indexed assignments and array stores are
+/// reported via `array_writes`; the `while` lift bails when those are
+/// non-empty (heap arrays already persist across iterations, but
+/// declaring a *new* array inside the body would re-allocate every
+/// iteration and is rejected upstream).
+pub(super) fn collect_mutated_scalars(stmts: &[Stmt]) -> MutationSummary {
+    let mut summary = MutationSummary::default();
+    for stmt in stmts {
+        walk_stmt(stmt, &mut summary);
+    }
+    summary
+}
+
+#[derive(Default)]
+pub(super) struct MutationSummary {
+    /// Identifiers that appear as the target of `=`, `+=`, `++`, etc.
+    pub scalars: std::collections::HashSet<String>,
+    /// Identifiers used as the array side of `arr[i] = expr` or
+    /// `arr[i] += expr` — the lift permits these inside `while`
+    /// because Artik arrays are heap-resident.
+    pub array_writes: std::collections::HashSet<String>,
+    /// Set when the body re-declares an array via `var arr[N];`. The
+    /// `while` lift rejects this — re-declaring an array each
+    /// iteration would leak heap memory.
+    pub declares_array: bool,
+    /// Set when the body emits a `<--` style witness write (currently
+    /// not exposed inside circom function bodies, but kept so the
+    /// detection grows cleanly if the AST adds the form).
+    pub writes_witness: bool,
+    /// Identifiers introduced via scalar `var x = ...;` — distinct
+    /// from the pre-loop scope. The lift uses this to decide whether a
+    /// reference inside the body refers to a fresh local or to one
+    /// that needs slot promotion.
+    pub fresh_decls: std::collections::HashSet<String>,
+}
+
+fn walk_stmt(stmt: &Stmt, out: &mut MutationSummary) {
+    match stmt {
+        Stmt::VarDecl {
+            names, dimensions, ..
+        } => {
+            if !dimensions.is_empty() {
+                out.declares_array = true;
+            } else {
+                for name in names {
+                    out.fresh_decls.insert(name.clone());
+                }
+            }
+        }
+        Stmt::Substitution { target, .. } => {
+            collect_assignment_target(target, out);
+        }
+        Stmt::CompoundAssign { target, .. } => {
+            collect_assignment_target(target, out);
+        }
+        Stmt::Expr { expr, .. } => collect_side_effect_target(expr, out),
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            for s in &then_body.stmts {
+                walk_stmt(s, out);
+            }
+            match else_body {
+                Some(ElseBranch::Block(b)) => {
+                    for s in &b.stmts {
+                        walk_stmt(s, out);
+                    }
+                }
+                Some(ElseBranch::IfElse(boxed)) => walk_stmt(boxed, out),
+                None => {}
+            }
+        }
+        Stmt::For {
+            init, step, body, ..
+        } => {
+            walk_stmt(init, out);
+            walk_stmt(step, out);
+            for s in &body.stmts {
+                walk_stmt(s, out);
+            }
+        }
+        Stmt::While { body, .. } => {
+            for s in &body.stmts {
+                walk_stmt(s, out);
+            }
+        }
+        Stmt::Return { .. } | Stmt::Block(_) | Stmt::Assert { .. } | Stmt::Log { .. } => {}
+        _ => {}
+    }
+}
+
+fn collect_assignment_target(target: &Expr, out: &mut MutationSummary) {
+    match target {
+        Expr::Ident { name, .. } => {
+            out.scalars.insert(name.clone());
+        }
+        Expr::Index { object, .. } => {
+            if let Expr::Ident { name, .. } = object.as_ref() {
+                out.array_writes.insert(name.clone());
+            }
+        }
+        _ => {}
+    }
+}
+
+fn collect_side_effect_target(expr: &Expr, out: &mut MutationSummary) {
+    if let Expr::PostfixOp { operand, .. } | Expr::PrefixOp { operand, .. } = expr {
+        if let Expr::Ident { name, .. } = operand.as_ref() {
+            out.scalars.insert(name.clone());
+        }
+    }
+}
+
+/// Does any statement in `stmts` (recursively) execute a `return`?
+/// The `if/else` lift needs this to decide whether the mux merge is
+/// safe — a returning arm can't merge branchlessly, so the lift falls
+/// back to a real conditional jump.
+pub(super) fn stmts_have_return(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_return)
+}
+
+pub(super) fn stmt_has_return(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Return { .. } => true,
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            stmts_have_return(&then_body.stmts)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => stmts_have_return(&b.stmts),
+                    Some(ElseBranch::IfElse(boxed)) => stmt_has_return(boxed),
+                    None => false,
+                }
+        }
+        Stmt::For { body, .. } => stmts_have_return(&body.stmts),
+        Stmt::While { body, .. } => stmts_have_return(&body.stmts),
+        Stmt::Block(b) => stmts_have_return(&b.stmts),
+        _ => false,
+    }
+}
+
 /// Map a circom compound-assignment operator to the plain binary op
 /// the lift knows how to emit. Returns `None` for unsupported shapes.
 pub(super) fn compound_to_binop(op: CompoundOp) -> Option<BinOp> {

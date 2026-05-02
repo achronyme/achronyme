@@ -21,17 +21,34 @@ use artik::{IntW, Reg};
 use crate::ast::{self, BinOp, CompoundOp, Expr, Stmt};
 
 use super::helpers::{
-    eval_const_expr, is_increment_on, stmt_is_mux_compatible, stmts_are_mux_compatible,
+    collect_mutated_scalars, eval_const_expr, is_increment_on, stmt_is_mux_compatible,
+    stmts_are_mux_compatible, stmts_have_return,
 };
 use super::{ConstInt, LiftState};
 
 impl<'f> LiftState<'f> {
+    /// Top-level `for` dispatcher. Tries the unroll path first; if
+    /// the bounds aren't compile-time-foldable, falls back to a real
+    /// loop emitted as `init; while (cond) { body; step; }`.
+    pub(super) fn lift_for_dispatch(
+        &mut self,
+        init: &Stmt,
+        condition: &Expr,
+        step: &Stmt,
+        body: &[Stmt],
+    ) -> Option<()> {
+        if let Some(()) = self.lift_for_unrolled(init, condition, step, body) {
+            return Some(());
+        }
+        self.lift_for_runtime(init, condition, step, body)
+    }
+
     /// Unroll a for loop at lift time. Only loops with literal bounds
     /// and a `++` / `+= 1` step over a freshly declared integer loop
     /// variable are supported. The loop variable is tracked as a
     /// `ConstInt` in `const_locals` for the duration of each body
     /// invocation; compile-time references to it fold to `PushConst`.
-    pub(super) fn lift_for(
+    pub(super) fn lift_for_unrolled(
         &mut self,
         init: &Stmt,
         condition: &Expr,
@@ -140,11 +157,10 @@ impl<'f> LiftState<'f> {
 
     /// Lift an `if / else`. Compile-time-foldable conditions pick a
     /// single branch and emit only that body's instructions. Runtime
-    /// conditions (dependent on a signal or runtime-valued local) fall
-    /// through to [`lift_if_else_mux`], which branchlessly computes
-    /// both arms and selects per-variable via a field-arithmetic mux.
-    /// Anything the mux pass can't prove safe returns `None` and the
-    /// caller falls back to E212.
+    /// conditions dispatch to either [`lift_if_else_mux`] (branchless
+    /// merge for side-effect-free arms) or
+    /// [`lift_if_else_branching`] (real conditional jump for arms with
+    /// `return`).
     pub(super) fn lift_if_else(
         &mut self,
         condition: &Expr,
@@ -154,7 +170,210 @@ impl<'f> LiftState<'f> {
         if let Some(cond) = eval_const_expr(condition, &self.const_locals) {
             return self.lift_if_else_folded(cond, then_body, else_body);
         }
+        // `field_value < 0` is unreachable in field semantics — every
+        // residue lives in `[0, p)` and `< 0` against a runtime field
+        // value is dead code. Fold it to constant-false so the
+        // surrounding if doesn't drag in a comparison the lift can't
+        // safely emit.
+        if is_field_lt_zero_pattern(condition) {
+            return self.lift_if_else_folded(0, then_body, else_body);
+        }
+
+        let then_returns = stmts_have_return(&then_body.stmts);
+        let else_returns = match else_body {
+            Some(ast::ElseBranch::Block(b)) => stmts_have_return(&b.stmts),
+            Some(ast::ElseBranch::IfElse(boxed)) => super::helpers::stmt_has_return(boxed),
+            None => false,
+        };
+        if then_returns || else_returns {
+            return self.lift_if_else_branching(condition, then_body, else_body);
+        }
         self.lift_if_else_mux(condition, then_body, else_body)
+    }
+
+    /// Real conditional-jump if/else. Used when at least one arm
+    /// `return`s — the mux merge can't represent a halt. Locals
+    /// merging is intentionally narrow: at most one arm may modify
+    /// locals, and in the both-fall-through case neither arm may
+    /// touch locals. The shape covers circomlib's sqrt early-exit
+    /// pattern (`if (cond) return 0;`) without forcing a general
+    /// SSA-merge implementation.
+    pub(super) fn lift_if_else_branching(
+        &mut self,
+        condition: &Expr,
+        then_body: &ast::Block,
+        else_body: Option<&ast::ElseBranch>,
+    ) -> Option<()> {
+        let cond_reg = self.lift_expr(condition)?;
+        let zero = self.push_const_unsigned(0)?;
+        let is_zero_int = self.builder.feq(cond_reg, zero);
+
+        let skip_label = self.builder.new_label();
+        let end_label = self.builder.new_label();
+
+        // Branch to skip when cond is false (is_zero_int == 1).
+        self.builder.jump_if_to(is_zero_int, skip_label);
+
+        let pre_locals = self.locals.clone();
+        let pre_const_locals = self.const_locals.clone();
+
+        // Then arm.
+        let saved_halted = self.halted;
+        self.halted = false;
+        for stmt in &then_body.stmts {
+            self.lift_stmt(stmt)?;
+            if self.halted {
+                break;
+            }
+        }
+        let then_halted = self.halted;
+        let then_locals = std::mem::replace(&mut self.locals, pre_locals.clone());
+        let then_const_locals = std::mem::replace(&mut self.const_locals, pre_const_locals.clone());
+
+        if !then_halted {
+            self.builder.jump_to(end_label);
+        }
+
+        self.builder.place(skip_label);
+
+        // Else arm.
+        self.halted = false;
+        let mut else_halted = false;
+        match else_body {
+            Some(ast::ElseBranch::Block(b)) => {
+                for stmt in &b.stmts {
+                    self.lift_stmt(stmt)?;
+                    if self.halted {
+                        break;
+                    }
+                }
+                else_halted = self.halted;
+            }
+            Some(ast::ElseBranch::IfElse(boxed)) => {
+                self.lift_stmt(boxed)?;
+                else_halted = self.halted;
+            }
+            None => {}
+        }
+        let else_locals = std::mem::replace(&mut self.locals, pre_locals.clone());
+        let else_const_locals = std::mem::replace(&mut self.const_locals, pre_const_locals.clone());
+
+        self.builder.place(end_label);
+
+        // const_locals must agree on both arms — the lift's loop
+        // unroll path keys off compile-time entries, and a divergent
+        // const view post-merge is undefined.
+        if then_const_locals != pre_const_locals && !then_halted {
+            return None;
+        }
+        if else_const_locals != pre_const_locals && !else_halted {
+            return None;
+        }
+
+        self.halted = saved_halted || (then_halted && else_halted);
+        if self.halted {
+            return Some(());
+        }
+
+        let then_modified = then_locals != pre_locals;
+        let else_modified = else_locals != pre_locals;
+
+        self.locals = match (then_halted, else_halted) {
+            (true, false) => else_locals,
+            (false, true) => then_locals,
+            (false, false) => {
+                if !then_modified && !else_modified {
+                    pre_locals
+                } else {
+                    return None;
+                }
+            }
+            (true, true) => unreachable!("handled by halted check above"),
+        };
+        self.const_locals = pre_const_locals;
+        Some(())
+    }
+
+    /// Emit a `while` as `place(start); cond; jump_if_zero end; body;
+    /// jump start; place(end);`. Mutable scalars whose values must
+    /// flow across iterations are promoted to 1-element heap slots —
+    /// reload at top, store at tail.
+    pub(super) fn lift_while(&mut self, condition: &Expr, body: &[Stmt]) -> Option<()> {
+        let summary = collect_mutated_scalars(body);
+
+        if summary.declares_array || summary.writes_witness {
+            return None;
+        }
+        if stmts_have_return(body) {
+            return None;
+        }
+
+        let mut promoted: Vec<(String, Reg)> = Vec::new();
+        for name in &summary.scalars {
+            if summary.fresh_decls.contains(name) {
+                continue;
+            }
+            if self.const_locals.contains_key(name) {
+                return None;
+            }
+            if let Some(initial) = self.locals.get(name).copied() {
+                let slot = self.alloc_field_slot();
+                self.store_field_slot(slot, initial)?;
+                promoted.push((name.clone(), slot));
+            }
+        }
+
+        let loop_start = self.builder.new_label();
+        let loop_end = self.builder.new_label();
+
+        self.builder.place(loop_start);
+
+        for (name, slot) in &promoted {
+            let reg = self.load_field_slot(*slot)?;
+            self.locals.insert(name.clone(), reg);
+        }
+
+        let cond_reg = self.lift_expr(condition)?;
+        let zero = self.push_const_unsigned(0)?;
+        let is_zero_int = self.builder.feq(cond_reg, zero);
+        self.builder.jump_if_to(is_zero_int, loop_end);
+
+        for stmt in body {
+            self.lift_stmt(stmt)?;
+            if self.halted {
+                return None;
+            }
+        }
+
+        for (name, slot) in &promoted {
+            let cur = self.locals.get(name).copied()?;
+            self.store_field_slot(*slot, cur)?;
+        }
+
+        self.builder.jump_to(loop_start);
+        self.builder.place(loop_end);
+
+        for (name, slot) in &promoted {
+            let reg = self.load_field_slot(*slot)?;
+            self.locals.insert(name.clone(), reg);
+        }
+
+        Some(())
+    }
+
+    /// Runtime fallback for `for` when the bounds are not literal:
+    /// emit `init`, then a `while (cond)` whose body is `body; step;`.
+    pub(super) fn lift_for_runtime(
+        &mut self,
+        init: &Stmt,
+        condition: &Expr,
+        step: &Stmt,
+        body: &[Stmt],
+    ) -> Option<()> {
+        self.lift_stmt(init)?;
+        let mut combined: Vec<Stmt> = body.to_vec();
+        combined.push(step.clone());
+        self.lift_while(condition, &combined)
     }
 
     /// Compile-time branch: `cond` already evaluated to an integer;
@@ -333,5 +552,33 @@ impl<'f> LiftState<'f> {
 
         self.locals = merged;
         Some(())
+    }
+}
+
+/// Detect `<expr> < 0` / `0 > <expr>` against a literal `0`. The
+/// canonical residue of any field value is `>= 0`, so the comparison
+/// is dead code in the witness program. Folding it here keeps the
+/// surrounding `if` lift from having to emit a field-`<` op the VM
+/// doesn't natively support.
+fn is_field_lt_zero_pattern(expr: &Expr) -> bool {
+    match expr {
+        Expr::BinOp {
+            op: BinOp::Lt, rhs, ..
+        } => is_literal_zero(rhs),
+        Expr::BinOp {
+            op: BinOp::Gt, lhs, ..
+        } => is_literal_zero(lhs),
+        _ => false,
+    }
+}
+
+fn is_literal_zero(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number { value, .. } => value == "0",
+        Expr::HexNumber { value, .. } => {
+            let trimmed = value.strip_prefix("0x").unwrap_or(value);
+            trimmed.bytes().all(|b| b == b'0')
+        }
+        _ => false,
     }
 }

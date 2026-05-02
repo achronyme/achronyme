@@ -53,6 +53,7 @@ use memory::FieldFamily;
 use crate::ast::{FunctionDef, Stmt};
 use crate::lowering::context::LoweringContext;
 
+mod big_eval;
 mod bytecode;
 mod control;
 mod exprs;
@@ -203,6 +204,13 @@ struct LiftState<'f> {
     /// Captures the return of a nested call. Inspected and cleared
     /// by `lift_nested_call`.
     nested_result: Option<NestedResult>,
+    /// Witness slot id reserved for the function's scalar return value.
+    /// Lazily populated on the first scalar `return` so multi-return
+    /// shapes (e.g. early-exit `if (cond) return X;` followed by a
+    /// later `return Y;`) all write to the same slot. `None` until the
+    /// first scalar return; `Some` afterwards. Array returns continue
+    /// to allocate per-element slots inline.
+    output_slot: Option<u32>,
 }
 
 /// Value produced by a nested (inlined) function call. Arrays are
@@ -276,6 +284,7 @@ impl<'f> LiftState<'f> {
             functions,
             nested_depth: 0,
             nested_result: None,
+            output_slot: None,
         }
     }
 }

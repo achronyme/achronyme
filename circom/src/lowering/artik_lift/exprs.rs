@@ -12,10 +12,13 @@
 //! `const_locals` (compile-time), `arrays`, and `locals` (runtime
 //! register) in order.
 
+use std::collections::HashMap;
+
 use artik::{IntW, Reg};
 
-use crate::ast::{Expr, UnaryOp};
+use crate::ast::{BinOp, Expr, UnaryOp};
 
+use super::big_eval::try_eval_big;
 use super::helpers::{eval_const_expr, extract_call_name};
 use super::{LiftState, NestedResult};
 
@@ -28,11 +31,57 @@ impl<'f> LiftState<'f> {
                 let trimmed = value.strip_prefix("0x").unwrap_or(value);
                 self.push_const_hex(trimmed)
             }
-            Expr::BinOp { op, lhs, rhs, .. } => {
-                let a = self.lift_expr(lhs)?;
-                let c = self.lift_expr(rhs)?;
-                self.apply_field_binop(*op, a, c)
-            }
+            Expr::BinOp { op, lhs, rhs, .. } => match op {
+                // `**` requires a compile-time-known non-negative
+                // exponent — circomlib's modular sqrt uses this for
+                // Legendre tests and Tonelli-Shanks setup.
+                BinOp::Pow => {
+                    let exp = try_eval_big(rhs, &HashMap::new(), &self.const_locals)?;
+                    let base = self.lift_expr(lhs)?;
+                    self.pow_const_exp(base, &exp)
+                }
+                // `&&` / `||` on field values: evaluate to `{0, 1}`
+                // via the standard "non-zero is true" projection. Both
+                // operands are lifted unconditionally, matching the
+                // mux-style if/else lowering. Each non-zero check is
+                // `1 - feq(x, 0)`.
+                BinOp::And | BinOp::Or => {
+                    let a = self.lift_expr(lhs)?;
+                    let b = self.lift_expr(rhs)?;
+                    let a_bool = self.field_to_bool(a)?;
+                    let b_bool = self.field_to_bool(b)?;
+                    match op {
+                        BinOp::And => Some(self.builder.fmul(a_bool, b_bool)),
+                        BinOp::Or => {
+                            let prod = self.builder.fmul(a_bool, b_bool);
+                            let sum = self.builder.fadd(a_bool, b_bool);
+                            Some(self.builder.fsub(sum, prod))
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                // `==` / `!=`: emit FEq (returns IntW::U8 0/1) then
+                // promote to a field {0, 1}.
+                BinOp::Eq | BinOp::Neq => {
+                    let a = self.lift_expr(lhs)?;
+                    let b = self.lift_expr(rhs)?;
+                    let eq_int = self.builder.feq(a, b);
+                    let eq_field = self.builder.field_from_int(eq_int, IntW::U8);
+                    match op {
+                        BinOp::Eq => Some(eq_field),
+                        BinOp::Neq => {
+                            let one = self.push_const_unsigned(1)?;
+                            Some(self.builder.fsub(one, eq_field))
+                        }
+                        _ => unreachable!(),
+                    }
+                }
+                _ => {
+                    let a = self.lift_expr(lhs)?;
+                    let c = self.lift_expr(rhs)?;
+                    self.apply_field_binop(*op, a, c)
+                }
+            },
             Expr::UnaryOp {
                 op: UnaryOp::Neg,
                 operand,

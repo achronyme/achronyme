@@ -184,7 +184,10 @@ impl<'f> LiftState<'f> {
                 step,
                 body,
                 ..
-            } => self.lift_for(init, condition, step, &body.stmts),
+            } => self.lift_for_dispatch(init, condition, step, &body.stmts),
+            Stmt::While {
+                condition, body, ..
+            } => self.lift_while(condition, &body.stmts),
             Stmt::IfElse {
                 condition,
                 then_body,
@@ -225,7 +228,14 @@ impl<'f> LiftState<'f> {
                     self.halted = true;
                     return Some(());
                 }
-                let slot = self.builder.alloc_witness_slot();
+                let slot = match self.output_slot {
+                    Some(s) => s,
+                    None => {
+                        let s = self.builder.alloc_witness_slot();
+                        self.output_slot = Some(s);
+                        s
+                    }
+                };
                 self.builder.write_witness(slot, r);
                 self.builder.ret();
                 self.halted = true;
@@ -245,9 +255,12 @@ impl<'f> LiftState<'f> {
         }
     }
 
-    /// Mutate `const_locals` if `expr` is a supported side-effect form
-    /// (postfix / prefix `++` or `--` on a compile-time-tracked var).
-    /// Returns `None` for anything else, which falls back to E212.
+    /// Mutate either `const_locals` or `locals` if `expr` is a
+    /// supported side-effect form (postfix / prefix `++` or `--` on
+    /// a tracked variable). Compile-time vars stay folded; runtime
+    /// registers get a field-arithmetic update via `fadd` / `fsub`
+    /// against the constant `1`. Returns `None` for shapes that
+    /// don't fit either path.
     fn apply_side_effect(&mut self, expr: &Expr) -> Option<()> {
         let (op, operand) = match expr {
             Expr::PostfixOp { op, operand, .. } | Expr::PrefixOp { op, operand, .. } => {
@@ -258,15 +271,26 @@ impl<'f> LiftState<'f> {
         let Expr::Ident { name, .. } = operand.as_ref() else {
             return None;
         };
-        // Only compile-time-tracked vars support ++/--: a runtime
-        // `i++` would require loading, adding 1, storing, which the
-        // lift can support later but does not today.
-        let current = self.const_locals.get(name).copied()?;
-        let next = match op {
-            PostfixOp::Increment => current.checked_add(1)?,
-            PostfixOp::Decrement => current.checked_sub(1)?,
-        };
-        self.const_locals.insert(name.clone(), next);
-        Some(())
+
+        if let Some(current) = self.const_locals.get(name).copied() {
+            let next = match op {
+                PostfixOp::Increment => current.checked_add(1)?,
+                PostfixOp::Decrement => current.checked_sub(1)?,
+            };
+            self.const_locals.insert(name.clone(), next);
+            return Some(());
+        }
+
+        if let Some(reg) = self.locals.get(name).copied() {
+            let one = self.push_const_unsigned(1)?;
+            let new_reg = match op {
+                PostfixOp::Increment => self.builder.fadd(reg, one),
+                PostfixOp::Decrement => self.builder.fsub(reg, one),
+            };
+            self.locals.insert(name.clone(), new_reg);
+            return Some(());
+        }
+
+        None
     }
 }
