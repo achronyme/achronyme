@@ -716,26 +716,36 @@ fn mux4_forge_output_rejected() {
 // ============================================================================
 //
 // `BinSum` and the general `Multiplexer(wIn, nIn)` template compile to
-// ProveIR but their R1CS path is incomplete today:
+// ProveIR but their R1CS path is incomplete today.
 //
-//   * BinSum uses the `var lin += signal * e2` pattern followed by
-//     `out[k] <-- (lin >> k) & 1`. The frontend doesn't yet track a
-//     compile-time `var` that accumulates signal-typed expressions as
-//     a linear combination. The R1CS produced rejects the honest
-//     witness (`ConstraintUnsatisfied`), so a forgery test against the
-//     same constraint set would conflate "frontend bug" with "missing
-//     soundness oracle". Empirically verified by feeding the canonical
-//     a=5,b=3 → out=8 witness through `compile_valid_witness` and
-//     observing the rejection at the honest-witness gate.
-//   * Multiplexer feeds a 2-D signal input `inp[nIn][wIn]` through a
-//     Decoder + EscalarProduct. The witness evaluator lacks the
-//     flattened-naming pass for 2-D signal arrays — same shape of
-//     blocker, different surface.
+// **BinSum — structural re-inlining bug** (empirically diagnosed by
+// dumping the post-instantiate IR for `BinSum(4, 2)` wrapped in a
+// 5-iteration output-wiring loop). Each `bs.out[i]` reference in the
+// wrapper's `for (i = 0; i < nout; i++) { out[i] <== bs.out[i]; }`
+// triggers a full re-inlining of the BinSum template body. The IR
+// contains five separate `lin === lout` AssertEqs (one per wrapper
+// output-wiring iteration), each preceded by a freshly-allocated
+// `bs.out_0..4` Input set. The instantiator's name → wire HashMap
+// overwrites by name across emissions, so only the last emission's
+// wires receive witness values from the witness evaluator; the
+// earlier emissions' constraints reference dangling wires that stay
+// zero. The honest witness gets rejected at the first dangling-wire
+// constraint (the lin-side LC evaluates to 8, the lout-side LC
+// evaluates to 0 against the orphan wires). The deeper root is
+// component-output-wiring re-inlining, not "var-as-linear-combination
+// tracking" as the surface symptom initially suggested. The same
+// shape may contribute to the EdDSAPoseidon wire-id non-determinism
+// and the `var_postdecl_padding +1` rolled-loop artifact tracked
+// elsewhere.
 //
-// Adversarial soundness tests for these two templates are therefore
-// deferred until the R1CS path verifies honest witnesses. Until then
-// any forgery probe would test a broken oracle, not a real soundness
-// invariant.
+// **Multiplexer** — feeds a 2-D signal input `inp[nIn][wIn]` through a
+// Decoder + EscalarProduct. The witness evaluator lacks the
+// flattened-naming pass for 2-D signal arrays — distinct surface from
+// BinSum's re-inlining bug.
+//
+// Both adversarial soundness tests stay deferred. A forgery probe
+// against either template's current constraint set would conflate
+// the frontend bug with a real soundness oracle.
 
 // ============================================================================
 // Placeholder-aware lower_multi_index — cross-mode pin
