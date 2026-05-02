@@ -108,7 +108,7 @@ mod tests {
         assert_eq!(v.as_handle(), Some(7));
     }
 
-    // --- TAG_CIRCOM_HANDLE (Phase 4.1) ---
+    // --- TAG_CIRCOM_HANDLE ---
 
     #[test]
     fn circom_handle_value_round_trip() {
