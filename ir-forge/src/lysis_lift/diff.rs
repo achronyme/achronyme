@@ -2,11 +2,10 @@
 //! same body at different probe values (RFC §6.1, watchpoint #3).
 //!
 //! The BTA classifier calls [`symbolic_emit`] at least twice (three
-//! times once Phase 3 uses the RFC §6.1.1 v1.1 algorithm) with
-//! different `(loop_var, concrete_i)` bindings; the results differ
-//! iff the loop body's structure depends on the loop variable. This
-//! module answers the question "how do they differ?" in one of two
-//! shapes:
+//! times under the RFC §6.1.1 v1.1 algorithm) with different
+//! `(loop_var, concrete_i)` bindings; the results differ iff the
+//! loop body's structure depends on the loop variable. This module
+//! answers the question "how do they differ?" in one of two shapes:
 //!
 //! - [`Diff::OnlyConstants`] — both trees have identical topology
 //!   (node count, variant sequence, operand indices, op tags, etc.)

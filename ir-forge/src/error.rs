@@ -70,9 +70,9 @@ pub enum CircomDispatchErrorKind {
     /// library-mode instantiation pipeline does not yet support.
     ArrayInputUnsupported { template: String, signal: String },
     /// DotAccess on a circom result returned an array output, which
-    /// requires element indexing that Phase 3 has not yet added.
-    /// (User-facing fallback for shapes not covered by the
-    /// "<name>.<out>_<i>" pattern.)
+    /// requires element indexing that the dispatch surface does not
+    /// yet support. (User-facing fallback for shapes not covered by
+    /// the "<name>.<out>_<i>" pattern.)
     ArrayOutputRequiresIndex { template: String, signal: String },
     /// The underlying circom lowering stage produced its own error.
     /// Wrapped here so ProveIrError stays the single surface the CLI
@@ -252,8 +252,8 @@ pub enum ProveIrError {
     /// Parse error (propagated from parser).
     ParseError(Box<Diagnostic>),
     /// A function that is VM-only (e.g. calls `print`) was referenced
-    /// inside a prove/circuit block. Phase 4 availability inference
-    /// detected this at resolve time.
+    /// inside a prove/circuit block. Availability inference detected
+    /// this at resolve time.
     VmOnlyFunction { name: String, span: OptSpan },
     /// Circom template dispatch failure inside a prove/circuit
     /// block. See [`CircomDispatchErrorKind`] for the variant list.

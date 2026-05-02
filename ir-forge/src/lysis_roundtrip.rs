@@ -2,21 +2,19 @@
 //! lower through Walker → Sink → materialize, and return a fresh
 //! `IrProgram<F>` with the deduplicated instruction stream.
 //!
-//! This is the **Stage 1 smoke gate** of Lysis Phase 3.C.6 (see
-//! `.claude/plans/lysis-phase-3c6.md`). It proves the
-//! `ExtendedInstruction → Lysis → Vec<Instruction>` cable works
-//! end-to-end on real `IrProgram<F>` shapes — **before** introducing
-//! the `InstrSink` trait refactor of Stage 2.
+//! This is the **smoke gate** for the Lysis cable. It proves the
+//! `ExtendedInstruction → Lysis → Vec<Instruction>` path works
+//! end-to-end on real `IrProgram<F>` shapes.
 //!
-//! ## Stage-1 limitations
+//! ## Limitations of the round-trip path
 //!
 //! - **No structural reduction.** Every input `Instruction<F>` is
 //!   wrapped as [`ExtendedInstruction::Plain`], so the walker emits a
 //!   flat instruction stream — no `LoopUnroll`. The Lysis interner
 //!   still hash-conses identical pure ops, but multiplicative loop
 //!   amplification (e.g. SHA-256(64)) is unaffected: the HARD GATE
-//!   probe in `circom/tests/e2e.rs::sha256_64_r1cs_probe` will still
-//!   hang under this round-trip path. Stage 2's `ExtendedSink` is
+//!   probe in `circom/tests/e2e.rs::sha256_64_r1cs_probe` would hang
+//!   under this round-trip path. The `ExtendedSink` integration is
 //!   what emits real `LoopUnroll` nodes and unlocks the gate.
 //! - **Metadata is dropped.** `var_names`, `var_types`, `var_spans`,
 //!   and `input_spans` are not reattached to the materialized
@@ -25,36 +23,29 @@
 //!   dedup order, not source order). The oracle gate in
 //!   `zkc::lysis_oracle` does not consult these fields and R1CS
 //!   compilation does not require them, so the smoke test still
-//!   discriminates `Equivalent` correctly. Stage 2 wires metadata
-//!   through the sink.
+//!   discriminates `Equivalent` correctly.
 //! - **Walker coverage gaps surface as [`RoundTripError::Walk`].**
-//!   `IntDiv` and `IntMod` shipped in Phase 1.5; field `Div` shipped
-//!   in Phase 1.B (BETA20-CLOSEOUT, 2026-04-30) via the new
-//!   `Opcode::EmitDiv`. Remaining gaps are tracked per variant in
-//!   `walker.rs::lift_*`.
+//!   `IntDiv`, `IntMod`, and field `Div` are all walker-supported
+//!   today via `EmitIntDiv` / `EmitIntMod` / `EmitDiv`. Remaining
+//!   gaps are tracked per variant in `walker.rs::lift_*`.
 //! - **Walker desugarings break strict oracle equivalence on a
-//!   subset of variants.** This is the surprising Stage-1 finding —
-//!   the Walker rewrites `Assert(x)` → `AssertEq(x, one)` (with a
-//!   hoisted `Const(1)`), `Not(x)` → `Sub(one, x)`, `And` → `Mul`,
-//!   `Or` → `Add - Mul`, `IsNeq` → `Sub(one, IsEq)`, `IsLe` →
-//!   `Sub(one, IsLt(swap))`, `IsLtBounded`/`IsLeBounded` similarly.
-//!   The rewrites are SEMANTICALLY equivalent at proof time but
-//!   produce a DIFFERENT R1CS constraint multiset (the new `one`
-//!   wire perturbs the linear-combination shape). The oracle's
+//!   subset of variants.** The Walker rewrites
+//!   `Assert(x)` → `AssertEq(x, one)` (with a hoisted `Const(1)`),
+//!   `Not(x)` → `Sub(one, x)`, `And` → `Mul`,
+//!   `Or` → `Add minus Mul`, `IsNeq` → `Sub(one, IsEq)`,
+//!   `IsLe` → `Sub(one, IsLt(swap))`, `IsLtBounded` / `IsLeBounded`
+//!   similarly. The rewrites are SEMANTICALLY equivalent at proof
+//!   time but produce a DIFFERENT R1CS constraint multiset (the new
+//!   `one` wire perturbs the linear-combination shape). The oracle's
 //!   step-3 multiset compare is bit-strict, so any fixture whose
-//!   legacy `IrProgram` contains those variants will be classified
+//!   legacy `IrProgram` contains those variants is classified
 //!   `ConstraintsDiffer` even though both pipelines compute the
-//!   same circuit. The Stage-1 cross-validation test
+//!   same circuit. The cross-validation test
 //!   (`zkc/tests/lysis_roundtrip_smoke.rs`) works around this by
 //!   building fixtures from the variant subset the Walker
 //!   round-trips byte-identical: `Const`, `Input`, `Add`, `Sub`,
 //!   `Mul`, `IsEq`, `IsLt`, `Mux`, `AssertEq`, `RangeCheck`,
-//!   `Decompose`, `PoseidonHash`. This covers ~80 % of what circom
-//!   actually emits today; the missing 20 % is what Stage 2 has to
-//!   reconcile (probable resolution: emit the primitive form
-//!   directly from `instantiate` so `Plain` wrapping never sees
-//!   `Assert`/`Not`/`And`/`Or`/`Bounded` variants in the first
-//!   place — those become Stage-2 cleanup of the legacy emitter).
+//!   `Decompose`, `PoseidonHash`.
 
 use ir_core::{Instruction, IrProgram};
 use lysis::{execute, expected_family, InterningSink, LysisConfig, LysisError};
@@ -111,9 +102,9 @@ impl From<LysisError> for RoundTripError {
 ///    format on every call so future schema drift trips the smoke
 ///    test, not a downstream gate).
 /// 4. In **debug builds**, run `lysis::bytecode::validate` on the
-///    decoded program (Phase 1.C — BETA20-CLOSEOUT). The validator
-///    is RFC §4.5 well-formedness, fully backstopped by the executor
-///    at runtime; release builds skip it for speed.
+///    decoded program. The validator enforces RFC §4.5
+///    well-formedness, fully backstopped by the executor at runtime;
+///    release builds skip it for speed.
 /// 5. Execute the bytecode against an [`InterningSink`].
 /// 6. Materialize the sink to a flat `Vec<Instruction<F>>`.
 /// 7. Reassemble into a fresh [`IrProgram`] with `next_var` set to

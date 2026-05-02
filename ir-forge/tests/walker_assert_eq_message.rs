@@ -1,18 +1,18 @@
 //! Walker → bytecode → executor round-trip for `Instruction::AssertEq`
 //! and `Instruction::Assert` carrying a user-authored message.
 //!
-//! Background: pre-fix, the Walker emitted `Opcode::EmitAssertEq { lhs,
-//! rhs }` for both messageless and message-bearing IR asserts. The
-//! opcode schema had no message slot, so every IR re-materialised by
-//! the executor came back with `message: None`. The R1CS evaluator
-//! then surfaced the generic `assert_eq failed: values are not equal`
-//! shape instead of the user's string, breaking
+//! Background: without a message-aware opcode, the Walker would emit
+//! `Opcode::EmitAssertEq { lhs, rhs }` for both messageless and
+//! message-bearing IR asserts, the opcode would have no message slot,
+//! and every IR re-materialised by the executor would come back with
+//! `message: None`. The R1CS evaluator would then surface the generic
+//! `assert_eq failed: values are not equal` shape instead of the
+//! user's string, breaking
 //! `cli/tests/circuit_test.rs::circuit_assert_eq_message_shown_on_failure`
-//! the moment Phase 1.B flipped the prove handler to `instantiate_lysis`
-//! (2026-04-30).
+//! whenever the prove handler routes through `instantiate_lysis`.
 //!
-//! Fix surface: a sibling opcode `EmitAssertEqMsg { lhs, rhs, msg_idx
-//! }` references the const pool's `String` entry; the executor reads
+//! Solution: a sibling opcode `EmitAssertEqMsg { lhs, rhs, msg_idx }`
+//! references the const pool's `String` entry; the executor reads
 //! the string and rebuilds `InstructionKind::AssertEq { message:
 //! Some(_), .. }`. These tests pin the round-trip end-to-end.
 

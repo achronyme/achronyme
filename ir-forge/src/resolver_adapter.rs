@@ -1,18 +1,14 @@
 //! `resolve::ModuleSource` adapter backed by
 //! [`crate::module_loader::ModuleLoader`].
 //!
-//! Movimiento 2 Phase 3D introduced this adapter in the `compiler`
-//! crate under the name `CompilerModuleSource`. Phase 3G relocates
-//! it to the `ir` crate because its only runtime dependency
+//! Lives in the `ir` crate because its only runtime dependency
 //! ([`ModuleLoader`]) lives here, and because the standalone
-//! [`crate::prove_ir::ProveIrCompiler::compile_circuit`] entry
-//! point needs its own access to the adapter without adding a
-//! dependency on `compiler` (which would introduce a crate cycle).
+//! [`crate::prove_ir::ProveIrCompiler::compile_circuit`] entry point
+//! needs its own access to the adapter without adding a dependency
+//! on `compiler` (which would introduce a crate cycle).
 //!
-//! The type is renamed to `ModuleLoaderSource` — "compiler" in the
-//! old name referred to the VM bytecode compiler, which is no
-//! longer the exclusive consumer. The rename makes the actual
-//! dependency (a [`ModuleLoader`]) legible at the call site.
+//! The type is named `ModuleLoaderSource` so the actual dependency
+//! (a [`ModuleLoader`]) is legible at the call site.
 //!
 //! ## In-memory root override
 //!
@@ -119,8 +115,8 @@ impl<'a> ModuleSource for ModuleLoaderSource<'a> {
                 return Ok(ro.canonical.clone());
             }
         }
-        // Phase 3F: transitive imports from the in-memory root arrive
-        // with `importer = Some(<resolve-in-memory-root>)`. That
+        // Transitive imports from the in-memory root arrive with
+        // `importer = Some(<resolve-in-memory-root>)`. That
         // pseudo-path has no real filesystem parent, so we substitute
         // `self.base_path` as the base directory for resolving
         // `relative`. This is the only way in-memory-rooted compiles

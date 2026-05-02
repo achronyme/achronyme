@@ -60,8 +60,7 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
     /// `emit_node` for `CircuitNode::Assert`. Centralising the lowering
     /// keeps the `Const(1)` shared via [`emit_const`]'s cache and matches
     /// the form `ir-forge::lysis_lift::Walker` produces, so the legacy
-    /// and Lysis pipelines stay byte-equivalent in R1CS multiset
-    /// (Phase 3.C.6 Stage 1 finding).
+    /// and Lysis pipelines stay byte-equivalent in R1CS multiset.
     pub(super) fn lower_not(&mut self, operand: SsaVar) -> SsaVar {
         let one = self.emit_const(FieldElement::<F>::one());
         let v = self.fresh_var();

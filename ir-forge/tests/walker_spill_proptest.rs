@@ -1,4 +1,4 @@
-//! Property-based tests for the Phase 4 spill heuristic.
+//! Property-based tests for the spill heuristic.
 //!
 //! These tests exercise `partition_live_set` indirectly via the
 //! visible Walker contract: any cold var produces at most one
@@ -9,8 +9,6 @@
 //! through `Walker::lower` on hand-built `ExtendedInstruction`
 //! sequences. The proptest generator builds programs with parametric
 //! live-set sizes and checks the emitted bytecode.
-//!
-//! See research report §6.4 + Commit 5 of Phase 4.
 
 use ir_core::{Instruction, SsaVar};
 use ir_forge::extended::ExtendedInstruction;
@@ -57,8 +55,9 @@ fn count_opcodes(program: &lysis::Program<Bn254Fr>, predicate: impl Fn(&Opcode) 
 proptest! {
     /// Single-static-store invariant: every heap slot receives exactly
     /// one `StoreHeap` across the program. This is the property that
-    /// validator rule 13 enforces; this test verifies the walker
-    /// upholds it before the validator catches any violation.
+    /// the single-static-store validator rule enforces; this test
+    /// verifies the walker upholds it before the validator catches
+    /// any violation.
     #[test]
     fn each_slot_has_at_most_one_store_heap(
         n_consts in 1u32..40,
@@ -106,10 +105,9 @@ proptest! {
     }
 
     /// Programs whose live set never exceeds `MAX_CAPTURES_HOT` (= 48)
-    /// emit zero heap opcodes. This is the "no regression for the
-    /// existing corpus" property: the Phase 4 walker preserves the
-    /// pre-Phase-4 bytecode shape for programs below the spill
-    /// threshold.
+    /// emit zero heap opcodes. This is the "no regression for small
+    /// programs" property: the walker leaves bytecode shape
+    /// untouched for programs below the spill threshold.
     #[test]
     fn small_programs_emit_no_heap_ops(
         n_consts in 1u32..30,

@@ -330,8 +330,8 @@ fn instantiate_comparison_gt_desugars_to_lt() {
 
 #[test]
 fn instantiate_bool_lowers_and_to_mul() {
-    // `a == 1 && b == 1` lowers to two IsEqs and one Mul (And lowered
-    // to Mul at emission time per Phase 3.C.6 Stage 1; see
+    // `a == 1 && b == 1` lowers to two IsEqs and one Mul (And is
+    // lowered to Mul at emission time; see
     // ir-forge/src/instantiate/exprs.rs CircuitBoolOp::And). The
     // outer assert lowers to AssertEq(Mul, 1).
     let ir = compile_and_instantiate("public a\npublic b\nassert(a == 1 && b == 1)");
@@ -543,7 +543,7 @@ fn audit_unary_neg() {
     assert_eq!(negs, 1);
 }
 
-// Unary Not — lowered to Sub(1, x) at emission time (Phase 3.C.6).
+// Unary Not — lowered to Sub(1, x) at emission time.
 #[test]
 fn audit_unary_not_lowers_to_sub() {
     let ir = compile_and_instantiate("public x\npublic out\nassert_eq(!x, out)");
@@ -561,9 +561,9 @@ fn audit_unary_not_lowers_to_sub() {
     assert!(subs >= 1, "expected at least one Sub (the Not lowering)");
 }
 
-// Comparison operators Neq, Le, Ge — lowered at emission time
-// (Phase 3.C.6) so IsNeq / IsLe never appear; the lowered shapes
-// are 1 - IsEq(...) and 1 - IsLt(swap).
+// Comparison operators Neq, Le, Ge — lowered at emission time so
+// IsNeq / IsLe never appear; the lowered shapes are
+// 1 - IsEq(...) and 1 - IsLt(swap).
 #[test]
 fn audit_comparison_neq_lowers_to_iseq_plus_sub() {
     let ir = compile_and_instantiate("public a\npublic b\nassert(a != b)");
@@ -879,18 +879,13 @@ fn spans_propagated_to_let_binding() {
     assert_eq!(span.unwrap().line_start, 2);
 }
 
-// Ignored 2026-05-01: pre-existing Lysis diagnostic gap surfaced by
-// migrating `compile_and_instantiate` off Legacy. The Lysis path
-// (Walker → bytecode → InterningSink → materialize) drops the
-// per-iteration source span on AssertEq nodes lifted out of a
-// `CircuitNode::For` body. The Legacy path attached the body
-// expression's span to each unrolled instruction; Lysis emits a
-// single `ExtendedInstruction::LoopUnroll` whose body carries no
-// per-instruction span side-channel through the bytecode round-trip.
-//
-// Tracked as a pre-tag fix-before-release commitment (same precedent
-// as `var_postdecl_padding_e2e` and the Walker AssertEq message
-// channel earlier this session). Will close before beta.20 tag.
+// Ignored: the Lysis path (Walker → bytecode → InterningSink →
+// materialize) drops the per-iteration source span on AssertEq nodes
+// lifted out of a `CircuitNode::For` body. The legacy path attached
+// the body expression's span to each unrolled instruction; Lysis
+// emits a single `ExtendedInstruction::LoopUnroll` whose body carries
+// no per-instruction span side-channel through the bytecode
+// round-trip.
 #[test]
 #[ignore = "Lysis loop-body span gap — see fix-Lysis-loop-body-span-propagation task"]
 fn spans_propagated_through_for_loop() {

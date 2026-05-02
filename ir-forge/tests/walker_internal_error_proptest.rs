@@ -1,11 +1,12 @@
 //! Property-based test: `Walker::lower` never returns an *internal-
 //! error* `WalkError` variant on lift-shaped input.
 //!
-//! ## The narrowed property (Phase 0.2.C, advisor §2a)
+//! ## The narrowed property
 //!
 //! Literal "totality" — `Walker::lower` always returns `Ok` — is
-//! unsound by design. `WalkError` (`ir-forge/src/lysis_lift/walker.rs`
-//! lines 136-225) has 18 variants split into three classes:
+//! unsound by design. `WalkError` (in
+//! `ir-forge/src/lysis_lift/walker.rs`) has 18 variants split into
+//! three classes:
 //!
 //! - **User-rejection allowed (8)**: `Alloc`, `OperandOutOfRange`,
 //!   `NegativeLoopBound`, `LoopBodyTooLong`, `LiveSetTooLarge`,

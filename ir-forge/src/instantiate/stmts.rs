@@ -85,8 +85,7 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 // Lower Assert(x) → AssertEq(x, 1). The Lysis lifter's
                 // Walker performs the same desugaring at lift time;
                 // emitting it here keeps the legacy and Lysis paths
-                // byte-equivalent in R1CS multiset (Phase 3.C.6
-                // Stage 1 finding).
+                // byte-equivalent in R1CS multiset.
                 let one = self.emit_const(FieldElement::<F>::one());
                 let v = self.fresh_var();
                 self.push_inst(Instruction::AssertEq {
@@ -203,8 +202,7 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 // no constraint references. Confirmed empirically
                 // closing a +256-wire orphan delta on EscalarMulAny(254)
                 // and analogous slack on Pedersen / EscalarMulFix /
-                // Poseidon / MiMCSponge / Pedersen_old / LessThan;
-                // see `.claude/plans/cross-path-baseline-2026-04-28/slack-audit.md`.
+                // Poseidon / MiMCSponge / Pedersen_old / LessThan.
                 if let Some(InstEnvValue::Array(existing)) = self.env.get(name) {
                     if existing.len() == size {
                         return Ok(());

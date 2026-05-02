@@ -136,10 +136,10 @@ pub enum SymbolicNode<F: FieldBackend> {
         capture_operands: SmallVec<[NodeIdx; 4]>,
         n_outputs: u16,
     },
-    /// A nested `LoopUnroll`. Marker node only — Phase 3's BTA does
-    /// not recurse into nested loops, so this sentinel forces the
+    /// A nested `LoopUnroll`. Marker node only — BTA does not
+    /// recurse into nested loops, so this sentinel forces the
     /// enclosing loop to classify as `DataDependent` when present.
-    /// (A Phase 4 refinement could recursively classify the nested
+    /// (A future refinement could recursively classify the nested
     /// loop.)
     NestedLoop,
     /// A symbolic-index write produced by Gap 1
@@ -284,14 +284,14 @@ impl<F: FieldBackend> SymbolicTree<F> {
 /// - `TemplateCall` becomes a `TemplateCall` node; the `outputs` are
 ///   bound to synthetic `OuterRef`-free placeholders via a
 ///   `NestedLoop`-style note that structural_diff treats as opaque.
-///   (For now Phase 3 classifies bodies containing template calls
+///   (Bodies containing template calls are classified
 ///   conservatively: they behave like `OuterRef` operands for the
 ///   caller's purposes but the call itself lives as a single node.)
 /// - `LoopUnroll` inside the body → `NestedLoop` sentinel; the
 ///   enclosing loop will classify `DataDependent`.
 /// - `TemplateBody` inside the body → treated as `NestedLoop` for
 ///   safety; declaring a template inside a loop body is unusual and
-///   Phase 3 doesn't chase it.
+///   the current pass doesn't chase it.
 ///
 /// # SsaVar resolution
 ///
@@ -362,7 +362,7 @@ fn emit_one<F: FieldBackend>(
         ExtendedInstruction::LoopUnroll { .. } | ExtendedInstruction::TemplateBody { .. } => {
             // Nested control structures collapse to an opaque marker
             // that forces the enclosing classification to
-            // DataDependent. Phase 4 can lift this.
+            // DataDependent. Lifting this is future work.
             let idx = tree.push(SymbolicNode::NestedLoop);
             tree.body_order.push(idx);
         }

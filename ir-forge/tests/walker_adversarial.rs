@@ -1,18 +1,18 @@
-//! Phase 4 — adversarial walker fixtures (research report §6.5 + §7.7).
+//! Adversarial walker fixtures.
 //!
-//! These tests document scenarios that the v1 heap path cannot
+//! These tests document scenarios that the current heap path cannot
 //! handle: programs whose post-split body materialises so many cold
 //! vars sequentially that lazy-reload-without-recycling overruns the
-//! frame cap. The next escalation — **scratch-reg recycling** — is
-//! v1.1 work; this file exists so the future implementer has a
-//! canonical place to flip these tests from `#[ignore]` to `#[test]`
-//! when v1.1 lands.
+//! frame cap. The next escalation is **scratch-reg recycling**; this
+//! file exists so the future implementer has a canonical place to
+//! flip these tests from `#[ignore]` to `#[test]` when that
+//! implementation lands.
 //!
-//! See §6.5 Commit 6a (B) for the full justification: a single
-//! template body that legitimately materialises > ~200 distinct cold
-//! vars violates the v1 invariant that the callee frame is bounded
-//! by `hot_captures + distinct cold vars materialised in that
-//! template body` (research report §6.4 + §8 sign-off item 3).
+//! Justification: a single template body that legitimately
+//! materialises more than ~200 distinct cold vars violates the
+//! invariant that the callee frame is bounded by
+//! `hot_captures + distinct cold vars materialised in that template
+//! body`.
 
 use ir_core::{Instruction, SsaVar};
 use ir_forge::extended::ExtendedInstruction;
@@ -36,9 +36,9 @@ fn plain(inst: Instruction<Bn254Fr>) -> ExtendedInstruction<Bn254Fr> {
 
 /// Adversarial scenario: a single template body that touches > 200
 /// distinct cold vars sequentially (no batching, no early-use
-/// clustering). Each cold reference triggers `LoadHeap` + a fresh
-/// `RegAllocator::alloc()` because v1 has no scratch-reg recycling
-/// (research report §7.7). The frame allocator hits its 255-reg cap
+/// clustering). Each cold reference triggers `LoadHeap` plus a fresh
+/// `RegAllocator::alloc()` because the current walker has no
+/// scratch-reg recycling. The frame allocator hits its 255-reg cap
 /// and the walker errors with `WalkError::Alloc(...)`.
 ///
 /// Building a precise counterexample requires careful pre-split
@@ -49,20 +49,20 @@ fn plain(inst: Instruction<Bn254Fr>) -> ExtendedInstruction<Bn254Fr> {
 /// placeholder until the v1.1 implementer has the scratch-recycling
 /// machinery to compare against.
 ///
-/// **Expected v1 behaviour**: walker fails. **Expected v1.1
-/// behaviour**: walker succeeds because each LoadHeap reuses the reg
+/// **Current behaviour**: walker fails. **Behaviour with scratch-reg
+/// recycling**: walker succeeds because each LoadHeap reuses the reg
 /// of a recently-dead cold var, capping the frame at the working set
-/// size (≤ 64 typically) instead of growing to the spill set (250+).
+/// size (typically <= 64) instead of growing to the spill set (250+).
 #[test]
-#[ignore = "v1 lazy-reload-without-recycling overflows the 255-reg frame cap when a single template body sequentially materialises more cold vars than fit alongside the hot partition. Research report §7.7 documents the v1.1 scratch-reg recycling that closes this; this test will flip to #[test] when v1.1 lands."]
+#[ignore = "lazy-reload-without-recycling overflows the 255-reg frame cap when a single template body sequentially materialises more cold vars than fit alongside the hot partition. Flip to #[test] once scratch-reg recycling lands."]
 fn adversarial_sequential_cold_vars_overflow_v1_frame() {
     // Placeholder body: one Const, one Halt — does NOT actually
     // exercise the failure path. Constructing the precise fixture
     // requires the scratch-recycling reference implementation to
     // compare against; building it without that baseline risks
-    // pinning v1 to a passing-by-accident state. The `#[ignore]`
-    // reason above carries the contract; the body exists only so
-    // the test compiles.
+    // pinning the walker to a passing-by-accident state. The
+    // `#[ignore]` reason above carries the contract; the body
+    // exists only so the test compiles.
     let body = vec![plain(Instruction::Const {
         result: ssa(0),
         value: fe(0),
@@ -70,10 +70,10 @@ fn adversarial_sequential_cold_vars_overflow_v1_frame() {
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
     let result = walker.lower(&body);
-    // When v1.1 lands and this is flipped to `#[test]`, the
-    // assertion becomes `result.is_err()` (v1 fails) or
-    // `result.is_ok()` after recycling (v1.1 passes). Today the
-    // placeholder body trivially succeeds, which is harmless because
-    // the test is `#[ignore]`'d.
+    // Once scratch-reg recycling lands and this is flipped to
+    // `#[test]`, the assertion becomes `result.is_err()` (current
+    // walker fails) or `result.is_ok()` after recycling (passes).
+    // Today the placeholder body trivially succeeds, which is
+    // harmless because the test is `#[ignore]`'d.
     let _ = result;
 }

@@ -3,8 +3,8 @@
 //!
 //! The `circom` crate already depends on `ir` (for `CircuitExpr`,
 //! `CircuitNode`, `FieldConst`). Having `ir` reach back into `circom`
-//! for `CircomLibrary` would create a cycle, so Phase 3 abstracts the
-//! capability as a trait living here in `ir`. The `circom` crate
+//! for `CircomLibrary` would create a cycle, so the capability is
+//! abstracted as a trait living here in `ir`. The `circom` crate
 //! implements the trait for `CircomLibrary`, and the `compiler` crate
 //! — which depends on both — plumbs trait objects through
 //! [`super::OuterScope`] into the ProveIR compiler.
