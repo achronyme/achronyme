@@ -80,8 +80,7 @@ pub fn lower_template(
                         })
                         .collect();
                     if let Some(vals) = folded {
-                        array_captures
-                            .insert(param.clone(), super::utils::EvalValue::Array(vals));
+                        array_captures.insert(param.clone(), super::utils::EvalValue::Array(vals));
                     }
                 }
             }

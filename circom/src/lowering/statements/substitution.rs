@@ -651,11 +651,7 @@ pub(super) fn extract_component_call(
                         })
                         .collect();
                     if let Some(vals) = folded {
-                        array_arg_indices.push((
-                            i,
-                            format!("__lit_{i}"),
-                            EvalValue::Array(vals),
-                        ));
+                        array_arg_indices.push((i, format!("__lit_{i}"), EvalValue::Array(vals)));
                     }
                 }
             }

@@ -52,7 +52,7 @@ pub struct LoweringEnv {
     /// var as `CircuitExpr::Var(name)` and a subsequent
     /// reassignment (`x += ...`) is not silently folded into a stale
     /// literal. Required for circomlib patterns like `var n1 = n\2;
-    /// for (i = 0; i < n1; i++) ...` (gates.circom MultiAND).
+    ///   for (i = 0; i < n1; i++) ...` (gates.circom MultiAND).
     pub bound_const_vars: HashMap<String, FieldConst>,
     /// Known array constants — compile-time arrays from function calls
     /// like `var C[n] = POSEIDON_C(t)`.  Used to resolve `C[expr]`

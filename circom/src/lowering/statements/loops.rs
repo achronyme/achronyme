@@ -1591,10 +1591,7 @@ fn validate_loop_step(
         }
         // i += 1 or i -= 1
         Stmt::CompoundAssign {
-            target,
-            op,
-            value,
-            ..
+            target, op, value, ..
         } => {
             if let Expr::Ident { name, .. } = target {
                 if name == var_name {
