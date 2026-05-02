@@ -121,7 +121,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// - `Expr::Ident { name }` and `name` is a registered selective
     ///   import (bare template name key), or
     /// - `Expr::DotAccess { object: Ident(P), field: T }` and
-    ///   `"P::T"` is registered as a namespace entry (Phase 3.4).
+    ///   `"P::T"` is registered as a namespace entry (the
+    ///   `alias.template` shape used by namespaced circom imports).
     ///
     /// Returns `None` for every other shape so the caller falls
     /// through to the normal call dispatch without regression.
