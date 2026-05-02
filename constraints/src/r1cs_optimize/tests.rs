@@ -511,14 +511,14 @@ fn test_tautological_linear_removed() {
     // Second: 1*pub = pub -> tautological, removed
     // Third: pub*pub = z -> quadratic, kept
     //
-    // The cluster-Gauss path (Phase 6 default) absorbs the tautology
-    // inside solve_cluster_linear (the second linear constraint
-    // reduces to an empty row after the first substitution and is
-    // dropped before being re-emitted as residual). Greedy used to
-    // discover it via is_trivially_satisfied AFTER applying
-    // substitutions. End state is the same (1 constraint, 1 var
-    // eliminated); we no longer assert on the trivial_removed
-    // counter because it's a bookkeeping detail.
+    // The cluster-Gauss path absorbs the tautology inside
+    // `solve_cluster_linear` (the second linear constraint reduces
+    // to an empty row after the first substitution and is dropped
+    // before being re-emitted as residual). The greedy path
+    // discovers it via `is_trivially_satisfied` after applying
+    // substitutions. End state is the same (1 constraint,
+    // 1 var eliminated); the `trivial_removed` counter is a
+    // bookkeeping detail and not asserted on.
     assert_eq!(stats.constraints_before, 3);
     assert_eq!(stats.constraints_after, 1, "only pub*pub=z should remain");
     assert_eq!(stats.variables_eliminated, 1);
@@ -792,7 +792,7 @@ fn sparse_skips_oversized_cluster() {
 }
 
 // ========================================================================
-// linear_cluster::build_clusters_by_signal -- Phase 2 tests
+// linear_cluster::build_clusters_by_signal -- partition tests
 // ========================================================================
 
 /// Two disjoint linear sub-systems must produce two clusters: their
@@ -874,7 +874,7 @@ fn cluster_all_protected_returns_singletons() {
 }
 
 // ========================================================================
-// linear_cluster::solve_cluster_linear -- Phase 3 tests
+// linear_cluster::solve_cluster_linear -- per-cluster Gauss tests
 // ========================================================================
 
 /// A cluster containing a single non-linear (quadratic) constraint must
@@ -968,7 +968,7 @@ fn cluster_gauss_chain_match_greedy() {
 }
 
 // ========================================================================
-// optimize_linear_clustered driver -- Phase 4 tests
+// optimize_linear_clustered driver tests
 // ========================================================================
 
 /// Mirror of `test_single_linear_elimination` (the very first sanity
@@ -1162,7 +1162,7 @@ fn cluster_gauss_tautology_after_pivot() {
 }
 
 // ========================================================================
-// Picker selection -- Phase 5 (H1.D) tests
+// Picker selection tests
 // ========================================================================
 
 /// Above the MIN_OCCURRENCE_LOWER threshold (350), the picker switches

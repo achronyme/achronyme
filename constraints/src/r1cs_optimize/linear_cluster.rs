@@ -9,18 +9,12 @@
 //!    constraints referencing it merge).
 //! 2. Run reduced row-echelon Gaussian elimination over each cluster
 //!    independently. Cluster sizes >= 350 use a min-occurrence
-//!    picker; smaller clusters use the existing max-frequency
-//!    picker. (Phase 5: picker swap. Phase 2 + 3 use only
-//!    max-frequency.)
+//!    picker; smaller clusters use the max-frequency picker.
 //!
 //! `optimize_linear_clustered` is the public entry; an
 //! `_with_protected` variant exists for the same reason as in
 //! `linear.rs:52` -- O2's outer loop calls it after
 //! `decompose_for_deduce_tracked` to shield aux wires.
-//!
-//! This module currently exposes only `build_clusters_by_signal`
-//! (Phase 2). The Gaussian solver and public API land in subsequent
-//! phases.
 
 use std::collections::{HashMap, HashSet};
 
@@ -48,21 +42,21 @@ use crate::r1cs::{Constraint, LinearCombination, Variable};
 /// Falling back to greedy on the cluster's subset is sound: the
 /// greedy and Gauss algorithms reach the same linear fixpoint (just
 /// via different orderings), so the substitution map produced is
-/// equivalent. The min-occurrence picker (Phase 5) only applies
-/// inside the Gauss path and therefore only for clusters in
+/// equivalent. The min-occurrence picker only applies inside the
+/// Gauss path and therefore only for clusters in
 /// `[MIN_OCCURRENCE_LOWER, CLUSTER_FALLBACK_THRESHOLD]`; outside that
 /// band we either use Gauss + max-frequency (small clusters) or
 /// greedy fallback (giant clusters).
 ///
 /// 500 was chosen empirically by re-running the full circomlib
-/// benchmark after Phase 6 switched the default to clustered:
-/// thresholds >= 1000 produced 5-15x runtime regressions on
-/// EscalarMulAny(254) and MiMCSponge(2,220,1) without recovering
-/// observable constraint counts (their clusters in the 1000-5000
-/// range yielded the same fixpoint as greedy on those templates).
-/// 500 keeps the gauss path active where the algorithmic difference
-/// matters (LessThan(8): 10 -> 9 constraints) without the runtime
-/// regression on circuits with mid-sized clusters.
+/// benchmark with the clustered driver enabled: thresholds >= 1000
+/// produced 5-15x runtime regressions on EscalarMulAny(254) and
+/// MiMCSponge(2,220,1) without recovering observable constraint
+/// counts (their clusters in the 1000-5000 range yielded the same
+/// fixpoint as greedy on those templates). 500 keeps the gauss path
+/// active where the algorithmic difference matters (LessThan(8):
+/// 10 -> 9 constraints) without the runtime regression on circuits
+/// with mid-sized clusters.
 const CLUSTER_FALLBACK_THRESHOLD: usize = 500;
 
 /// Lower bound for switching from max-frequency picker to
@@ -125,7 +119,6 @@ impl Picker {
 /// Constraints not classified as linear by `is_linear` produce
 /// singleton clusters (they cannot contribute to or be reduced by
 /// the Gauss step).
-#[allow(dead_code)] // wired in Phase 4
 pub(super) fn build_clusters_by_signal<F: FieldBackend>(
     linear_constraints: &[Constraint<F>],
     protected: &HashSet<usize>,
@@ -238,10 +231,11 @@ fn solve_for_variable_with_picker<F: FieldBackend>(
 /// Each linear constraint `k * other = c_lc` is rewritten as the LC
 /// `c_lc - k*other` that must equal zero. We pick a pivot row + a
 /// pivot variable via `solve_for_variable` (max-frequency picker;
-/// the size-conditional swap to min-occurrence lands in Phase 5),
-/// record the substitution `var -> expr`, apply it to the remaining
-/// rows + previously-recorded substitutions (composition), and
-/// repeat until no row admits a substitution.
+/// the size-conditional swap to min-occurrence happens in
+/// `optimize_linear_clustered`), record the substitution
+/// `var -> expr`, apply it to the remaining rows + previously-
+/// recorded substitutions (composition), and repeat until no row
+/// admits a substitution.
 ///
 /// Inputs:
 /// - `cluster_constraints`: linear constraints in this cluster.
@@ -252,9 +246,8 @@ fn solve_for_variable_with_picker<F: FieldBackend>(
 ///   inputs, `Variable::ONE`, decompose aux wires).
 /// - `var_freq`: per-variable frequency over the full constraint
 ///   set, used by the max-frequency picker. The frequency map is
-///   passed in (rather than computed locally over the cluster) to
-///   match the existing greedy path's heuristic exactly during
-///   Phase 3.
+///   passed in (rather than computed locally over the cluster) so
+///   the Gauss path matches the greedy path's heuristic exactly.
 ///
 /// Output:
 /// - `(SubstitutionMap, residual)`: the discovered substitutions
@@ -263,7 +256,6 @@ fn solve_for_variable_with_picker<F: FieldBackend>(
 ///   constraints that could not be reduced (all-protected variables,
 ///   or non-linear constraints in the cluster). Residual constraints
 ///   are emitted in `1 * lc = 0` form mirroring the dense path.
-#[allow(dead_code)] // wired in Phase 4
 pub(super) fn solve_cluster_linear<F: FieldBackend>(
     cluster_constraints: Vec<Constraint<F>>,
     protected: &HashSet<usize>,
@@ -367,9 +359,8 @@ pub fn optimize_linear_clustered<F: FieldBackend>(
 }
 
 /// Like `optimize_linear_clustered`, but also protects extra variable
-/// indices from substitution. Used by the upcoming default-switch
-/// in O2's outer loop (Phase 6) to shield decompose aux wires.
-#[allow(dead_code)] // wired in Phase 6
+/// indices from substitution. Used by O2's outer loop to shield
+/// decompose aux wires.
 pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,

@@ -37,10 +37,9 @@ use crate::r1cs::Constraint;
 /// Protected variables (ONE + public inputs, indices `0..=num_pub_inputs`)
 /// are never substituted away.
 ///
-/// **Phase 6 note:** this entry is no longer the public O1 driver --
-/// `r1cs_optimize::optimize_linear` is now an alias for the
-/// cluster-based driver (`linear_cluster::optimize_linear_clustered`).
-/// This function is preserved as a `pub(super)` helper because:
+/// Not the public O1 driver -- `r1cs_optimize::optimize_linear` is
+/// an alias for `linear_cluster::optimize_linear_clustered`. This
+/// function is preserved as a `pub(super)` helper because:
 ///   1. `linear_cluster::optimize_linear_clustered_with_protected`
 ///      uses it as the per-cluster fallback for clusters whose size
 ///      exceeds `CLUSTER_FALLBACK_THRESHOLD` (greedy reaches the same
@@ -61,8 +60,8 @@ pub(super) fn optimize_linear_greedy<F: FieldBackend>(
 /// - `linear_cluster::optimize_linear_clustered_with_protected` as the
 ///   per-cluster fallback for clusters above
 ///   `CLUSTER_FALLBACK_THRESHOLD`.
-/// - `deduce::optimize_o2_with_deducer` historically; phase 6 swaps
-///   those call sites to the clustered variant.
+/// - `deduce::optimize_o2_with_deducer` historically; the current
+///   call sites use the clustered variant.
 pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
     constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
@@ -170,14 +169,14 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         all_subs.extend(round_subs);
     }
 
-    // Phase 2: Remove duplicate non-linear constraints.
+    // Step 2: Remove duplicate non-linear constraints.
     // After variable substitution, constraints from different template instances
     // (wired via AssertEq) can become identical. Deduplicate by hashing.
     let before_dedup = constraints.len();
     deduplicate_constraints(constraints);
     let duplicates_removed = before_dedup - constraints.len();
 
-    // Phase 3: Final trivial constraint removal (post-dedup may expose more).
+    // Step 3: Final trivial constraint removal (post-dedup may expose more).
     let before_final_trivial = constraints.len();
     constraints.retain(|c| !is_trivially_satisfied(c));
     total_trivial_removed += before_final_trivial - constraints.len();
