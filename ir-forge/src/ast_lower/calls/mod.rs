@@ -1,20 +1,28 @@
-//! Call dispatch + builtin lowering on [`ProveIrCompiler`].
+//! Top-level call dispatch on [`ProveIrCompiler`].
 //!
-//! 21 methods that handle every flavour of `Expr::Call` lowering:
+//! Owns [`ProveIrCompiler::compile_call`], which inspects the
+//! callee shape and routes to one of six cohesive submodules:
 //!
-//! - **Static access** — `compile_static_access` (the namespace path
-//!   `Module::name`).
-//! - **Top-level dispatch** — `compile_call` (the big match on callee
-//!   shape: ident / static / dot).
-//! - **Circom integration** — `diagnose_unresolved_circom_curry`,
-//!   `try_resolve_circom_key`, `instantiate_circom_template`,
-//!   `compile_circom_template_call`, `compile_let_for_circom_call`.
-//! - **Annotation-driven dispatch** — `try_annotation_dispatch`,
-//!   `compile_named_call` (M2 Phase 3E + legacy fallback).
-//! - **Builtin lowering** — `lower_builtin`, `dispatch_builtin_by_handle`,
-//!   plus 9 per-builtin helpers (poseidon, poseidon_many, mux,
-//!   range_check, merkle_verify, len, assert_eq, assert, int_div,
-//!   int_mod).
+//! - [`static_access`] — `T::MEMBER` namespace reads
+//!   ([`compile_static_access`](ProveIrCompiler::compile_static_access)).
+//! - [`circom_resolve`] — `circom_table` lookup helpers
+//!   ([`try_resolve_circom_key`](ProveIrCompiler::try_resolve_circom_key),
+//!   [`diagnose_unresolved_circom_curry`](ProveIrCompiler::diagnose_unresolved_circom_curry)).
+//! - [`circom_instantiate`] — the shared
+//!   [`instantiate_circom_template`](ProveIrCompiler::instantiate_circom_template)
+//!   path used by both circom call entry points.
+//! - [`circom_call`] — expression-level
+//!   ([`compile_circom_template_call`](ProveIrCompiler::compile_circom_template_call))
+//!   and let-bound
+//!   ([`compile_let_for_circom_call`](ProveIrCompiler::compile_let_for_circom_call))
+//!   circom template invocations.
+//! - [`dispatch`] — annotation-driven and legacy named-call dispatch
+//!   ([`try_annotation_dispatch`](ProveIrCompiler::try_annotation_dispatch),
+//!   [`compile_named_call`](ProveIrCompiler::compile_named_call)).
+//! - [`builtins`] — every per-builtin lowering, plus the registry
+//!   lookup ([`lower_builtin`](ProveIrCompiler::lower_builtin)) and
+//!   handle dispatch
+//!   ([`dispatch_builtin_by_handle`](ProveIrCompiler::dispatch_builtin_by_handle)).
 //!
 //! Method-call lookups + dot access live in [`super::methods`].
 
@@ -83,7 +91,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     // Call dispatch
     // -----------------------------------------------------------------------
 
-    pub(super) fn compile_call(
+    pub(in crate::ast_lower) fn compile_call(
         &mut self,
         callee: &Expr,
         args: &[&Expr],
