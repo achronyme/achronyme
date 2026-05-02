@@ -27,6 +27,8 @@ use super::{CompEnvValue, ProveIrCompiler};
 use crate::error::ProveIrError;
 use crate::types::*;
 
+mod atoms;
+
 impl<F: FieldBackend> ProveIrCompiler<F> {
     // -----------------------------------------------------------------------
     // Statement compilation
@@ -149,91 +151,6 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             Expr::Error { span, .. } => Err(ProveIrError::UnsupportedOperation {
                 description: "cannot compile error placeholder (source has parse errors)".into(),
                 span: to_span(span),
-            }),
-        }
-    }
-
-    // -----------------------------------------------------------------------
-    // Literals
-    // -----------------------------------------------------------------------
-
-    pub(super) fn compile_number(&self, s: &str, span: &Span) -> Result<CircuitExpr, ProveIrError> {
-        if s.contains('.') {
-            return Err(ProveIrError::TypeNotConstrainable {
-                type_name: "decimal number".into(),
-                span: to_span(span),
-            });
-        }
-        let (negative, digits) = if let Some(rest) = s.strip_prefix('-') {
-            (true, rest)
-        } else {
-            (false, s)
-        };
-        let fe = FieldElement::<F>::from_decimal_str(digits).ok_or_else(|| {
-            ProveIrError::UnsupportedOperation {
-                description: format!("invalid integer literal: {s}"),
-                span: to_span(span),
-            }
-        })?;
-        let fc = FieldConst::from_field(fe);
-        if negative {
-            Ok(CircuitExpr::UnaryOp {
-                op: CircuitUnaryOp::Neg,
-                operand: Box::new(CircuitExpr::Const(fc)),
-            })
-        } else {
-            Ok(CircuitExpr::Const(fc))
-        }
-    }
-
-    pub(super) fn compile_field_lit(
-        &self,
-        value: &str,
-        radix: &FieldRadix,
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
-        let fe = match radix {
-            FieldRadix::Decimal => FieldElement::<F>::from_decimal_str(value),
-            FieldRadix::Hex => FieldElement::<F>::from_hex_str(value),
-            FieldRadix::Binary => FieldElement::<F>::from_binary_str(value),
-        }
-        .ok_or_else(|| ProveIrError::UnsupportedOperation {
-            description: format!("invalid field literal: {value}"),
-            span: to_span(span),
-        })?;
-        Ok(CircuitExpr::Const(FieldConst::from_field(fe)))
-    }
-
-    // -----------------------------------------------------------------------
-    // Identifiers
-    // -----------------------------------------------------------------------
-
-    pub(super) fn compile_ident(
-        &mut self,
-        name: &str,
-        span: &Span,
-    ) -> Result<CircuitExpr, ProveIrError> {
-        // Phase 3E.1 shadow dispatch: observation only. Real
-        // dispatch flip lands in Phase 3E.2/3. Records a hit only
-        // when the resolver state is installed AND the annotation
-        // map has an entry for the current `(root_module, expr_id)`
-        // pair. No effect on the lookup that follows.
-        self.record_resolver_hit();
-        match self.env.get(name) {
-            Some(CompEnvValue::Scalar(resolved)) => Ok(CircuitExpr::Var(resolved.clone())),
-            Some(CompEnvValue::Array(_)) => Err(ProveIrError::TypeMismatch {
-                expected: "scalar".into(),
-                got: "array".into(),
-                span: to_span(span),
-            }),
-            Some(CompEnvValue::Capture(cap_name)) => {
-                self.captured_names.insert(cap_name.clone());
-                Ok(CircuitExpr::Capture(cap_name.clone()))
-            }
-            None => Err(ProveIrError::UndeclaredVariable {
-                name: name.into(),
-                span: to_span(span),
-                suggestion: None, // TODO: fuzzy match from env keys
             }),
         }
     }
