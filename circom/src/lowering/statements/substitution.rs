@@ -22,7 +22,7 @@ use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::expressions::lower_expr;
 use super::super::signals::collect_signal_names;
-use super::super::utils::{extract_ident_name, EvalValue};
+use super::super::utils::{extract_ident_name, BigVal, EvalValue};
 use super::targets::{
     extract_assign_target_ctx, extract_target_name, linearize_multi_index,
     try_resolve_component_array_target, AssignTarget,
@@ -632,6 +632,30 @@ pub(super) fn extract_component_call(
                 if let Some(slice) = resolve_partial_array_slice(arg, env, ctx) {
                     if matches!(slice, EvalValue::Array(_)) {
                         array_arg_indices.push((i, format!("__slice_{i}"), slice));
+                        continue;
+                    }
+                }
+                // Inline array literal at the call site, e.g.
+                // `EscalarMul(8, [Gx, Gy])`. Pass it as an array arg
+                // so the callee's body sees the param in
+                // `known_array_values` rather than scalar-coercing the
+                // first element. Only fold when every element is a
+                // compile-time field constant.
+                if let Expr::ArrayLit { elements, .. } = arg {
+                    let all = ctx.all_constants(env);
+                    let folded: Option<Vec<EvalValue>> = elements
+                        .iter()
+                        .map(|e| {
+                            super::super::utils::const_eval_with_params(e, &all)
+                                .map(|fc| EvalValue::Scalar(BigVal::from_field_const(fc)))
+                        })
+                        .collect();
+                    if let Some(vals) = folded {
+                        array_arg_indices.push((
+                            i,
+                            format!("__lit_{i}"),
+                            EvalValue::Array(vals),
+                        ));
                     }
                 }
             }

@@ -3166,6 +3166,33 @@ fn binsub_circomlib() {
     assert!(n > 0, "expected constraints for BinSub(8)");
 }
 
+/// EscalarMul(8, base): generic scalar multiplication on BabyJubJub
+/// using the windowed-add algorithm. Exercises array-literal template
+/// arguments (`base = [Gx, Gy]`) propagating through nested template
+/// instantiations and into compile-time function calls
+/// (`EscalarMulW4Table(base, k)`) inside `EscalarMulWindow`.
+///
+/// Identity-point input (escalar = 0, inp = (0, 1)) — exercises the
+/// pipeline without forcing a specific math result; the constraint
+/// system is the test surface here, not curve correctness.
+#[test]
+fn escalarmul_circomlib() {
+    let mut inputs = HashMap::new();
+    for i in 0..8 {
+        inputs.insert(format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    inputs.insert("inp_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("inp_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+
+    let n = circomlib_e2e_verify_fe(
+        "EscalarMul(8, base)",
+        "test/circomlib/escalarmul_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for EscalarMul(8, base)");
+}
+
 /// SMTVerifier(10): sparse Merkle tree inclusion/exclusion verifier
 /// at depth 10 (1024 leaves). Largest standalone circomlib template
 /// not yet covered. Exercises descending for-loops (`i != -1`),

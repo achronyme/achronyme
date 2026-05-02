@@ -19,7 +19,11 @@ use ir_forge::types::{CaptureDef, CaptureUsage, CircuitExpr, CircuitNode, ForRan
 ///   `Pow` exponents — affects circuit shape, not constraint values.
 /// - **CircuitInput**: only in constraint expressions (`CircuitExpr::Capture`).
 /// - **Both**: used in both structural and constraint positions.
-pub(super) fn classify_captures(params: &[String], body: &[CircuitNode]) -> Vec<CaptureDef> {
+pub(super) fn classify_captures(
+    params: &[String],
+    body: &[CircuitNode],
+    skip: &HashSet<String>,
+) -> Vec<CaptureDef> {
     let mut structural: HashSet<&str> = HashSet::new();
     let mut circuit: HashSet<&str> = HashSet::new();
 
@@ -32,6 +36,14 @@ pub(super) fn classify_captures(params: &[String], body: &[CircuitNode]) -> Vec<
 
     for param in params {
         if !param_set.contains(param.as_str()) {
+            continue;
+        }
+        // Params already resolved by the caller (e.g. array template
+        // captures supplied as compile-time literals) are not emitted
+        // as ProveIR captures — the instantiator has no scalar value
+        // for them and the body never references them via
+        // `CircuitExpr::Capture(name)`.
+        if skip.contains(param.as_str()) {
             continue;
         }
         let in_struct = structural.contains(param.as_str());
