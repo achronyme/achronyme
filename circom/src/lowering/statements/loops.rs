@@ -96,18 +96,30 @@ pub(super) fn lower_for_loop<'a>(
         }
     };
 
-    // Extract end bound from condition: `i < end` or `i <= end`
-    let bound = extract_loop_bound(condition, &var_name, env).ok_or_else(|| {
+    // Extract end bound + direction from condition.
+    // Ascending: `i < N` / `i <= N`. Descending: `i != -1`.
+    let parsed = extract_loop_bound(condition, &var_name, env).ok_or_else(|| {
         LoweringError::with_code(
-            "for loop condition must be `i < <bound>` or `i <= <bound>` \
-             where <bound> is a constant or template parameter",
+            "for loop condition must be `i < <bound>`, `i <= <bound>`, or \
+             `i != -1` where <bound> is a constant or template parameter",
             "E208",
             span,
         )
     })?;
+    let bound = parsed.bound;
+    let is_descending = parsed.is_descending;
 
-    // Validate step is `i++` or `i += 1`
-    validate_loop_step(step, &var_name, span)?;
+    // Validate step direction matches the condition direction.
+    let step_is_descending = validate_loop_step(step, &var_name, span)?;
+    if step_is_descending != is_descending {
+        return Err(LoweringError::with_code(
+            "for loop step direction does not match condition: ascending \
+             condition (`i <`/`i <=`) requires `++`/`+= 1`; descending \
+             condition (`i != -1`) requires `--`/`-= 1`",
+            "E208",
+            span,
+        ));
+    }
 
     // Register loop variable
     env.locals.insert(var_name.clone());
@@ -132,7 +144,9 @@ pub(super) fn lower_for_loop<'a>(
     // iter. Default-on after D4 validation closed (550 tests + 8/8
     // byte-identical benchmarks under both polarities); set
     // `R1PP_ENABLED=0` to opt out and exercise the legacy unroll path.
-    if r1pp_enabled() {
+    // Memoization assumes an ascending range; descending loops fall
+    // through to the direct unroll below.
+    if !is_descending && r1pp_enabled() {
         if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end) {
             return memoize_loop(
                 &var_name, start, end, body, span, env, nodes, ctx, pending, plan,
@@ -153,7 +167,15 @@ pub(super) fn lower_for_loop<'a>(
     } else {
         CompileTimeEnv::new()
     };
-    for i in start..end {
+    // Build the iter value sequence. Ascending: `start..end` (end
+    // exclusive). Descending: `(end..=start).rev()` (end is the
+    // lower-inclusive bound, e.g. 0 for `i != -1`).
+    let iter_values: Vec<u64> = if is_descending {
+        (end..=start).rev().collect()
+    } else {
+        (start..end).collect()
+    };
+    for i in iter_values {
         env.known_constants
             .insert(var_name.clone(), FieldConst::from_u64(i));
         if is_mixed {
@@ -1405,10 +1427,29 @@ pub(super) enum LoopBound {
     Expr(Expr),
 }
 
-/// Extract the upper bound from a loop condition like `i < N` or `i <= N`.
+/// Result of parsing a for-loop condition: the bound plus the
+/// iteration direction. Ascending loops match `i < N` / `i <= N`;
+/// descending loops match `i != -1` (the canonical circomlib SMT
+/// pattern, semantically equivalent to `i >= 0`).
+pub(super) struct ParsedLoopCond {
+    pub bound: LoopBound,
+    pub is_descending: bool,
+}
+
+/// Extract the upper bound from a loop condition.
 ///
-/// `N` can be a numeric literal or a template parameter (capture).
-fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Option<LoopBound> {
+/// Ascending: `i < N` or `i <= N`. `N` can be a numeric literal or a
+/// template parameter (capture). Returns `bound` as the
+/// upper-exclusive end.
+///
+/// Descending: `i != -1`. Returns `bound = LoopBound::Literal(0)`
+/// (lower-inclusive end) and `is_descending = true`. The unroll path
+/// iterates the loop variable from `start` down to `0` inclusive.
+fn extract_loop_bound(
+    condition: &Expr,
+    var_name: &str,
+    env: &LoweringEnv,
+) -> Option<ParsedLoopCond> {
     match condition {
         Expr::BinOp { op, lhs, rhs, .. } => {
             // Check that LHS is the loop variable
@@ -1420,11 +1461,50 @@ fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Op
                 return None;
             }
 
-            // Try literal constant first
+            // Descending shapes — recognise the canonical circomlib SMT
+            // patterns. `bound` here is the lower-inclusive end of the
+            // iteration; the unroll runs `(bound..=start).rev()`.
+            //
+            //   `i != -1` ≡ `i >= 0`   → bound = 0
+            //   `i >= 0`               → bound = 0
+            //   `i > -1`               → bound = 0
+            //   `i > 0`                → bound = 1 (stops one before 0)
+            //   `i >= N` (literal N)   → bound = N
+            //   `i > N` (literal N)    → bound = N + 1
+            let rhs_signed = super::super::utils::const_eval_signed(rhs);
+            match (op, rhs_signed) {
+                (BinOp::Neq, Some(-1)) | (BinOp::Gt, Some(-1)) | (BinOp::Ge, Some(0)) => {
+                    return Some(ParsedLoopCond {
+                        bound: LoopBound::Literal(0),
+                        is_descending: true,
+                    });
+                }
+                (BinOp::Gt, Some(n)) if n >= 0 => {
+                    return Some(ParsedLoopCond {
+                        bound: LoopBound::Literal((n as u64) + 1),
+                        is_descending: true,
+                    });
+                }
+                (BinOp::Ge, Some(n)) if n > 0 => {
+                    return Some(ParsedLoopCond {
+                        bound: LoopBound::Literal(n as u64),
+                        is_descending: true,
+                    });
+                }
+                _ => {}
+            }
+
+            // Try literal constant first (ascending paths only)
             if let Some(bound) = const_eval_u64(rhs) {
                 return match op {
-                    BinOp::Lt => Some(LoopBound::Literal(bound)),
-                    BinOp::Le => Some(LoopBound::Literal(bound + 1)),
+                    BinOp::Lt => Some(ParsedLoopCond {
+                        bound: LoopBound::Literal(bound),
+                        is_descending: false,
+                    }),
+                    BinOp::Le => Some(ParsedLoopCond {
+                        bound: LoopBound::Literal(bound + 1),
+                        is_descending: false,
+                    }),
                     _ => None,
                 };
             }
@@ -1433,7 +1513,10 @@ fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Op
             if let Expr::Ident { name, .. } = rhs.as_ref() {
                 if env.captures.contains(name) {
                     return match op {
-                        BinOp::Lt => Some(LoopBound::Capture(name.clone())),
+                        BinOp::Lt => Some(ParsedLoopCond {
+                            bound: LoopBound::Capture(name.clone()),
+                            is_descending: false,
+                        }),
                         // i <= capture: not directly representable as WithCapture
                         // (would need capture + 1). For now, only support <.
                         _ => None,
@@ -1443,7 +1526,10 @@ fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Op
 
             // Expression bound (e.g., `i < n + 1`) — defer lowering to caller
             if matches!(op, BinOp::Lt) {
-                return Some(LoopBound::Expr(rhs.as_ref().clone()));
+                return Some(ParsedLoopCond {
+                    bound: LoopBound::Expr(rhs.as_ref().clone()),
+                    is_descending: false,
+                });
             }
 
             None
@@ -1452,12 +1538,16 @@ fn extract_loop_bound(condition: &Expr, var_name: &str, env: &LoweringEnv) -> Op
     }
 }
 
-/// Validate that the loop step is `i++` or `i += 1`.
+/// Validate the loop step.
+///
+/// Returns `false` for ascending steps (`i++`, `i += 1`) and `true`
+/// for descending steps (`i--`, `i -= 1`). The caller cross-checks
+/// the direction against the condition shape.
 fn validate_loop_step(
     step: &Stmt,
     var_name: &str,
     span: &diagnostics::Span,
-) -> Result<(), LoweringError> {
+) -> Result<bool, LoweringError> {
     match step {
         // i++
         Stmt::Expr {
@@ -1471,7 +1561,7 @@ fn validate_loop_step(
         } => {
             if let Expr::Ident { name, .. } = operand.as_ref() {
                 if name == var_name {
-                    return Ok(());
+                    return Ok(false);
                 }
             }
             Err(LoweringError::new(
@@ -1479,27 +1569,54 @@ fn validate_loop_step(
                 span,
             ))
         }
-        // i += 1
+        // i--
+        Stmt::Expr {
+            expr:
+                Expr::PostfixOp {
+                    op: PostfixOp::Decrement,
+                    operand,
+                    ..
+                },
+            ..
+        } => {
+            if let Expr::Ident { name, .. } = operand.as_ref() {
+                if name == var_name {
+                    return Ok(true);
+                }
+            }
+            Err(LoweringError::new(
+                format!("for loop step must decrement `{var_name}`"),
+                span,
+            ))
+        }
+        // i += 1 or i -= 1
         Stmt::CompoundAssign {
             target,
-            op: CompoundOp::Add,
+            op,
             value,
             ..
         } => {
             if let Expr::Ident { name, .. } = target {
                 if name == var_name {
                     if let Some(1) = const_eval_u64(value) {
-                        return Ok(());
+                        match op {
+                            CompoundOp::Add => return Ok(false),
+                            CompoundOp::Sub => return Ok(true),
+                            _ => {}
+                        }
                     }
                 }
             }
             Err(LoweringError::new(
-                format!("for loop step must be `{var_name}++` or `{var_name} += 1`"),
+                format!(
+                    "for loop step must be `{var_name}++`, `{var_name}--`, \
+                     `{var_name} += 1`, or `{var_name} -= 1`"
+                ),
                 span,
             ))
         }
         _ => Err(LoweringError::new(
-            "for loop step must be `i++` or `i += 1` in circuit context",
+            "for loop step must be `i++`, `i--`, `i += 1`, or `i -= 1` in circuit context",
             span,
         )),
     }
