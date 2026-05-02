@@ -104,33 +104,33 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // Module function call via compile-time `::` path:
             //   `alias::func(args)` parses as
             //   `Call { callee: StaticAccess { type_name: alias, member: func }, args }`.
-            // The alias's exported functions live in `fn_table` under the
-            // `{alias}::{func}` key (seeded by the module loader at
-            // OuterScope build time), so this is a direct qualified
-            // lookup — no runtime map dispatch, no hashmap per call,
-            // fully constexpr. This is the new preferred syntax; the
-            // older `alias.func()` DotAccess form is still accepted
-            // below for a transition period.
+            // The alias's exported functions live in `fn_table` under
+            // the `{alias}::{func}` key (seeded by the module loader
+            // at OuterScope build time), so this is a direct
+            // qualified lookup — no runtime map dispatch, no hashmap
+            // per call, fully constexpr. This is the canonical syntax
+            // for module-qualified calls; the `alias.func()`
+            // DotAccess shape is rejected with a migration diagnostic
+            // in the arm below.
             Expr::StaticAccess {
                 type_name,
                 member,
                 id: static_id,
                 ..
             } => {
-                // Phase 3F: try annotation-driven dispatch first so
-                // cross-module calls via `alias::name` also push
-                // the definer's module onto the resolver stack via
-                // `compile_user_fn_call` — this is what kills gap
-                // 2.4 for the `a → b::middle → helper` scenario
-                // (helper is a bare identifier inside middle's
-                // inlined body and resolves against mod_B, not
-                // against a's root module).
+                // Try annotation-driven dispatch first so cross-module
+                // calls via `alias::name` push the definer's module
+                // onto the resolver stack via `compile_user_fn_call`.
+                // That stack push is what makes the
+                // `a → b::middle → helper` scenario resolve correctly:
+                // `helper` is a bare identifier inside middle's
+                // inlined body and must resolve against mod_B, not
+                // against a's root module.
                 //
-                // `compile_expr` set `current_expr_id` to the
-                // Call's id when it dispatched here; we temporarily
-                // override it with the StaticAccess's own id so
-                // the annotation lookup keys correctly, then
-                // restore it afterwards.
+                // `compile_expr` set `current_expr_id` to the Call's
+                // id when it dispatched here; we temporarily override
+                // it with the StaticAccess's own id so the annotation
+                // lookup keys correctly, then restore it afterwards.
                 let saved_expr_id = self.current_expr_id;
                 self.current_expr_id = Some(*static_id);
                 let annotation_result = self.try_annotation_dispatch(*static_id, args, span);
@@ -141,10 +141,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     Err(e) => return Err(e),
                 }
 
-                // Legacy name-based lookup. `compile_user_fn_call`
-                // still maintains the resolver module stack via
-                // `resolver_module_by_key`, so the stack discipline
-                // holds even on this fallback path.
+                // Name-based fallback when no annotation matched.
+                // `compile_user_fn_call` maintains the resolver module
+                // stack via `resolver_module_by_key`, so the stack
+                // discipline holds on this path as well.
                 let qualified = format!("{type_name}::{member}");
                 if self.has_function(&qualified) {
                     return self.compile_user_fn_call(&qualified, args, span);
@@ -162,11 +162,11 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             // Method call: expr.method(args).
             //
             // `alias.func(...)` where `alias` is a module namespace
-            // import is no longer the canonical syntax — use
-            // `alias::func(...)` (handled by the `StaticAccess` arm
-            // above). Emit a migration error instead of silently
-            // falling through so the old syntax becomes a hard
-            // compile-time failure with a clean "did you mean" hint.
+            // import is not a valid call shape — the canonical form
+            // is `alias::func(...)` (handled by the `StaticAccess`
+            // arm above). Emit a migration error instead of silently
+            // falling through so this shape is a hard compile-time
+            // failure with a clean "did you mean" hint.
             Expr::DotAccess {
                 object,
                 field,
@@ -192,16 +192,16 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
             // Named function/builtin call: name(args)
             //
-            // Phase 3E.1: the resolver's annotate_program walker
-            // annotates the callee Ident (not the enclosing Call),
-            // so we need the Ident's own ExprId to consult the
-            // annotation table. `compile_expr` has stashed the Call's
-            // id in `self.current_expr_id` by now — re-override it
-            // with the Ident's id so the shadow hook in
-            // `compile_named_call` reads the correct annotation key.
-            // This is cheap and localized; the alternative of
-            // threading the id through `compile_named_call`'s
-            // signature would touch many test call sites.
+            // The resolver's `annotate_program` walker annotates the
+            // callee Ident (not the enclosing Call), so we need the
+            // Ident's own ExprId to consult the annotation table.
+            // `compile_expr` has stashed the Call's id in
+            // `self.current_expr_id` by now — re-override it with the
+            // Ident's id so the shadow hook in `compile_named_call`
+            // reads the correct annotation key. This is cheap and
+            // localized; the alternative of threading the id through
+            // `compile_named_call`'s signature would touch many test
+            // call sites.
             Expr::Ident { name, id, .. } => {
                 self.current_expr_id = Some(*id);
                 self.compile_named_call(name, args, span)
