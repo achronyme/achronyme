@@ -1,10 +1,9 @@
-//! End-to-end compiler tests for the Phase 3 Circom import dispatcher.
+//! End-to-end compiler tests for the Circom import dispatcher.
 //!
-//! Phase 3.1 added the trait-based dispatch surface in the `ir`
-//! crate, Phase 3.2 implemented the trait for `CircomLibrary` and
-//! seeded OuterScope.circom_imports from the .ach compiler, and
-//! Phase 3.3 wires `compile_call` in `ProveIrCompiler` to actually
-//! instantiate templates inside prove/circuit blocks.
+//! The dispatcher chains a trait surface in the `ir` crate, a
+//! `CircomLibrary` impl, and `OuterScope.circom_imports` seeded
+//! from the .ach compiler. `ProveIrCompiler::compile_call`
+//! instantiates templates inside prove/circuit blocks.
 //!
 //! These tests drive a full `.ach` → bytecode compile through the
 //! real circom frontend (no stubs) to pin the happy path:
@@ -117,8 +116,8 @@ prove(expected: Public) {{
 fn prove_block_can_access_array_output_bits_via_dot() {
     // Num2Bits(4) exposes a 4-bit array output. The prove block
     // binds the call with `let r = Num2Bits(4)(x_val)` and asserts
-    // on individual bits via `r.out_0`, `r.out_1`, ... — which is
-    // how Phase 3.4's dotted env entries resolve.
+    // on individual bits via `r.out_0`, `r.out_1`, ... — exercises
+    // the dotted-env-entry resolution path.
     let tc = temp_circom(
         r#"
         pragma circom 2.0.0;

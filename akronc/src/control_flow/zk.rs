@@ -95,13 +95,13 @@ pub(super) fn compile_prove(
         }
     }
 
-    // Phase 3E.1 / 3F: forward the VM compiler's already-built
-    // resolver state (if any) to ProveIR. SymbolTable and
-    // ResolvedProgram move into `Arc`s once per prove block; the
-    // dispatch maps are already `Arc`-shared on the VM compiler so
-    // the clone is a refcount bump. No-op when the VM compiler
-    // didn't auto-build a resolver state — prove blocks in
-    // multi-module compiles without `base_path`, for example.
+    // Forward the VM compiler's already-built resolver state (if
+    // any) to ProveIR. SymbolTable and ResolvedProgram move into
+    // `Arc`s once per prove block; the dispatch maps are already
+    // `Arc`-shared on the VM compiler so the clone is a refcount
+    // bump. No-op when the VM compiler didn't auto-build a resolver
+    // state — prove blocks in multi-module compiles without
+    // `base_path`, for example.
     let resolver_state = match (
         compiler.resolver_symbol_table.as_ref(),
         compiler.resolved_program.as_ref(),
@@ -131,11 +131,10 @@ pub(super) fn compile_prove(
         _ => None,
     };
 
-    // Phase 6E: prefer graph-derived outer functions when the
-    // resolver auto-build succeeded — they capture transitive
-    // imports that the incremental fn_decl_asts may miss. Fall
-    // back to fn_decl_asts for in-memory compiles without a
-    // resolver state.
+    // Prefer graph-derived outer functions when the resolver
+    // auto-build succeeded — they capture transitive imports that
+    // the incremental fn_decl_asts may miss. Fall back to
+    // fn_decl_asts for in-memory compiles without a resolver state.
     let functions = compiler
         .resolver_outer_functions
         .clone()

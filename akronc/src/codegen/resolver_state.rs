@@ -1,10 +1,10 @@
 //! Resolver-state hookup for the `Compiler` orchestrator.
 //!
-//! Covers Movimiento 2's Phase 3D/3F/4/6E dispatch machinery: the
-//! manual install path (for tests + CLI flows that build their own
-//! [`SymbolTable`] + [`ResolvedProgram`]) and the in-memory-root
-//! auto-build path invoked from [`Compiler::compile`] whenever the
-//! caller didn't install a state up front.
+//! Covers the dispatch machinery: the manual install path (for tests
+//! and CLI flows that build their own [`SymbolTable`] and
+//! [`ResolvedProgram`]) and the in-memory-root auto-build path
+//! invoked from [`Compiler::compile`] whenever the caller didn't
+//! install a state up front.
 //!
 //! Two free helpers live here too — `program_has_imports` and
 //! `has_import` — since they're used only by
@@ -34,10 +34,10 @@ impl Compiler {
     /// `program` belongs to; pass [`resolve::ModuleGraph::root`].
     ///
     /// Clears any previous resolver state and the hit trace. Does
-    /// NOT populate the Phase 3F dispatch maps — external installers
-    /// that care about cross-module dispatch must either build the
-    /// maps themselves or use the [`Compiler::compile`] auto-build
-    /// path, which derives them from the graph.
+    /// NOT populate the dispatch maps — external installers that
+    /// care about cross-module dispatch must either build the maps
+    /// themselves or use the [`Compiler::compile`] auto-build path,
+    /// which derives them from the graph.
     pub fn install_resolver_state(
         &mut self,
         table: SymbolTable,
@@ -55,10 +55,10 @@ impl Compiler {
     }
 
     /// Build a resolver state for the current program and install it
-    /// on this compiler. Used by [`Compiler::compile`] as the bridge
-    /// between the legacy dispatch path and the resolver-driven one.
+    /// on this compiler. Used by [`Compiler::compile`] to wire
+    /// resolver-driven dispatch when no state was installed up front.
     ///
-    /// ## Multi-module policy (Phase 3F)
+    /// ## Multi-module policy
     ///
     /// - Single-module programs (no imports) always go through the
     ///   in-memory-root override: the adapter serves the already
@@ -68,14 +68,14 @@ impl Compiler {
     ///   lets the graph builder resolve transitive `./x.ach`
     ///   imports against `base_path`. Without a `base_path` (typical
     ///   for in-memory tests), multi-module compiles silently skip
-    ///   the auto-build, falling back to the legacy `fn_decl_asts`
-    ///   aggregation.
+    ///   the auto-build, falling back to the `fn_decl_asts`
+    ///   aggregation path.
     ///
-    /// On success, this also precomputes the Phase 3F fn_table
-    /// dispatch maps via [`build_dispatch_maps`] so the ProveIR
-    /// compiler can translate `SymbolId → fn_table key` and
-    /// `fn_table key → ModuleId` without re-parsing resolver
-    /// conventions at every call site.
+    /// On success, this also precomputes the fn_table dispatch maps
+    /// via [`build_dispatch_maps`] so the ProveIR compiler can
+    /// translate `SymbolId → fn_table key` and `fn_table key →
+    /// ModuleId` without re-parsing resolver conventions at every
+    /// call site.
     ///
     /// A silent no-op if any step fails — the resolver state is an
     /// optimisation path, not a correctness requirement, so a
@@ -121,15 +121,15 @@ impl Compiler {
             return;
         };
 
-        // Phase 3F: precompute the fn_table dispatch maps from the
-        // SymbolTable + ModuleGraph. Both maps are Arc-shared so
-        // per-prove-block handoff into `OuterResolverState` is a
-        // refcount bump rather than a HashMap clone.
+        // Precompute the fn_table dispatch maps from the SymbolTable
+        // + ModuleGraph. Both maps are Arc-shared so per-prove-block
+        // handoff into `OuterResolverState` is a refcount bump
+        // rather than a HashMap clone.
         let (dispatch_by_symbol, module_by_key) = build_dispatch_maps(&state.table, &state.graph);
         let availability_map = build_availability_map(&state.table, &state.graph);
 
-        // Phase 6E: derive outer functions from the graph so prove
-        // blocks can use them instead of the incremental fn_decl_asts.
+        // Derive outer functions from the graph so prove blocks can
+        // use them instead of the incremental fn_decl_asts.
         let outer_functions = resolve::build_outer_functions(&state, &dispatch_by_symbol);
 
         let root_module = state.root();
@@ -144,11 +144,11 @@ impl Compiler {
 }
 
 /// Returns true if a program contains any top-level `import` /
-/// `selective import`. Phase 3F gates multi-module auto-build on
-/// the presence of `base_path`: in-memory compiles without a
-/// filesystem root can't canonicalize transitive imports, so the
-/// resolver state for such programs is silently skipped and the
-/// legacy `fn_decl_asts` aggregation path handles dispatch.
+/// `selective import`. Multi-module auto-build is gated on the
+/// presence of `base_path`: in-memory compiles without a filesystem
+/// root can't canonicalize transitive imports, so the resolver state
+/// for such programs is silently skipped and the `fn_decl_asts`
+/// aggregation path handles dispatch.
 fn program_has_imports(program: &Program) -> bool {
     program.stmts.iter().any(has_import)
 }

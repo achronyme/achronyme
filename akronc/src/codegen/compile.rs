@@ -32,13 +32,10 @@ impl Compiler {
             }
         }
 
-        // Movimiento 2 Phase 3D — if no resolver state was
-        // pre-installed (via `install_resolver_state`), try to build
-        // one from the parsed root. Only kicks in for single-module
-        // in-memory programs (no imports); anything more advanced
-        // stays on the legacy path until Phase 3E wires the real
-        // multi-module graph. Any failure is silent — the legacy
-        // compilation path must not regress because of a resolver
+        // If no resolver state was pre-installed (via
+        // `install_resolver_state`), try to build one from the
+        // parsed root. Any failure is silent — the unannotated
+        // dispatch path must not regress because of a resolver
         // hiccup.
         if self.resolved_program.is_none() {
             self.try_auto_build_resolver_state(&program);

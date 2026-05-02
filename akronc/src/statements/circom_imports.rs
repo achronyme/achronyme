@@ -29,7 +29,7 @@ use crate::error::{span_box, CompilerError};
 use crate::expressions::ExpressionCompiler;
 
 // ---------------------------------------------------------------------------
-// Phase 4.3: VM-mode circom template call emission
+// VM-mode circom template call emission
 // ---------------------------------------------------------------------------
 
 /// Extension trait adding circom-call support to the bytecode
@@ -136,9 +136,9 @@ impl CircomVmCallEmitter for Compiler {
         }
         let mut template_u64_args: Vec<u64> = Vec::with_capacity(expected_params);
         for (i, arg) in template_args.iter().enumerate() {
-            // Phase 5: accept any ConstExpr, not just Expr::Number.
-            // First try the literal path (cheapest), then check the
-            // resolver's const_values annotation map.
+            // Accept any ConstExpr, not just Expr::Number. First try
+            // the literal path (cheapest), then check the resolver's
+            // const_values annotation map.
             let const_val = match arg {
                 Expr::Number { value, .. } => value.parse::<i64>().ok(),
                 _ => self.resolved_program.as_ref().and_then(|rp| {
@@ -455,7 +455,7 @@ fn load_library_or_error(
 /// Compile-time only: no VM bytecode is emitted and the alias is
 /// **not** registered as a runtime global. References inside `prove {}`
 /// / `circuit {}` blocks or VM expressions are resolved later by
-/// pattern-matching against the namespace table (Phase 3).
+/// pattern-matching against the namespace table.
 pub(super) fn namespace(
     compiler: &mut Compiler,
     path: &str,
@@ -494,8 +494,9 @@ pub(super) fn namespace(
 ///
 /// Like namespace imports this is compile-time only: the template
 /// names are registered in `circom_template_aliases` but no VM
-/// bytecode or `global_symbols` entries are emitted. Phase 3 resolves
-/// `Call { callee: Ident(T1), ... }` against the alias table.
+/// bytecode or `global_symbols` entries are emitted. The dispatch
+/// pass resolves `Call { callee: Ident(T1), ... }` against the
+/// alias table.
 pub(super) fn selective(
     compiler: &mut Compiler,
     names: &[String],

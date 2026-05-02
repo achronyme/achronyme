@@ -16,12 +16,10 @@ pub use codegen::Compiler;
 pub use error::CompilerError;
 pub use interner::{FieldInterner, StringInterner};
 
-/// Forward-compat alias for [`Compiler`]. The bytecode compiler will
-/// rename to `BytecodeCompiler` in the post-cleanup crate split (see
-/// `.claude/plans/structural-cleanup.md` §10 D2) to disambiguate from
-/// `ProveIrCompiler` (AST → ProveIR) and the post-cleanup `zkc`
-/// backend compilers. Use this alias in new code to avoid a second
-/// rename later.
+/// Disambiguating alias for [`Compiler`]. `BytecodeCompiler` makes
+/// the role explicit when [`Compiler`] would clash with
+/// `ProveIrCompiler` (AST → ProveIR) or the `zkc` backend compilers
+/// in the same scope. Prefer this name in new code.
 pub type BytecodeCompiler = Compiler;
 
 // declarations is inside statements.

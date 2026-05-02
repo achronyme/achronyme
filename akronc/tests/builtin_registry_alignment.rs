@@ -11,10 +11,9 @@
 //! `compiler/` depends on `vm`, `ir`, and `resolve` — it's the natural
 //! home.
 //!
-//! ## Phase 6 scope
+//! ## Coverage
 //!
-//! After Phase 6, the registry IS the dispatch surface. These tests
-//! verify:
+//! The registry IS the dispatch surface. These tests verify:
 //! - Every VM-available registry entry is backed by a real native from
 //!   `builtin_modules()`.
 //! - Every ProveIR-available registry entry has a valid

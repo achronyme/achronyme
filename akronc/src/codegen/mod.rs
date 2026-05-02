@@ -14,8 +14,9 @@
 //!   `collect_in_scope_names`, `MIGRATED_TO_METHOD`, and the
 //!   "did you mean?" `undefined_var_error` builder.
 //! - [`resolver_state`] — `install_resolver_state` +
-//!   `try_auto_build_resolver_state` (Movimiento 2 Phase 3D/3F/4/6E)
-//!   plus the `program_has_imports` / `has_import` gate helpers.
+//!   `try_auto_build_resolver_state` (resolver / dispatch-maps /
+//!   availability / outer-functions hookup) plus the
+//!   `program_has_imports` / `has_import` gate helpers.
 //! - [`wrappers`] — register alloc / intern / emit / `current` /
 //!   `append_debug_symbols` thin delegations.
 
@@ -134,14 +135,14 @@ pub struct Compiler {
     /// Prime field for ProveIR serialization. Defaults to BN254.
     pub prime_id: memory::field::PrimeId,
 
-    // ── Movimiento 2 Phase 3D: resolver shadow-dispatch ────────────
+    // ── Resolver shadow-dispatch ───────────────────────────────────
     /// Annotation map produced by [`resolve::annotate_program`].
     /// Populated either automatically by [`Compiler::compile`] (for
     /// in-memory single-module programs) or manually via
     /// [`Compiler::install_resolver_state`]. The resolver-driven
     /// dispatch path reads this to resolve call-site annotations;
-    /// the legacy name-based path coexists as a fallback for
-    /// compiles without resolver state.
+    /// the name-based fallback handles compiles without resolver
+    /// state.
     pub resolved_program: Option<ResolvedProgram>,
     /// Symbol table produced alongside `resolved_program`. Stored so
     /// that hits into the annotation map can be resolved to their
@@ -151,9 +152,9 @@ pub struct Compiler {
     /// Root [`ModuleId`] of the graph `resolved_program` belongs to.
     /// The lookup key into
     /// [`resolve::ResolvedProgram::annotations`] is `(module, expr_id)`;
-    /// Phase 3D only touches root-module expressions, so stashing
-    /// the id here avoids carrying the whole graph around. For
-    /// auto-built in-memory roots this is always
+    /// the dispatcher only touches root-module expressions, so
+    /// stashing the id here avoids carrying the whole graph around.
+    /// For auto-built in-memory roots this is always
     /// [`ModuleId::from_raw(0)`]; external installers pass their
     /// own.
     pub resolver_root_module: Option<ModuleId>,
@@ -165,10 +166,10 @@ pub struct Compiler {
     /// Annotation hits recorded by `compile_ident` during a
     /// compilation pass. Each entry is `(expr_id, symbol_id)` for an
     /// [`Expr::Ident`](achronyme_parser::ast::Expr::Ident) whose
-    /// resolver annotation matched. Consumed by Phase 3D tests;
-    /// ignored by production code paths.
+    /// resolver annotation matched. Consumed by resolver-dispatch
+    /// tests; ignored by production code paths.
     pub resolver_hits: Vec<(ExprId, SymbolId)>,
-    // ── Movimiento 2 Phase 3F: multi-module dispatch maps ──────────
+    // ── Multi-module dispatch maps ─────────────────────────────────
     /// Precomputed translation from [`SymbolId`] to the fn_table
     /// key the ProveIR compiler uses. Derived at auto-build time
     /// from the resolver's [`SymbolTable`] + [`ModuleGraph`] import
@@ -181,11 +182,12 @@ pub struct Compiler {
     pub resolver_dispatch_by_symbol: Option<Arc<HashMap<SymbolId, String>>>,
     /// Inverse of [`resolver_dispatch_by_symbol`]: fn_table key to
     /// the owning [`ModuleId`]. Consumed by
-    /// [`ir_forge::ProveIrCompiler::compile_user_fn_call`] to
-    /// push the definer's module onto the resolver stack before
-    /// inlining — the structural half of the gap 2.4 fix.
+    /// [`ir_forge::ProveIrCompiler::compile_user_fn_call`] to push
+    /// the definer's module onto the resolver stack before inlining,
+    /// so a bare identifier in an inlined body resolves against its
+    /// own module's symbols.
     pub resolver_module_by_key: Option<Arc<HashMap<String, ModuleId>>>,
-    // ── Movimiento 2 Phase 4: availability inference ──────────────
+    // ── Availability inference ─────────────────────────────────────
     /// fn_table key → [`Availability`] for every user function.
     /// The VM compiler checks this before emitting bytecode: if a
     /// function is `ProveIr`-only, its body is skipped (no bytecode)

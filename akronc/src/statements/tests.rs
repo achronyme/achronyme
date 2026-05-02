@@ -376,7 +376,7 @@ fn import_circom_duplicate_alias_conflicts() {
         .expect("duplicate same-path import is idempotent");
 }
 
-// --- Phase 3.2: build_circom_imports_for_outer_scope ---
+// --- build_circom_imports_for_outer_scope ---
 
 #[test]
 fn build_circom_imports_flattens_namespace_templates_to_colon_keys() {
