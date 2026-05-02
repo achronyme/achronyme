@@ -14,8 +14,11 @@
 //!   registration.
 //! - [`stmts`] — 16 statement walkers (`compile_block_stmts`,
 //!   `compile_stmt`, declarations, assignments, imports, ...).
-//! - [`exprs`] — 17 expression compilers (`compile_expr` dispatch,
-//!   atoms, control flow, user-fn inlining, arith/bool/comparison).
+//! - [`exprs`] — expression compilation, organised as a submodule
+//!   directory: `compile_expr` dispatcher in `exprs/mod.rs`, plus
+//!   `atoms` (literal + ident), `control` (if / index / block-as-expr),
+//!   `for_loop` (`compile_for_expr` + carry-set detector), `inline`
+//!   (user-fn inlining), and `ops` (binop / unary / `extract_const_u64`).
 //! - [`calls`] — 21 call-dispatch + builtin-lowering methods (Circom
 //!   integration, M2 annotation dispatch, per-builtin lowering).
 //! - [`methods`] — 11 dot-access + method-call helpers (arity checks,
