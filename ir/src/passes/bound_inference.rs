@@ -36,7 +36,7 @@ pub fn bound_inference<F: FieldBackend>(
     program: &mut IrProgram<F>,
     extra_bounds: &HashMap<SsaVar, u32>,
 ) -> BoundInferenceResult {
-    // Phase 1: collect proven bounds from RangeCheck instructions.
+    // Step 1: collect proven bounds from RangeCheck instructions.
     // RangeCheck { result, operand, bits } proves that `operand` fits in `bits` bits.
     // We track the tightest (smallest) bound per variable.
     let mut bounds: HashMap<SsaVar, u32> = HashMap::new();
@@ -76,7 +76,7 @@ pub fn bound_inference<F: FieldBackend>(
         };
     }
 
-    // Phase 2: rewrite IsLt/IsLe to bounded variants when both operands have bounds.
+    // Step 2: rewrite IsLt/IsLe to bounded variants when both operands have bounds.
     let mut rewritten = 0;
     let mut unbounded = Vec::new();
 

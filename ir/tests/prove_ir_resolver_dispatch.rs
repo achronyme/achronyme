@@ -1,5 +1,4 @@
-//! Integration tests for Movimiento 2 Phase 3E.1 — ProveIR compiler
-//! shadow dispatch.
+//! Integration tests for ProveIR compiler shadow dispatch.
 //!
 //! These tests mirror `compiler/tests/resolver_shadow_dispatch.rs` but
 //! target the ProveIR compiler. They verify that:
@@ -8,7 +7,7 @@
 //!    identifiers and named calls inside the block records shadow
 //!    hits in the compiler's hit trace.
 //! 2. The recorded hits' [`SymbolId`]s correspond to the same symbols
-//!    the legacy `fn_table`/`lower_builtin` dispatch would pick, as
+//!    the unannotated `fn_table`/`lower_builtin` dispatch picks, as
 //!    surfaced through the [`SymbolTable`] lookup.
 //! 3. Calls to Both-availability builtins (`poseidon`, `assert`) are
 //!    recorded.
@@ -286,21 +285,21 @@ fn shadow_path_does_not_break_compilation() {
     for &((module_id, _expr_id), _sid) in &hits {
         assert_eq!(
             module_id, root,
-            "hits should all be rooted at the root module in 3E.1"
+            "hits should all be rooted at the root module"
         );
     }
 }
 
 // ---------------------------------------------------------------------
-// Phase 3E.2/3 — real annotation-driven dispatch tests
+// Real annotation-driven dispatch tests
 // ---------------------------------------------------------------------
 
 #[test]
 fn user_fn_call_dispatches_via_annotation() {
     // A top-level `helper` fn forwarded through OuterScope::functions
     // and called from inside a prove block. The annotation map has a
-    // UserFn entry keyed by the callee Ident's ExprId; Phase 3E.2 is
-    // expected to take the annotation path and dispatch into
+    // UserFn entry keyed by the callee Ident's ExprId; the compiler
+    // takes the annotation path and dispatches into
     // compile_user_fn_call with the symbol's qualified_name. For a
     // single-module program the qualified name IS the bare fn name,
     // so the fn_table lookup inside compile_user_fn_call succeeds.
@@ -343,14 +342,13 @@ fn user_fn_call_dispatches_via_annotation() {
 }
 
 #[test]
-fn annotation_dispatch_and_legacy_produce_identical_ir() {
+fn annotation_dispatch_and_unannotated_produce_identical_ir() {
     // With and without an installed resolver state, the ProveIR
     // output must be structurally identical for a program the
-    // legacy path already handles. This is the observable-parity
-    // guarantee of Phase 3E.2 for single-module programs: the
-    // annotation-driven dispatch is cosmetic here (it always
-    // points at the same user fn / builtin the legacy path would
-    // have picked), so IR generation is unchanged.
+    // unannotated path already handles. The annotation-driven
+    // dispatch is cosmetic in single-module programs — it always
+    // points at the same user fn / builtin the unannotated path
+    // would have picked, so IR generation is unchanged.
     let source = "\
         fn helper(x, y) { x + y }\n\
         prove { public out: Field\n\
@@ -366,7 +364,7 @@ fn annotation_dispatch_and_legacy_produce_identical_ir() {
     let (ir_with, hits_with) = ProveIrCompiler::<Bn254Fr>::compile_with_trace(&body, &outer_with)
         .expect("compile with state");
 
-    // Without resolver state — legacy path.
+    // Without resolver state — unannotated path.
     let outer_without = OuterScope {
         values: std::collections::HashMap::new(),
         functions,
@@ -404,7 +402,7 @@ fn annotation_dispatch_and_legacy_produce_identical_ir() {
     );
     assert!(
         hits_without.is_empty(),
-        "expected legacy-path to record no hits"
+        "expected unannotated path to record no hits"
     );
 }
 

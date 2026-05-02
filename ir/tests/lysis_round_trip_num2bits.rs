@@ -1,4 +1,4 @@
-//! Week-1 Phase 3.A exit criterion — round-trip smoke test.
+//! Round-trip smoke test for the Lysis bytecode pipeline.
 //!
 //! Builds a Num2Bits(4)-shaped Lysis program via `ProgramBuilder`,
 //! runs it through the full pipeline `encode → decode → validate →
@@ -8,8 +8,7 @@
 //!
 //! This is NOT a semantics test — no R1CS compilation, no witness
 //! solving, no oracle. It proves the pipeline "Lysis bytecode →
-//! `Vec<ir::Instruction>`" is live, which is the prerequisite for
-//! Phase 3.B (the actual ProveIR-extended → Lysis lifter).
+//! `Vec<ir::Instruction>`" stays live.
 //!
 //! ## Num2Bits(4) reference shape
 //!
