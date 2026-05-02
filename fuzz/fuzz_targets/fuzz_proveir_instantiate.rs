@@ -1,4 +1,4 @@
-//! Fuzz target: ProveIR instantiate (Phase 0.4.B).
+//! Fuzz target: ProveIR instantiate.
 //!
 //! Pre-compiles a small ProveIR fixture once at first invocation, then
 //! feeds `ProveIR::instantiate_lysis` random capture maps derived from
@@ -56,9 +56,8 @@ use memory::{Bn254Fr, FieldElement};
 
 /// Compile a fixed prove block once and reuse across iterations.
 /// `assert_eq(a * b, out)` exercises Mul + AssertEq via Lysis's Walker —
-/// shape that closes under `instantiate_lysis` per Phase 1.B's
-/// cross_path_prove_baseline (33/33 byte-identical). Outer scope
-/// declares `a`, `b`, `out`; `out` is published, so the captures the
+/// shape that closes under `instantiate_lysis`. Outer scope declares
+/// `a`, `b`, `out`; `out` is published, so the captures the
 /// instantiator validates against are `a` and `b` (everything else
 /// missing → `Err`).
 fn fixture() -> &'static ProveIR {

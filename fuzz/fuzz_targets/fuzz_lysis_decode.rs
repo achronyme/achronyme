@@ -1,10 +1,10 @@
 //! Fuzz target: random bytes → `lysis::decode` must never panic.
 //!
-//! RFC §10 Phase 1 exit criterion: "Fuzz target `fuzz_decode` runs
-//! 10M iterations without panic." The target body is deliberately
-//! minimal — any input, including completely random garbage, must
-//! either decode successfully or return a `LysisError`. Panics,
-//! unwinds, or UB are test failures.
+//! Decoder soundness gate: `fuzz_decode` must run millions of
+//! iterations on random bytes without panicking. The target body is
+//! deliberately minimal — any input, including completely random
+//! garbage, must either decode successfully or return a
+//! `LysisError`. Panics, unwinds, or UB are test failures.
 //!
 //! Run locally with:
 //!
