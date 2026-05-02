@@ -53,7 +53,7 @@ pub struct LoweringContext<'a> {
     /// from an iteration's emission to obtain the "body-only" IR — the
     /// part that is uniform across iters and therefore memoizable.
     pub flush_tracker: FlushTracker,
-    /// R1″ Phase 6 / Option D: when `Some((var_name, token))`, the
+    /// memoized unroll: when `Some((var_name, token))`, the
     /// expression lowering treats `Ident(var_name)` as the placeholder
     /// `CircuitExpr::LoopVar(token)` instead of either a const fold
     /// or an `env.resolve` lookup. The for-loop memoization unroller

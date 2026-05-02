@@ -1,4 +1,4 @@
-//! Phase 3.C.6 Stage 1 smoke gate.
+//! Lysis round-trip smoke gate.
 //!
 //! Cross-validates [`ir_forge::lysis_roundtrip`] against
 //! programmatically-built `IrProgram<F>` fixtures using
@@ -344,12 +344,10 @@ fn decompose_and_range_check_roundtrips() {
 // ---------------------------------------------------------------------
 // Source-level fixtures (via test_utils::compile_circuit)
 //
-// Originally blocked by the Walker desugaring divergence (see module
-// docs for the Stage-1 finding). Unblocked by Option A (Phase 3.C.6
-// commit 2.0): instantiate now lowers Not/And/Or/IsNeq/IsLe/Assert to
-// the same primitive forms the Walker produces, so the legacy and
-// Lysis pipelines stay byte-equivalent through the oracle's strict
-// multiset compare.
+// `instantiate` lowers Not/And/Or/IsNeq/IsLe/Assert to the same
+// primitive forms the Walker produces, so any pipeline that round-
+// trips through those primitives stays byte-equivalent through the
+// oracle's strict multiset compare.
 // ---------------------------------------------------------------------
 
 #[test]

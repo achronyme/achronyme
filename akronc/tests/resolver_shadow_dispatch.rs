@@ -1,5 +1,4 @@
-//! Integration tests for Movimiento 2 Phase 3D — the VM compiler's
-//! resolver shadow dispatch.
+//! Integration tests for the VM compiler's resolver shadow dispatch.
 //!
 //! These tests compile small in-memory programs via `Compiler::compile`
 //! and assert that:
@@ -9,8 +8,8 @@
 //!    that the resolver knows about (builtins, same-module fns).
 //! 3. The recorded hits' `SymbolId`s correspond to the expected
 //!    `CallableKind` variants in the installed `SymbolTable`.
-//! 4. Programs with imports skip auto-build (the legacy lazy loader
-//!    is still authoritative in 3D).
+//! 4. Programs with imports skip the in-memory auto-build (the
+//!    filesystem-rooted multi-module path takes over there).
 //! 5. Compilation itself still succeeds — the shadow path is
 //!    observation only.
 
@@ -100,11 +99,10 @@ fn compile_ident_records_hit_for_builtin_call() {
 
 #[test]
 fn program_with_imports_skips_auto_build() {
-    // Phase 3D deliberately skips the resolver auto-build when a
-    // program has any `import` statements. The real filesystem-rooted
-    // multi-module graph lands in Phase 3E; until then, we don't want
-    // the adapter to try resolving relative paths against a missing
-    // base_path.
+    // The in-memory auto-build deliberately skips when a program has
+    // any `import` statements. Multi-module programs need a
+    // filesystem-rooted graph (see `base_path`); without one, the
+    // adapter cannot resolve relative paths.
     //
     // We can't feed a real import here without a `base_path` that
     // points at a real file, so we construct a program that parses

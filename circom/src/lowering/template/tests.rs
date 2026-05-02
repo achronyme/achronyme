@@ -125,8 +125,7 @@ fn iszero_template() {
 fn num2bits_style() {
     // Pure var-only body (no signal ops) so the loop stays as
     // `CircuitNode::For` — a body with any `<--` / `<==` would be
-    // unrolled at lowering by the Phase 1 `IndexedAssignmentLoop`
-    // catch-all.
+    // unrolled at lowering by the `IndexedAssignmentLoop` catch-all.
     let ir = parse_and_lower(
         r#"
         template VarLoop() {
@@ -738,7 +737,7 @@ fn circom_prove_e2e(
     )
 }
 
-// ── R1″ Phase 3: FlushTracker integration ───────────────────────
+// ── FlushTracker integration ────────────────────────────────────
 
 #[test]
 fn flush_tracker_records_pending_inline() {

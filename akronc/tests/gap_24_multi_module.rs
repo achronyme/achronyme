@@ -1,4 +1,4 @@
-//! Movimiento 2 Phase 3F — Gap 2.4 regression test.
+//! Regression test for transitive private-identifier resolution.
 //!
 //! Verifies that a prove block calling a user fn from another
 //! module, whose body references a module-private bare identifier,
@@ -16,13 +16,12 @@
 //! export fn middle() { helper() }   // ← bare identifier
 //! ```
 //!
-//! Before Phase 3F this failed with `UndeclaredVariable: helper`
-//! — the ProveIR compiler inlined `middle`'s body and looked up
-//! the bare `helper` in its fn_table, which only had the mangled
-//! `b::helper` key. The repro documents the failure mode; the
-//! Phase 3F fix threads resolver annotations + a precomputed
-//! fn_table dispatch map to resolve the bare identifier against
-//! the definer's module.
+//! Naively this would fail with `UndeclaredVariable: helper` because
+//! the ProveIR compiler inlines `middle`'s body and looks up the
+//! bare `helper` in its fn_table, which only contains the mangled
+//! `b::helper` key. Resolver annotations + a precomputed fn_table
+//! dispatch map resolve the bare identifier against the definer's
+//! module.
 
 use std::path::PathBuf;
 
@@ -46,7 +45,7 @@ fn transitive_bare_identifier_in_inlined_body_compiles() {
     let result = compiler.compile(&source);
     assert!(
         result.is_ok(),
-        "gap 2.4 repro should compile cleanly post Phase 3F, got: {:?}",
+        "transitive-bare-identifier fixture should compile cleanly, got: {:?}",
         result.err()
     );
 }

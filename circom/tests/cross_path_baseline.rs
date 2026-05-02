@@ -1,29 +1,26 @@
 //! Frozen-baseline regression test for circom benchmark templates.
 //!
-//! Phase 2.C — converted from a Lysis-vs-Legacy byte-identity gate
-//! (`38913753`, Phase 1.A) to a frozen-baseline regression gate.
 //! Each circom template is compiled through Lysis, hashed via
-//! `zkc::test_support::compute_frozen_baseline`, and compared against
-//! a pinned `FrozenBaseline` literal stored below.
+//! `zkc::test_support::compute_frozen_baseline`, and compared
+//! against a pinned `FrozenBaseline` literal stored below.
 //!
-//! ## Why frozen baseline replaces Lysis-vs-Legacy
+//! ## Why a frozen baseline
 //!
-//! With Lysis as default and the Legacy path scheduled for deletion in
-//! Phase 2.A, dual-path comparison becomes vacuous (Lysis-vs-Lysis).
 //! Frozen-baseline pins the structural identity of each template's
-//! R1CS at HEAD-of-Phase-2.B, surfacing any future drift — both
-//! intentional changes (re-pin via REGEN) and silent regressions
-//! (assertion fails with actionable diff).
+//! R1CS, surfacing any future drift — both intentional changes
+//! (re-pin via REGEN) and silent regressions (assertion fails with
+//! actionable diff).
 //!
 //! The canonical-multiset hash is **sort-based**
 //! (`zkc::test_support::canonical_multiset_hash`), which neutralizes
 //! term-order permutations within a single linear combination. It
 //! does NOT neutralize wire-index permutations across constraints —
-//! and the EdDSAPoseidon HashMap iteration leak (flagged in Phase 1.A)
-//! produces exactly that pattern. EdDSAPoseidon is therefore pinned
-//! shape-only via `assert_frozen_baseline_shape_matches`: counts,
-//! variable count, and public partition are pinned, but hash drift
-//! is accepted. Tracked as a determinism follow-up post-tag.
+//! and a residual EdDSAPoseidon HashMap iteration leak in wire
+//! allocation produces exactly that pattern. EdDSAPoseidon is
+//! therefore pinned shape-only via
+//! `assert_frozen_baseline_shape_matches`: counts, variable count,
+//! and public partition are pinned, but hash drift is accepted.
+//! Determinism follow-up tracked separately.
 //!
 //! ## Re-generating pinned values
 //!
@@ -144,11 +141,11 @@ fn cross_path_baseline_circom() {
     let mut pinned = 0usize;
 
     // Templates whose hash drifts non-deterministically across runs
-    // (HashMap iteration leak in wire allocation upstream — Phase 1.A
-    // noted). Sort-based canonicalization neutralizes term-order
-    // permutations *within* an LC but not wire-index permutations
-    // *across* LCs. For these, pin shape only (counts + vars + public)
-    // not hash. Tracked as a deterministic-allocation follow-up.
+    // (HashMap iteration leak in wire allocation upstream).
+    // Sort-based canonicalization neutralizes term-order permutations
+    // *within* an LC but not wire-index permutations *across* LCs.
+    // For these, pin shape only (counts + vars + public) not hash.
+    // Tracked as a deterministic-allocation follow-up.
     const HASH_NONDETERMINISTIC: &[&str] = &["EdDSAPoseidon"];
 
     let templates: Vec<(&str, &str, FrozenBaseline)> = vec![

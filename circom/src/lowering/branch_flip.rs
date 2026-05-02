@@ -1,14 +1,15 @@
-//! R1″ Phase 4: detect a top-level `if (loop_var <op> k) { ... } else { ... }`
+//! Detect a top-level `if (loop_var <op> k) { ... } else { ... }`
 //! pattern in a for-loop body.
 //!
 //! When a body contains exactly that shape, the body's emission is
 //! uniform within `[start, boundary)` and uniform within
-//! `[boundary, end)`, but differs between the two ranges. R1″
-//! memoization captures both groups separately — one substituted
-//! template for the lower range, one for the upper range.
+//! `[boundary, end)`, but differs between the two ranges. The
+//! memoized unroll captures both groups separately — one
+//! substituted template for the lower range, one for the upper
+//! range.
 //!
-//! This module is pure AST analysis. It does not lower anything; the
-//! actual two-capture partition is wired in Phase 6.
+//! This module is pure AST analysis. It does not lower anything;
+//! the actual two-capture partition lives in `loops.rs`.
 
 use crate::ast::{BinOp, Expr, Stmt};
 
@@ -56,7 +57,7 @@ pub struct BranchFlip {
 ///
 /// **Single-flip scope.** Multi-boundary patterns
 /// (`if (i < 16) {...} else if (i < 32) {...}`) only return the
-/// outermost boundary. Phase 4 explicitly targets the SHA-256
+/// outermost boundary. The detector targets the SHA-256
 /// message-schedule shape (one if-else split). Multi-partition is
 /// future work.
 pub fn detect_branch_flip(stmts: &[Stmt], loop_var: &str) -> Option<BranchFlip> {

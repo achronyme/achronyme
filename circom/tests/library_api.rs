@@ -3,10 +3,9 @@
 //! Exercises `compile_template_library`, `instantiate_template_into`,
 //! and `evaluate_template_witness` against real circomlib fixtures.
 //!
-//! These are Phase 1.6 of the circom import feature: end-to-end
-//! smoke tests that the public API works against the same Poseidon
-//! source the rest of the crate already uses for the R1CS/Groth16
-//! compatibility test.
+//! End-to-end smoke tests that the public API works against the
+//! same Poseidon source the rest of the crate already uses for the
+//! R1CS/Groth16 compatibility test.
 
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
@@ -212,8 +211,8 @@ fn instantiate_poseidon_inline_body() {
     }
 }
 
-/// Unknown template name should surface a clear error from the witness
-/// evaluator (matches the Phase 1.5 error surface used by the VM).
+/// Unknown template name should surface a clear error from the
+/// witness evaluator, matching the error surface the VM consumes.
 #[test]
 fn evaluate_poseidon_unknown_name() {
     let path = poseidon_path();

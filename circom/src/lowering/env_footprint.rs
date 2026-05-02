@@ -1,5 +1,5 @@
-//! R1″ Phase 5: capture and replay [`LoweringEnv`] mutations across
-//! memoized iterations.
+//! Capture and replay [`LoweringEnv`] mutations across memoized
+//! iterations.
 //!
 //! When the for-loop unroller captures iter 0 with the
 //! [`crate::lowering::loop_var_subst::loop_var_placeholder`] in
@@ -13,10 +13,10 @@
 //! pre-iter snapshot and the post-iter env state.
 //! [`EnvFootprint::apply_substituted`] re-applies that diff with the
 //! placeholder substituted, so the post-state of a memoized iter `N`
-//! matches what the legacy unrolled lowering would have produced.
+//! matches what a hand-unrolled lowering would have produced.
 //!
-//! Phase 5 does NOT integrate with `lower_for_loop` — that's Phase 6.
-//! This module is the replay primitive plus tests.
+//! This module is the replay primitive plus tests; the integration
+//! into `lower_for_loop` happens upstream in `loops.rs`.
 
 use std::collections::{HashMap, HashSet};
 
@@ -39,7 +39,7 @@ use super::utils::EvalValue;
 /// **Value-dependent vars are out of scope.** If iter 0 set
 /// `known_constants["k"] = Const(5)` and iter 1 would have set
 /// `Const(6)`, replaying iter-0's footprint at iter 1 produces
-/// `Const(5)` — wrong. Phase 6's integration is responsible for
+/// `Const(5)` — wrong. The lowering integration is responsible for
 /// refusing to memoize loops where any compile-time var depends on
 /// the loop variable. This module assumes the caller has already
 /// gated on that property.

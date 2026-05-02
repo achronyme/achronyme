@@ -1,11 +1,12 @@
-//! Phase 3.C.3 oracle fixtures.
+//! Lysis oracle fixtures.
 //!
 //! Each fixture builds two `IrProgram<F>`s programmatically and asserts
 //! that [`zkc::lysis_oracle::semantic_equivalence`] classifies
 //! them into the expected [`OracleResult`] variant. The canonical
-//! regression (`oracle_shared_vs_duplicated`) runs first; if it misses
-//! `Equivalent`, the whole Lysis design premise is broken (rollback per
-//! `.claude/plans/lysis-phase3.md` §8).
+//! regression (`oracle_shared_vs_duplicated`) is the load-bearing
+//! check — if it misses `Equivalent`, the strict multiset compare
+//! is rejecting structurally identical programs and every other
+//! fixture is invalidated.
 //!
 //! ## Fixture matrix
 //!
@@ -17,10 +18,6 @@
 //! | `public_partition`            | `PartitionDiffers`  | Visibility partition    |
 //! | `extra_constraint`            | `ConstraintsDiffer` | constraint delta detect |
 //! | `coefficient_diff`            | `ConstraintsDiffer` | LC coefficient detect   |
-//!
-//! `oracle_witness_divergence` (step 4 specific) is deferred to 3.C.8
-//! where real Lysis-vs-legacy pipelines expose the WitnessCall
-//! divergence surface naturally.
 
 use std::collections::HashMap;
 
@@ -78,16 +75,12 @@ fn square_assert(start: u32) -> IrProgram<F> {
 
 #[test]
 fn oracle_shared_vs_duplicated_is_equivalent() {
-    // Phase 3.C canonical regression. Both sides are structurally
-    // identical IR streams built via two independent calls to the
-    // same builder. This fixture is the MVP stand-in for the real
-    // Lysis-lifter-vs-legacy-instantiate comparison that 3.C.8 will
-    // expose once circom/ emits ExtendedInstruction under the flag.
-    //
-    // The semantic contract checked here: when both sides produce
-    // bit-identical IR, the oracle must classify `Equivalent` —
-    // otherwise the strict multiset compare is rejecting structurally
-    // identical programs, which would invalidate every other fixture.
+    // Canonical regression. Both sides are structurally identical IR
+    // streams built via two independent calls to the same builder.
+    // The semantic contract: when both sides produce bit-identical
+    // IR, the oracle must classify `Equivalent` — otherwise the
+    // strict multiset compare is rejecting structurally identical
+    // programs, which would invalidate every other fixture.
     let a = square_assert(0);
     let b = square_assert(0);
     assert_eq!(semantic_equivalence(&a, &b, &[]), OracleResult::Equivalent);

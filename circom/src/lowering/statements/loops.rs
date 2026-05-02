@@ -133,19 +133,17 @@ pub(super) fn lower_for_loop<'a>(
     let is_mixed = strategy == LoopLowering::MixedSignalVar;
     let end = resolve_bound_to_u64(&bound, env, ctx, span)?;
 
-    // R1″ Phase 6 / Option D: memoized unroll. Capture iter `start`
-    // with the loop variable held as a `LoopVar(token)` placeholder;
-    // replay each remaining iter by cloning the captured node slice
-    // and `substitute_loop_var`-rewriting the placeholder to the iter
+    // Memoized unroll. Capture iter `start` with the loop variable
+    // held as a `LoopVar(token)` placeholder; replay each remaining
+    // iter by cloning the captured node slice and
+    // `substitute_loop_var`-rewriting the placeholder to the iter
     // value. Saves the dominant `lower_stmt` cost on heavy bodies
     // (SHA-256 round body in particular) without changing any
     // constraint downstream — the substituted slice is structurally
-    // identical to what the legacy unroll would have emitted for that
-    // iter. Default-on after D4 validation closed (550 tests + 8/8
-    // byte-identical benchmarks under both polarities); set
-    // `R1PP_ENABLED=0` to opt out and exercise the legacy unroll path.
-    // Memoization assumes an ascending range; descending loops fall
-    // through to the direct unroll below.
+    // identical to what the direct unroll would have emitted for
+    // that iter. Set `R1PP_ENABLED=0` to opt out and exercise the
+    // direct unroll path. Memoization assumes an ascending range;
+    // descending loops fall through to the direct unroll below.
     if !is_descending && r1pp_enabled() {
         if let Some(plan) = is_memoizable(strategy, &body.stmts, &var_name, start, end) {
             return memoize_loop(
@@ -244,15 +242,13 @@ pub(super) fn lower_for_loop<'a>(
     Ok(())
 }
 
-// ─── R1″ Phase 6 / Option D — memoized unroll ───────────────────────
+// ─── Memoized unroll ────────────────────────────────────────────────
 
 /// `true` unless `R1PP_ENABLED=0` (or `false`) is set in the process
-/// environment. The memoized unroll path is the default after D4
-/// validation closed (Follow-up D, 2026-04-27): 550 tests pass under
-/// both polarities, 8/8 benchmark templates byte-identical, and 4
-/// adversarial soundness tests pin the cross-mode invariants. Set
-/// `R1PP_ENABLED=0` to force the legacy unroll path — useful for
-/// cross-mode debugging and the byte-identical asserts in
+/// environment. The memoized unroll path is the default; set
+/// `R1PP_ENABLED=0` to force the direct unroll path. The two
+/// modes are byte-identical on every benchmark template and pinned
+/// across modes by the adversarial cross-mode tests in
 /// `circom/tests/adversarial.rs`.
 fn r1pp_enabled() -> bool {
     std::env::var("R1PP_ENABLED")
@@ -311,9 +307,9 @@ struct MemoPlan {
 ///   - **Iteration count < 4**: memoization overhead (capture clone +
 ///     N substitutes) likely exceeds the savings on a small loop.
 ///   - **WitnessCall in body**: `program_bytes` is opaque Artik
-///     bytecode; `substitute_loop_var` deliberately does NOT walk it
-///     (see Phase 2 caveat). Any iter-dependent witness logic embedded
-///     in bytecode would replay iter-0 semantics for every iter.
+///     bytecode; `substitute_loop_var` deliberately does NOT walk
+///     into it. Any iter-dependent witness logic embedded in
+///     bytecode would replay iter-0 semantics for every iter.
 ///   - **`var x = …` whose RHS references the loop var**: replaying
 ///     iter-0's footprint would seed `known_constants` with iter-0's
 ///     value of `x`, then every replay iter would read the stale value
@@ -329,39 +325,38 @@ fn is_memoizable(
     start: u64,
     end: u64,
 ) -> Option<MemoPlan> {
-    // R1″ Phase 6 / Option II (commit `2bd57034`): `KnownArrayRefs` is
-    // accepted alongside `IndexedAssignmentLoop`. Memoizing a
-    // KnownArrayRefs body — Poseidon's Ark (`out[i] <== in[i] +
-    // C[i+r]`), MixS's second-pass loop (`out[i] <== in[i] + in[0] *
-    // S[(t*2-1)*r + t + i - 1]`), etc. — relies on the post-substitute
-    // fold pass [`crate::lowering::known_array_fold::fold_known_array_indices`]
+    // `KnownArrayRefs` is accepted alongside `IndexedAssignmentLoop`.
+    // Memoizing a KnownArrayRefs body — Poseidon's Ark (`out[i] <==
+    // in[i] + C[i+r]`), MixS's second-pass loop, etc. — relies on
+    // the post-substitute fold pass
+    // [`crate::lowering::known_array_fold::fold_known_array_indices`]
     // wired into `memoize_loop` below. The fold collapses
     // `ArrayIndex { array: <kav-name>, index: <fully-const after
-    // substitute> }` to `Const(fc)`, mirroring what legacy
-    // `lower_index` Case 0 emits for non-placeholder shapes.
+    // substitute> }` to `Const(fc)`, mirroring what `lower_index`
+    // Case 0 emits for non-placeholder shapes.
     //
-    // `ComponentArrayOps` remains rejected: instantiating sub-
-    // components per iter requires `EnvFootprint` to mirror more state
-    // than it does today (component arrays, pending wiring). That's a
+    // `ComponentArrayOps` is rejected: instantiating sub-components
+    // per iter requires `EnvFootprint` to mirror more state than it
+    // does today (component arrays, pending wiring). That's a
     // separate widening with its own state machinery.
     //
-    // `MixedSignalVar` remains rejected by definition (the body
-    // interleaves compile-time `var` mutations with signal expressions
-    // that the footprint can't replay). Note that Mix's outer-i body
-    // does NOT classify as MixedSignalVar empirically — it classifies
-    // as KnownArrayRefs because Mix's signal ops are linear, not
+    // `MixedSignalVar` is rejected by definition (the body interleaves
+    // compile-time `var` mutations with signal expressions that the
+    // footprint can't replay). Note that Mix's outer-i body does NOT
+    // classify as MixedSignalVar empirically — it classifies as
+    // KnownArrayRefs because Mix's signal ops are linear, not
     // branched; `body_mixes_signals_and_vars` only fires on if/else-
     // branched signal ops.
     //
-    // R1″ Phase 6 / Follow-up D: `body_has_state_carrying_var_mutation`
-    // was loosened to admit Mix's outer-i body (`lc = 0; for(j) lc +=
-    // M[j][i]*in[j]; out[i] <== lc;`). The discriminator is whether
-    // each name with a CompoundAssign or self-referential SubAssignIdent
-    // in the body has a corresponding **in-body reset** (a non-self-
-    // referential `Substitution { Assign, Ident(name), value }` earlier
-    // in the same body). Mix's `lc = 0` is the reset; Num2Bits's
-    // body has neither a reset for `lc1` nor a non-self-referential
-    // assign for `e2 = e2 + e2`, so it stays rejected.
+    // `body_has_state_carrying_var_mutation` admits Mix's outer-i
+    // body (`lc = 0; for(j) lc += M[j][i]*in[j]; out[i] <== lc;`).
+    // The discriminator is whether each name with a CompoundAssign
+    // or self-referential SubAssignIdent in the body has a
+    // corresponding **in-body reset** (a non-self-referential
+    // `Substitution { Assign, Ident(name), value }` earlier in the
+    // same body). Mix's `lc = 0` is the reset; Num2Bits's body has
+    // neither a reset for `lc1` nor a non-self-referential assign
+    // for `e2 = e2 + e2`, so it stays rejected.
     if !matches!(
         strategy,
         LoopLowering::IndexedAssignmentLoop | LoopLowering::KnownArrayRefs
@@ -403,16 +398,15 @@ fn is_memoizable(
     //   call-via-var-decl shapes, but bare expression calls in signal
     //   positions still need analysis.
     // - Multi-dim signal-array reads (`c[i][k]`): the placeholder
-    //   breaks the const-fold chain in `lower_multi_index`, with
-    //   defence-in-depth phantom-`ArrayIndex` and missing-strides
-    //   guards (E213). See R1″ Phase 6 / Follow-up A. The previous
-    //   `body_has_multi_dim_index` disqualifier (added 8bfd2fd4,
-    //   gate removed 6a4e5f36, walker deleted 71383148) is no
-    //   longer load-bearing FOR BODIES THAT PASS THE OTHER MVP GATES
-    //   (component_or_call, dot_access, capture_array, iter < 4).
-    //   Widening any of those re-exposes the question whether the
-    //   placeholder + phantom-ArrayIndex + strides guards cover the
-    //   new shape — re-validate end-to-end before loosening.
+    //   breaks the const-fold chain in `lower_multi_index`, so a
+    //   phantom-`ArrayIndex` + missing-strides defence-in-depth (E213)
+    //   blocks the unsafe shape at lower time. The simpler MVP gates
+    //   below (component_or_call, dot_access, capture_array, iter < 4)
+    //   already exclude every body that exercises the multi-dim path,
+    //   so no separate disqualifier is needed for it. Widening any of
+    //   those gates re-exposes the question whether the placeholder +
+    //   phantom-ArrayIndex + strides guards cover the new shape —
+    //   re-validate end-to-end before loosening.
     if body_has_component_or_call(body) {
         return None;
     }
@@ -426,22 +420,18 @@ fn is_memoizable(
     if body_has_dot_access(body) {
         return None;
     }
-    // R1″ Phase 6 / Follow-up B: the previous `body_reads_capture_array`
-    // gate was empirically vestigial — instrumentation across the full
-    // e2e suite (EdDSAPoseidon, MiMCSponge, Pedersen, SHA-256, Poseidon)
-    // confirmed it fires 5 times total, never returns `true`. Reason:
-    // array template params land in `env.known_array_values`
-    // (`components.rs:212`), NOT `env.captures` (which only carries
-    // scalars per `components.rs:204-208`); the predicate's
-    // `env.captures.contains(name)` check therefore never trips on a
-    // real array binding. The gate's original use case
-    // (`verifier.hash.pEx.ark_0.C is not an array` at instantiate) was
-    // closed structurally by Edit 2 of Follow-up A's E213
-    // phantom-`ArrayIndex` guard, which now rejects such cases at
-    // lowering time. Limitation noted: `EnvFootprint` does not mirror
-    // `env.captures` mutations — see `env_footprint.rs:47-65`. This
-    // matters only if a future widening admits bodies that mutate
-    // captures across iters; until then it's a documented blind spot.
+    // No `body_reads_capture_array` gate is needed — array template
+    // params land in `env.known_array_values` (`components.rs:212`),
+    // NOT `env.captures` (which only carries scalars per
+    // `components.rs:204-208`), so a `captures.contains(name)` check
+    // would never trip on a real array binding. The originally
+    // motivating shape (`verifier.hash.pEx.ark_0.C is not an array`
+    // at instantiate) is rejected at lower time by the E213
+    // phantom-`ArrayIndex` guard. Limitation noted: `EnvFootprint`
+    // does not mirror `env.captures` mutations — see
+    // `env_footprint.rs:47-65`. This matters only if a future
+    // widening admits bodies that mutate captures across iters;
+    // until then it's a documented blind spot.
     Some(MemoPlan { token: 0, strategy })
 }
 
@@ -785,7 +775,7 @@ fn expr_has_call(expr: &Expr) -> bool {
 /// `true` iff the body declares a compile-time `var` whose initializer
 /// references the loop variable. Replaying such a `var` from a
 /// memoized iter-0 footprint would seed every replay iter with iter-0's
-/// computed value (Phase 5 caveat).
+/// computed value, masking the per-iter recomputation.
 fn body_has_loop_var_dependent_var_decl(stmts: &[Stmt], loop_var: &str) -> bool {
     stmts
         .iter()
@@ -917,16 +907,16 @@ fn memoize_loop<'a>(
     // diff isolates exactly the mutations this iteration caused.
     let pre_env = env.clone();
 
-    // R1″ Phase 6 / Option II: snapshot the parent-scope kav for the
-    // post-substitute fold pass. Ark's `known_array_values["C"]` was
-    // inserted at sub-template inlining time (`components.rs:212`),
-    // i.e. BEFORE entering this for-loop body, so the snapshot is the
+    // Snapshot the parent-scope kav for the post-substitute fold
+    // pass. Ark's `known_array_values["C"]` was inserted at
+    // sub-template inlining time (`components.rs:212`), i.e. BEFORE
+    // entering this for-loop body, so the snapshot is the
     // authoritative source. Late-bound additions during body lowering
-    // (none observed under EdDSAPoseidon today, but a documented risk
-    // in plan §7) would not be reflected — if a future widening admits
-    // bodies that mutate `known_array_values` mid-iteration, swap to
-    // referencing the live `env.known_array_values` after the post-
-    // capture `*env = pre_env` reset (§5 risk #1).
+    // (none observed empirically) would not be reflected — if a
+    // future widening admits bodies that mutate
+    // `known_array_values` mid-iteration, swap to referencing the
+    // live `env.known_array_values` after the post-capture
+    // `*env = pre_env` reset.
     //
     // The clone is gated on `KnownArrayRefs` because the fold pass that
     // consumes the snapshot only fires kav-named `ArrayIndex` residuals,
@@ -2522,10 +2512,9 @@ mod tests {
         // `CircuitNode::For`) and the walker handles per-iteration
         // unfolding at bytecode emission time.
         //
-        // Pre-Phase-2.A this returned `IndexedAssignmentLoop` under
-        // the deleted Legacy frontend; the SHA-256 hard gate's 6.4 GB
-        // OOM regression that the lowering keeps avoiding was driven
-        // by exactly that eager-unroll classification.
+        // The historical eager-unroll classification on this shape
+        // drove the SHA-256 hard gate to 6.4 GB OOM; the SymIndEff
+        // path is the surface that lets it stay rolled.
         let stmts = extract_template_body(
             r#"
             template T(nBits, nBlocks) {
@@ -2548,16 +2537,13 @@ mod tests {
         assert_eq!(classify_loop_body(&for_body, &env, "k"), None);
     }
 
-    /// R1″ Phase 6 / Follow-up A — Edit 5.
-    ///
     /// Body has a multi-dim signal-array read (`c[i][0]`, `c[i][7]`)
-    /// with the loop var in the outer slot. Pre-Edit 4 the
-    /// `body_has_multi_dim_index` disqualifier rejected this. With
-    /// Edit 4 dropped and Edits 1+2's placeholder-aware
-    /// `lower_multi_index` in place, `is_memoizable` must accept it.
-    /// A future regression that re-introduces the multi-dim gate (or
-    /// loosens any of the placeholder mechanism upstream) trips this
-    /// test immediately.
+    /// with the loop var in the outer slot. With the placeholder-
+    /// aware `lower_multi_index` and no multi-dim disqualifier in
+    /// `is_memoizable`, this shape must be admitted. A future
+    /// regression that re-introduces a multi-dim gate or loosens
+    /// the placeholder mechanism upstream trips this test
+    /// immediately.
     #[test]
     fn is_memoizable_accepts_multi_dim_signal_array_body() {
         let stmts = extract_template_body(
@@ -2589,7 +2575,7 @@ mod tests {
         );
     }
 
-    /// R1″ Phase 6 / Follow-up A deferred risk — Add-slot in placeholder index.
+    /// Add-slot in placeholder index.
     ///
     /// Body shape `c[i+1][k]` puts the loop variable inside an `Add`
     /// expression in the outer index slot. `placeholder_appears_in`
@@ -2632,8 +2618,7 @@ mod tests {
         );
     }
 
-    /// R1″ Phase 6 / Follow-up A deferred risk — compile-time outer slot
-    /// with placeholder in inner slot.
+    /// Compile-time outer slot with placeholder in inner slot.
     ///
     /// Body shape `c[k][i]` for compile-time `k` (template param)
     /// resolved at lowering via `param_values` / `known_constants`. With
@@ -2675,18 +2660,16 @@ mod tests {
         );
     }
 
-    /// R1″ Phase 6 / Option II.
+    /// Strategy-gate acceptance for `KnownArrayRefs`.
     ///
-    /// Pre-Option II the strategy gate at `loops.rs:292-294` rejected
-    /// any body whose `classify_loop_body` result was not exactly
-    /// `IndexedAssignmentLoop`. After Option II's commit, the gate
-    /// accepts `IndexedAssignmentLoop | KnownArrayRefs`. This test
-    /// pins the new acceptance contract using an Ark-shaped synthetic
-    /// body — `out[i] <== in[i] + C[i+r]` — that classifies as
-    /// `KnownArrayRefs` (because of the `C[i+r]` reference into a
-    /// compile-time array) and passes all downstream gates (no
-    /// component / call / dot-access / state-carrying var mutation).
-    /// A future regression that re-tightens the strategy gate or that
+    /// The strategy gate accepts `IndexedAssignmentLoop |
+    /// KnownArrayRefs`. This test pins the contract using an
+    /// Ark-shaped synthetic body — `out[i] <== in[i] + C[i+r]` —
+    /// that classifies as `KnownArrayRefs` (because of the `C[i+r]`
+    /// reference into a compile-time array) and passes all
+    /// downstream gates (no component / call / dot-access /
+    /// state-carrying var mutation). A future regression that
+    /// re-tightens the strategy gate or that
     /// trips one of the downstream gates on this minimal shape would
     /// fail this assertion.
     ///
@@ -2759,7 +2742,7 @@ mod tests {
         );
     }
 
-    /// R1″ Phase 6 / Follow-up D — soundness pin.
+    /// Soundness pin.
     ///
     /// Num2Bits's body has two state-carrying mutations that memoization
     /// CANNOT correctly replay: `lc1 += out[i] * e2` (an accumulator with
@@ -2819,7 +2802,7 @@ mod tests {
         );
     }
 
-    /// R1″ Phase 6 / Follow-up D — soundness pin.
+    /// Soundness pin.
     ///
     /// Mix's inner-j body in isolation (`lc += M[j][i]*in[j]`) has a
     /// CompoundAssign on `lc` with NO in-body reset. Memoizing it alone
@@ -2864,13 +2847,13 @@ mod tests {
         );
     }
 
-    /// R1″ Phase 6 / Follow-up D — soundness pin.
+    /// Soundness pin.
     ///
     /// MixS's first loop (`for(i) lc += S[(t*2-1)*r+i]*in[i]`) is
     /// structurally identical to inner-j: CompoundAssign without an
     /// in-body reset. The reset (`var lc = 0`) lives at template scope,
     /// outside this loop. MUST stay rejected.
-    /// R1″ Phase 6 / Follow-up D — admit pin.
+    /// Admit pin.
     ///
     /// Mix's outer-i body has a CompoundAssign on `lc` inside a nested
     /// for, BUT with a top-level `lc = 0` reset before that. The reset

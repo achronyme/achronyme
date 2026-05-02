@@ -126,7 +126,7 @@ pub(super) fn resolve_component_array_name_ctx(
 ) -> Option<String> {
     match expr {
         Expr::Index { object, index, .. } => {
-            // R1″ Phase 6 / Option D: when the index references the
+            // memoized unroll: when the index references the
             // active memoization placeholder (e.g. `comp[i]` while
             // capturing iter 0 of the loop over `i`), embed the
             // placeholder substring instead of the iter-0 numeric
@@ -367,7 +367,7 @@ pub(super) fn try_resolve_component_array_target(
                 indices.reverse();
                 let mut comp_name = name.clone();
                 for idx_expr in &indices {
-                    // R1″ Phase 6 / Option D: per-index placeholder
+                    // memoized unroll: per-index placeholder
                     // check. Multi-dim arrays may mix placeholder and
                     // non-placeholder slots (e.g. `mux.c[0][i]`).
                     let idx_segment = ctx.placeholder_index_segment(idx_expr).or_else(|| {
@@ -466,7 +466,7 @@ mod tests {
 
     #[test]
     fn assign_target_ctx_uses_placeholder_for_component_array() {
-        // R1″ Phase 6 / Option D: `comp[i].sig <== expr` with the
+        // memoized unroll: `comp[i].sig <== expr` with the
         // memoization placeholder active should produce a target
         // whose component segment is the placeholder substring, not
         // the iter-0 numeric value. After `substitute_loop_var` runs

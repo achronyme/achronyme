@@ -1,7 +1,6 @@
 //! Cross-validation: Achronyme ↔ snarkjs Groth16 proof interoperability.
 //!
-//! Closes Circom Frontend Phase 6.3. Two directions are tested on
-//! every circuit:
+//! Two directions are tested on every circuit:
 //!
 //!   (A) Achronyme compiles + proves → snarkjs verifies.
 //!       Confirms Achronyme's proof / public / vkey JSON is bit-for-bit

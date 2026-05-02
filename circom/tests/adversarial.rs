@@ -737,25 +737,24 @@ fn mux4_forge_output_rejected() {
 // pending E2E".
 
 // ============================================================================
-// R1″ Phase 6 / Follow-up A — placeholder-aware lower_multi_index
+// Placeholder-aware lower_multi_index — cross-mode pin
 // ============================================================================
 //
-// Edit 2 of Follow-up A made `lower_multi_index` skip its const-fold
-// fast path when the active R1″ memoization placeholder loop variable
-// appears in any index slot. Edit 4 (not yet landed at this commit)
-// will drop the `body_has_multi_dim_index` disqualifier from
-// `is_memoizable` so that bodies with multi-dim shapes like `c[i][k]`
-// become memoizable.
+// `lower_multi_index` skips its const-fold fast path when the active
+// memoization placeholder loop variable appears in any index slot,
+// and `is_memoizable` admits bodies with multi-dim shapes like
+// `c[i][k]`.
 //
 // This regression test pins the contract: under both R1PP_ENABLED=0
 // and R1PP_ENABLED=1, the Mux3 wrapper must produce IDENTICAL
 // constraint counts AND must continue to reject the same forgery
 // (`out` flipped while the selector encodes a different index). The
 // test is "trivially passing" today — Mux3's MultiMux3(1) instance
-// has n=1 < 4 so the iteration-count gate already rejects memoization
-// regardless of the multi-dim gate. Once Edit 4 widens the population
-// of memoizable bodies, this test becomes the regression watchdog
-// proving Edits 1+2 keep the IR byte-identical.
+// has n=1 < 4 so the iteration-count gate already rejects
+// memoization regardless of the multi-dim gate. If a future widening
+// expands the population of memoizable bodies, this test becomes the
+// regression watchdog proving the placeholder-aware path keeps the
+// IR byte-identical.
 //
 // Counter-factual procedure (manual, off-CI): stage Edit 4 (gate
 // removed) WITHOUT Edits 1+2 on a temporary branch and re-run this
@@ -842,14 +841,14 @@ fn r1pp_followup_a_mux3_forgery_rejected_under_r1pp_on() {
 }
 
 // ============================================================================
-// R1″ Phase 6 / Follow-up B — vestigial gate cleanup
+// EdDSAPoseidon cross-mode pin
 // ============================================================================
 //
-// Follow-up B dropped the `body_reads_capture_array` gate from
-// `is_memoizable` after empirical investigation showed the gate
-// fired 5 times across the full e2e suite and never returned
-// `true`. The cleanup is behaviourally a no-op today (no template
-// memoizes that wouldn't have memoized before).
+// `is_memoizable` does not carry a `body_reads_capture_array` gate —
+// empirical investigation across the full e2e suite showed such a
+// gate would fire 5 times and never return `true`, so it would be a
+// behavioural no-op (no template memoizes that wouldn't have
+// memoized without it).
 //
 // This regression pin compiles EdDSAPoseidon — the heaviest circuit
 // in the corpus, exercising Ark/Mix/PoseidonEx/EscalarMulFix —

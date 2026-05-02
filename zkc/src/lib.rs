@@ -13,13 +13,10 @@
 //! - [`r1cs_gadgets`] — shared gadget helpers (power-of-two, etc.).
 //! - [`error`] — `R1CSError` + related types (formerly
 //!   `akronc::r1cs_error`).
-//! - [`lysis_oracle`] — A/B oracle that compares Lysis-lowered programs
-//!   against the legacy instantiate path. Gated behind `test-support`
-//!   (Phase 2.B): the oracle has no production callers, only tests
-//!   in `cli/tests/cross_path_prove_baseline.rs` and
-//!   `circom/tests/cross_path_baseline.rs`. Phase 2.A deletes the
-//!   module entirely once those tests migrate to frozen-baseline mode
-//!   in Phase 2.C.
+//! - [`lysis_oracle`] — canonical-multiset comparator originally built
+//!   as an A/B oracle. Gated behind `test-support`; no production
+//!   callers. Retained because the canonicalization primitives back
+//!   the frozen-baseline pins that replaced the cross-path A/B gates.
 
 pub mod error;
 pub mod plonkish_backend;

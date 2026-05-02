@@ -1,6 +1,6 @@
 //! Test helpers shared between integration tests, the cargo-fuzz harness
-//! at `fuzz/fuzz_targets/fuzz_r1cs_preservation.rs` (Phase 0.4.C), and
-//! the frozen-baseline regression pins (Phase 2.B/2.C).
+//! at `fuzz/fuzz_targets/fuzz_r1cs_preservation.rs`, and the
+//! frozen-baseline regression pins.
 //!
 //! Gated behind `cfg(any(test, feature = "test-support"))` so this
 //! module is compiled into integration tests automatically and into
@@ -10,20 +10,17 @@
 //!
 //! ## Two responsibilities, one module
 //!
-//! 1. **R1CS preservation oracle helpers** (Phase 0.2.D / 0.4.C):
-//!    `compile_and_solve` + `apply_substitutions`. See
+//! 1. **R1CS preservation oracle helpers**: `compile_and_solve` +
+//!    `apply_substitutions`. See
 //!    `zkc/tests/r1cs_preservation_proptest.rs` for the property
 //!    framing (CompCert two-sided simulation, advisor §2b).
 //!
-//! 2. **Frozen-baseline regression machinery** (Phase 2.B): the
-//!    canonical-multiset hash + `FrozenBaseline` snapshot. Replaces
-//!    the Lysis-vs-Legacy comparator in `zkc::lysis_oracle::compare`
-//!    once that comparator's last callers (cross-path baseline tests)
-//!    migrate in Phase 2.C. The `canonicalize_constraint` /
-//!    `lc_to_terms` / `constraint_multiset` / `extract_public_inputs`
-//!    primitives moved here from `lysis_oracle::compare` so both the
-//!    oracle (still alive until Phase 2.A) and the frozen-baseline
-//!    pins consume the same canonicalization logic.
+//! 2. **Frozen-baseline regression machinery**: the canonical-multiset
+//!    hash + `FrozenBaseline` snapshot used by the cross-path
+//!    baseline tests. The `canonicalize_constraint` / `lc_to_terms` /
+//!    `constraint_multiset` / `extract_public_inputs` primitives are
+//!    shared with `lysis_oracle::compare` so both consumers see the
+//!    same canonicalization logic.
 
 use std::collections::HashMap;
 
@@ -39,7 +36,7 @@ use crate::r1cs_backend::R1CSCompiler;
 use crate::witness::WitnessGenerator;
 
 // ============================================================================
-// R1CS preservation oracle helpers (Phase 0.2.D / 0.4.C)
+// R1CS preservation oracle helpers
 // ============================================================================
 
 /// Compile a circuit source to R1CS, generate a satisfying witness,
@@ -93,7 +90,7 @@ pub fn apply_substitutions(compiler: &R1CSCompiler, witness: &[FieldElement]) ->
 }
 
 // ============================================================================
-// Canonicalization primitives (Phase 2.B — moved from lysis_oracle::compare)
+// Canonicalization primitives (shared with lysis_oracle::compare)
 // ============================================================================
 
 /// Canonical positional key for a single `A * B = C` constraint.
@@ -160,7 +157,7 @@ pub fn extract_public_inputs<F: FieldBackend>(program: &IrProgram<F>) -> Vec<Str
 }
 
 // ============================================================================
-// Frozen-baseline machinery (Phase 2.B)
+// Frozen-baseline machinery
 // ============================================================================
 
 /// SHA-256 hash of the bincode-serialized canonical multiset. Compact
@@ -208,8 +205,7 @@ pub fn canonical_multiset_hash<F: FieldBackend>(constraints: &[Constraint<F>]) -
 }
 
 /// Snapshot of a circuit's structural identity. Pin-able value used
-/// by frozen-baseline regression tests in place of Lysis-vs-Legacy
-/// comparison (post Phase 2.A).
+/// by frozen-baseline regression tests.
 #[cfg(feature = "test-support")]
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct FrozenBaseline {

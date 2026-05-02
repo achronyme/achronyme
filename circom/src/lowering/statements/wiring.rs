@@ -46,7 +46,7 @@ use super::super::context::LoweringContext;
 use super::super::env::LoweringEnv;
 use super::super::error::LoweringError;
 use super::super::utils::{extract_ident_name, EvalValue};
-// R1″ Phase 6 / Option D: wiring.rs uses the ctx-aware resolver so the
+// memoized unroll: wiring.rs uses the ctx-aware resolver so the
 // `pending` HashMap stays consistent with the IR emission side. During
 // a memoized iter-0 capture, `try_resolve_component_array_target`
 // (assignment side) and `resolve_component_array_name_ctx` (read +

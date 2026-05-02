@@ -20,10 +20,10 @@ pub trait ExpressionCompiler {
 impl ExpressionCompiler for Compiler {
     fn compile_expr(&mut self, expr: &Expr) -> Result<u8, CompilerError> {
         self.current_span = Some(expr.span().clone());
-        // Movimiento 2 Phase 3D: stash the current expression id so
-        // dispatch helpers (`compile_ident`, …) can form the
-        // `(module, expr_id)` annotation key without a signature
-        // change. Set unconditionally; synthetic expressions
+        // Stash the current expression id so dispatch helpers
+        // (`compile_ident`, …) can form the `(module, expr_id)`
+        // annotation key without a signature change. Set
+        // unconditionally; synthetic expressions
         // (id == ExprId::SYNTHETIC) simply miss the annotation map.
         self.current_expr_id = Some(expr.id());
         match expr {
@@ -249,14 +249,12 @@ impl Compiler {
     }
 
     fn compile_ident(&mut self, name: &str) -> Result<u8, CompilerError> {
-        // Movimiento 2 Phase 3D: shadow-dispatch observation. If a
-        // resolver state was installed or auto-built, look up the
-        // annotation for the current Expr::Ident and record the hit
-        // on `resolver_hits`. This is pure observation — we do not
-        // alter dispatch. Tests read the trace to verify the
-        // resolver agrees with the legacy lookup. Phase 3E flips to
-        // real dispatch-via-SymbolId and Phase 6 removes the legacy
-        // path.
+        // Shadow-dispatch observation. If a resolver state was
+        // installed or auto-built, look up the annotation for the
+        // current Expr::Ident and record the hit on `resolver_hits`.
+        // This is pure observation — dispatch itself is unchanged.
+        // Tests read the trace to verify the resolver agrees with
+        // the name-based lookup.
         if let (Some(resolved), Some(root_module), Some(expr_id)) = (
             self.resolved_program.as_ref(),
             self.resolver_root_module,
