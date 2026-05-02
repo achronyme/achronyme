@@ -1,4 +1,4 @@
-//! Fuzz target: R1CS optimization preservation (Phase 0.4.C).
+//! Fuzz target: R1CS optimization preservation.
 //!
 //! Coverage-guided companion to the proptest at
 //! `zkc/tests/r1cs_preservation_proptest.rs`. The proptest covers

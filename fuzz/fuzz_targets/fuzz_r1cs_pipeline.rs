@@ -22,17 +22,17 @@ fuzz_target!(|data: &[u8]| {
     if let Ok(source) = std::str::from_utf8(data) {
         // Try the full pipeline — every error path must be graceful
         let result = std::panic::catch_unwind(|| {
-            // Phase 1: Parse + lower
+            // Step 1: Parse + lower
             let lowered = ir::IrLowering::lower_self_contained(source);
             let (pub_names, wit_names, mut program) = match lowered {
                 Ok(v) => v,
                 Err(_) => return,
             };
 
-            // Phase 2: Optimize
+            // Step 2: Optimize
             ir::passes::optimize(&mut program);
 
-            // Phase 3: R1CS compile
+            // Step 3: R1CS compile
             let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
             let mut compiler = zkc::r1cs_backend::R1CSCompiler::new();
             compiler.set_proven_boolean(proven);
@@ -43,13 +43,13 @@ fuzz_target!(|data: &[u8]| {
                 inputs.insert(name.clone(), memory::FieldElement::ZERO);
             }
 
-            // Phase 4: Compile with witness — may fail (e.g., div by zero), that's fine
+            // Step 4: Compile with witness — may fail (e.g., div by zero), that's fine
             let witness = match compiler.compile_ir_with_witness(&program, &inputs) {
                 Ok(w) => w,
                 Err(_) => return,
             };
 
-            // Phase 5: Verify — result doesn't matter, but must not panic
+            // Step 5: Verify — result doesn't matter, but must not panic
             let _ = compiler.cs.verify(&witness);
         });
 
