@@ -20,7 +20,9 @@ use artik::{IntW, Reg};
 
 use crate::ast::{self, BinOp, CompoundOp, Expr, Stmt};
 
-use super::helpers::{eval_const_expr, is_increment_on, stmt_is_mux_compatible, stmts_are_mux_compatible};
+use super::helpers::{
+    eval_const_expr, is_increment_on, stmt_is_mux_compatible, stmts_are_mux_compatible,
+};
 use super::{ConstInt, LiftState};
 
 impl<'f> LiftState<'f> {
