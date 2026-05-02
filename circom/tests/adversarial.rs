@@ -715,26 +715,27 @@ fn mux4_forge_output_rejected() {
 // Known coverage gap — BinSum / Multiplexer
 // ============================================================================
 //
-// The beta.20 pre-release audit flagged adversarial tests for `BinSum`
-// and the general `Multiplexer(wIn, nIn)` template. Both compile
-// through `circom::compile_file` today (see `binsum_circomlib_compile`
-// and `multiplexer_circomlib_compile` in `e2e.rs`) but neither reaches
-// R1CS yet:
+// `BinSum` and the general `Multiplexer(wIn, nIn)` template compile to
+// ProveIR but their R1CS path is incomplete today:
 //
 //   * BinSum uses the `var lin += signal * e2` pattern followed by
-//     `out[k] <-- (lin >> k) & 1`. Achronyme's lowering does not yet
-//     track compile-time `var`s that accumulate signal expressions,
-//     so the resulting R1CS is incomplete.
+//     `out[k] <-- (lin >> k) & 1`. The frontend doesn't yet track a
+//     compile-time `var` that accumulates signal-typed expressions as
+//     a linear combination. The R1CS produced rejects the honest
+//     witness (`ConstraintUnsatisfied`), so a forgery test against the
+//     same constraint set would conflate "frontend bug" with "missing
+//     soundness oracle". Empirically verified by feeding the canonical
+//     a=5,b=3 → out=8 witness through `compile_valid_witness` and
+//     observing the rejection at the honest-witness gate.
 //   * Multiplexer feeds a 2-D signal input `inp[nIn][wIn]` through a
-//     Decoder + EscalarProduct. The witness evaluator still lacks the
-//     flattened-naming pass for 2-D signal arrays.
+//     Decoder + EscalarProduct. The witness evaluator lacks the
+//     flattened-naming pass for 2-D signal arrays — same shape of
+//     blocker, different surface.
 //
 // Adversarial soundness tests for these two templates are therefore
-// deferred until the R1CS path works end-to-end; attempting a forgery
-// against a circuit that isn't fully constrained yet would be noise,
-// not signal. The deferral is tracked in
-// `project_beta20_circom_session_apr4.md` under "BinSum / Multiplexer
-// pending E2E".
+// deferred until the R1CS path verifies honest witnesses. Until then
+// any forgery probe would test a broken oracle, not a real soundness
+// invariant.
 
 // ============================================================================
 // Placeholder-aware lower_multi_index — cross-mode pin
