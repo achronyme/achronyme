@@ -1364,6 +1364,59 @@ fn fn_witness_lift_unrolls_for_loop() {
         .expect("unrolled Artik payload must decode and validate");
 }
 
+/// Real `while` loops lift to Artik via slot-promoted scalars + a
+/// conditional back-edge. Validates the smallest interesting shape:
+/// `var i = start; while (i > 0) { i = i - 1; } return i;` returns
+/// 0 for any non-negative `start`. Decode + run the payload against
+/// `start = 5`; the program must end with witness slot 0 holding 0.
+#[test]
+fn fn_witness_lift_while_terminates() {
+    use ir_forge::types::CircuitNode;
+    use memory::field::{Bn254Fr, FieldElement};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_while_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("while lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("while payload must decode and validate");
+
+    // The lift must have emitted a back-edge jump pair — `Jump`
+    // (back to the loop header) and `JumpIf` (exit when cond is
+    // false). A regression that silently bails through the
+    // unrolled-for path or fails to wire the back-edge would leave
+    // the body straight-line.
+    let saw_jump = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::Jump { .. }));
+    let saw_jump_if = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::JumpIf { .. }));
+    assert!(saw_jump && saw_jump_if, "expected back-edge + exit jumps");
+
+    type FE = FieldElement<Bn254Fr>;
+    let sigs = [FE::from_u64(5)];
+    let mut slots = [FE::zero()];
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("while program must execute");
+    assert_eq!(slots[0], FE::zero(), "countdown_to_zero(5) should be 0");
+}
+
 /// Fase 2.1 lift extension: compile-time-folded `if / else` inside
 /// an unrolled loop selects the right branch per iteration without
 /// emitting any JumpIf. Runtime conditions still fall back to E212.
