@@ -41,13 +41,14 @@ mod ops;
 impl<F: FieldBackend> ProveIrCompiler<F> {
     /// Compile an AST expression into a `CircuitExpr`.
     pub(crate) fn compile_expr(&mut self, expr: &Expr) -> Result<CircuitExpr, ProveIrError> {
-        // Phase 3E.1: thread the current ExprId so the shadow-dispatch
-        // hooks in compile_ident / compile_named_call can read it off
-        // the compiler. Mirrors the VM compiler's pattern in
-        // `compiler/src/expressions/mod.rs::compile_expr`. We don't
-        // need the previous id for scoping because compile_expr is
-        // the only site that writes the field, and each recursive
-        // call re-overrides it before any hook reads it.
+        // Thread the current ExprId so the resolver-dispatch hooks in
+        // `compile_ident` / `compile_named_call` can pair it with the
+        // active resolver module to form the annotation lookup key.
+        // Mirrors the VM compiler's pattern in
+        // `compiler/src/expressions/mod.rs::compile_expr`. The
+        // previous id never needs saving — `compile_expr` is the only
+        // writer, and each recursive call re-overrides the field
+        // before any hook reads it.
         self.current_expr_id = Some(expr.id());
         match expr {
             Expr::Number { value, span, .. } => self.compile_number(value, span),
