@@ -54,13 +54,13 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                 .dispatch_builtin_by_handle(handle, args, span)
                 .map(Some),
             DispatchDecision::UserFn { qualified_name } => {
-                // Phase 3F: the dispatch map already translated the
-                // SymbolId to the correct fn_table key. If the key
-                // isn't in `fn_table` we fall through to legacy —
-                // happens when a symbol is known to the resolver
-                // but not registered in this specific prove block's
-                // OuterScope (e.g. prove-block-local imports that
-                // the auto-build never saw).
+                // The dispatch map has already translated the SymbolId
+                // to the correct fn_table key. If the key isn't in
+                // `fn_table` we fall through to the name-based path —
+                // happens when a symbol is known to the resolver but
+                // not registered in this specific prove block's
+                // OuterScope (e.g. prove-block-local imports that the
+                // auto-build never saw).
                 if !self.has_function(&qualified_name) {
                     return Ok(None);
                 }
@@ -73,11 +73,12 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                     .map(Some)
             }
             DispatchDecision::NoAnnotation => {
-                // Record a shadow hit for symmetry with Phase 3E.1
-                // — the annotation map may still have an entry
-                // (Constant in call position, etc.) that the
-                // dispatch helper rejected. The hit trace still
-                // reflects what the resolver saw at this call site.
+                // Record a shadow hit so the trace mirrors the
+                // bare-ident path in `compile_named_call`. The
+                // annotation map may still hold an entry (Constant in
+                // call position, etc.) that the dispatch helper
+                // rejected; the hit trace still reflects what the
+                // resolver saw at this call site.
                 self.record_resolver_hit_for(callee_expr_id);
                 Ok(None)
             }
@@ -86,18 +87,19 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
 
     /// Compile a named function or builtin call.
     ///
-    /// Movimiento 2 Phase 3E.2 / 3F — annotation-driven dispatch
-    /// delegates to [`try_annotation_dispatch`] and falls back to
-    /// the legacy name-based path if the annotation path declines.
+    /// Tries annotation-driven dispatch via
+    /// [`try_annotation_dispatch`] first, then falls back to the
+    /// name-based path (builtin registry then user-fn inlining) if
+    /// the annotation path declines.
     pub(super) fn compile_named_call(
         &mut self,
         name: &str,
         args: &[&Expr],
         span: &Span,
     ) -> Result<CircuitExpr, ProveIrError> {
-        // Phase 3E.2: consult the annotation table for the current
-        // callee Ident. `current_expr_id` was overridden with the
-        // Ident's ExprId by `compile_call`'s Ident arm.
+        // Consult the annotation table for the current callee Ident.
+        // `current_expr_id` was overridden with the Ident's ExprId by
+        // `compile_call`'s Ident arm.
         if let Some(expr_id) = self.current_expr_id {
             if let Some(expr) = self.try_annotation_dispatch(expr_id, args, span)? {
                 return Ok(expr);
@@ -110,9 +112,9 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             self.record_resolver_hit();
         }
 
-        // Legacy dispatch path. `lower_builtin` returning `Ok(None)`
-        // means the name isn't a recognised builtin; fall through
-        // to user-fn inlining exactly as before.
+        // Name-based dispatch path. `lower_builtin` returning
+        // `Ok(None)` means the name isn't a recognised builtin; fall
+        // through to user-fn inlining.
         if let Some(expr) = self.lower_builtin(name, args, span)? {
             return Ok(expr);
         }
