@@ -1627,7 +1627,7 @@ impl<F: FieldBackend> Walker<F> {
                 }
             }
             Instruction::RangeCheck {
-                result: _,
+                result,
                 operand,
                 bits,
             } => {
@@ -1643,6 +1643,10 @@ impl<F: FieldBackend> Walker<F> {
                     var: op,
                     max_bits: *bits as u8,
                 });
+                // Result aliases operand once the bit-width constraint is
+                // enforced; downstream consumers (Mux, Bool propagation,
+                // IsLtBounded) read result, so bind it to operand's reg.
+                self.bind(*result, op);
             }
             Instruction::Decompose {
                 result: _,
