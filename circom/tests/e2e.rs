@@ -3093,6 +3093,76 @@ fn eddsamimc_r1cs() {
     assert!(n > 0, "expected constraints for EdDSAMiMC verifier");
 }
 
+/// EdDSAMiMCSponge: same wiring as EdDSAMiMC but the message hash is
+/// MiMCSponge instead of MiMC. Sibling template — verifies the
+/// frontend handles the alternative hash through the same component
+/// composition pipeline.
+#[test]
+fn eddsamimcsponge_r1cs() {
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert(
+        "Ax".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "Ay".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("S".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    inputs.insert(
+        "R8x".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "R8y".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("M".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+
+    let n = circomlib_e2e_verify_fe(
+        "EdDSAMiMCSponge R1CS (enabled=0)",
+        "test/circomlib/eddsamimcsponge_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for EdDSAMiMCSponge verifier");
+}
+
+/// Edwards2Montgomery: convert a Twisted-Edwards point to its
+/// Montgomery-form representation. Single-template test on the
+/// generator point — exercises the modular-inverse division
+/// (`(1+y)/(1-y)`) the frontend lowers as a witness hint.
+#[test]
+fn montgomery_circomlib() {
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    // BabyJubJub generator point (Edwards form).
+    inputs.insert(
+        "in_0".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "in_1".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+
+    let n = circomlib_e2e_verify_fe(
+        "Edwards2Montgomery",
+        "test/circomlib/montgomery_test.circom",
+        &inputs,
+    );
+    eprintln!("  Constraints: {n}");
+    assert!(n > 0, "expected constraints for Edwards2Montgomery");
+}
+
 /// Pedersen_old(8): hash 8 bits using the legacy Pedersen
 /// template that delegates to `EscalarMul` + `EscalarMulWindow` +
 /// `EscalarMulW4Table`. The table-builder function does compile-
