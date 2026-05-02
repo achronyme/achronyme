@@ -193,8 +193,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
     /// fresh, which advances `ssa_versions` and `env` so the next iter's
     /// `Var(name)` reads point at the previous iter's `Let("name$vK")`
     /// output. The natural SSA chain falls out of standard tree walking
-    /// — same mechanism the circom Class A fix uses for var-accumulator
-    /// escape.
+    /// — the same shape the circom frontend uses to let var
+    /// accumulators escape across iterations.
     fn compile_for_eager_unroll(
         &mut self,
         var: &str,
