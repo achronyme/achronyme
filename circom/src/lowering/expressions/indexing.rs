@@ -200,8 +200,8 @@ pub(super) fn resolve_component_array_expr_full(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<String> {
-    let all = ctx.all_constants_bigval(env);
-    resolve_component_array_expr_with_constants(expr, &all, Some(ctx))
+    let lookup = super::super::utils::CtxEnvLookup::new(ctx, env);
+    resolve_component_array_expr_with_constants(expr, &lookup, Some(ctx))
 }
 
 /// Resolve a component array expression with explicit known constants.
@@ -214,9 +214,9 @@ pub(super) fn resolve_component_array_expr_full(
 /// the legacy numeric-only resolution. Recursive calls propagate the
 /// same option so multi-dim indices like `comp[0][i]` mix literals and
 /// placeholders correctly.
-fn resolve_component_array_expr_with_constants(
+fn resolve_component_array_expr_with_constants<L: super::super::utils::VarLookup>(
     expr: &Expr,
-    known_constants: &HashMap<String, super::super::utils::BigVal>,
+    known_constants: &L,
     placeholder_ctx: Option<&LoweringContext>,
 ) -> Option<String> {
     match expr {
@@ -314,8 +314,7 @@ pub(super) fn eval_index_expr(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<usize> {
-    let vars = ctx.all_constants_bigval(env);
-    let fc = super::super::utils::const_eval_with_bigvals(expr, &vars)?;
+    let fc = super::super::utils::const_eval_ctx(expr, ctx, env)?;
     Some(fc.to_u64()? as usize)
 }
 
