@@ -384,9 +384,22 @@ pub fn lift_uniform_loops<F: FieldBackend>(
     let mut local_set: HashSet<SsaVar> = HashSet::new();
     let mut out_rev: Vec<ExtendedInstruction<F>> = Vec::with_capacity(body.len());
     for inst in body.into_iter().rev() {
-        let mut total = acc.clone();
-        total.union_with(&outer_refs_padded);
-        let lifted = lift_one(inst, registry, &total)?;
+        // Computing `total = acc | outer_refs_padded` is only needed
+        // when `lift_one` actually consults `outer_refs` — that is,
+        // for `LoopUnroll` candidates. The pass-through arm ignores
+        // its `outer_refs` argument entirely. Materialising the union
+        // for every other ExtendedInstruction was the dominant cost
+        // here on heavy circuits (per-instruction clone of an
+        // `O(max_var)`-bit bitset over a body in the hundreds of
+        // thousands of positions); skip it on the common non-loop
+        // path and only build `total` for the rare loop case.
+        let lifted = if matches!(inst, ExtendedInstruction::LoopUnroll { .. }) {
+            let mut total = acc.clone();
+            total.union_with(&outer_refs_padded);
+            lift_one(inst, registry, &total)?
+        } else {
+            vec![inst]
+        };
         for new_inst in lifted.into_iter().rev() {
             local_set.clear();
             super::walker::collect_in_extinst(&new_inst, &mut local_set);
