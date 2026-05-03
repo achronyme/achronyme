@@ -18,6 +18,7 @@ memory = { path = "../memory" }
 artik = { path = "../artik" }
 num-bigint = "0.4"
 num-traits = "0.2"
+dhat = { version = "0.3", optional = true }
 
 [features]
 # Emit `ExtendedInstruction<F>` instead of `Instruction<F>` where the
@@ -27,6 +28,12 @@ num-traits = "0.2"
 # circom/lysis-frontend` or from the `[circom]` section of
 # `achronyme.toml`.
 lysis-frontend = []
+
+# Heap profiling for the `profile_*` examples via `dhat-rs`. Off by
+# default; opt in with `--features dhat-heap`. Only the example
+# binaries set `dhat::Alloc` as global allocator, so enabling this
+# feature does not affect library builds or normal `cargo test` runs.
+dhat-heap = ["dep:dhat"]
 
 [dev-dependencies]
 akronc = { path = "../akronc" }
@@ -40,3 +47,7 @@ ir-core = { path = "../ir-core" }
 tempfile = "3"
 toml = "0.8"
 sha2 = "0.10"
+
+[[example]]
+name = "profile_eddsa_verifier"
+required-features = ["dhat-heap"]
