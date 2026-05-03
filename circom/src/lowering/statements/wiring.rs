@@ -130,6 +130,13 @@ pub(super) struct PendingComponent<'a> {
     /// was indexed).
     state: WiringState,
     /// Signal inputs wired to compile-time constants.
+    ///
+    /// Two key shapes:
+    /// - Scalar wiring `comp.signal <== const_expr` records `signal → fc`.
+    /// - Indexed wiring `comp.signal[idx] <== const_expr` records
+    ///   `format!("{signal}_{idx}") → fc` (matching the layout that
+    ///   `inline_component_body_*` reads via `env.known_constants`).
+    ///
     /// When the component body is inlined, these are injected into the
     /// sub-template's `known_constants` so the lowerer emits `Const`
     /// instead of `Input`, enabling full constant propagation through
@@ -166,18 +173,33 @@ impl<'a> PendingComponent<'a> {
     /// isn't fully wired after a single element. The component must
     /// be flushed explicitly before its outputs are referenced.
     ///
-    /// When `value` is a `Const`, the constant is recorded in
-    /// `const_wired` for sub-template constant propagation.
+    /// For scalar wirings only, when `value` is a `Const`, the constant
+    /// is recorded in `const_wired` for sub-template constant
+    /// propagation. For indexed wirings the per-element constant is
+    /// recorded separately via `record_indexed_const`, since the
+    /// resolved index isn't part of the base signal name.
     pub(super) fn mark_wired(
         &mut self,
         signal: String,
         value: Option<&CircuitExpr>,
         is_indexed: bool,
     ) {
-        if let Some(CircuitExpr::Const(fc)) = value {
-            self.const_wired.insert(signal.clone(), *fc);
+        if !is_indexed {
+            if let Some(CircuitExpr::Const(fc)) = value {
+                self.const_wired.insert(signal.clone(), *fc);
+            }
         }
         self.state.mark(signal, is_indexed);
+    }
+
+    /// Record a constant indexed wiring: `comp.signal_base[idx] <== fc`.
+    ///
+    /// Stored as `format!("{signal_base}_{idx}") → fc` so that
+    /// `inline_component_body_with_const_inputs` can inject it into the
+    /// sub-template's `known_constants` under the same key the indexed
+    /// signal lookup uses.
+    pub(super) fn record_indexed_const(&mut self, signal_base: &str, idx: u64, fc: FieldConst) {
+        self.const_wired.insert(format!("{signal_base}_{idx}"), fc);
     }
 
     /// Returns `true` when all declared inputs have been wired AND
@@ -197,10 +219,12 @@ impl<'a> PendingComponent<'a> {
     /// Inline this pending component's body into `nodes`, propagating
     /// constants into `env`.
     ///
-    /// Merges `const_wired` (recorded during `mark_wired`) with any
-    /// constants found in already-emitted `Let`/`WitnessHint` nodes
-    /// for this component (the indexed-wiring path stores constants
-    /// in nodes rather than in `const_wired`).
+    /// `const_wired` is the authoritative source of constant input
+    /// values: scalar wirings populate it via `mark_wired`, indexed
+    /// constant wirings via `record_indexed_const`. The substitution
+    /// lowerer also stamps the corresponding `Let`/`LetIndexed` nodes
+    /// into the parent vec, but those are for downstream consumers,
+    /// not for re-discovery here.
     ///
     /// `span` is used for error attribution. Callers triggered from a
     /// wiring statement pass that statement's span; cleanup paths pass
@@ -213,14 +237,12 @@ impl<'a> PendingComponent<'a> {
         env: &mut LoweringEnv,
         span: &diagnostics::Span,
     ) -> Result<(), LoweringError> {
-        let mut const_inputs = self.const_wired.clone();
-        extract_const_inputs_from_nodes(comp_name, nodes, &mut const_inputs);
         let body = inline_component_body_with_const_inputs(
             comp_name,
             self.template,
             &self.template_args,
             &self.array_args,
-            &const_inputs,
+            &self.const_wired,
             ctx,
             span,
         )?;
@@ -257,68 +279,6 @@ pub(super) fn flush_specific_component<'a>(
         comp.inline_into(comp_name, nodes, ctx, env, &span)?;
     }
     Ok(())
-}
-
-/// Scan existing nodes for Let/LetIndexed/WitnessHint/WitnessHintIndexed
-/// with name `comp_name.signal_name` and constant values.
-/// Extracts `signal_name → FieldConst` pairs.
-///
-/// For indexed nodes (e.g., `LetIndexed { array: "comp.base", index: Const(0), value: Const(fc) }`),
-/// the element name is constructed as `base_0`.
-fn extract_const_inputs_from_nodes(
-    comp_name: &str,
-    nodes: &[CircuitNode],
-    const_inputs: &mut HashMap<String, FieldConst>,
-) {
-    let prefix = format!("{comp_name}.");
-    for node in nodes {
-        match node {
-            CircuitNode::Let { name, value, .. } => {
-                if let Some(signal) = name.strip_prefix(&prefix) {
-                    if let Some(fc) = try_fold_const(value) {
-                        const_inputs.insert(signal.to_string(), fc);
-                    }
-                }
-            }
-            CircuitNode::LetIndexed {
-                array,
-                index,
-                value,
-                ..
-            } => {
-                if let Some(signal_base) = array.strip_prefix(&prefix) {
-                    if let (Some(idx_fc), Some(val_fc)) =
-                        (try_fold_const(index), try_fold_const(value))
-                    {
-                        if let Some(idx) = idx_fc.to_u64() {
-                            const_inputs.insert(format!("{signal_base}_{idx}"), val_fc);
-                        }
-                    }
-                }
-            }
-            CircuitNode::WitnessHint { name, hint, .. } => {
-                if let Some(signal) = name.strip_prefix(&prefix) {
-                    if let Some(fc) = try_fold_const(hint) {
-                        const_inputs.insert(signal.to_string(), fc);
-                    }
-                }
-            }
-            CircuitNode::WitnessHintIndexed {
-                array, index, hint, ..
-            } => {
-                if let Some(signal_base) = array.strip_prefix(&prefix) {
-                    if let (Some(idx_fc), Some(val_fc)) =
-                        (try_fold_const(index), try_fold_const(hint))
-                    {
-                        if let Some(idx) = idx_fc.to_u64() {
-                            const_inputs.insert(format!("{signal_base}_{idx}"), val_fc);
-                        }
-                    }
-                }
-            }
-            _ => {}
-        }
-    }
 }
 
 /// Scan a value expression for references to pending component outputs.
