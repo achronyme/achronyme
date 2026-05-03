@@ -72,6 +72,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use fixedbitset::FixedBitSet;
 use lysis::bytecode::encoding::encode_opcode;
 use lysis::bytecode::Opcode;
 use lysis::lower::{AllocError, RegAllocator, RegId};
@@ -420,8 +421,8 @@ impl<F: FieldBackend> Walker<F> {
     /// the entry point and own the lifted result thereafter.
     pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
         let mut registry = TemplateRegistry::<F>::new();
-        let lifted =
-            lift_uniform_loops(body.to_vec(), &mut registry, &HashSet::new()).map_err(|e| {
+        let lifted = lift_uniform_loops(body.to_vec(), &mut registry, &FixedBitSet::new())
+            .map_err(|e| {
                 // The lift's frame/template-space errors are walker-relevant
                 // — surface them through the existing error channel rather
                 // than silently dropping the lift.

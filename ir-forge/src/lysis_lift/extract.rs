@@ -33,6 +33,7 @@
 
 use std::collections::{BTreeSet, HashMap, HashSet};
 
+use fixedbitset::FixedBitSet;
 use memory::{FieldBackend, FieldElement};
 
 use super::bta::{classify_loop_unroll, BindingTime};
@@ -339,37 +340,74 @@ pub fn extract_template<F: FieldBackend>(
 pub fn lift_uniform_loops<F: FieldBackend>(
     body: Vec<ExtendedInstruction<F>>,
     registry: &mut TemplateRegistry<F>,
-    outer_refs: &HashSet<SsaVar>,
+    outer_refs: &FixedBitSet,
 ) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
-    // Per-position suffix references: `suffix_refs[i]` holds the union
-    // of SsaVars referenced by `body[i+1..]`. Combined with the
-    // caller's `outer_refs`, this is exactly the set of vars whose
+    // Per-position suffix references: `suffix_refs[i]` is the bitset of
+    // `SsaVar` indices referenced by `body[i+1..]`. Combined with the
+    // caller's `outer_refs`, that's exactly the set of vars whose
     // bindings must survive past the i-th instruction in the enclosing
-    // walker frame. A Uniform candidate at position `i` may not seal
+    // walker frame — a Uniform candidate at position `i` may not seal
     // any of those vars inside a sibling-invisible template frame.
-    let mut suffix_refs: Vec<HashSet<SsaVar>> = vec![HashSet::new(); body.len()];
-    let mut acc: HashSet<SsaVar> = HashSet::new();
-    for (i, inst) in body.iter().enumerate().rev() {
-        suffix_refs[i] = acc.clone();
-        super::walker::collect_in_extinst(inst, &mut acc);
+    //
+    // The triangular `suffix_refs` storage was the dominant heap-peak
+    // contributor on EdDSAVerifier-class circuits (over 9 GB of live
+    // `HashSet<SsaVar>` clones at the lift's peak). `SsaVar` is a
+    // dense, monotonically allocated `u32`, so a width-tight
+    // `FixedBitSet` is a near-zero-waste substitute and shrinks each
+    // suffix_refs entry from `~7 bytes/var` (hashbrown overhead) to
+    // `1 bit/var`.
+    let mut max_var: usize = outer_refs.len();
+    {
+        let mut tmp: HashSet<SsaVar> = HashSet::new();
+        for inst in &body {
+            super::walker::collect_in_extinst(inst, &mut tmp);
+        }
+        for v in &tmp {
+            let idx = v.0 as usize;
+            if idx >= max_var {
+                max_var = idx + 1;
+            }
+        }
     }
+    let outer_refs_padded = pad_to(outer_refs, max_var);
+
+    let mut suffix_refs: Vec<FixedBitSet> = Vec::with_capacity(body.len());
+    let mut acc = FixedBitSet::with_capacity(max_var);
+    let mut local_set: HashSet<SsaVar> = HashSet::new();
+    for inst in body.iter().rev() {
+        suffix_refs.push(acc.clone());
+        local_set.clear();
+        super::walker::collect_in_extinst(inst, &mut local_set);
+        for v in &local_set {
+            acc.insert(v.0 as usize);
+        }
+    }
+    suffix_refs.reverse();
 
     let mut out = Vec::with_capacity(body.len());
     for (i, inst) in body.into_iter().enumerate() {
-        let total: HashSet<SsaVar> = suffix_refs[i]
-            .iter()
-            .chain(outer_refs.iter())
-            .copied()
-            .collect();
+        let mut total = suffix_refs[i].clone();
+        total.union_with(&outer_refs_padded);
         out.extend(lift_one(inst, registry, &total)?);
     }
     Ok(out)
 }
 
+/// Return a clone of `bs` grown to at least `len` bits. Used to keep
+/// successive bitset operations size-matched without mutating the
+/// caller's set in place.
+fn pad_to(bs: &FixedBitSet, len: usize) -> FixedBitSet {
+    let mut out = bs.clone();
+    if out.len() < len {
+        out.grow(len);
+    }
+    out
+}
+
 fn lift_one<F: FieldBackend>(
     inst: ExtendedInstruction<F>,
     registry: &mut TemplateRegistry<F>,
-    outer_refs: &HashSet<SsaVar>,
+    outer_refs: &FixedBitSet,
 ) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
     match inst {
         ExtendedInstruction::LoopUnroll {
@@ -417,7 +455,11 @@ fn lift_one<F: FieldBackend>(
                         _ => unreachable!("loop_unroll constructed above as LoopUnroll"),
                     };
                     let body_defined = super::walker::collect_defined_ssa_vars(body_inner);
-                    if !body_defined.is_disjoint(outer_refs) {
+                    let intersects = body_defined.iter().any(|v| {
+                        let idx = v.0 as usize;
+                        idx < outer_refs.len() && outer_refs.contains(idx)
+                    });
+                    if intersects {
                         return Ok(vec![loop_unroll]);
                     }
 
@@ -785,7 +827,7 @@ mod tests {
             .into(),
         ];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body.clone(), &mut reg, &HashSet::new()).unwrap();
+        let lifted = lift_uniform_loops(body.clone(), &mut reg, &FixedBitSet::new()).unwrap();
         assert_eq!(lifted.len(), 2);
         assert!(matches!(lifted[0], ExtendedInstruction::Plain(_)));
         assert!(matches!(lifted[1], ExtendedInstruction::Plain(_)));
@@ -810,7 +852,7 @@ mod tests {
             .into()],
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
 
         assert_eq!(lifted.len(), 2, "expected TemplateBody + TemplateCall");
         let (id_in_body, body_inner) = match &lifted[0] {
@@ -885,7 +927,7 @@ mod tests {
             .into()],
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
 
         assert!(reg.is_empty(), "no template allocated for DataDependent");
         assert_eq!(lifted.len(), 1);
@@ -923,7 +965,7 @@ mod tests {
             body: inner_body,
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
 
         assert!(reg.is_empty(), "no template allocated when lift overflows");
         assert_eq!(lifted.len(), 1, "single inline LoopUnroll fallback");
@@ -966,7 +1008,7 @@ mod tests {
             }],
         }];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
 
         // Inner produced one template; outer may have produced
         // another depending on how its inner lifts.
@@ -1004,7 +1046,7 @@ mod tests {
             },
         ];
         let mut reg = TemplateRegistry::<Bn254Fr>::new();
-        let lifted = lift_uniform_loops(body, &mut reg, &HashSet::new()).unwrap();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
         assert_eq!(lifted.len(), 4, "two TemplateBody + two TemplateCall pairs");
         assert_eq!(reg.len(), 2, "two distinct template ids");
         let ids: Vec<TemplateId> = lifted
