@@ -169,8 +169,16 @@ impl From<RoundTripError> for LysisInstantiateError {
 fn lower_extended_through_lysis<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
 ) -> Result<IrProgram<F>, LysisInstantiateError> {
+    let ExtendedIrProgram {
+        body,
+        next_var,
+        var_names,
+        var_types,
+        var_spans,
+        input_spans,
+    } = extended;
     let walker = Walker::<F>::new(expected_family::<F>());
-    let bytecode = walker.lower(&extended.body).map_err(RoundTripError::Walk)?;
+    let bytecode = walker.lower(body).map_err(RoundTripError::Walk)?;
 
     let bytes = lysis::encode(&bytecode);
     let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
@@ -191,13 +199,13 @@ fn lower_extended_through_lysis<F: FieldBackend>(
     // missing entries gracefully (Option<T> returns).
     let mut out = IrProgram::<F>::new();
     let watermark = ssa_watermark(&instructions);
-    let final_next_var = watermark.max(extended.next_var);
+    let final_next_var = watermark.max(next_var);
     out.set_instructions(instructions);
     out.set_next_var(final_next_var);
-    out.var_names = extended.var_names;
-    out.var_types = extended.var_types;
-    out.var_spans = extended.var_spans;
-    out.input_spans = extended.input_spans;
+    out.var_names = var_names;
+    out.var_types = var_types;
+    out.var_spans = var_spans;
+    out.input_spans = input_spans;
     Ok(out)
 }
 

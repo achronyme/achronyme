@@ -417,28 +417,28 @@ impl<F: FieldBackend> Walker<F> {
     /// gets replaced with a `TemplateBody` + `TemplateCall` pair so
     /// the bytecode emission path can isolate wide single instructions
     /// (`Decompose(254)`, `BinSum(32, n)`) into their own 255-slot
-    /// frames. The pass uses `Vec` ownership; we clone `body` once at
-    /// the entry point and own the lifted result thereafter.
-    pub fn lower(mut self, body: &[ExtendedInstruction<F>]) -> Result<Program<F>, WalkError> {
+    /// frames. `body` is consumed: `lift_uniform_loops` mutates it in
+    /// place via owned `Vec`, and the lifted form fully replaces the
+    /// caller's body before any per-instruction work begins.
+    pub fn lower(mut self, body: Vec<ExtendedInstruction<F>>) -> Result<Program<F>, WalkError> {
         let mut registry = TemplateRegistry::<F>::new();
-        let lifted = lift_uniform_loops(body.to_vec(), &mut registry, &FixedBitSet::new())
-            .map_err(|e| {
-                // The lift's frame/template-space errors are walker-relevant
-                // — surface them through the existing error channel rather
-                // than silently dropping the lift.
-                match e {
-                    ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
-                        kind: "lift_uniform_loops.frame_size",
-                        limit: MAX_FRAME_SIZE,
-                        got: requested,
-                    },
-                    ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
-                        kind: "lift_uniform_loops.template_id",
-                        limit: u32::from(u16::MAX),
-                        got: u32::from(u16::MAX) + 1,
-                    },
-                }
-            })?;
+        let lifted = lift_uniform_loops(body, &mut registry, &FixedBitSet::new()).map_err(|e| {
+            // The lift's frame/template-space errors are walker-relevant
+            // — surface them through the existing error channel rather
+            // than silently dropping the lift.
+            match e {
+                ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
+                    kind: "lift_uniform_loops.frame_size",
+                    limit: MAX_FRAME_SIZE,
+                    got: requested,
+                },
+                ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
+                    kind: "lift_uniform_loops.template_id",
+                    limit: u32::from(u16::MAX),
+                    got: u32::from(u16::MAX) + 1,
+                },
+            }
+        })?;
 
         // Lazy `one` loading: deferred to first desugaring that needs
         // it, so wide single-instruction templates (Decompose, Or)
@@ -3165,7 +3165,7 @@ mod tests {
     /// the materialized `Vec<InstructionKind>`.
     fn run(body: &[ExtendedInstruction<Bn254Fr>]) -> Vec<lysis::InstructionKind<Bn254Fr>> {
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(body).expect("lower");
+        let program = walker.lower(body.to_vec()).expect("lower");
         let mut sink = InterningSink::<Bn254Fr>::new();
         execute(&program, &[], &LysisConfig::default(), &mut sink).expect("exec");
         sink.materialize()
@@ -3473,7 +3473,7 @@ mod tests {
             },
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
+        let err = walker.lower(body.clone()).expect_err("should refuse");
         assert!(
             matches!(err, WalkError::SymbolicIndexedEffectNotEmittable),
             "got {err:?}"
@@ -3664,7 +3664,7 @@ mod tests {
             },
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
+        let err = walker.lower(body.clone()).expect_err("should refuse");
         assert!(
             matches!(err, WalkError::SymbolicArrayReadNotEmittable),
             "got {err:?}"
@@ -3866,7 +3866,7 @@ mod tests {
             },
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
+        let err = walker.lower(body.clone()).expect_err("should refuse");
         assert!(
             matches!(err, WalkError::SymbolicShiftNotEmittable),
             "got {err:?}"
@@ -3924,7 +3924,9 @@ mod tests {
             outputs: vec![ssa(0)],
         }];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse outputs");
+        let err = walker
+            .lower(body.clone())
+            .expect_err("should refuse outputs");
         assert_eq!(err, WalkError::TemplateOutputsNotSupported);
     }
 
@@ -3939,7 +3941,9 @@ mod tests {
             body: vec![],
         }];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse mismatch");
+        let err = walker
+            .lower(body.clone())
+            .expect_err("should refuse mismatch");
         assert!(matches!(
             err,
             WalkError::TemplateCapturesMismatch {
@@ -3977,7 +3981,7 @@ mod tests {
         ];
 
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower OK");
+        let program = walker.lower(body.clone()).expect("lower OK");
         // Lift produced a template; walker has root + lifted = 2.
         assert_eq!(program.templates.len(), 2);
         assert_eq!(program.templates[1].n_params, 1, "outer_input captured");
@@ -4026,7 +4030,7 @@ mod tests {
         ];
 
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower OK");
+        let program = walker.lower(body.clone()).expect("lower OK");
         // Templates: 0 (root wrapper) + 1 (lifted) = 2.
         assert_eq!(program.templates.len(), 2);
         // Template 1 carries n_params=1 (the captured outer input).
@@ -4043,7 +4047,7 @@ mod tests {
             body: vec![],
         }];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
+        let err = walker.lower(body.clone()).expect_err("should refuse");
         assert!(matches!(err, WalkError::NegativeLoopBound { .. }));
     }
 
@@ -4458,9 +4462,7 @@ mod tests {
             }),
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker
-            .lower(&body)
-            .expect_err("max_bits > u8 should refuse");
+        let err = walker.lower(body).expect_err("max_bits > u8 should refuse");
         assert!(matches!(
             err,
             WalkError::OperandOutOfRange {
@@ -4485,7 +4487,7 @@ mod tests {
             }),
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let err = walker.lower(&body).expect_err("should refuse");
+        let err = walker.lower(body.clone()).expect_err("should refuse");
         assert_eq!(
             err,
             WalkError::OperandOutOfRange {
@@ -4524,7 +4526,7 @@ mod tests {
             program_bytes: vec![0xFF],
         })];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
 
         let classic_count = program
             .body
@@ -4556,7 +4558,7 @@ mod tests {
             program_bytes: vec![0xFF],
         })];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
 
         let classic_count = program
             .body
@@ -4605,7 +4607,7 @@ mod tests {
             }),
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
 
         let load_heap_count = program
             .body
@@ -4655,7 +4657,7 @@ mod tests {
         }));
 
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
         // ≥ 2 templates means the split fired at least once.
         assert!(
             program.templates.len() >= 2,
@@ -4763,7 +4765,7 @@ mod tests {
         ];
 
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
 
         assert!(
             program.templates.len() >= 2,
@@ -4837,7 +4839,7 @@ mod tests {
             }),
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
         assert_eq!(
             program.templates.len(),
             1,
@@ -5053,7 +5055,7 @@ mod tests {
             }),
         ];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let program = walker.lower(&body).expect("lower");
+        let program = walker.lower(body.clone()).expect("lower");
         assert_eq!(program.header.heap_size_hint, 0);
         let heap_ops = program
             .body

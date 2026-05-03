@@ -309,7 +309,7 @@ proptest! {
         );
 
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        match walker.lower(&body) {
+        match walker.lower(body.clone()) {
             Ok(_) => {}
             Err(e) => {
                 prop_assert!(
@@ -353,7 +353,7 @@ fn walker_accepts_trivial_arith() {
     ];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let result = walker.lower(&body);
+    let result = walker.lower(body.clone());
     assert!(
         result.is_ok(),
         "Walker rejected trivial arith sequence: {result:?}"
@@ -386,7 +386,7 @@ fn walker_accepts_simple_loop_unroll() {
     ];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let result = walker.lower(&body);
+    let result = walker.lower(body.clone());
     match &result {
         Ok(_) => {}
         Err(e) => assert!(

@@ -58,7 +58,7 @@ fn walker_emits_assert_eq_msg_when_message_present() {
     ];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let program = walker.lower(&body).expect("walker lower");
+    let program = walker.lower(body.clone()).expect("walker lower");
 
     let mut saw_msg_opcode = false;
     let mut saw_plain_opcode = false;
@@ -113,7 +113,7 @@ fn walker_emits_plain_assert_eq_when_no_message() {
     ];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let program = walker.lower(&body).expect("walker lower");
+    let program = walker.lower(body.clone()).expect("walker lower");
 
     let saw_msg_opcode = program
         .body
@@ -151,7 +151,7 @@ fn walker_assert_with_message_routes_through_msg_opcode() {
     ];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let program = walker.lower(&body).expect("walker lower");
+    let program = walker.lower(body.clone()).expect("walker lower");
 
     let mut found = false;
     for instr in &program.body {

@@ -65,7 +65,7 @@ proptest! {
     ) {
         let body = build_const_use_chain(n_consts, n_uses);
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let Ok(program) = walker.lower(&body) else { return Ok(()); };
+        let Ok(program) = walker.lower(body.clone()) else { return Ok(()); };
 
         let mut slot_writes: std::collections::HashMap<u16, u32> =
             std::collections::HashMap::new();
@@ -94,7 +94,7 @@ proptest! {
     ) {
         let body = build_const_use_chain(n_consts, n_uses);
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let Ok(program) = walker.lower(&body) else { return Ok(()); };
+        let Ok(program) = walker.lower(body.clone()) else { return Ok(()); };
 
         let store_count = count_opcodes(&program, |op| matches!(op, Opcode::StoreHeap { .. }));
         prop_assert_eq!(
@@ -117,7 +117,7 @@ proptest! {
         // split trigger. No live set above 48 should ever materialise.
         let body = build_const_use_chain(n_consts, n_uses);
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-        let Ok(program) = walker.lower(&body) else { return Ok(()); };
+        let Ok(program) = walker.lower(body.clone()) else { return Ok(()); };
 
         let heap_ops =
             count_opcodes(&program, |op| matches!(op, Opcode::StoreHeap { .. } | Opcode::LoadHeap { .. }));

@@ -112,7 +112,7 @@ fn num2bits_4() -> Vec<ExtendedInstruction<Bn254Fr>> {
 fn num2bits_4_walker_roundtrip_matches_reference_shape() {
     let body = num2bits_4();
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let program = walker.lower(&body).expect("lower ok");
+    let program = walker.lower(body.clone()).expect("lower ok");
 
     let mut sink = InterningSink::<Bn254Fr>::new();
     execute(&program, &[], &LysisConfig::default(), &mut sink).expect("exec ok");
@@ -232,7 +232,7 @@ fn walker_loop_unroll_produces_same_instructions_as_manual_unrolling() {
     }];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let program = walker.lower(&loop_body).expect("lower");
+    let program = walker.lower(loop_body).expect("lower");
     let mut sink = InterningSink::<Bn254Fr>::new();
     execute(&program, &[], &LysisConfig::default(), &mut sink).expect("exec");
     let flat = sink.materialize();

@@ -120,7 +120,7 @@ pub fn lysis_roundtrip<F: FieldBackend>(
         .collect();
 
     let walker = Walker::<F>::new(expected_family::<F>());
-    let bytecode = walker.lower(&body)?;
+    let bytecode = walker.lower(body)?;
 
     // Defensive wire-format round-trip. Validate is debug-only (the
     // executor enforces well-formedness invariants at runtime, so

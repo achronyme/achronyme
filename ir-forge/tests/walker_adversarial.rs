@@ -69,7 +69,7 @@ fn adversarial_sequential_cold_vars_overflow_v1_frame() {
     })];
 
     let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
-    let result = walker.lower(&body);
+    let result = walker.lower(body.clone());
     // Once scratch-reg recycling lands and this is flipped to
     // `#[test]`, the assertion becomes `result.is_err()` (current
     // walker fails) or `result.is_ok()` after recycling (passes).
