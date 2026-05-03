@@ -49,9 +49,8 @@ pub(super) fn lower_for_loop<'a>(
             // Fall back to param-aware evaluation for the common pattern
             // `for (var k = nBits+1; ...)` where `nBits` is a template
             // parameter — circomlib SHA256 uses this in padding loops.
-            let all = ctx.all_constants_bigval(env);
             let start = const_eval_u64(init_expr)
-                .or_else(|| super::super::utils::const_eval_with_bigvals(init_expr, &all)?.to_u64())
+                .or_else(|| super::super::utils::const_eval_ctx(init_expr, ctx, env)?.to_u64())
                 .ok_or_else(|| {
                     LoweringError::with_code(
                         "for loop init must be a compile-time constant",
@@ -75,9 +74,8 @@ pub(super) fn lower_for_loop<'a>(
                     span,
                 )
             })?;
-            let all = ctx.all_constants_bigval(env);
             let start = const_eval_u64(value)
-                .or_else(|| super::super::utils::const_eval_with_bigvals(value, &all)?.to_u64())
+                .or_else(|| super::super::utils::const_eval_ctx(value, ctx, env)?.to_u64())
                 .ok_or_else(|| {
                     LoweringError::with_code(
                         "for loop init must be a compile-time constant",
@@ -1140,18 +1138,15 @@ fn resolve_bound_to_u64(
                     span,
                 )
             }),
-        LoopBound::Expr(expr) => {
-            let all = ctx.all_constants_bigval(env);
-            super::super::utils::const_eval_with_bigvals(expr, &all)
-                .and_then(|fc| fc.to_u64())
-                .ok_or_else(|| {
-                    LoweringError::new(
-                        "component array loop bound expression must be resolvable \
-                         at compile time",
-                        span,
-                    )
-                })
-        }
+        LoopBound::Expr(expr) => super::super::utils::const_eval_ctx(expr, ctx, env)
+            .and_then(|fc| fc.to_u64())
+            .ok_or_else(|| {
+                LoweringError::new(
+                    "component array loop bound expression must be resolvable \
+                     at compile time",
+                    span,
+                )
+            }),
     }
 }
 

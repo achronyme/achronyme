@@ -19,7 +19,7 @@ use crate::ast::Expr;
 #[allow(unused_imports)]
 pub use bigval::BigVal;
 #[allow(unused_imports)]
-pub use eval::{eval_expr, eval_function, eval_function_to_value};
+pub use eval::{eval_expr, eval_function, eval_function_to_value, VarLookup};
 #[allow(unused_imports)]
 pub use eval_value::{EvalValue, PrecomputeResult};
 #[allow(unused_imports)]
@@ -99,15 +99,74 @@ pub fn const_eval_with_params(
 /// Evaluate a Circom expression as `FieldConst` using a pre-built
 /// `HashMap<String, BigVal>` of known variables.
 ///
-/// Sister of [`const_eval_with_params`] for hot statement-lowering
-/// paths. The caller is expected to have built `vars` once via
-/// [`crate::lowering::context::LoweringContext::all_constants_bigval`]
-/// (or an equivalent merge) so each eval avoids the per-call
-/// `FieldConst → BigVal` clone+convert.
+/// Sister of [`const_eval_with_params`] for callers that already hold
+/// a merged BigVal map. Hot statement-lowering paths should prefer
+/// [`const_eval_ctx`] instead, which avoids materialising the merge.
 pub fn const_eval_with_bigvals(expr: &Expr, vars: &HashMap<String, BigVal>) -> Option<FieldConst> {
     let empty_fns = HashMap::new();
     let empty_arrays: HashMap<String, eval_value::EvalValue> = HashMap::new();
     eval::eval_expr(expr, vars, &empty_arrays, &empty_fns, 0).map(|v| v.to_field_const())
+}
+
+/// Lookup adaptor that queries `LoweringContext::param_values`,
+/// `LoweringEnv::known_constants`, and `LoweringEnv::bound_const_vars`
+/// in that order without merging them into a temporary HashMap.
+///
+/// Hot lowering paths (`eval_index_expr`, ternary fold, loop bounds,
+/// indexed substitution lhs) build one of these per evaluation and
+/// hand it to [`eval_expr`] / [`const_eval_ctx`]. Each Ident lookup
+/// walks the three source maps in precedence order:
+/// `param_values` shadows `known_constants`, which shadows
+/// `bound_const_vars`.
+pub struct CtxEnvLookup<'a, 'ctx> {
+    ctx: &'a super::context::LoweringContext<'ctx>,
+    env: &'a super::env::LoweringEnv,
+}
+
+impl<'a, 'ctx> CtxEnvLookup<'a, 'ctx> {
+    #[inline]
+    pub fn new(
+        ctx: &'a super::context::LoweringContext<'ctx>,
+        env: &'a super::env::LoweringEnv,
+    ) -> Self {
+        Self { ctx, env }
+    }
+}
+
+impl<'a, 'ctx> VarLookup for CtxEnvLookup<'a, 'ctx> {
+    #[inline]
+    fn get_var(&self, name: &str) -> Option<BigVal> {
+        if let Some(&fc) = self.ctx.param_values.get(name) {
+            return Some(BigVal::from_field_const(fc));
+        }
+        if let Some(&fc) = self.env.known_constants.get(name) {
+            return Some(BigVal::from_field_const(fc));
+        }
+        if let Some(&fc) = self.env.bound_const_vars.get(name) {
+            return Some(BigVal::from_field_const(fc));
+        }
+        None
+    }
+}
+
+/// Evaluate a Circom expression as `FieldConst` against a
+/// [`LoweringContext`] + [`LoweringEnv`] without materialising a
+/// merged variable map.
+///
+/// The hot statement-lowering entry point. Each `Ident` resolution
+/// walks `param_values`, `known_constants`, and `bound_const_vars` in
+/// precedence order; expressions with few identifiers pay only the
+/// per-name lookup cost rather than rebuilding a HashMap of every
+/// constant in scope.
+pub fn const_eval_ctx(
+    expr: &Expr,
+    ctx: &super::context::LoweringContext<'_>,
+    env: &super::env::LoweringEnv,
+) -> Option<FieldConst> {
+    let lookup = CtxEnvLookup::new(ctx, env);
+    let empty_fns = HashMap::new();
+    let empty_arrays: HashMap<String, eval_value::EvalValue> = HashMap::new();
+    eval::eval_expr(expr, &lookup, &empty_arrays, &empty_fns, 0).map(|v| v.to_field_const())
 }
 
 #[cfg(test)]
@@ -134,6 +193,38 @@ mod tests {
     fn extract_ident() {
         let expr = parse_expr("foo");
         assert_eq!(extract_ident_name(&expr), Some("foo".to_string()));
+    }
+
+    #[test]
+    fn ctx_env_lookup_precedence() {
+        // param_values shadow known_constants which shadow bound_const_vars.
+        use crate::lowering::context::LoweringContext;
+        use crate::lowering::env::LoweringEnv;
+        let prog = parse_program("template Foo() {}");
+        let mut ctx = LoweringContext::from_program(&prog);
+        let mut env = LoweringEnv::new();
+
+        let p = FieldConst::from_decimal_str("11").unwrap();
+        let k = FieldConst::from_decimal_str("22").unwrap();
+        let b = FieldConst::from_decimal_str("33").unwrap();
+
+        // bound_const_vars only
+        env.bound_const_vars.insert("x".to_string(), b);
+        let lookup = CtxEnvLookup::new(&ctx, &env);
+        assert_eq!(lookup.get_var("x"), Some(BigVal::from_field_const(b)));
+
+        // known_constants overrides bound_const_vars
+        env.known_constants.insert("x".to_string(), k);
+        let lookup = CtxEnvLookup::new(&ctx, &env);
+        assert_eq!(lookup.get_var("x"), Some(BigVal::from_field_const(k)));
+
+        // param_values overrides known_constants
+        ctx.param_values.insert("x".to_string(), p);
+        let lookup = CtxEnvLookup::new(&ctx, &env);
+        assert_eq!(lookup.get_var("x"), Some(BigVal::from_field_const(p)));
+
+        // missing identifier yields None
+        assert_eq!(lookup.get_var("missing"), None);
     }
 
     #[test]
