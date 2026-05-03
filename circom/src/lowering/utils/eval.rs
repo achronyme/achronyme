@@ -15,6 +15,23 @@ use super::bigval::BigVal;
 use super::eval_value::{EvalValue, StmtResult};
 use super::extract_ident_name;
 
+/// Read-only lookup for compile-time scalar variables.
+///
+/// `eval_expr` and `eval_expr_value` are generic over this trait so
+/// callers can avoid building an intermediate `HashMap<String, BigVal>`
+/// when the source-of-truth lives in some other shape (e.g. spread
+/// across `LoweringContext` + `LoweringEnv`).
+pub trait VarLookup {
+    fn get_var(&self, name: &str) -> Option<BigVal>;
+}
+
+impl VarLookup for HashMap<String, BigVal> {
+    #[inline]
+    fn get_var(&self, name: &str) -> Option<BigVal> {
+        self.get(name).copied()
+    }
+}
+
 /// Maximum loop iterations during compile-time function evaluation.
 const MAX_EVAL_ITERATIONS: usize = 10_000;
 
@@ -377,9 +394,9 @@ fn assign_nested(slot: &mut EvalValue, indices: &[usize], rhs: EvalValue) -> Opt
 }
 
 /// Evaluate an expression to an [`EvalValue`] (scalar, array, or raw expr).
-pub(super) fn eval_expr_value(
+pub(super) fn eval_expr_value<L: VarLookup>(
     expr: &Expr,
-    vars: &HashMap<String, BigVal>,
+    vars: &L,
     arrays: &HashMap<String, EvalValue>,
     functions: &HashMap<&str, &FunctionDef>,
     depth: usize,
@@ -389,7 +406,7 @@ pub(super) fn eval_expr_value(
             if let Some(val) = arrays.get(name.as_str()) {
                 return Some(val.clone());
             }
-            vars.get(name.as_str()).copied().map(EvalValue::Scalar)
+            vars.get_var(name.as_str()).map(EvalValue::Scalar)
         }
         Expr::ArrayLit { elements, .. } => {
             let vals: Vec<EvalValue> = elements
@@ -466,9 +483,9 @@ pub(super) fn eval_expr_value(
     }
 }
 
-pub fn eval_expr(
+pub fn eval_expr<L: VarLookup>(
     expr: &Expr,
-    vars: &HashMap<String, BigVal>,
+    vars: &L,
     arrays: &HashMap<String, EvalValue>,
     functions: &HashMap<&str, &FunctionDef>,
     depth: usize,
@@ -487,7 +504,7 @@ pub fn eval_expr(
             let fc = ir_forge::types::FieldConst::from_hex_str(value)?;
             Some(BigVal::from_field_const(fc))
         }
-        Expr::Ident { name, .. } => vars.get(name.as_str()).copied(),
+        Expr::Ident { name, .. } => vars.get_var(name.as_str()),
         Expr::BinOp { op, lhs, rhs, .. } => {
             let l = eval_expr(lhs, vars, arrays, functions, depth)?;
             let r = eval_expr(rhs, vars, arrays, functions, depth)?;
@@ -507,7 +524,7 @@ pub fn eval_expr(
         }
         Expr::PostfixOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
             if let Expr::Ident { name, .. } = operand.as_ref() {
-                vars.get(name.as_str()).copied()
+                vars.get_var(name.as_str())
             } else {
                 None
             }
