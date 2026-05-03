@@ -51,3 +51,7 @@ sha2 = "0.10"
 [[example]]
 name = "profile_eddsa_verifier"
 required-features = ["dhat-heap"]
+
+[[example]]
+name = "profile_sha256_64"
+required-features = ["dhat-heap"]
