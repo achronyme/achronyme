@@ -27,7 +27,7 @@ use super::targets::{
     extract_assign_target_ctx, extract_target_name, linearize_multi_index,
     try_resolve_component_array_target, AssignTarget,
 };
-use super::wiring::{maybe_trigger_inline, PendingComponent};
+use super::wiring::{extract_component_wiring_with_env, maybe_trigger_inline, PendingComponent};
 
 /// Lower a substitution statement (`target op value`).
 ///
@@ -104,6 +104,9 @@ pub(super) fn lower_substitution<'a>(
                     ) {
                         if let Some(idx) = idx_fc.to_u64() {
                             env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                            propagate_indexed_const_to_pending(
+                                target, idx, val_fc, env, ctx, pending,
+                            );
                         }
                     }
                     nodes.push(CircuitNode::LetIndexed {
@@ -158,6 +161,9 @@ pub(super) fn lower_substitution<'a>(
                     ) {
                         if let Some(idx) = idx_fc.to_u64() {
                             env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                            propagate_indexed_const_to_pending(
+                                target, idx, val_fc, env, ctx, pending,
+                            );
                         }
                     }
                     nodes.push(CircuitNode::WitnessHintIndexed {
@@ -193,6 +199,32 @@ pub(super) fn lower_substitution<'a>(
     }
 
     Ok(())
+}
+
+/// If `target` resolves to a pending component's indexed signal input
+/// and the index + value are compile-time constants, record
+/// `(signal_base, idx, fc)` directly in the component's `const_wired`
+/// map so the sub-template body sees the constant during inlining.
+///
+/// This is the indexed counterpart of the scalar path `mark_wired`
+/// already covers. Without this, the only way for a sub-template to
+/// see indexed constants would be a post-hoc scan of the parent's
+/// `nodes` accumulator, which is quadratic in the parent template's
+/// size when components are long-lived (e.g. SHA-256's per-block
+/// `sha256compression[i]`).
+fn propagate_indexed_const_to_pending(
+    target: &Expr,
+    idx: u64,
+    val_fc: FieldConst,
+    env: &LoweringEnv,
+    ctx: &LoweringContext<'_>,
+    pending: &mut HashMap<String, PendingComponent<'_>>,
+) {
+    if let Some((comp_name, signal_base)) = extract_component_wiring_with_env(target, env, ctx) {
+        if let Some(comp) = pending.get_mut(&comp_name) {
+            comp.record_indexed_const(&signal_base, idx, val_fc);
+        }
+    }
 }
 
 /// Lower a variable assignment (`target = value`).
