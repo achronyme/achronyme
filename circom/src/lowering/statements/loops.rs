@@ -124,22 +124,33 @@ pub(super) fn lower_for_loop<'a>(
     // Register loop variable
     env.locals.insert(var_name.clone());
 
-    // Pre-loop flush: any pending sub-component whose output is read
-    // from the body must be inlined into the parent `nodes` Vec
-    // BEFORE the unroll/memoize/emit_for_node dispatch. Otherwise the
-    // demand-driven flush in `lower_stmt` writes the component body
-    // into the for-body Vec, and the iter-time unroll replicates it
-    // once per iteration with name collisions on `comp.out_*`. The
-    // flush_tracker recording stays passive — pre-loop flushes land
-    // outside the body window so memoize replay's diff still sees
-    // zero in-body flushes.
-    let body_refs = collect_pending_refs_in_stmts(&body.stmts, pending, env, ctx);
-    for comp_name in body_refs {
-        flush_specific_component(&comp_name, nodes, ctx, pending, env)?;
-    }
-
     // Classify the body to decide whether to unroll at lowering time
     // and — if so — which strategy governs the unroll.
+    //
+    // Each lowering path has its own scope semantics for sub-component
+    // flushing:
+    //
+    // - **direct unroll** (this fn, after `classify_loop_body` succeeds
+    //   below): each iter's body lowers sequentially into the parent
+    //   `nodes` Vec. Demand-driven flushes from `lower_stmt` land in
+    //   the parent at iter 0 and remove the component from `pending`,
+    //   so subsequent iters are no-ops. No replication, no special
+    //   handling required.
+    //
+    // - **memoize** (`memoize_loop` below): iter `start` is captured
+    //   as a body slice and replayed for the rest. `flush_tracker`
+    //   records flush ranges so the replay can subtract them from the
+    //   captured slice, preventing flushed component bodies from
+    //   being cloned per replay iter.
+    //
+    // - **structural For** (`emit_for_node` below): the body is
+    //   lowered once into a *local* Vec that becomes `For { body }`,
+    //   then replicated by the instantiate-time unroll. Demand-driven
+    //   flushes land in that local Vec, so outer-scope component
+    //   bodies would be replicated N times. `emit_for_node` hoists
+    //   outer-scope reads to the parent `nodes` BEFORE the For node
+    //   to break the replication — see its body for the discriminator
+    //   that excludes components also wired by the body.
     let Some(strategy) = classify_loop_body(&body.stmts, env, &var_name) else {
         return emit_for_node(var_name, bound, start, body, span, env, nodes, ctx, pending);
     };
@@ -1161,6 +1172,21 @@ fn emit_for_node<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
+    // Outer-scope flush hoist: a structural `For` carries its body Vec
+    // through instantiate-time unroll, so any demand-driven flush that
+    // lands inside the body would be replicated per iteration with
+    // colliding `comp.out_*` Inputs. Walk the body for outer-scope
+    // pending components that are read but NOT wired in the body, and
+    // inline each into the parent `nodes` Vec before the structural
+    // For is appended. Components that the body wires (with or without
+    // also reading) stay in `pending` so the demand-driven flush can
+    // fire mid-body once their inputs are bound — preserving order in
+    // shapes that wire and read the same component within one body.
+    let body_refs = collect_pending_refs_in_stmts(&body.stmts, pending, env, ctx);
+    for comp_name in body_refs {
+        flush_specific_component(&comp_name, nodes, ctx, pending, env)?;
+    }
+
     let body_nodes = {
         let mut lowered = Vec::new();
         for stmt in &body.stmts {
