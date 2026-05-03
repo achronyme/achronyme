@@ -342,20 +342,29 @@ pub fn lift_uniform_loops<F: FieldBackend>(
     registry: &mut TemplateRegistry<F>,
     outer_refs: &FixedBitSet,
 ) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
-    // Per-position suffix references: `suffix_refs[i]` is the bitset of
-    // `SsaVar` indices referenced by `body[i+1..]`. Combined with the
-    // caller's `outer_refs`, that's exactly the set of vars whose
-    // bindings must survive past the i-th instruction in the enclosing
-    // walker frame — a Uniform candidate at position `i` may not seal
-    // any of those vars inside a sibling-invisible template frame.
+    // For each position `i`, `lift_one(body[i])` needs the set of
+    // `SsaVar`s referenced by `body[i+1..]` ∪ `outer_refs`. A Uniform
+    // candidate at `i` may not seal any of those vars inside a
+    // sibling-invisible template frame, or downstream uses fault.
     //
-    // The triangular `suffix_refs` storage was the dominant heap-peak
-    // contributor on EdDSAVerifier-class circuits (over 9 GB of live
-    // `HashSet<SsaVar>` clones at the lift's peak). `SsaVar` is a
-    // dense, monotonically allocated `u32`, so a width-tight
-    // `FixedBitSet` is a near-zero-waste substitute and shrinks each
-    // suffix_refs entry from `~7 bytes/var` (hashbrown overhead) to
-    // `1 bit/var`.
+    // Naive shape — pre-materialise `Vec<FixedBitSet>` of length
+    // `body.len()` — costs `body.len() × max_var` bits of live heap.
+    // On SHA-256(64) that was ~230k positions × ~480k vars ≈ 13.7 GB.
+    //
+    // Instead, walk the body in reverse with a single accumulator
+    // bitset `acc` representing exactly "vars referenced strictly
+    // after the current position". The forward output order is
+    // restored by appending each `lift_one` group in reverse and
+    // reversing the whole result vector once at the end.
+    //
+    // Folding refs into `acc` from the rewritten (post-lift) group
+    // rather than the original instruction is intentional: a Uniform
+    // body's interior `SsaVar`s are sealed inside the template
+    // frame and don't escape, so the lifted form references a subset
+    // of what the unlifted form would have. Keeping `acc` aligned
+    // with the rewritten body is both correct and may unlock
+    // additional sibling lifts that would have been blocked by a
+    // stale pre-lift over-approximation.
     let mut max_var: usize = outer_refs.len();
     {
         let mut tmp: HashSet<SsaVar> = HashSet::new();
@@ -371,26 +380,24 @@ pub fn lift_uniform_loops<F: FieldBackend>(
     }
     let outer_refs_padded = pad_to(outer_refs, max_var);
 
-    let mut suffix_refs: Vec<FixedBitSet> = Vec::with_capacity(body.len());
     let mut acc = FixedBitSet::with_capacity(max_var);
     let mut local_set: HashSet<SsaVar> = HashSet::new();
-    for inst in body.iter().rev() {
-        suffix_refs.push(acc.clone());
-        local_set.clear();
-        super::walker::collect_in_extinst(inst, &mut local_set);
-        for v in &local_set {
-            acc.insert(v.0 as usize);
+    let mut out_rev: Vec<ExtendedInstruction<F>> = Vec::with_capacity(body.len());
+    for inst in body.into_iter().rev() {
+        let mut total = acc.clone();
+        total.union_with(&outer_refs_padded);
+        let lifted = lift_one(inst, registry, &total)?;
+        for new_inst in lifted.into_iter().rev() {
+            local_set.clear();
+            super::walker::collect_in_extinst(&new_inst, &mut local_set);
+            for v in &local_set {
+                acc.insert(v.0 as usize);
+            }
+            out_rev.push(new_inst);
         }
     }
-    suffix_refs.reverse();
-
-    let mut out = Vec::with_capacity(body.len());
-    for (i, inst) in body.into_iter().enumerate() {
-        let mut total = suffix_refs[i].clone();
-        total.union_with(&outer_refs_padded);
-        out.extend(lift_one(inst, registry, &total)?);
-    }
-    Ok(out)
+    out_rev.reverse();
+    Ok(out_rev)
 }
 
 /// Return a clone of `bs` grown to at least `len` bits. Used to keep
