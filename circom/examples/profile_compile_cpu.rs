@@ -43,7 +43,7 @@ fn fixture(circuit: &str, manifest_dir: &Path) -> (PathBuf, Vec<PathBuf>) {
         ),
         "smt" | "smtverifier" => (
             manifest_dir.join("test/circomlib/smtverifier_test.circom"),
-            vec![manifest_dir.join("test/circomlib/circuits")],
+            vec![manifest_dir.join("test/circomlib")],
         ),
         other => {
             panic!("unknown circuit '{other}'. supported: poseidon | sha256 | eddsa | mimc | smt")
