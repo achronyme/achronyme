@@ -95,6 +95,30 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
         offset_to_idx.insert(instr.offset, idx);
     }
 
+    // For every declared template, precompute the (body_start_idx,
+    // body_end_idx) into `program.body` it occupies. The straight
+    // alternative — recomputing `body_end` per `InstantiateTemplate`
+    // dispatch via a max over `offset_to_idx` — is O(program.body.len)
+    // per call, which dominates execution time on heavy circuits whose
+    // templates instantiate hundreds of sub-templates against a body
+    // stream of 100k+ instructions. The single up-front pass below is
+    // O(program.body.len * program.templates.len) but the templates
+    // factor is small in practice.
+    let mut template_body_ranges: HashMap<u16, (usize, usize)> =
+        HashMap::with_capacity(program.templates.len());
+    for (idx, instr) in program.body.iter().enumerate() {
+        for template in &program.templates {
+            let slice_end = template.body_offset.saturating_add(template.body_len);
+            if instr.offset >= template.body_offset && instr.offset < slice_end {
+                template_body_ranges
+                    .entry(template.id)
+                    .and_modify(|(_, end)| *end = idx + 1)
+                    .or_insert((idx, idx + 1));
+                break;
+            }
+        }
+    }
+
     // Determine the instruction range of the top-level (root) body:
     // every instruction whose offset is not inside any template body.
     let (root_start, root_end) = root_body_range(program);
@@ -160,6 +184,7 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
             config,
             sink,
             &offset_to_idx,
+            &template_body_ranges,
             &mut heap,
         )?;
 
@@ -233,6 +258,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
     config: &LysisConfig,
     sink: &mut S,
     offset_to_idx: &HashMap<u32, usize>,
+    template_body_ranges: &HashMap<u16, (usize, usize)>,
     heap: &mut [Option<NodeId>],
 ) -> Result<Step, LysisError> {
     use Opcode::*;
@@ -408,28 +434,13 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     max: config.max_call_depth,
                 });
             }
-            let body_start =
-                *offset_to_idx
-                    .get(&template.body_offset)
-                    .ok_or(LysisError::ValidationFailed {
-                        rule: 7,
-                        location: offset,
-                        detail: "template body_offset does not resolve to an instruction index",
-                    })?;
-            // body_end = body_start + count of instructions in the
-            // template slice.
-            let slice_end = template.body_offset.saturating_add(template.body_len);
-            let body_end = offset_to_idx
-                .iter()
-                .filter_map(|(&off, &idx)| {
-                    if off >= template.body_offset && off < slice_end {
-                        Some(idx + 1)
-                    } else {
-                        None
-                    }
-                })
-                .max()
-                .unwrap_or(body_start + 1);
+            let &(body_start, body_end) = template_body_ranges.get(template_id).ok_or(
+                LysisError::ValidationFailed {
+                    rule: 7,
+                    location: offset,
+                    detail: "template body_offset does not resolve to an instruction index",
+                },
+            )?;
 
             // Move captures from caller regs into new frame.
             let caller = &frames[frame_idx];
