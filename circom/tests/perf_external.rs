@@ -510,6 +510,19 @@ fn eddsaposeidon_inputs() -> (String, String) {
     (json, toml)
 }
 
+fn eddsamimcsponge_inputs() -> (String, String) {
+    // Same input shape as EdDSAPoseidon; only the hash backend differs.
+    let ax = "5299619240641551281634865583518297030282874472190772894086521144482721001553";
+    let ay = "16950150798460657717958625567821834550301663161624707787222815936182638968203";
+    let json = format!(
+        r#"{{"enabled":"0","Ax":"{ax}","Ay":"{ay}","S":"1","R8x":"{ax}","R8y":"{ay}","M":"42"}}"#
+    );
+    let toml = format!(
+        "enabled = 0\nAx = \"{ax}\"\nAy = \"{ay}\"\nS = 1\nR8x = \"{ax}\"\nR8y = \"{ay}\"\nM = 42\n"
+    );
+    (json, toml)
+}
+
 fn smtverifier_10_inputs() -> (String, String) {
     // enabled=0: SMTVerifier becomes a no-op verifier; any input
     // satisfies the constraints. 10 zero siblings cover the full
@@ -562,6 +575,12 @@ const CIRCUITS: &[Circuit] = &[
         circom_src: "test/circomlib/eddsaposeidon_test.circom",
         libs: &["test/circomlib"],
         inputs: eddsaposeidon_inputs,
+    },
+    Circuit {
+        name: "EdDSAMiMCSponge",
+        circom_src: "test/circomlib/eddsamimcsponge_test.circom",
+        libs: &["test/circomlib"],
+        inputs: eddsamimcsponge_inputs,
     },
     Circuit {
         name: "Sha256(64)",
