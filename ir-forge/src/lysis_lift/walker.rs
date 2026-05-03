@@ -70,7 +70,7 @@
 //! that don't get split across multiple chained templates by the split
 //! machinery layered on top of this wrapping.
 
-use std::collections::{HashMap, HashSet};
+use rustc_hash::{FxBuildHasher, FxHashMap as HashMap, FxHashSet as HashSet};
 
 use fixedbitset::FixedBitSet;
 use lysis::bytecode::encoding::encode_opcode;
@@ -393,13 +393,13 @@ impl<F: FieldBackend> Walker<F> {
             templates: vec![TemplateBuf::new(0)],
             current: 0,
             allocator: RegAllocator::new(),
-            ssa_to_reg: HashMap::new(),
+            ssa_to_reg: HashMap::default(),
             one_reg: None,
-            walker_const: HashMap::new(),
-            template_id_map: HashMap::new(),
+            walker_const: HashMap::default(),
+            template_id_map: HashMap::default(),
             enclosing_iter_vars: Vec::new(),
             heap_alloc: 0,
-            ssa_to_heap: HashMap::new(),
+            ssa_to_heap: HashMap::default(),
         }
     }
 
@@ -544,7 +544,7 @@ impl<F: FieldBackend> Walker<F> {
         // captures; the rest spill to the heap and reload lazily on
         // first use.
         let upcoming = &body[next_idx..];
-        let (hot, cold) = partition_live_set(&live, upcoming, &HashSet::new());
+        let (hot, cold) = partition_live_set(&live, upcoming, &HashSet::default());
         self.perform_split(&hot, &cold)
     }
 
@@ -666,7 +666,7 @@ impl<F: FieldBackend> Walker<F> {
         self.templates.push(TemplateBuf::new(n_params));
         self.current = self.templates.len() - 1;
         self.allocator = RegAllocator::new_after_captures(n_params);
-        let mut new_ssa_to_reg = HashMap::new();
+        let mut new_ssa_to_reg = HashMap::default();
         for (i, var) in hot.iter().enumerate() {
             new_ssa_to_reg.insert(*var, i as RegId);
         }
@@ -2611,7 +2611,7 @@ fn cold_load_cost<F: FieldBackend>(
             return 0;
         }
     }
-    let mut refs = HashSet::new();
+    let mut refs = HashSet::default();
     collect_in_extinst(inst, &mut refs);
     refs.iter()
         .filter(|v| ssa_to_heap.contains_key(v) && !ssa_to_reg.contains_key(v))
@@ -2731,8 +2731,9 @@ fn partition_live_set<F: FieldBackend>(
     let scan = &upcoming_body[..upcoming_body.len().min(SCAN_WINDOW)];
 
     // Build first-use index. usize::MAX = "never seen in window".
-    let mut first_use: HashMap<SsaVar, usize> = HashMap::with_capacity(live.len());
-    let mut referenced_in_inst = HashSet::new();
+    let mut first_use: HashMap<SsaVar, usize> =
+        HashMap::with_capacity_and_hasher(live.len(), FxBuildHasher);
+    let mut referenced_in_inst = HashSet::default();
     for (i, inst) in scan.iter().enumerate() {
         referenced_in_inst.clear();
         collect_in_extinst(inst, &mut referenced_in_inst);
@@ -2784,7 +2785,7 @@ fn partition_live_set<F: FieldBackend>(
 pub(crate) fn collect_referenced_ssa_vars<F: FieldBackend>(
     body: &[ExtendedInstruction<F>],
 ) -> HashSet<SsaVar> {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     for inst in body {
         collect_in_extinst(inst, &mut out);
     }
@@ -2809,7 +2810,7 @@ pub(crate) fn collect_referenced_ssa_vars<F: FieldBackend>(
 pub(crate) fn collect_defined_ssa_vars<F: FieldBackend>(
     body: &[ExtendedInstruction<F>],
 ) -> HashSet<SsaVar> {
-    let mut out = HashSet::new();
+    let mut out = HashSet::default();
     for inst in body {
         collect_defined_in_extinst(inst, &mut out);
     }
@@ -2873,7 +2874,7 @@ fn collect_defined_in_extinst<F: FieldBackend>(
 fn compute_last_use_idx<F: FieldBackend>(
     body: &[ExtendedInstruction<F>],
 ) -> HashMap<SsaVar, usize> {
-    let mut out: HashMap<SsaVar, usize> = HashMap::new();
+    let mut out: HashMap<SsaVar, usize> = HashMap::default();
     for (i, inst) in body.iter().enumerate() {
         record_last_use_in_extinst(inst, i, &mut out);
     }
@@ -4855,7 +4856,7 @@ mod tests {
     fn partition_under_hot_cap_all_hot() {
         let live: Vec<SsaVar> = (0..10).map(ssa).collect();
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![];
-        let force = HashSet::new();
+        let force = HashSet::default();
         let (hot, cold) = partition_live_set(&live, &body, &force);
         assert_eq!(hot.len(), 10);
         assert!(cold.is_empty());
@@ -4865,7 +4866,7 @@ mod tests {
     fn partition_above_hot_cap_splits_at_max_captures_hot() {
         let live: Vec<SsaVar> = (0..60).map(ssa).collect();
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![];
-        let force = HashSet::new();
+        let force = HashSet::default();
         let (hot, cold) = partition_live_set(&live, &body, &force);
         assert_eq!(hot.len(), MAX_CAPTURES_HOT);
         assert_eq!(cold.len(), 60 - MAX_CAPTURES_HOT);
@@ -4886,7 +4887,7 @@ mod tests {
                 })
             })
             .collect();
-        let force = HashSet::new();
+        let force = HashSet::default();
         let (hot, cold) = partition_live_set(&live, &body, &force);
         assert_eq!(hot.len(), MAX_CAPTURES_HOT);
         let hot_set: HashSet<SsaVar> = hot.iter().copied().collect();
@@ -4911,7 +4912,7 @@ mod tests {
                 })
             })
             .collect();
-        let mut force = HashSet::new();
+        let mut force = HashSet::default();
         force.insert(ssa(99));
         let (hot, cold) = partition_live_set(&live, &body, &force);
         assert!(
@@ -4930,7 +4931,7 @@ mod tests {
         // internally but does not leak into the output ordering.
         let live: Vec<SsaVar> = (0..60).map(ssa).collect();
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![];
-        let force = HashSet::new();
+        let force = HashSet::default();
         let (hot, cold) = partition_live_set(&live, &body, &force);
         for w in hot.windows(2) {
             assert!(w[0].0 < w[1].0, "hot must be sorted by SsaVar.0");
@@ -4973,7 +4974,7 @@ mod tests {
                 })
             })
             .collect();
-        let force = HashSet::new();
+        let force = HashSet::default();
 
         let (heur_hot, heur_cold) = partition_live_set(&live, &body, &force);
 
@@ -4990,9 +4991,10 @@ mod tests {
         // walker contract enforced by `Walker::resolve`).
         let count_loads_first_half = |cold: &[SsaVar]| -> usize {
             let cold_set: std::collections::HashSet<_> = cold.iter().copied().collect();
-            let mut loaded: std::collections::HashSet<SsaVar> = std::collections::HashSet::new();
+            let mut loaded: std::collections::HashSet<SsaVar> =
+                std::collections::HashSet::default();
             for inst in body.iter().take(body.len() / 2) {
-                let mut refs = std::collections::HashSet::new();
+                let mut refs = std::collections::HashSet::default();
                 collect_in_extinst(inst, &mut refs);
                 for v in refs {
                     if cold_set.contains(&v) {
