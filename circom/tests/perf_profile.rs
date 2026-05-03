@@ -162,3 +162,53 @@ fn perf_num2bits_8() {
     inputs.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(13));
     report("Num2Bits(8)", "test/circom/num2bits_8.circom", inputs);
 }
+
+#[test]
+#[ignore]
+fn perf_sha256_64() {
+    // 64 input bits: zero-message keeps witness computation cheap and
+    // matches the input shape of `Sha256(64)` from circomlib (one block
+    // after padding).
+    let mut inputs = HashMap::new();
+    for i in 0..64 {
+        inputs.insert(format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    report("Sha256(64)", "test/circomlib/sha256_test.circom", inputs);
+}
+
+#[test]
+#[ignore]
+fn perf_eddsaposeidon() {
+    // BabyJubjub base point (Base8). With enabled=0 the verifier accepts
+    // any inputs as long as the intermediate Num2Bits / Edwards-curve
+    // wiring stays valid.
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert(
+        "Ax".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "Ay".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("S".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    inputs.insert(
+        "R8x".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    inputs.insert(
+        "R8y".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    inputs.insert("M".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+    report(
+        "EdDSAPoseidon",
+        "test/circomlib/eddsaposeidon_test.circom",
+        inputs,
+    );
+}
