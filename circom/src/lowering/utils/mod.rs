@@ -82,6 +82,10 @@ pub fn const_eval_signed(expr: &Expr) -> Option<i64> {
 ///
 /// Like `const_eval_u64` but also resolves identifiers from the param map
 /// and handles binary/unary operations, ternaries, and function calls.
+///
+/// Allocates a fresh `HashMap<String, BigVal>` from `params` on every call.
+/// Hot lowering paths that already maintain the BigVal form should call
+/// [`const_eval_with_bigvals`] instead and skip the per-call conversion.
 pub fn const_eval_with_params(
     expr: &Expr,
     params: &HashMap<String, FieldConst>,
@@ -90,6 +94,20 @@ pub fn const_eval_with_params(
     let empty_fns = HashMap::new();
     let empty_arrays: HashMap<String, eval_value::EvalValue> = HashMap::new();
     eval::eval_expr(expr, &vars, &empty_arrays, &empty_fns, 0).map(|v| v.to_field_const())
+}
+
+/// Evaluate a Circom expression as `FieldConst` using a pre-built
+/// `HashMap<String, BigVal>` of known variables.
+///
+/// Sister of [`const_eval_with_params`] for hot statement-lowering
+/// paths. The caller is expected to have built `vars` once via
+/// [`crate::lowering::context::LoweringContext::all_constants_bigval`]
+/// (or an equivalent merge) so each eval avoids the per-call
+/// `FieldConst → BigVal` clone+convert.
+pub fn const_eval_with_bigvals(expr: &Expr, vars: &HashMap<String, BigVal>) -> Option<FieldConst> {
+    let empty_fns = HashMap::new();
+    let empty_arrays: HashMap<String, eval_value::EvalValue> = HashMap::new();
+    eval::eval_expr(expr, vars, &empty_arrays, &empty_fns, 0).map(|v| v.to_field_const())
 }
 
 #[cfg(test)]

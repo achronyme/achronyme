@@ -182,6 +182,37 @@ impl<'a> LoweringContext<'a> {
         all
     }
 
+    /// Same merge as [`all_constants`] but produces a `BigVal` map
+    /// directly, skipping the per-call `FieldConst → BigVal` clone the
+    /// expression evaluator needs.
+    ///
+    /// Hot statement-lowering sites that immediately feed the result
+    /// into [`crate::lowering::utils::const_eval_with_bigvals`] should
+    /// call this rather than `all_constants` followed by
+    /// `const_eval_with_params`. Saves one `HashMap<String, _>`
+    /// allocation per evaluation.
+    pub fn all_constants_bigval(
+        &self,
+        env: &super::env::LoweringEnv,
+    ) -> HashMap<String, super::utils::BigVal> {
+        use super::utils::BigVal;
+        let mut all = HashMap::with_capacity(
+            self.param_values.len() + env.known_constants.len() + env.bound_const_vars.len(),
+        );
+        for (k, &v) in &self.param_values {
+            all.insert(k.clone(), BigVal::from_field_const(v));
+        }
+        for (k, &v) in &env.known_constants {
+            all.entry(k.clone())
+                .or_insert_with(|| BigVal::from_field_const(v));
+        }
+        for (k, &v) in &env.bound_const_vars {
+            all.entry(k.clone())
+                .or_insert_with(|| BigVal::from_field_const(v));
+        }
+        all
+    }
+
     /// Look up a single constant by name without creating a merged HashMap.
     ///
     /// Checks `param_values` first (template params, precomputed vars),

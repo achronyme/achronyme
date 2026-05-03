@@ -164,8 +164,8 @@ pub fn lower_expr(
             // Constant-fold: if the condition is a compile-time constant,
             // select the branch directly (avoids lowering dead branches
             // that may contain invalid array accesses like xL[-1]).
-            let all = ctx.all_constants(env);
-            if let Some(cond_val) = super::utils::const_eval_with_params(condition, &all) {
+            let all = ctx.all_constants_bigval(env);
+            if let Some(cond_val) = super::utils::const_eval_with_bigvals(condition, &all) {
                 return if !cond_val.is_zero() {
                     lower_expr(if_true, env, ctx)
                 } else {
