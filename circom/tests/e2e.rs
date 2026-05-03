@@ -3827,6 +3827,13 @@ fn num2bits_optimization_diagnostic() {
 
 /// Benchmark: compare constraint counts before/after R1CS linear
 /// constraint elimination for key circomlib circuits.
+///
+/// The `cirO0` / `cirO1` / `cirO2` columns are measured directly against
+/// `circom` 2.2.3 (`circom --r1cs --Ox -l test/circomlib`) and reported
+/// as **total constraints (non-linear + linear)**, matching the semantics
+/// of `R1CSCompiler::cs::num_constraints()`. Re-measure these literals
+/// whenever the upstream `circom` baseline shifts; stale values silently
+/// distort the achronyme-vs-circom narrative.
 #[test]
 fn r1cs_optimization_benchmark() {
     /// Compile a circom circuit and return constraint counts at three
@@ -3994,12 +4001,12 @@ fn r1cs_optimization_benchmark() {
         "Num2Bits(8)",
         b,
         a,
-        "17",
-        "17",
-        "17",
+        "9",
+        "9",
+        "9",
         t.elapsed().as_secs_f64() * 1000.0,
     );
-    sparse_summary.push(("Num2Bits(8)", a, asp, "17"));
+    sparse_summary.push(("Num2Bits(8)", a, asp, "9"));
 
     // IsZero
     let t = std::time::Instant::now();
@@ -4015,7 +4022,7 @@ fn r1cs_optimization_benchmark() {
         "IsZero",
         b,
         a,
-        "3",
+        "2",
         "2",
         "2",
         t.elapsed().as_secs_f64() * 1000.0,
@@ -4036,12 +4043,12 @@ fn r1cs_optimization_benchmark() {
         "LessThan(8)",
         b,
         a,
-        "21",
-        "20",
-        "20",
+        "12",
+        "12",
+        "9",
         t.elapsed().as_secs_f64() * 1000.0,
     );
-    sparse_summary.push(("LessThan(8)", a, asp, "20"));
+    sparse_summary.push(("LessThan(8)", a, asp, "9"));
 
     // Pedersen(8)
     let t = std::time::Instant::now();
@@ -4056,8 +4063,8 @@ fn r1cs_optimization_benchmark() {
         "Pedersen(8)",
         b,
         a,
-        "91",
-        "89",
+        "243",
+        "95",
         "13",
         t.elapsed().as_secs_f64() * 1000.0,
     );
@@ -4076,8 +4083,8 @@ fn r1cs_optimization_benchmark() {
         "EscalarMulFix(253)",
         b,
         a,
-        "59",
-        "57",
+        "153",
+        "62",
         "11",
         t.elapsed().as_secs_f64() * 1000.0,
     );
@@ -4100,8 +4107,8 @@ fn r1cs_optimization_benchmark() {
         "EscalarMulAny(254)",
         b,
         a,
-        "2310",
-        "2310",
+        "7907",
+        "2312",
         "2310",
         t.elapsed().as_secs_f64() * 1000.0,
     );
@@ -4121,8 +4128,8 @@ fn r1cs_optimization_benchmark() {
         "Poseidon(2)",
         b,
         a,
-        "243",
-        "243",
+        "765",
+        "517",
         "240",
         t.elapsed().as_secs_f64() * 1000.0,
     );
@@ -4142,8 +4149,8 @@ fn r1cs_optimization_benchmark() {
         "MiMCSponge(2,220,1)",
         b,
         a,
-        "1320",
-        "1320",
+        "1767",
+        "1321",
         "1320",
         t.elapsed().as_secs_f64() * 1000.0,
     );
