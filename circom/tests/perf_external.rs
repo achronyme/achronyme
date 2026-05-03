@@ -523,6 +523,30 @@ fn eddsamimcsponge_inputs() -> (String, String) {
     (json, toml)
 }
 
+fn smtprocessor_10_inputs() -> (String, String) {
+    // fnc=[0,0]: no-op processor; trivial state transition. `newRoot`
+    // is a circom `signal output` — the witness generator computes it,
+    // so it MUST NOT appear in `input.json` (snarkjs rejects extra
+    // signals as "Too many values"). The TOML side is lenient and
+    // ignores the omission either way.
+    let zeros_json: Vec<&str> = (0..10).map(|_| "\"0\"").collect();
+    let json = format!(
+        r#"{{"oldRoot":"0","oldKey":"0","oldValue":"0","isOld0":"0","newKey":"0","newValue":"0","fnc":["0","0"],"siblings":[{}]}}"#,
+        zeros_json.join(",")
+    );
+    let mut toml = String::from(
+        "oldRoot = 0\noldKey = 0\noldValue = 0\nisOld0 = 0\nnewKey = 0\nnewValue = 0\nfnc = [0, 0]\nsiblings = [",
+    );
+    for i in 0..10 {
+        if i > 0 {
+            toml.push_str(", ");
+        }
+        toml.push('0');
+    }
+    toml.push_str("]\n");
+    (json, toml)
+}
+
 fn smtverifier_10_inputs() -> (String, String) {
     // enabled=0: SMTVerifier becomes a no-op verifier; any input
     // satisfies the constraints. 10 zero siblings cover the full
@@ -569,6 +593,12 @@ const CIRCUITS: &[Circuit] = &[
         circom_src: "test/circomlib/smtverifier_test.circom",
         libs: &["test/circomlib"],
         inputs: smtverifier_10_inputs,
+    },
+    Circuit {
+        name: "SMTProcessor(10)",
+        circom_src: "test/circomlib/smtprocessor_test.circom",
+        libs: &["test/circomlib"],
+        inputs: smtprocessor_10_inputs,
     },
     Circuit {
         name: "EdDSAPoseidon",

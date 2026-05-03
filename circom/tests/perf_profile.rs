@@ -280,3 +280,32 @@ fn perf_eddsamimcsponge() {
         inputs,
     );
 }
+
+#[test]
+#[ignore]
+fn perf_smtprocessor_10() {
+    // SMTProcessor(10) with fnc=[0,0]: no-op state transition (newRoot
+    // == oldRoot). Larger sibling of SMTVerifier(10) — adds the
+    // insert/update/delete branch logic on top of the same hash chain.
+    let mut inputs = HashMap::new();
+    inputs.insert("oldRoot".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newRoot".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("isOld0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("newValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc_1".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    for i in 0..10 {
+        inputs.insert(
+            format!("siblings_{i}"),
+            FieldElement::<Bn254Fr>::from_u64(0),
+        );
+    }
+    report(
+        "SMTProcessor(10)",
+        "test/circomlib/smtprocessor_test.circom",
+        inputs,
+    );
+}
