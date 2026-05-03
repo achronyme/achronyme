@@ -16,7 +16,9 @@
 //! `linear.rs:52` -- O2's outer loop calls it after
 //! `decompose_for_deduce_tracked` to shield aux wires.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
@@ -131,7 +133,7 @@ pub(super) fn build_clusters_by_signal<F: FieldBackend>(
     // table is keyed on signal index up to the maximum referenced
     // (sized lazily via HashMap, since the wire-index space is sparse
     // here -- we only see indices appearing in the linear subset).
-    let mut first_owner: std::collections::HashMap<usize, usize> = std::collections::HashMap::new();
+    let mut first_owner: FxHashMap<usize, usize> = FxHashMap::default();
 
     for (idx, constraint) in linear_constraints.iter().enumerate() {
         // Walk only constraints that ARE linear. Non-linear ones
@@ -186,7 +188,7 @@ pub(super) fn build_clusters_by_signal<F: FieldBackend>(
 fn solve_for_variable_with_picker<F: FieldBackend>(
     lc: LinearCombination<F>,
     protected: &HashSet<usize>,
-    var_freq: &HashMap<usize, usize>,
+    var_freq: &FxHashMap<usize, usize>,
     picker: Picker,
 ) -> Option<(Variable, LinearCombination<F>)> {
     match picker {
@@ -259,7 +261,7 @@ fn solve_for_variable_with_picker<F: FieldBackend>(
 pub(super) fn solve_cluster_linear<F: FieldBackend>(
     cluster_constraints: Vec<Constraint<F>>,
     protected: &HashSet<usize>,
-    var_freq: &HashMap<usize, usize>,
+    var_freq: &FxHashMap<usize, usize>,
 ) -> (SubstitutionMap<F>, Vec<Constraint<F>>) {
     let cluster_size = cluster_constraints.len();
     let picker = Picker::for_cluster_size(cluster_size);
@@ -280,7 +282,7 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
         }
     }
 
-    let mut subs: SubstitutionMap<F> = HashMap::new();
+    let mut subs: SubstitutionMap<F> = FxHashMap::default();
 
     loop {
         // Build the "effective protected" set: original protected
@@ -312,7 +314,7 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
         // Apply the new substitution to all remaining rows + compose
         // it into previously-recorded substitutions so the final map
         // is acyclic.
-        let mut single_sub: SubstitutionMap<F> = HashMap::new();
+        let mut single_sub: SubstitutionMap<F> = FxHashMap::default();
         single_sub.insert(var.index(), expr.clone());
 
         for lc in zero_lcs.iter_mut() {
@@ -372,7 +374,7 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     let mut protected: HashSet<usize> = (0..=num_pub_inputs).collect();
     protected.extend(extra_protected);
 
-    let mut all_subs: SubstitutionMap<F> = HashMap::new();
+    let mut all_subs: SubstitutionMap<F> = FxHashMap::default();
     let mut rounds = 0usize;
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
@@ -409,7 +411,7 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         let clusters = build_clusters_by_signal(&linear_constraints, &round_protected);
 
         // Solve each cluster and merge results.
-        let mut round_subs: SubstitutionMap<F> = HashMap::new();
+        let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut residuals: Vec<Constraint<F>> = Vec::new();
         for cluster in &clusters {
             let cluster_cons: Vec<Constraint<F>> = cluster

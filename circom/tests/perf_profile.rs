@@ -178,6 +178,35 @@ fn perf_sha256_64() {
 
 #[test]
 #[ignore]
+fn perf_smtverifier_10() {
+    // SMTVerifier(10) with enabled=0 + 10 zero siblings: deep
+    // composition of Poseidon + Mux + AliasCheck + SMTLevelVerifier;
+    // exercises the descending-loop and `var n1 = n\2` propagation
+    // paths that SHA-256 doesn't.
+    let mut inputs = HashMap::new();
+    inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("fnc".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("root".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldKey".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("oldValue".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("isOld0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("key".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("value".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    for i in 0..10 {
+        inputs.insert(
+            format!("siblings_{i}"),
+            FieldElement::<Bn254Fr>::from_u64(0),
+        );
+    }
+    report(
+        "SMTVerifier(10)",
+        "test/circomlib/smtverifier_test.circom",
+        inputs,
+    );
+}
+
+#[test]
+#[ignore]
 fn perf_eddsaposeidon() {
     // BabyJubjub base point (Base8). With enabled=0 the verifier accepts
     // any inputs as long as the intermediate Num2Bits / Edwards-curve

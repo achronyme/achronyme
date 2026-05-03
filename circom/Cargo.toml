@@ -68,4 +68,8 @@ name = "profile_compile_cpu"
 required-features = ["cpu-profile"]
 
 [[example]]
+name = "profile_pipeline_cpu"
+required-features = ["cpu-profile"]
+
+[[example]]
 name = "profile_compile_baseline"

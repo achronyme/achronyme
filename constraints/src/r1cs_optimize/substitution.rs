@@ -13,7 +13,9 @@
 //! no knowledge of constraints' algebraic shape — that lives in
 //! `predicates`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
@@ -88,7 +90,7 @@ pub(super) fn apply_substitution_to_constraint_in_place<F: FieldBackend>(
 pub(super) fn solve_for_variable<F: FieldBackend>(
     lc: LinearCombination<F>,
     protected: &HashSet<usize>,
-    var_freq: &HashMap<usize, usize>,
+    var_freq: &FxHashMap<usize, usize>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     let simplified = lc.simplify();
 

@@ -19,7 +19,9 @@
 //! the O2 pass to shield decomposition wires during DEDUCE
 //! processing.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use rustc_hash::FxHashMap;
 
 use memory::FieldBackend;
 
@@ -73,7 +75,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
     let mut protected: HashSet<usize> = (0..=num_pub_inputs).collect();
     protected.extend(extra_protected);
 
-    let mut all_subs: SubstitutionMap<F> = HashMap::new();
+    let mut all_subs: SubstitutionMap<F> = FxHashMap::default();
     let mut rounds = 0usize;
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
@@ -84,7 +86,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // Compute variable frequency for this round's heuristic
         let var_freq = compute_variable_frequency(constraints);
 
-        let mut round_subs: SubstitutionMap<F> = HashMap::new();
+        let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut to_remove: HashSet<usize> = HashSet::new();
 
         // Also protect variables already substituted in previous rounds
