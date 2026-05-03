@@ -384,9 +384,22 @@ pub fn lift_uniform_loops<F: FieldBackend>(
     let mut local_set: HashSet<SsaVar> = HashSet::new();
     let mut out_rev: Vec<ExtendedInstruction<F>> = Vec::with_capacity(body.len());
     for inst in body.into_iter().rev() {
-        let mut total = acc.clone();
-        total.union_with(&outer_refs_padded);
-        let lifted = lift_one(inst, registry, &total)?;
+        // Computing `total = acc | outer_refs_padded` is only needed
+        // when `lift_one` actually consults `outer_refs` — that is,
+        // for `LoopUnroll` candidates. The pass-through arm ignores
+        // its `outer_refs` argument entirely. Materialising the union
+        // for every other ExtendedInstruction was the dominant cost
+        // here on heavy circuits (per-instruction clone of an
+        // `O(max_var)`-bit bitset over a body in the hundreds of
+        // thousands of positions); skip it on the common non-loop
+        // path and only build `total` for the rare loop case.
+        let lifted = if matches!(inst, ExtendedInstruction::LoopUnroll { .. }) {
+            let mut total = acc.clone();
+            total.union_with(&outer_refs_padded);
+            lift_one(inst, registry, &total)?
+        } else {
+            vec![inst]
+        };
         for new_inst in lifted.into_iter().rev() {
             local_set.clear();
             super::walker::collect_in_extinst(&new_inst, &mut local_set);
@@ -1065,6 +1078,45 @@ mod tests {
             .collect();
         assert_eq!(ids.len(), 2);
         assert_ne!(ids[0], ids[1]);
+    }
+
+    #[test]
+    fn lift_keeps_loop_inline_when_body_var_escapes_to_sibling() {
+        // Loop body defines ssa(10); a sibling instruction *after* the
+        // loop consumes ssa(10). Lifting would seal ssa(10) inside the
+        // template frame and fault the downstream consumer. The walker
+        // must recognise the escape and keep the LoopUnroll verbatim.
+        //
+        // Walking in reverse: the consumer's reference to ssa(10) lands
+        // in `acc` first; when the LoopUnroll is reached, the escape
+        // check finds `body_defined ∩ acc` non-empty and falls back.
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(0),
+                start: 0,
+                end: 3,
+                body: vec![Instruction::Mul {
+                    result: ssa(10), // defined inside, consumed below
+                    lhs: ssa(0),
+                    rhs: ssa(99),
+                }
+                .into()],
+            },
+            Instruction::Add {
+                result: ssa(11),
+                lhs: ssa(10),
+                rhs: ssa(99),
+            }
+            .into(),
+        ];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
+        assert_eq!(lifted.len(), 2, "loop kept verbatim, sibling preserved");
+        assert!(
+            matches!(lifted[0], ExtendedInstruction::LoopUnroll { .. }),
+            "first instruction must remain a LoopUnroll, not a TemplateCall",
+        );
+        assert!(reg.is_empty(), "no template should be allocated");
     }
 
     #[test]
