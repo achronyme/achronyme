@@ -494,14 +494,15 @@ fn lower_var_decl(
                 // avoids folding subsequent mutations of the same name
                 // (e.g. `var lc1 = 0; lc1 += ...` in Num2Bits) into a
                 // stale literal.
-                let all = ctx.all_constants(env);
-                let lowered =
-                    if let Some(fc) = crate::lowering::utils::const_eval_with_params(value, &all) {
-                        env.bound_const_vars.insert(names[0].clone(), fc);
-                        CircuitExpr::Const(fc)
-                    } else {
-                        lower_expr(value, env, ctx)?
-                    };
+                let all = ctx.all_constants_bigval(env);
+                let lowered = if let Some(fc) =
+                    crate::lowering::utils::const_eval_with_bigvals(value, &all)
+                {
+                    env.bound_const_vars.insert(names[0].clone(), fc);
+                    CircuitExpr::Const(fc)
+                } else {
+                    lower_expr(value, env, ctx)?
+                };
 
                 // Array-valued function-call init: when the lift (Artik)
                 // returns `LiftedShape::Array`, the call site stages a
@@ -610,8 +611,8 @@ fn lower_if_else<'a>(
 ) -> Result<(), LoweringError> {
     // Try compile-time branch selection: if the condition resolves
     // to a known constant, only lower the taken branch.
-    let params = ctx.all_constants(env);
-    if let Some(cond_val) = super::utils::const_eval_with_params(condition, &params) {
+    let params = ctx.all_constants_bigval(env);
+    if let Some(cond_val) = super::utils::const_eval_with_bigvals(condition, &params) {
         if !cond_val.is_zero() {
             for stmt in &then_body.stmts {
                 lower_stmt(stmt, env, nodes, ctx, pending)?;

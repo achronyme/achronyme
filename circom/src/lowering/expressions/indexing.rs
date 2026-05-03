@@ -200,7 +200,7 @@ pub(super) fn resolve_component_array_expr_full(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<String> {
-    let all = ctx.all_constants(env);
+    let all = ctx.all_constants_bigval(env);
     resolve_component_array_expr_with_constants(expr, &all, Some(ctx))
 }
 
@@ -216,7 +216,7 @@ pub(super) fn resolve_component_array_expr_full(
 /// placeholders correctly.
 fn resolve_component_array_expr_with_constants(
     expr: &Expr,
-    known_constants: &HashMap<String, FieldConst>,
+    known_constants: &HashMap<String, super::super::utils::BigVal>,
     placeholder_ctx: Option<&LoweringContext>,
 ) -> Option<String> {
     match expr {
@@ -226,13 +226,12 @@ fn resolve_component_array_expr_with_constants(
                 .or_else(|| {
                     let idx = const_eval_u64(index).or_else(|| {
                         // Evaluate using BigVal to detect negative values
-                        let vars = super::super::utils::fc_map_to_bigval(known_constants);
                         let empty_fns = HashMap::new();
                         let empty_arrays: HashMap<String, crate::lowering::utils::EvalValue> =
                             HashMap::new();
                         let result = super::super::utils::eval_expr(
                             index,
-                            &vars,
+                            known_constants,
                             &empty_arrays,
                             &empty_fns,
                             0,
@@ -315,8 +314,8 @@ pub(super) fn eval_index_expr(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<usize> {
-    let params = ctx.all_constants(env);
-    let fc = super::super::utils::const_eval_with_params(expr, &params)?;
+    let vars = ctx.all_constants_bigval(env);
+    let fc = super::super::utils::const_eval_with_bigvals(expr, &vars)?;
     Some(fc.to_u64()? as usize)
 }
 

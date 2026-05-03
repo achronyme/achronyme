@@ -44,8 +44,6 @@ pub(super) fn lower_substitution<'a>(
     ctx: &mut LoweringContext<'a>,
     pending: &mut HashMap<String, PendingComponent<'a>>,
 ) -> Result<(), LoweringError> {
-    let all_constants = ctx.all_constants(env);
-
     // Desugar reverse operators: `expr ==> target` → `target <== expr`
     //                            `expr --> target` → `target <-- expr`
     let (target, op, value) = match op {
@@ -190,17 +188,7 @@ pub(super) fn lower_substitution<'a>(
 
         // `target = expr` → variable reassignment, component array instantiation, or SSA shadowing
         AssignOp::Assign => {
-            lower_var_assign(
-                target,
-                value,
-                span,
-                &sr,
-                &all_constants,
-                env,
-                nodes,
-                ctx,
-                pending,
-            )?;
+            lower_var_assign(target, value, span, &sr, env, nodes, ctx, pending)?;
         }
     }
 
@@ -214,7 +202,6 @@ fn lower_var_assign<'a>(
     value: &Expr,
     span: &diagnostics::Span,
     sr: &Option<SpanRange>,
-    _all_constants: &HashMap<String, FieldConst>,
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'a>,
@@ -352,8 +339,8 @@ fn lower_var_assign<'a>(
     // can reference them (e.g., `var nseg = (s < n-1) ? 249 : last;`).
     // Use param_values (not known_constants) to avoid affecting Ident
     // resolution in lower_expr — vars like `lc1` may be modified later.
-    let all = ctx.all_constants(env);
-    if let Some(val) = super::super::utils::const_eval_with_params(value, &all) {
+    let all = ctx.all_constants_bigval(env);
+    if let Some(val) = super::super::utils::const_eval_with_bigvals(value, &all) {
         ctx.param_values.insert(name.clone(), val);
     }
 
@@ -642,11 +629,11 @@ pub(super) fn extract_component_call(
                 // first element. Only fold when every element is a
                 // compile-time field constant.
                 if let Expr::ArrayLit { elements, .. } = arg {
-                    let all = ctx.all_constants(env);
+                    let all = ctx.all_constants_bigval(env);
                     let folded: Option<Vec<EvalValue>> = elements
                         .iter()
                         .map(|e| {
-                            super::super::utils::const_eval_with_params(e, &all)
+                            super::super::utils::const_eval_with_bigvals(e, &all)
                                 .map(|fc| EvalValue::Scalar(BigVal::from_field_const(fc)))
                         })
                         .collect();
@@ -738,9 +725,9 @@ fn resolve_partial_array_slice(
     // indices collected outermost-to-innermost traversal is reversed
     indices.reverse();
 
-    let all = ctx.all_constants(env);
+    let all = ctx.all_constants_bigval(env);
     for idx_expr in &indices {
-        let idx_fc = super::super::utils::const_eval_with_params(idx_expr, &all)?;
+        let idx_fc = super::super::utils::const_eval_with_bigvals(idx_expr, &all)?;
         let idx = idx_fc.to_u64()? as usize;
         let next = match &slice {
             EvalValue::Array(elems) => elems.get(idx)?.clone(),
