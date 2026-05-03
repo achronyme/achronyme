@@ -47,15 +47,18 @@ fn build_ach_binary() -> PathBuf {
     let manifest = Path::new(env!("CARGO_MANIFEST_DIR"));
     let workspace = manifest.parent().unwrap();
     let bin = workspace.join("target/release/ach");
-    if !bin.exists() {
-        eprintln!("  building ach release binary (first run only)...");
-        let status = Command::new("cargo")
-            .args(["build", "--release", "-p", "cli", "--bin", "ach"])
-            .current_dir(workspace)
-            .status()
-            .expect("cargo build failed");
-        assert!(status.success(), "cargo build -p cli failed");
-    }
+    // Always rebuild — `cargo build` is a no-op when the binary is up to
+    // date but a real recompile when sources changed since the last
+    // benchmark run. A bare existence check here once shipped a stale
+    // binary that did not reflect the optimizer change under test, so
+    // the benchmark reported baseline numbers for code that had moved on.
+    eprintln!("  ensuring ach release binary is up to date...");
+    let status = Command::new("cargo")
+        .args(["build", "--release", "-p", "cli", "--bin", "ach"])
+        .current_dir(workspace)
+        .status()
+        .expect("cargo build failed");
+    assert!(status.success(), "cargo build -p cli failed");
     bin
 }
 
