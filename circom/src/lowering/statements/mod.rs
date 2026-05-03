@@ -37,6 +37,14 @@ use substitution::{compound_to_binop, extract_component_call, lower_substitution
 use wiring::{collect_value_component_refs, flush_specific_component, PendingComponent};
 
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
+///
+/// Allocates a fresh `pending` HashMap for the duration of the call and
+/// drains any remaining pending components into the returned Vec at exit.
+/// **This is the block-scope primitive**: each call is a self-contained
+/// scope where new components register, get wired, and inline. Use this
+/// for body-introducing constructs that must not propagate pending state
+/// to the caller (template body, runtime if/else branches, sub-template
+/// inlining).
 pub fn lower_stmts<'a>(
     stmts: &'a [Stmt],
     env: &mut LoweringEnv,
@@ -48,8 +56,12 @@ pub fn lower_stmts<'a>(
 
 /// Lower statements with an externally provided pending component map.
 ///
-/// Used by `lower_for_loop` to propagate component wirings from loop body
-/// to the parent scope (e.g., `for (...) { mux.c[0][i] <== c[i]; }`).
+/// Used by `lower_for_loop`'s direct-unroll and memoize paths to share
+/// component wirings between loop body and the parent scope (e.g.,
+/// `for (...) { mux.c[0][i] <== c[i]; }` registers wirings on the
+/// caller's `mux` so the next iteration sees them). **Skip the
+/// end-of-block drain here** — the caller's own `lower_stmts` (or its
+/// equivalent) owns the drain.
 fn lower_stmts_with_pending<'a>(
     stmts: &'a [Stmt],
     env: &mut LoweringEnv,
@@ -568,6 +580,24 @@ fn lower_var_decl(
 
 /// Lower an if/else statement.
 #[allow(clippy::too_many_arguments)]
+/// Scope semantics:
+///
+/// - **Compile-time-known condition**: the taken branch lowers into the
+///   parent `nodes` Vec with the parent's `pending` HashMap, exactly as
+///   if the branch's statements were inlined at the if-site. No scope
+///   boundary — the branch becomes parent flow.
+/// - **Runtime condition**: each branch lowers via `lower_stmts` (a
+///   fresh `pending` HashMap, drained at exit), then both bodies are
+///   wrapped as `CircuitNode::If`. The fresh pending is the scope
+///   boundary — components declared inside a branch don't escape, and
+///   demand-driven flushes from outer-scope components fire in the
+///   parent before the If is emitted (the read site is the *condition
+///   expression* in the parent statement, scanned by the demand-driven
+///   walker before this function runs).
+///
+/// The runtime path doesn't replicate at instantiate (an `If` resolves
+/// to a single Mux, not a body-N-times unroll), so no flush hoist is
+/// needed — unlike `emit_for_node`, where the body Vec is replicated.
 fn lower_if_else<'a>(
     condition: &Expr,
     then_body: &'a ast::Block,
