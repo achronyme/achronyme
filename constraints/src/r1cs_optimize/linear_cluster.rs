@@ -25,7 +25,8 @@ use memory::{FieldBackend, FieldElement};
 use super::linear::{deduplicate_constraints, optimize_linear_with_protected};
 use super::predicates::{compute_variable_frequency, is_linear, is_trivially_satisfied};
 use super::substitution::{
-    apply_substitution_in_place, apply_substitution_to_constraint_in_place, solve_for_variable,
+    apply_substitution_in_place, apply_substitution_to_constraint_in_place, cached_inv,
+    solve_for_variable, InvCache,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
@@ -190,9 +191,10 @@ fn solve_for_variable_with_picker<F: FieldBackend>(
     protected: &HashSet<usize>,
     var_freq: &FxHashMap<usize, usize>,
     picker: Picker,
+    inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     match picker {
-        Picker::MaxFrequency => solve_for_variable(lc, protected, var_freq),
+        Picker::MaxFrequency => solve_for_variable(lc, protected, var_freq, inv_cache),
         Picker::MinOccurrence => {
             let simplified = lc.simplify();
             let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
@@ -214,7 +216,7 @@ fn solve_for_variable_with_picker<F: FieldBackend>(
                 }
             }
             let (target_var, target_coeff, _) = best?;
-            let neg_inv = target_coeff.neg().inv()?;
+            let neg_inv = cached_inv(inv_cache, target_coeff.neg())?;
             let mut result = LinearCombination::<F>::zero();
             for (var, coeff) in simplified.terms() {
                 if *var == target_var {
@@ -262,6 +264,7 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
     cluster_constraints: Vec<Constraint<F>>,
     protected: &HashSet<usize>,
     var_freq: &FxHashMap<usize, usize>,
+    inv_cache: &mut InvCache<F>,
 ) -> (SubstitutionMap<F>, Vec<Constraint<F>>) {
     let cluster_size = cluster_constraints.len();
     let picker = Picker::for_cluster_size(cluster_size);
@@ -298,9 +301,13 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
         // Find the first row that admits a substitution.
         let mut found: Option<(usize, Variable, LinearCombination<F>)> = None;
         for (i, lc) in zero_lcs.iter().enumerate() {
-            if let Some((var, expr)) =
-                solve_for_variable_with_picker(lc.clone(), &effective_protected, var_freq, picker)
-            {
+            if let Some((var, expr)) = solve_for_variable_with_picker(
+                lc.clone(),
+                &effective_protected,
+                var_freq,
+                picker,
+                inv_cache,
+            ) {
                 found = Some((i, var, expr));
                 break;
             }
@@ -378,6 +385,13 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     let mut rounds = 0usize;
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
+    // Pivot-inversion memo, shared across rounds *and* clusters within this
+    // call. Pivot denominators repeat heavily across the linear constraints
+    // of a single circuit (≈ten distinct values across tens of thousands
+    // of inversions on SHA-256), so a cache scoped to the whole pass is the
+    // right granularity — per-cluster scoping would re-pay the Fermat-LT
+    // `pow(p-2)` cost on every cluster.
+    let mut inv_cache: InvCache<F> = FxHashMap::default();
 
     loop {
         rounds += 1;
@@ -441,7 +455,8 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
                 residuals.extend(subset);
                 continue;
             }
-            let (subs, residual) = solve_cluster_linear(cluster_cons, &round_protected, &var_freq);
+            let (subs, residual) =
+                solve_cluster_linear(cluster_cons, &round_protected, &var_freq, &mut inv_cache);
             // Clusters are disjoint over non-protected signals, so
             // their substitution-map keys are disjoint by
             // construction. Inserting unconditionally is safe.
