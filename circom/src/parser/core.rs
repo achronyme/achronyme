@@ -13,6 +13,7 @@ pub(super) struct Parser {
     pub(super) pos: usize,
     pub(super) errors: Vec<Diagnostic>,
     pub(super) expr_depth: usize,
+    pub(super) block_depth: usize,
 }
 
 impl Parser {
@@ -21,12 +22,18 @@ impl Parser {
     /// `.ach` parser and stay well under the 2 MiB test thread stack.
     pub(super) const MAX_EXPR_DEPTH: usize = 64;
 
+    /// Mirror of `MAX_EXPR_DEPTH` for `{...}` nesting. Adversarial
+    /// input like `{{{{...}}}}` would otherwise reach `parse_stmt ->
+    /// parse_block` recursion past the test thread stack.
+    pub(super) const MAX_BLOCK_DEPTH: usize = 64;
+
     pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             pos: 0,
             errors: Vec::new(),
             expr_depth: 0,
+            block_depth: 0,
         }
     }
 
@@ -444,6 +451,16 @@ impl Parser {
     pub(super) fn parse_block(&mut self) -> Result<Block, ParseError> {
         let sp = self.span();
         self.expect(&TokenKind::LBrace)?;
+        if self.block_depth >= Self::MAX_BLOCK_DEPTH {
+            let here = self.span();
+            return Err(ParseError::with_code(
+                format!("block nesting exceeds {} levels", Self::MAX_BLOCK_DEPTH),
+                "E300",
+                here.line_start,
+                here.col_start,
+            ));
+        }
+        self.block_depth += 1;
         let mut stmts = Vec::new();
         while !self.at(&TokenKind::RBrace) && !self.at(&TokenKind::Eof) {
             match self.parse_stmt() {
@@ -459,6 +476,7 @@ impl Parser {
                 }
             }
         }
+        self.block_depth -= 1;
         self.expect(&TokenKind::RBrace)?;
         Ok(Block {
             stmts,

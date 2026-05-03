@@ -675,4 +675,14 @@ component main = IsZero();
         let src = format!("template T() {{ signal a; a <-- {inner};");
         let _ = parse_circom(&src);
     }
+
+    /// Hundreds of nested `{` would overflow via `parse_block →
+    /// parse_stmt → parse_block`. The block-depth cap returns a
+    /// graceful failure instead.
+    #[test]
+    fn deeply_nested_blocks_do_not_overflow() {
+        let inner: String = "{".repeat(2000);
+        let src = format!("template T() {inner}");
+        let _ = parse_circom(&src);
+    }
 }
