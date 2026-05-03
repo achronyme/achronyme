@@ -434,13 +434,14 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     max: config.max_call_depth,
                 });
             }
-            let &(body_start, body_end) = template_body_ranges.get(template_id).ok_or(
-                LysisError::ValidationFailed {
-                    rule: 7,
-                    location: offset,
-                    detail: "template body_offset does not resolve to an instruction index",
-                },
-            )?;
+            let &(body_start, body_end) =
+                template_body_ranges
+                    .get(template_id)
+                    .ok_or(LysisError::ValidationFailed {
+                        rule: 7,
+                        location: offset,
+                        detail: "template body_offset does not resolve to an instruction index",
+                    })?;
 
             // Move captures from caller regs into new frame.
             let caller = &frames[frame_idx];
