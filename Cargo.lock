@@ -1368,6 +1368,7 @@ dependencies = [
  "indexmap",
  "lysis-types",
  "memory",
+ "rustc-hash 2.1.2",
  "siphasher",
  "smallvec",
 ]

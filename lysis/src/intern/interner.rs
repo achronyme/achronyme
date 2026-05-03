@@ -21,9 +21,10 @@
 
 use indexmap::IndexMap;
 use memory::field::{Bn254Fr, FieldBackend};
+use rustc_hash::FxBuildHasher;
 
 use crate::intern::effect::{EffectId, SideEffect};
-use crate::intern::hash::{deterministic_hash, DeterministicBuildHasher};
+use crate::intern::hash::deterministic_hash;
 use crate::intern::key::NodeKey;
 use crate::intern::span::{SpanList, SpanRange};
 use crate::intern::NodeId;
@@ -58,9 +59,17 @@ pub enum Emission {
 /// Fields are `pub(crate)` so the `materialize` submodule can
 /// destructure by move during `materialize()`. External callers go
 /// through the impl's methods; no field is exposed in the public API.
+///
+/// `nodes` uses `FxBuildHasher` for bucket placement — the IndexMap's
+/// observable contract (insertion order, key equality) is hasher-
+/// agnostic, so the cross-process determinism that matters is carried
+/// by the cached `NodeMeta.hash` field (computed via
+/// [`deterministic_hash`] / SipHash-2-4) rather than the bucket
+/// distribution. Two independent runs assemble the map in the same
+/// insertion order regardless of the bucket hasher.
 #[derive(Debug, Clone)]
 pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
-    pub(crate) nodes: IndexMap<NodeKey<F>, NodeMeta, DeterministicBuildHasher>,
+    pub(crate) nodes: IndexMap<NodeKey<F>, NodeMeta, FxBuildHasher>,
     pub(crate) effects: Vec<SideEffect>,
     pub(crate) node_spans: Vec<SpanList>,
     pub(crate) effect_spans: Vec<SpanList>,
@@ -82,7 +91,7 @@ impl<F: FieldBackend> NodeInterner<F> {
     /// Empty interner.
     pub fn new() -> Self {
         Self {
-            nodes: IndexMap::with_hasher(DeterministicBuildHasher),
+            nodes: IndexMap::with_hasher(FxBuildHasher),
             effects: Vec::new(),
             node_spans: Vec::new(),
             effect_spans: Vec::new(),
