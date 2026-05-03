@@ -897,8 +897,13 @@ fn cluster_gauss_singleton_no_substitution() {
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let var_freq = compute_variable_frequency(&constraints);
 
-    let (subs, residual) =
-        solve_cluster_linear::<memory::Bn254Fr>(constraints.clone(), &protected, &var_freq);
+    let mut inv_cache = rustc_hash::FxHashMap::default();
+    let (subs, residual) = solve_cluster_linear::<memory::Bn254Fr>(
+        constraints.clone(),
+        &protected,
+        &var_freq,
+        &mut inv_cache,
+    );
 
     assert!(subs.is_empty());
     assert_eq!(residual.len(), 1);
@@ -935,10 +940,15 @@ fn cluster_gauss_chain_match_greedy() {
     // Solve only the linear cluster.
     let mut total_subs = std::collections::HashMap::new();
     let mut total_residual: Vec<Constraint<memory::Bn254Fr>> = Vec::new();
+    let mut inv_cache = rustc_hash::FxHashMap::default();
     for cluster in &clusters {
         let cluster_cons: Vec<_> = cluster.iter().map(|i| constraints[*i].clone()).collect();
-        let (subs, residual) =
-            solve_cluster_linear::<memory::Bn254Fr>(cluster_cons, &protected, &var_freq);
+        let (subs, residual) = solve_cluster_linear::<memory::Bn254Fr>(
+            cluster_cons,
+            &protected,
+            &var_freq,
+            &mut inv_cache,
+        );
         total_subs.extend(subs);
         total_residual.extend(residual);
     }
@@ -1310,8 +1320,13 @@ fn cluster_gauss_high_degree_variable() {
         .iter()
         .map(|i| constraints[*i].clone())
         .collect();
-    let (subs, residual) =
-        solve_cluster_linear::<memory::Bn254Fr>(cluster_cons, &protected, &var_freq);
+    let mut inv_cache = rustc_hash::FxHashMap::default();
+    let (subs, residual) = solve_cluster_linear::<memory::Bn254Fr>(
+        cluster_cons,
+        &protected,
+        &var_freq,
+        &mut inv_cache,
+    );
 
     // 20 linear constraints over 21 variables (a + b0..b19) collapse
     // to 20 substitutions; the surviving variable is the one each

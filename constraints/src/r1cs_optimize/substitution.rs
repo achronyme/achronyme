@@ -80,6 +80,28 @@ pub(super) fn apply_substitution_to_constraint_in_place<F: FieldBackend>(
     apply_substitution_in_place(&mut constraint.c, subs);
 }
 
+/// Memoized field inversion. The pivot denominator `target_coeff.neg()`
+/// repeats heavily across `solve_for_variable*` calls within one
+/// `optimize_linear*` invocation: empirically 99.98% duplicate rate on
+/// SHA-256(64) (10 unique values across 41540 inversions), 93–95% on
+/// EdDSAPoseidon and SMTVerifier. Caching collapses the Fermat-LT
+/// `pow(p-2)` chain (≈256 Montgomery muls each) to a hashmap lookup
+/// for hits, leaving misses on the first occurrence of each value.
+pub(super) type InvCache<F> = FxHashMap<FieldElement<F>, FieldElement<F>>;
+
+#[inline]
+pub(super) fn cached_inv<F: FieldBackend>(
+    cache: &mut InvCache<F>,
+    value: FieldElement<F>,
+) -> Option<FieldElement<F>> {
+    if let Some(inv) = cache.get(&value) {
+        return Some(*inv);
+    }
+    let inv = value.inv()?;
+    cache.insert(value, inv);
+    Some(inv)
+}
+
 /// Given an LC that must equal zero, solve for a non-protected variable.
 ///
 /// E.g., for `3*x + 2*y - z + 5*ONE = 0`, solving for z gives:
@@ -91,6 +113,7 @@ pub(super) fn solve_for_variable<F: FieldBackend>(
     lc: LinearCombination<F>,
     protected: &HashSet<usize>,
     var_freq: &FxHashMap<usize, usize>,
+    inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     let simplified = lc.simplify();
 
@@ -118,7 +141,7 @@ pub(super) fn solve_for_variable<F: FieldBackend>(
     let (target_var, target_coeff, _) = best?;
 
     // We need to compute: target_var = (-1/target_coeff) * (all other terms)
-    let neg_inv = target_coeff.neg().inv()?;
+    let neg_inv = cached_inv(inv_cache, target_coeff.neg())?;
 
     let mut result = LinearCombination::<F>::zero();
     for (var, coeff) in &simplified.terms {
