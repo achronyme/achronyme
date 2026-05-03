@@ -31,7 +31,9 @@
 //!   (one slot per producing node). A future pass will do
 //!   linear-scan liveness.
 
-use std::collections::{BTreeSet, HashMap, HashSet};
+use std::collections::BTreeSet;
+
+use rustc_hash::{FxHashMap as HashMap, FxHashSet as HashSet};
 
 use fixedbitset::FixedBitSet;
 use memory::{FieldBackend, FieldElement};
@@ -144,7 +146,7 @@ pub fn build_capture_layout<F: FieldBackend>(
         .copied()
         .map(CaptureKind::Slot)
         .collect();
-    let mut seen: HashSet<SsaVar> = HashSet::new();
+    let mut seen: HashSet<SsaVar> = HashSet::default();
     for node in &skeleton.nodes {
         if let SymbolicNode::OuterRef(v) = node {
             if seen.insert(*v) {
@@ -226,7 +228,7 @@ pub struct TemplateRegistry<F: FieldBackend> {
 impl<F: FieldBackend> Default for TemplateRegistry<F> {
     fn default() -> Self {
         Self {
-            specs: HashMap::new(),
+            specs: HashMap::default(),
             next_id: 0,
         }
     }
@@ -367,7 +369,7 @@ pub fn lift_uniform_loops<F: FieldBackend>(
     // stale pre-lift over-approximation.
     let mut max_var: usize = outer_refs.len();
     {
-        let mut tmp: HashSet<SsaVar> = HashSet::new();
+        let mut tmp: HashSet<SsaVar> = HashSet::default();
         for inst in &body {
             super::walker::collect_in_extinst(inst, &mut tmp);
         }
@@ -381,7 +383,7 @@ pub fn lift_uniform_loops<F: FieldBackend>(
     let outer_refs_padded = pad_to(outer_refs, max_var);
 
     let mut acc = FixedBitSet::with_capacity(max_var);
-    let mut local_set: HashSet<SsaVar> = HashSet::new();
+    let mut local_set: HashSet<SsaVar> = HashSet::default();
     let mut out_rev: Vec<ExtendedInstruction<F>> = Vec::with_capacity(body.len());
     for inst in body.into_iter().rev() {
         // Computing `total = acc | outer_refs_padded` is only needed
@@ -533,7 +535,7 @@ fn lift_uniform_to_template<F: FieldBackend>(
 ) -> Result<Vec<ExtendedInstruction<F>>, ExtractError> {
     // OuterRef captures only — slots map to the (internal) iter_var.
     let mut outer_refs: Vec<SsaVar> = Vec::new();
-    let mut seen: HashSet<SsaVar> = HashSet::new();
+    let mut seen: HashSet<SsaVar> = HashSet::default();
     for node in &skeleton.nodes {
         if let SymbolicNode::OuterRef(v) = node {
             if seen.insert(*v) {
