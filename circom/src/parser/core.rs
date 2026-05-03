@@ -12,14 +12,21 @@ pub(super) struct Parser {
     pub(super) tokens: Vec<Token>,
     pub(super) pos: usize,
     pub(super) errors: Vec<Diagnostic>,
+    pub(super) expr_depth: usize,
 }
 
 impl Parser {
+    /// Adversarial input like `[[[[...]]]]` blows the recursive-descent
+    /// stack before any other limit trips. Cap at 64 to mirror the
+    /// `.ach` parser and stay well under the 2 MiB test thread stack.
+    pub(super) const MAX_EXPR_DEPTH: usize = 64;
+
     pub(super) fn new(tokens: Vec<Token>) -> Self {
         Self {
             tokens,
             pos: 0,
             errors: Vec::new(),
+            expr_depth: 0,
         }
     }
 
