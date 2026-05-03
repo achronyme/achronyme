@@ -143,9 +143,12 @@ fn main() {
     let iropt_ms = t.elapsed().as_secs_f64() * 1000.0;
 
     // Witness hints (so the R1CS compile path matches what real users hit).
-    let mut all_signals =
-        circom::witness::compute_witness_hints_with_captures(&compile_result.prove_ir, &inputs, &compile_result.capture_values)
-            .unwrap_or_else(|e| panic!("witness hints: {e}"));
+    let mut all_signals = circom::witness::compute_witness_hints_with_captures(
+        &compile_result.prove_ir,
+        &inputs,
+        &compile_result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness hints: {e}"));
     for (cname, fe) in &captures {
         all_signals.entry(cname.clone()).or_insert(*fe);
     }

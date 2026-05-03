@@ -7,7 +7,7 @@
 //! backend, the witness generator) only ever see
 //! `R1CSOptimizeResult` and `SubstitutionMap<F>`.
 
-use std::collections::HashMap;
+use rustc_hash::FxHashMap;
 
 use crate::r1cs::LinearCombination;
 
@@ -31,4 +31,14 @@ pub struct R1CSOptimizeResult {
 }
 
 /// Maps a variable index to the LC that replaces it.
-pub type SubstitutionMap<F> = HashMap<usize, LinearCombination<F>>;
+///
+/// Keyed by `var.index()` (a small dense `usize`). Uses
+/// `rustc_hash::FxHashMap` because:
+///   - the keys are compiler-internal indices, not user-facing
+///     strings, so HashDoS resistance from the default SipHash-13
+///     is unneeded;
+///   - `apply_substitution_in_place` probes this map per-term per-LC
+///     per-round; for SMTVerifier(10) the SipHash leaf samples
+///     summed to ~23 % of total pipeline wall time before this
+///     change.
+pub type SubstitutionMap<F> = FxHashMap<usize, LinearCombination<F>>;

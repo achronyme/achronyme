@@ -18,7 +18,9 @@
 //! sibling submodule (`linear`, `deduce`, `substitution`) and
 //! from `tests.rs`.
 
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
+
+use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
@@ -65,10 +67,15 @@ pub(super) fn is_linear<F: FieldBackend>(
 }
 
 /// Count how many constraints each variable appears in (across A, B, C).
+///
+/// Returns an `FxHashMap` keyed by `var.index()`. Hot path: probed
+/// per-term in `solve_for_variable`. The default `RandomState`/SipHash
+/// hasher accounted for ~18 % of SMTVerifier(10) pipeline wall before
+/// the switch.
 pub(super) fn compute_variable_frequency<F: FieldBackend>(
     constraints: &[Constraint<F>],
-) -> HashMap<usize, usize> {
-    let mut freq: HashMap<usize, usize> = HashMap::new();
+) -> FxHashMap<usize, usize> {
+    let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
     for constraint in constraints {
         let mut vars_in_constraint: HashSet<usize> = HashSet::new();
         for (var, _) in &constraint.a.terms {

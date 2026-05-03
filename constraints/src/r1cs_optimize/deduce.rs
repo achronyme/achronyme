@@ -25,6 +25,8 @@
 
 use std::collections::{HashMap, HashSet};
 
+use rustc_hash::FxHashMap;
+
 use memory::{FieldBackend, FieldElement};
 
 use super::linear_cluster::{
@@ -387,7 +389,7 @@ where
 
         // Step 1: Decompose + record aux wire definitions
         let mut aux_wire_indices: HashSet<usize> = HashSet::new();
-        let mut aux_definitions: HashMap<usize, LinearCombination<F>> = HashMap::new();
+        let mut aux_definitions: FxHashMap<usize, LinearCombination<F>> = FxHashMap::default();
         {
             // Capture definitions before decomposition modifies constraints
             let pre_count = constraints.len();
