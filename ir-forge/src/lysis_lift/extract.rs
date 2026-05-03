@@ -1068,6 +1068,45 @@ mod tests {
     }
 
     #[test]
+    fn lift_keeps_loop_inline_when_body_var_escapes_to_sibling() {
+        // Loop body defines ssa(10); a sibling instruction *after* the
+        // loop consumes ssa(10). Lifting would seal ssa(10) inside the
+        // template frame and fault the downstream consumer. The walker
+        // must recognise the escape and keep the LoopUnroll verbatim.
+        //
+        // Walking in reverse: the consumer's reference to ssa(10) lands
+        // in `acc` first; when the LoopUnroll is reached, the escape
+        // check finds `body_defined ∩ acc` non-empty and falls back.
+        let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![
+            ExtendedInstruction::LoopUnroll {
+                iter_var: ssa(0),
+                start: 0,
+                end: 3,
+                body: vec![Instruction::Mul {
+                    result: ssa(10), // defined inside, consumed below
+                    lhs: ssa(0),
+                    rhs: ssa(99),
+                }
+                .into()],
+            },
+            Instruction::Add {
+                result: ssa(11),
+                lhs: ssa(10),
+                rhs: ssa(99),
+            }
+            .into(),
+        ];
+        let mut reg = TemplateRegistry::<Bn254Fr>::new();
+        let lifted = lift_uniform_loops(body, &mut reg, &FixedBitSet::new()).unwrap();
+        assert_eq!(lifted.len(), 2, "loop kept verbatim, sibling preserved");
+        assert!(
+            matches!(lifted[0], ExtendedInstruction::LoopUnroll { .. }),
+            "first instruction must remain a LoopUnroll, not a TemplateCall",
+        );
+        assert!(reg.is_empty(), "no template should be allocated");
+    }
+
+    #[test]
     fn two_independent_extractions_get_different_ids() {
         let body: Vec<ExtendedInstruction<Bn254Fr>> = vec![Instruction::Mul {
             result: ssa(1),
