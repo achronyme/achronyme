@@ -38,3 +38,12 @@ lto = true
 opt-level = 3
 codegen-units = 1
 panic = "abort"
+
+# Release-equivalent profile that retains line-table debuginfo so
+# external sampling profilers (samply, perf, pprof-rs) can resolve
+# Rust frames. Used by the `profile_compile_cpu` example. Compile
+# time ~ release; binary size grows by the line tables only.
+[profile.profile-cpu]
+inherits = "release"
+debug = "line-tables-only"
+strip = "none"
