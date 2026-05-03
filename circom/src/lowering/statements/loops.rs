@@ -21,7 +21,7 @@ use super::super::loop_var_subst::substitute_loop_var;
 use super::super::utils::{const_eval_u64, BigVal, EvalValue};
 use super::arrays::{body_has_component_array_ops, body_references_known_arrays};
 use super::targets::extract_target_name;
-use super::wiring::PendingComponent;
+use super::wiring::{collect_pending_refs_in_stmts, flush_specific_component, PendingComponent};
 
 /// Lower a C-style for loop to a ProveIR `For` node.
 ///
@@ -123,6 +123,20 @@ pub(super) fn lower_for_loop<'a>(
 
     // Register loop variable
     env.locals.insert(var_name.clone());
+
+    // Pre-loop flush: any pending sub-component whose output is read
+    // from the body must be inlined into the parent `nodes` Vec
+    // BEFORE the unroll/memoize/emit_for_node dispatch. Otherwise the
+    // demand-driven flush in `lower_stmt` writes the component body
+    // into the for-body Vec, and the iter-time unroll replicates it
+    // once per iteration with name collisions on `comp.out_*`. The
+    // flush_tracker recording stays passive — pre-loop flushes land
+    // outside the body window so memoize replay's diff still sees
+    // zero in-body flushes.
+    let body_refs = collect_pending_refs_in_stmts(&body.stmts, pending, env, ctx);
+    for comp_name in body_refs {
+        flush_specific_component(&comp_name, nodes, ctx, pending, env)?;
+    }
 
     // Classify the body to decide whether to unroll at lowering time
     // and — if so — which strategy governs the unroll.
