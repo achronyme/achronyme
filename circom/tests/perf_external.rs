@@ -476,6 +476,59 @@ fn escalarmulany_inputs() -> (String, String) {
     (json, toml)
 }
 
+fn sha256_64_inputs() -> (String, String) {
+    // 64 zero input bits — exercises the full Sha256(64) compression
+    // pipeline. The output digest will be the SHA-256 of all zeros.
+    let zeros_json: Vec<&str> = (0..64).map(|_| "\"0\"").collect();
+    let json = format!(r#"{{"in":[{}]}}"#, zeros_json.join(","));
+    let mut toml = String::from("in = [");
+    for i in 0..64 {
+        if i > 0 {
+            toml.push_str(", ");
+        }
+        toml.push('0');
+    }
+    toml.push_str("]\n");
+    (json, toml)
+}
+
+fn eddsaposeidon_inputs() -> (String, String) {
+    // enabled=0 keeps the verify a no-op; the BabyJubjub base point
+    // (Base8) keeps intermediate Num2Bits / Edwards-curve wirings
+    // valid so the constraint system is satisfiable.
+    let ax = "5299619240641551281634865583518297030282874472190772894086521144482721001553";
+    let ay = "16950150798460657717958625567821834550301663161624707787222815936182638968203";
+    let json = format!(
+        r#"{{"enabled":"0","Ax":"{ax}","Ay":"{ay}","S":"1","R8x":"{ax}","R8y":"{ay}","M":"42"}}"#
+    );
+    let toml = format!(
+        "enabled = 0\nAx = \"{ax}\"\nAy = \"{ay}\"\nS = 1\nR8x = \"{ax}\"\nR8y = \"{ay}\"\nM = 42\n"
+    );
+    (json, toml)
+}
+
+fn smtverifier_10_inputs() -> (String, String) {
+    // enabled=0: SMTVerifier becomes a no-op verifier; any input
+    // satisfies the constraints. 10 zero siblings cover the full
+    // tree depth.
+    let zeros_json: Vec<&str> = (0..10).map(|_| "\"0\"").collect();
+    let json = format!(
+        r#"{{"enabled":"0","fnc":"0","root":"0","oldKey":"0","oldValue":"0","isOld0":"0","key":"0","value":"0","siblings":[{}]}}"#,
+        zeros_json.join(",")
+    );
+    let mut toml = String::from(
+        "enabled = 0\nfnc = 0\nroot = 0\noldKey = 0\noldValue = 0\nisOld0 = 0\nkey = 0\nvalue = 0\nsiblings = [",
+    );
+    for i in 0..10 {
+        if i > 0 {
+            toml.push_str(", ");
+        }
+        toml.push('0');
+    }
+    toml.push_str("]\n");
+    (json, toml)
+}
+
 const CIRCUITS: &[Circuit] = &[
     Circuit {
         name: "Num2Bits(8)",
@@ -494,6 +547,24 @@ const CIRCUITS: &[Circuit] = &[
         circom_src: "test/circomlib/escalarmulany254_test.circom",
         libs: &["test/circomlib"],
         inputs: escalarmulany_inputs,
+    },
+    Circuit {
+        name: "SMTVerifier(10)",
+        circom_src: "test/circomlib/smtverifier_test.circom",
+        libs: &["test/circomlib"],
+        inputs: smtverifier_10_inputs,
+    },
+    Circuit {
+        name: "EdDSAPoseidon",
+        circom_src: "test/circomlib/eddsaposeidon_test.circom",
+        libs: &["test/circomlib"],
+        inputs: eddsaposeidon_inputs,
+    },
+    Circuit {
+        name: "Sha256(64)",
+        circom_src: "test/circomlib/sha256_test.circom",
+        libs: &["test/circomlib"],
+        inputs: sha256_64_inputs,
     },
 ];
 
@@ -518,7 +589,8 @@ fn perf_external_vs_circom_snarkjs() {
     }
 
     let ach = build_ach_binary();
-    let ptau = ensure_ptau(14);
+    // ptau 2^15 = 32 768 covers Sha256(64)'s ~29k post-O2 constraints.
+    let ptau = ensure_ptau(15);
 
     eprintln!("\n== External pipeline benchmark ==");
     eprintln!("  ach    : {}", ach.display());
