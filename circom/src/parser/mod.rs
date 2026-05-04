@@ -664,4 +664,25 @@ component main = IsZero();
         let (_, errors) = parse_circom(src).unwrap();
         assert!(errors.is_empty());
     }
+
+    /// Hundreds of nested `[` would overflow the recursive-descent
+    /// stack via `parse_expr_bp → parse_prefix → parse_atom →
+    /// parse_array_lit → parse_expr_list → parse_expr`. The
+    /// expression-depth cap returns a graceful failure instead.
+    #[test]
+    fn deeply_nested_exprs_do_not_overflow() {
+        let inner: String = "[".repeat(2000);
+        let src = format!("template T() {{ signal a; a <-- {inner};");
+        let _ = parse_circom(&src);
+    }
+
+    /// Hundreds of nested `{` would overflow via `parse_block →
+    /// parse_stmt → parse_block`. The block-depth cap returns a
+    /// graceful failure instead.
+    #[test]
+    fn deeply_nested_blocks_do_not_overflow() {
+        let inner: String = "{".repeat(2000);
+        let src = format!("template T() {inner}");
+        let _ = parse_circom(&src);
+    }
 }

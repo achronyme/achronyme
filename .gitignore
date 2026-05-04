@@ -28,6 +28,7 @@ changes.txt
 fuzz/corpus/
 fuzz/artifacts/
 fuzz/target/
+fuzz/.soak/
 
 # WASM playground
 wasm/target/
