@@ -390,7 +390,7 @@ fn try_eval_circuit_expr_fc(
 // ---------------------------------------------------------------------------
 
 /// Mangle a list of CircuitNodes: prefix all names and substitute captures.
-fn mangle_nodes(
+pub(crate) fn mangle_nodes(
     nodes: &[CircuitNode],
     prefix: &str,
     param_subs: &HashMap<String, CircuitExpr>,

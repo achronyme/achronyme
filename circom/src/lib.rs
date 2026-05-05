@@ -332,6 +332,52 @@ pub fn compile_template_library(
     })
 }
 
+/// Lower a library-resident template through the For-preserving
+/// pipeline so a dispatch caller can inline the body without the
+/// eager loop unrolling that walks per-iter signal arrays into
+/// flat scalars. Captures are pre-bound from the call's template
+/// args. Signal inputs are wired by the caller via name mangling
+/// against `parent_prefix`.
+///
+/// Bit-width inference runs after the body lowering so `Decompose`
+/// widths narrow against the captures — the walker would otherwise
+/// reject wide leaves even with `For` loops preserved.
+pub fn lower_library_template(
+    library: &CircomLibrary,
+    template_name: &str,
+    captures: std::collections::HashMap<String, ir_forge::types::FieldConst>,
+) -> Result<lowering::template::LowerTemplateResult, CircomError> {
+    let template = library
+        .program
+        .definitions
+        .iter()
+        .find_map(|d| match d {
+            ast::Definition::Template(t) if t.name == template_name => Some(t),
+            _ => None,
+        })
+        .ok_or_else(|| CircomError::MainTemplateNotFound(template_name.to_string()))?;
+
+    let mut lower_result = lowering::template::lower_template_with_captures(
+        template,
+        &captures,
+        &[],
+        &library.program,
+    )
+    .map_err(CircomError::LoweringError)?;
+
+    let bool_widths = lowering::bit_width::scan_bool_constraints(&lower_result.prove_ir);
+    let signal_widths =
+        lowering::bit_width::propagate_let_widths(&lower_result.prove_ir, bool_widths);
+    let inference_ctx = lowering::bit_width::InferenceCtx {
+        param_values: Some(&captures),
+        known_constants: None,
+        signal_widths: Some(&signal_widths),
+    };
+    lowering::bit_width::rewrite_num_bits_in_prove_ir(&mut lower_result.prove_ir, &inference_ctx);
+
+    Ok(lower_result)
+}
+
 /// Shared compilation pipeline: analysis + lowering. Runs validation.
 fn compile_program(program: &ast::CircomProgram) -> Result<CircomCompileResult, CircomError> {
     let warnings = validate_program(program)?;
