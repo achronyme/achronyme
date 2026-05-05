@@ -2,15 +2,15 @@ use std::cell::RefCell;
 
 use wasm_bindgen::prelude::*;
 
-use akronc::Compiler;
-use memory::{Closure, Function, Value};
 use akron::error::RuntimeError;
 use akron::native::NativeObj;
 use akron::{CallFrame, ValueOps, VM};
+use akronc::Compiler;
+use memory::{Closure, Function, Value};
 
 // Thread-local buffer for capturing print() output.
 thread_local! {
-    static OUTPUT: RefCell<Vec<String>> = RefCell::new(Vec::new());
+    static OUTPUT: RefCell<Vec<String>> = const { RefCell::new(Vec::new()) };
 }
 
 /// Custom print native that writes to the thread-local buffer instead of stdout.
@@ -178,14 +178,26 @@ fn run_inner(source: &str) -> Result<(), String> {
 // LSP functions (powered by ach-lsp-core)
 // ---------------------------------------------------------------------------
 
-/// Check source code for diagnostics. Returns JSON array of LspDiagnostic[].
+/// Check `.ach` source code for diagnostics. Returns JSON array of LspDiagnostic[].
 #[wasm_bindgen]
 pub fn check(source: &str) -> String {
     let diags = ach_lsp_core::diagnostics::check(source);
     serde_json::to_string(&diags).unwrap_or_else(|_| "[]".into())
 }
 
-/// Get all completion items. Returns JSON array of CompletionItem[].
+/// Check `.circom` source code for diagnostics. Returns JSON array of LspDiagnostic[].
+///
+/// Routes through the circom parser + constraint analyzer + (for self-contained
+/// sources) the lowering pipeline. Use this entry point — not [`check`] — for
+/// any URI ending in `.circom`. The two pipelines surface different code
+/// families (E100-E102 / W101-W103 / E200-E211 vs the `.ach` parser codes).
+#[wasm_bindgen]
+pub fn check_circom(source: &str) -> String {
+    let diags = ach_lsp_core::diagnostics_circom::check_circom(source);
+    serde_json::to_string(&diags).unwrap_or_else(|_| "[]".into())
+}
+
+/// Get all `.ach` completion items. Returns JSON array of CompletionItem[].
 /// This is static data (keywords + builtins + snippets), no source needed.
 #[wasm_bindgen]
 pub fn completions() -> String {
@@ -194,7 +206,20 @@ pub fn completions() -> String {
     serde_json::to_string(&items).unwrap_or_else(|_| "[]".into())
 }
 
-/// Get hover documentation for the word at (line, col). Returns markdown string or "".
+/// Get all `.circom` completion items. Returns JSON array of CompletionItem[].
+///
+/// Disjoint from [`completions`] — circom keywords (`template`, `signal`,
+/// `pragma`, `include`) and the verified circomlib templates (Num2Bits,
+/// Poseidon, MiMCSponge, …) live in the circom-specific tables.
+#[wasm_bindgen]
+pub fn completions_circom() -> String {
+    let mut items = ach_lsp_core::completion::circom_keyword_completions();
+    items.extend(ach_lsp_core::completion::circom_snippet_completions());
+    serde_json::to_string(&items).unwrap_or_else(|_| "[]".into())
+}
+
+/// Get `.ach` hover documentation for the word at (line, col).
+/// Returns a markdown string or `""` when no entry matches.
 #[wasm_bindgen]
 pub fn hover(source: &str, line: u32, col: u32) -> String {
     let word = match ach_lsp_core::document::word_at_position(source, line, col) {
@@ -202,6 +227,23 @@ pub fn hover(source: &str, line: u32, col: u32) -> String {
         None => return String::new(),
     };
     ach_lsp_core::hover::hover_for(&word)
+        .unwrap_or("")
+        .to_string()
+}
+
+/// Get `.circom` hover documentation for the word at (line, col).
+/// Returns a markdown string or `""` when no entry matches.
+///
+/// `Poseidon`, `Pedersen`, `Sha256`, etc. resolve to circomlib component
+/// docs here; in the `.ach` table the same identifiers (when present)
+/// resolve to the achronyme builtin instead.
+#[wasm_bindgen]
+pub fn hover_circom(source: &str, line: u32, col: u32) -> String {
+    let word = match ach_lsp_core::document::word_at_position(source, line, col) {
+        Some((w, _)) => w,
+        None => return String::new(),
+    };
+    ach_lsp_core::hover::circom_hover_for(&word)
         .unwrap_or("")
         .to_string()
 }
