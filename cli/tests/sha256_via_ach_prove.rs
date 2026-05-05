@@ -1,0 +1,119 @@
+//! Regression: heavy circomlib templates dispatched from a `.ach
+//! prove` block compile through the For-preserving path without
+//! exhausting Lysis's 255-slot frame ceiling.
+
+use std::io::Write;
+
+use cli::commands::ErrorFormat;
+use memory::field::PrimeId;
+
+const EF: ErrorFormat = ErrorFormat::Human;
+
+fn workspace_root() -> std::path::PathBuf {
+    std::path::PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .to_path_buf()
+}
+
+fn run_ach(source: &str) -> anyhow::Result<()> {
+    let dir = tempfile::tempdir().expect("tempdir");
+    let ach_path = dir.path().join("main.ach");
+    let mut f = std::fs::File::create(&ach_path).expect("create ach file");
+    f.write_all(source.as_bytes()).expect("write ach source");
+    f.flush().expect("flush ach source");
+
+    cli::commands::run::run_file(
+        ach_path.to_str().unwrap(),
+        false,
+        None,
+        "r1cs",
+        PrimeId::Bn254,
+        None,
+        false,
+        false,
+        EF,
+        &[],
+    )
+}
+
+fn sha256_source(circomlib: &std::path::Path, n_bits: usize, mix: bool) -> String {
+    let mut bits = String::from("[");
+    for i in 0..n_bits {
+        if i > 0 {
+            bits.push_str(", ");
+        }
+        bits.push_str(if mix && i % 2 == 0 { "0p1" } else { "0p0" });
+    }
+    bits.push_str("]");
+    format!(
+        r#"
+import {{ Sha256 }} from "{lib}/circuits/sha256/sha256.circom"
+
+prove() {{
+    let _r = Sha256({n_bits})({bits})
+}}
+"#,
+        lib = circomlib.to_str().unwrap(),
+    )
+}
+
+#[test]
+fn iszero_via_ach_prove_compiles() {
+    let circomlib = workspace_root().join("test/circomlib");
+    if !circomlib.join("circuits/comparators.circom").exists() {
+        eprintln!("skipping: circomlib not present at {circomlib:?}");
+        return;
+    }
+
+    let source = format!(
+        r#"
+import {{ IsZero }} from "{lib}/circuits/comparators.circom"
+
+prove() {{
+    let _r = IsZero()(0p0)
+}}
+"#,
+        lib = circomlib.to_str().unwrap()
+    );
+
+    run_ach(&source).expect("IsZero via .ach prove must compile + run");
+}
+
+#[test]
+fn sha256_64_all_zero_inputs_compiles() {
+    let circomlib = workspace_root().join("test/circomlib");
+    if !circomlib.join("circuits/sha256/sha256.circom").exists() {
+        eprintln!("skipping: circomlib/sha256 not present at {circomlib:?}");
+        return;
+    }
+    let source = sha256_source(&circomlib, 64, false);
+    run_ach(&source).expect("Sha256(64) all-zero via .ach prove must compile + run");
+}
+
+#[test]
+fn sha256_64_mixed_inputs_compiles() {
+    let circomlib = workspace_root().join("test/circomlib");
+    if !circomlib.join("circuits/sha256/sha256.circom").exists() {
+        eprintln!("skipping: circomlib/sha256 not present at {circomlib:?}");
+        return;
+    }
+    let source = sha256_source(&circomlib, 64, true);
+    run_ach(&source).expect("Sha256(64) mixed via .ach prove must compile + run");
+}
+
+// nBits<64 currently fails Lysis with `walker: undefined SsaVar %1` —
+// independent of the input pattern (all-zero and mixed both fail at
+// nBits in {8, 16, 32}, both pass at nBits=64). The frame-overflow
+// blocker the For-preserving dispatch was added to fix is gone; this
+// is a separate walker-side surface that needs its own diagnosis.
+#[test]
+#[ignore = "Sha256(N) for N < 64 fails Lysis with walker UndefinedSsaVar; separate from frame-overflow"]
+fn sha256_8_compiles() {
+    let circomlib = workspace_root().join("test/circomlib");
+    if !circomlib.join("circuits/sha256/sha256.circom").exists() {
+        return;
+    }
+    let source = sha256_source(&circomlib, 8, false);
+    run_ach(&source).expect("Sha256(8) all-zero via .ach prove must compile + run");
+}

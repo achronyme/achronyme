@@ -8,8 +8,7 @@ use std::collections::HashMap;
 use diagnostics::Span;
 use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 
-use crate::lowering::components::inline_component_body_with_const_inputs;
-use crate::lowering::context::LoweringContext;
+use crate::lowering::components::mangle_nodes;
 
 use super::error::{check_param_count, find_template, LibraryError};
 use super::metadata::resolve_entry;
@@ -99,16 +98,19 @@ impl From<LibraryError> for InstantiationError {
 
 /// Instantiate a Circom template into a parent circuit body.
 ///
-/// Lowering happens on demand against the library's own AST.
+/// Lowering routes through `lower_library_template` so `for` loops over
+/// loop-var-indexed signals stay rolled. The walker's per-iter unroll
+/// keeps Lysis frame slots within the 255-slot ceiling on heavy
+/// templates that would otherwise eagerly amplify (SHA-256, large
+/// MiMC sponges).
+///
 /// `template_args` bind template parameters in declaration order;
 /// `signal_inputs` wires each declared input signal to an expression
-/// from the caller's scope (typically a `CircuitExpr::Var` referencing
-/// an `.ach`-side binding, or a `CircuitExpr::Const` for
-/// compile-time-known values, which are propagated through the
-/// sub-template for O1/O2-friendly constraint generation).
+/// from the caller's scope (`CircuitExpr::Var` for runtime values,
+/// `CircuitExpr::Const` for compile-time-known values).
 ///
 /// Name mangling: all signals and locals inside the inlined body are
-/// prefixed with `parent_prefix` + `_`. The returned
+/// prefixed with `parent_prefix` + `.`. The returned
 /// [`TemplateInstantiation::outputs`] map uses those mangled names so
 /// callers can emit `result.out` access.
 pub fn instantiate_template_into(
@@ -117,16 +119,11 @@ pub fn instantiate_template_into(
     template_args: &[FieldConst],
     signal_inputs: &HashMap<String, CircuitExpr>,
     parent_prefix: &str,
-    span: &Span,
+    _span: &Span,
 ) -> Result<TemplateInstantiation, InstantiationError> {
-    // 1. Locate the template and validate argument count — both shared
-    //    with the witness-eval path via `error::LibraryError`.
     let template = find_template(library, template_name)?;
     check_param_count(template, template_args.len())?;
 
-    // 2. Resolve the library's cached entry against the concrete
-    //    captures so output dimensions become Const. This is O(signals
-    //    × dims) and avoids re-walking the template body's AST.
     let mut known_params = HashMap::new();
     for (name, fc) in template.params.iter().zip(template_args.iter()) {
         known_params.insert(name.clone(), *fc);
@@ -136,10 +133,7 @@ pub fn instantiate_template_into(
         .expect("find_template succeeded, cached entry must exist");
     let entry = resolve_entry(cached, &known_params);
 
-    // 3. Wire signal inputs: emit a Let binding per input, splitting
-    //    compile-time constants into `const_inputs` for propagation.
     let mut body = Vec::new();
-    let mut const_inputs: HashMap<String, FieldConst> = HashMap::new();
 
     for input in &entry.inputs {
         if input.is_scalar() {
@@ -149,21 +143,6 @@ pub fn instantiate_template_into(
                     signal: input.name.clone(),
                 }
             })?;
-
-            // Propagate compile-time-known inputs into the sub-template so
-            // the lowerer emits `Const` instead of `Input` for them. We do
-            // NOT emit a Let binding for Const inputs at all — it would be
-            // dead code (the body never reads the mangled name because
-            // const_inputs short-circuits in inline_component_body_with_const_inputs).
-            if let CircuitExpr::Const(fc) = expr {
-                const_inputs.insert(input.name.clone(), *fc);
-                continue;
-            }
-
-            // Mangle with `.` to match the `mangle_name` convention
-            // used by `inline_component_body_with_const_inputs` — the
-            // inlined body references `{parent_prefix}.{input.name}`
-            // so the wiring Let must use the same separator.
             let mangled = format!("{parent_prefix}.{}", input.name);
             body.push(CircuitNode::Let {
                 name: mangled,
@@ -171,11 +150,6 @@ pub fn instantiate_template_into(
                 span: None,
             });
         } else {
-            // Array-valued input (e.g. `signal input inputs[nInputs]`).
-            // Resolve dimensions to concrete sizes, then wire each
-            // element individually. The caller has already expanded
-            // `ArrayLit` / VM-mode list values into per-element entries
-            // keyed `signal_0`, `signal_0_0`, ... in `signal_inputs`.
             let dims = resolve_output_dims(&input.dimensions).ok_or_else(|| {
                 InstantiationError::Lowering(format!(
                     "template `{template_name}` input signal `{}` has unresolved array \
@@ -184,12 +158,6 @@ pub fn instantiate_template_into(
                 ))
             })?;
             let indices = iter_multi_index(&dims);
-            // Collect the per-element expressions so we can also emit
-            // a single `LetArray` binding — the ProveIR → IR
-            // instantiation pass uses that to register the array as a
-            // whole under `{prefix}.{input.name}`, which lets
-            // non-unrolled body references like `in[i]` (with `i`
-            // still a runtime var) resolve via the IR array env.
             let mut elem_exprs: Vec<CircuitExpr> = Vec::with_capacity(indices.len());
             for idx in &indices {
                 let suffix = idx
@@ -204,14 +172,6 @@ pub fn instantiate_template_into(
                         signal: elem_key.clone(),
                     }
                 })?;
-                if let CircuitExpr::Const(fc) = expr {
-                    const_inputs.insert(elem_key.clone(), *fc);
-                    elem_exprs.push(CircuitExpr::Const(*fc));
-                    continue;
-                }
-                // Match the `.`-separated mangler convention — the
-                // inlined body resolves `in[i]` to `Var(in_i)`, which
-                // `mangle_name` then rewrites to `{prefix}.{in_i}`.
                 let mangled = format!("{parent_prefix}.{elem_key}");
                 body.push(CircuitNode::Let {
                     name: mangled.clone(),
@@ -220,13 +180,6 @@ pub fn instantiate_template_into(
                 });
                 elem_exprs.push(CircuitExpr::Var(mangled));
             }
-
-            // Aggregate binding: `let {prefix}.{name} = [elem0, ...]`
-            // so non-unrolled loops that keep `in[i]` as an
-            // `ArrayIndex` with a runtime `i` can still resolve the
-            // whole array at IR instantiation time. Scalar-element
-            // lookups keep working because the individual `{prefix}.{name}_i`
-            // Lets above remain in scope.
             let array_name = format!("{parent_prefix}.{}", input.name);
             body.push(CircuitNode::LetArray {
                 name: array_name,
@@ -236,33 +189,22 @@ pub fn instantiate_template_into(
         }
     }
 
-    // 4. Build a fresh LoweringContext bound to the library's program and
-    //    inline the template body.
-    let mut ctx = LoweringContext::from_program(&library.program);
-    let template_arg_exprs: Vec<CircuitExpr> = template_args
-        .iter()
-        .map(|fc| CircuitExpr::Const(*fc))
-        .collect();
+    let lower_result = crate::lower_library_template(library, template_name, known_params)
+        .map_err(|e| match e {
+            crate::CircomError::LoweringError(le) => InstantiationError::Lowering(le.to_string()),
+            other => InstantiationError::Lowering(other.to_string()),
+        })?;
 
-    let inlined = inline_component_body_with_const_inputs(
+    let mut param_subs: HashMap<String, CircuitExpr> = HashMap::new();
+    for (name, fc) in template.params.iter().zip(template_args.iter()) {
+        param_subs.insert(name.clone(), CircuitExpr::Const(*fc));
+    }
+    body.extend(mangle_nodes(
+        &lower_result.prove_ir.body,
         parent_prefix,
-        template,
-        &template_arg_exprs,
-        &HashMap::new(), // array_args: none for now
-        &const_inputs,
-        &mut ctx,
-        span,
-    )
-    .map_err(|e| InstantiationError::Lowering(e.to_string()))?;
+        &param_subs,
+    ));
 
-    body.extend(inlined);
-
-    // 5. Build the outputs map keyed by original output name.
-    //    Scalar outputs wrap a single Var; array outputs hold the
-    //    resolved shape + one Var per element in row-major order.
-    //    Names use the `.` separator to match `mangle_name` in
-    //    `components.rs`, so the Vars resolve to the locals the
-    //    inlined body just bound.
     let mut outputs = HashMap::new();
     for out in &entry.outputs {
         if out.is_scalar() {
@@ -424,12 +366,7 @@ mod tests {
     }
 
     #[test]
-    fn instantiate_const_input_skips_trivial_let() {
-        // When a signal input is a compile-time Const, the wiring Let
-        // would be dead code: inline_component_body_with_const_inputs
-        // injects the value into the sub-template's known_constants
-        // and the mangled name is never referenced. Verify no Let
-        // binding for the mangled input name is emitted.
+    fn instantiate_const_input_emits_const_let() {
         let lib = make_library(
             r#"
             template Square() {
@@ -444,16 +381,15 @@ mod tests {
         let inst = instantiate_template_into(&lib, "Square", &[], &inputs, "k0", &dummy_span())
             .expect("instantiation should succeed");
 
-        let has_mangled_input_let = inst.body.iter().any(|n| match n {
-            CircuitNode::Let { name, .. } => name == "k0.x",
-            _ => false,
+        let const_let = inst.body.iter().find_map(|n| match n {
+            CircuitNode::Let { name, value, .. } if name == "k0.x" => Some(value.clone()),
+            _ => None,
         });
         assert!(
-            !has_mangled_input_let,
-            "Const inputs should not emit a wiring Let, body was: {:?}",
+            matches!(const_let, Some(CircuitExpr::Const(fc)) if fc.to_u64() == Some(5)),
+            "expected wiring Let `k0.x = Const(5)`, body was: {:?}",
             inst.body
         );
-        // The Scalar output must still be present.
         assert!(matches!(
             inst.outputs.get("y"),
             Some(TemplateOutput::Scalar(CircuitExpr::Var(_)))
