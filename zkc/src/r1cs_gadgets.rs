@@ -138,6 +138,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut sum = LinearCombination::zero();
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
+            crate::r1cs_backend::BC_ENFORCE_N_RANGE
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.cs.enforce(
                 LinearCombination::from_variable(bit_var),
                 LinearCombination::from_constant(FieldElement::<F>::one())
@@ -187,6 +189,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
             // b_i * (1 - b_i) = 0
+            crate::r1cs_backend::BC_IS_LT_VIA_BITS
+                .fetch_add(1, std::sync::atomic::Ordering::Relaxed);
             self.cs.enforce(
                 LinearCombination::from_variable(bit_var),
                 LinearCombination::from_constant(FieldElement::<F>::one())
