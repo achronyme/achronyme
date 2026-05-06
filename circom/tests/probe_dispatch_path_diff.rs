@@ -899,8 +899,8 @@ fn probe_lower_library_template_sha256_8() {
     stats.print("Sha256(8)");
 
     let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = captures
-        .iter()
-        .map(|(k, _)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(8)))
+        .keys()
+        .map(|k| (k.clone(), FieldElement::<Bn254Fr>::from_u64(8)))
         .collect();
 
     let lysis_result = lower_result
@@ -941,8 +941,8 @@ fn probe_lower_library_template_sha256_64() {
     stats.print("for-preserving");
 
     let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = captures
-        .iter()
-        .map(|(k, _)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(64)))
+        .keys()
+        .map(|k| (k.clone(), FieldElement::<Bn254Fr>::from_u64(64)))
         .collect();
 
     let extended = lower_result
