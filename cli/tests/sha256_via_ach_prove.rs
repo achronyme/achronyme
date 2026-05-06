@@ -102,13 +102,7 @@ fn sha256_64_mixed_inputs_compiles() {
     run_ach(&source).expect("Sha256(64) mixed via .ach prove must compile + run");
 }
 
-// nBits<64 currently fails Lysis with `walker: undefined SsaVar %1` —
-// independent of the input pattern (all-zero and mixed both fail at
-// nBits in {8, 16, 32}, both pass at nBits=64). The frame-overflow
-// blocker the For-preserving dispatch was added to fix is gone; this
-// is a separate walker-side surface that needs its own diagnosis.
 #[test]
-#[ignore = "Sha256(N) for N < 64 fails Lysis with walker UndefinedSsaVar; separate from frame-overflow"]
 fn sha256_8_compiles() {
     let circomlib = workspace_root().join("test/circomlib");
     if !circomlib.join("circuits/sha256/sha256.circom").exists() {
@@ -116,4 +110,14 @@ fn sha256_8_compiles() {
     }
     let source = sha256_source(&circomlib, 8, false);
     run_ach(&source).expect("Sha256(8) all-zero via .ach prove must compile + run");
+}
+
+#[test]
+fn sha256_8_mixed_inputs_compiles() {
+    let circomlib = workspace_root().join("test/circomlib");
+    if !circomlib.join("circuits/sha256/sha256.circom").exists() {
+        return;
+    }
+    let source = sha256_source(&circomlib, 8, true);
+    run_ach(&source).expect("Sha256(8) mixed via .ach prove must compile + run");
 }

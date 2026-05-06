@@ -558,10 +558,31 @@ impl<F: FieldBackend> Walker<F> {
     /// the boundary — required so the next iteration's restore can
     /// rebind iter_var literals, and required so an inner-triggered
     /// split doesn't strand an outer loop's iter_var binding.
-    fn split_in_per_iter(&mut self, body: &[ExtendedInstruction<F>]) -> Result<(), WalkError> {
+    ///
+    /// `body_defined` is the set of SsaVars defined anywhere inside
+    /// `body` (computed once per loop in `emit_loop_unroll_per_iter_inner`
+    /// and threaded through). Anything in `ssa_to_reg` that is NOT in
+    /// `body_defined` was produced by code outside the loop, so its
+    /// only post-split fate is to be referenced by the OUTER scope
+    /// after the loop closes. The loop body itself can't observe
+    /// whether such a var has a downstream use, but the walker has
+    /// already locked it into `ssa_to_reg`, so dropping it from the
+    /// live set without spilling would surface as `UndefinedSsaVar`
+    /// at the outer consumer. Force-include outer vars in `live` so
+    /// `partition_live_set` can route them to `cold` and `perform_split`
+    /// spills them to heap — a later `resolve()` then faults them in
+    /// via `LoadHeap` regardless of which template the outer use
+    /// lands in.
+    fn split_in_per_iter(
+        &mut self,
+        body: &[ExtendedInstruction<F>],
+        body_defined: &HashSet<SsaVar>,
+    ) -> Result<(), WalkError> {
         let referenced = collect_referenced_ssa_vars(body);
         let enclosing: HashSet<SsaVar> = self.enclosing_iter_vars.iter().copied().collect();
-        let live = self.compute_live_set(|v| referenced.contains(v) || enclosing.contains(v))?;
+        let live = self.compute_live_set(|v| {
+            referenced.contains(v) || enclosing.contains(v) || !body_defined.contains(v)
+        })?;
         dump_live_set_trace("mid_iter", live.len(), body.len(), self.current);
         // Mid-iter splits force-include enclosing iter vars in `hot`
         // regardless of first-use ordering — outer loops' iter_vars
@@ -2019,7 +2040,7 @@ impl<F: FieldBackend> Walker<F> {
                         .saturating_add(cost)
                         .saturating_add(cold_loads);
                     if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
-                        self.split_in_per_iter(body)?;
+                        self.split_in_per_iter(body, &body_defined)?;
                     }
                 }
                 self.emit(inst)?;
