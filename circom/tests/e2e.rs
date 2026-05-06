@@ -2265,6 +2265,15 @@ fn sha256_64_constraint_breakdown() {
         stats.trivial_removed,
         stats.duplicates_removed,
     );
+    eprintln!("\n-- O1 round_details (linear_eliminated, newly_linear) ----");
+    let total_newly_linear: usize = stats.round_details.iter().map(|(_, n)| n).sum();
+    for (i, (lin_elim, newly_lin)) in stats.round_details.iter().enumerate() {
+        eprintln!(
+            "  round {}: linear_eliminated={lin_elim}  newly_linear={newly_lin}",
+            i + 1
+        );
+    }
+    eprintln!("  total newly_linear across rounds = {total_newly_linear}");
 
     eprintln!("\n-- POST-R1CS-O1 shape histogram ---------------------");
     print_constraint_histogram(rc.cs.constraints());
