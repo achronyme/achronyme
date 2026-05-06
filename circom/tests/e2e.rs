@@ -2686,6 +2686,233 @@ fn sha256_64_circom_o2_histogram_diff() {
     );
 }
 
+/// Sha256(8) variant of the histogram-diff. Used to test the
+/// per-input-bit hypothesis: if the wrapper-only `(1,2,0)` excess
+/// scales with `nBits`, achronyme is over-emitting bool-checks
+/// proportional to the number of variable input bits.
+#[test]
+#[ignore = "Sha256(8) histogram diff. Prerequisite: snarkjs JSON dump at /tmp/cir-sha256_8-o2/sha256_8_test.json. Run with `--ignored sha256_8_circom_o2_histogram_diff -- --nocapture`."]
+fn sha256_8_circom_o2_histogram_diff() {
+    use std::collections::{BTreeMap, HashSet};
+    use std::fs;
+
+    const CIRCOM_O2_JSON: &str = "/tmp/cir-sha256_8-o2/sha256_8_test.json";
+
+    let json_path = PathBuf::from(CIRCOM_O2_JSON);
+    if !json_path.exists() {
+        panic!("circom O2 dump not found at {CIRCOM_O2_JSON}");
+    }
+    let raw = fs::read_to_string(&json_path).expect("read circom JSON");
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("parse circom JSON");
+    let constraints_v = v["constraints"].as_array().expect("constraints array");
+
+    let mut circom_hist: BTreeMap<(usize, usize, usize), usize> = BTreeMap::new();
+    for c in constraints_v {
+        let arr = c.as_array().expect("constraint triple [A,B,C]");
+        let an = arr[0].as_object().map(|m| m.len()).unwrap_or(0);
+        let bn = arr[1].as_object().map(|m| m.len()).unwrap_or(0);
+        let cn = arr[2].as_object().map(|m| m.len()).unwrap_or(0);
+        let key = (an.min(bn), an.max(bn), cn);
+        *circom_hist.entry(key).or_insert(0) += 1;
+    }
+    let circom_total: usize = circom_hist.values().sum();
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256_8_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Sha256(8) compile failed: {e}"));
+    let mut captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    captures.insert("nBits".to_string(), FieldElement::<Bn254Fr>::from_u64(8));
+    let outs: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&captures, &outs)
+        .expect("instantiate_lysis");
+    ir::passes::optimize(&mut program);
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).expect("R1CS compile");
+    let _ = rc.optimize_r1cs();
+    let post_o1 = rc.cs.num_constraints();
+
+    let mut ach_hist: BTreeMap<(usize, usize, usize), usize> = BTreeMap::new();
+    for c in rc.cs.constraints() {
+        let an = c.a.simplify().terms().len();
+        let bn = c.b.simplify().terms().len();
+        let cn = c.c.simplify().terms().len();
+        *ach_hist.entry((an.min(bn), an.max(bn), cn)).or_insert(0) += 1;
+    }
+
+    let bool_check_circom = circom_hist.get(&(1, 2, 0)).copied().unwrap_or(0);
+    let bool_check_ach = ach_hist.get(&(1, 2, 0)).copied().unwrap_or(0);
+
+    eprintln!("\n=== Sha256(8) — achronyme post-O1 vs circom --O2 ===");
+    eprintln!("achronyme post-O1   = {post_o1}");
+    eprintln!("circom    --O2      = {circom_total}");
+    eprintln!(
+        "net residual        = {:+} c",
+        post_o1 as i64 - circom_total as i64
+    );
+    eprintln!();
+    eprintln!("(1,2,0) bool-check-shape:");
+    eprintln!("  circom    --O2 = {bool_check_circom}");
+    eprintln!("  achronyme O1   = {bool_check_ach}");
+    eprintln!(
+        "  delta          = {:+}",
+        bool_check_ach as i64 - bool_check_circom as i64
+    );
+    eprintln!();
+    eprintln!("=== reference (from prior runs) ===");
+    eprintln!("Sha256(64) full:        ach (1,2,0) = 10309, circom = 10160, Δ = +149");
+    eprintln!("Sha256comp(1) standalone: ach (1,2,0) = 10245, circom = 10160, Δ = +85");
+    eprintln!("                          wrapper-only Δ on (1,2,0) for nBits=64 = +64");
+    eprintln!();
+    eprintln!("=== per-input-bit hypothesis ===");
+    eprintln!("  if Sha256(8) (1,2,0) Δ ≈ +85+8 = +93  -> hypothesis CONFIRMED (1c per bit)");
+    eprintln!("  if Sha256(8) (1,2,0) Δ ≈ +85+0 = +85  -> wrapper effect is constant, not per-bit");
+    eprintln!("  if Sha256(8) (1,2,0) Δ ≈ +85+64 = +149 -> wrapper effect is constant 64, masked by nBits coincidence");
+}
+
+/// Per-block differential: compile `Sha256compression()` standalone
+/// (one block, no padding) in achronyme and compare to circom
+/// `--O2`. Isolates the cost of the Sha256compression round body
+/// from the cost of the outer Sha256 wrapper (input padding,
+/// length encoding, paddedIn fan-out).
+///
+/// `Sha256(64) = padding/length-encoding overhead + Sha256compression(1) + output unpack`.
+/// If achronyme matches circom on Sha256compression(1) standalone,
+/// the +112 c residual on Sha256(64) lives in the outer wrapper.
+/// If achronyme is +N on Sha256compression(1) standalone, the gap
+/// is per-block and `n_blocks × N` should match the full-circuit
+/// residual.
+///
+/// Prerequisite: a circom O2 dump in JSON form. Generate with:
+///
+/// ```text
+/// mkdir -p /tmp/cir-sha256comp-o2 && \
+///   circom test/circomlib/sha256compression_test.circom --r1cs --O2 \
+///     -l test/circomlib -o /tmp/cir-sha256comp-o2/ && \
+///   snarkjs r1cs export json \
+///     /tmp/cir-sha256comp-o2/sha256compression_test.r1cs \
+///     /tmp/cir-sha256comp-o2/sha256compression_test.json
+/// ```
+#[test]
+#[ignore = "Sha256compression(1) per-block differential vs circom --O2. Prerequisite: snarkjs JSON dump at /tmp/cir-sha256comp-o2/sha256compression_test.json. Run with `--ignored sha256compression_perblock_diff -- --nocapture`."]
+fn sha256compression_perblock_diff() {
+    use std::collections::{BTreeMap, BTreeSet, HashSet};
+    use std::fs;
+
+    const CIRCOM_O2_JSON: &str = "/tmp/cir-sha256comp-o2/sha256compression_test.json";
+
+    let json_path = PathBuf::from(CIRCOM_O2_JSON);
+    if !json_path.exists() {
+        panic!(
+            "circom O2 JSON dump not found at {CIRCOM_O2_JSON}.\n\
+             Generate via:\n  \
+             mkdir -p /tmp/cir-sha256comp-o2 && circom \
+             test/circomlib/sha256compression_test.circom --r1cs --O2 \
+             -l test/circomlib -o /tmp/cir-sha256comp-o2/ && snarkjs r1cs \
+             export json /tmp/cir-sha256comp-o2/sha256compression_test.r1cs \
+             /tmp/cir-sha256comp-o2/sha256compression_test.json"
+        );
+    }
+
+    let raw = fs::read_to_string(&json_path).expect("read circom JSON");
+    let v: serde_json::Value = serde_json::from_str(&raw).expect("parse circom JSON");
+    let constraints_v = v["constraints"].as_array().expect("constraints array");
+
+    type ShapeKey = (usize, usize, usize);
+    type DiffRow = (ShapeKey, usize, usize, i64);
+
+    let mut circom_hist: BTreeMap<ShapeKey, usize> = BTreeMap::new();
+    for c in constraints_v {
+        let arr = c.as_array().expect("constraint triple [A,B,C]");
+        let an = arr[0].as_object().map(|m| m.len()).unwrap_or(0);
+        let bn = arr[1].as_object().map(|m| m.len()).unwrap_or(0);
+        let cn = arr[2].as_object().map(|m| m.len()).unwrap_or(0);
+        let key = (an.min(bn), an.max(bn), cn);
+        *circom_hist.entry(key).or_insert(0) += 1;
+    }
+    let circom_total: usize = circom_hist.values().sum();
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/sha256compression_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Sha256compression compile failed: {e}"));
+    // Sha256compression() takes no template parameters.
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let outs: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&captures, &outs)
+        .expect("instantiate_lysis");
+    ir::passes::optimize(&mut program);
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).expect("R1CS compile");
+    let pre_opt = rc.cs.num_constraints();
+    let _ = rc.optimize_r1cs();
+    let post_o1 = rc.cs.num_constraints();
+
+    let mut ach_hist: BTreeMap<ShapeKey, usize> = BTreeMap::new();
+    for c in rc.cs.constraints() {
+        let a = c.a.simplify();
+        let b = c.b.simplify();
+        let cc = c.c.simplify();
+        let an = a.terms().len();
+        let bn = b.terms().len();
+        let cn = cc.terms().len();
+        let key = (an.min(bn), an.max(bn), cn);
+        *ach_hist.entry(key).or_insert(0) += 1;
+    }
+
+    let mut all_keys: BTreeSet<ShapeKey> = BTreeSet::new();
+    all_keys.extend(circom_hist.keys().copied());
+    all_keys.extend(ach_hist.keys().copied());
+    let mut rows: Vec<DiffRow> = all_keys
+        .iter()
+        .map(|&k| {
+            let cir = *circom_hist.get(&k).unwrap_or(&0);
+            let ach = *ach_hist.get(&k).unwrap_or(&0);
+            (k, cir, ach, ach as i64 - cir as i64)
+        })
+        .collect();
+    rows.sort_by(|x, y| y.3.abs().cmp(&x.3.abs()).then(x.0.cmp(&y.0)));
+
+    eprintln!("\n=== Sha256compression(1) standalone — achronyme post-O1 vs circom --O2 ===");
+    eprintln!("achronyme pre-opt    = {pre_opt}");
+    eprintln!("achronyme post-O1    = {post_o1}");
+    eprintln!("circom    --O2       = {circom_total}");
+    eprintln!(
+        "per-block residual   = {:+} c   (achronyme - circom)",
+        post_o1 as i64 - circom_total as i64
+    );
+    eprintln!();
+    eprintln!("=== Reference: full SHA-256(64) residual = +112 c ===");
+    eprintln!("If per-block residual matches +112, the gap is in Sha256compression itself.");
+    eprintln!(
+        "If per-block residual is 0, the gap is in the outer Sha256 wrapper (padding/length/output)."
+    );
+    eprintln!("If per-block residual is < 0, the wrapper-only delta = +112 - (per-block) c.");
+    eprintln!();
+    eprintln!(
+        "{:>14} {:>12} {:>10} {:>15}",
+        "(min,max,|C|)", "circomO2", "achO1", "delta(ach-cir)"
+    );
+    eprintln!(
+        "{:>14} {:>12} {:>10} {:>15}",
+        "-------------", "--------", "-----", "--------------"
+    );
+    for (k, cir, ach, delta) in rows.iter().take(25) {
+        eprintln!(
+            "  ({:>2},{:>2},{:>2})    {:>12} {:>10} {:>+15}",
+            k.0, k.1, k.2, cir, ach, delta
+        );
+    }
+}
+
 /// Cluster size diagnostic: for each circomlib template, build the
 /// raw R1CS, partition the linear constraints by shared signal, and
 /// dump the cluster size histogram. Validates whether
