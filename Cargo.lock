@@ -622,6 +622,7 @@ dependencies = [
  "num-traits",
  "pprof",
  "proving",
+ "serde_json",
  "sha2",
  "tempfile",
  "toml",

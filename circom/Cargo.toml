@@ -54,6 +54,7 @@ ir-core = { path = "../ir-core" }
 tempfile = "3"
 toml = "0.8"
 sha2 = "0.10"
+serde_json = "1"
 
 [[example]]
 name = "profile_eddsa_verifier"
