@@ -5,6 +5,62 @@ use constraints::PoseidonParamsProvider;
 use memory::field::PrimeId;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 use std::collections::HashMap;
+use std::sync::atomic::{AtomicU64, Ordering};
+
+// Per-call-site bool-check emission counters. Each tracks how many
+// `b · (1 − b) = 0` constraints a specific code path has emitted
+// since the last `reset_boolcheck_counters()` call. Useful when an
+// optimisation diff or compiler-comparison probe wants to localise
+// where bool-check shape constraints originate without re-running
+// the entire pipeline with a debug build. All atomic; safe to
+// snapshot or reset at any point.
+pub static BC_RANGE_CHECK: AtomicU64 = AtomicU64::new(0);
+pub static BC_NOT: AtomicU64 = AtomicU64::new(0);
+pub static BC_AND_LHS: AtomicU64 = AtomicU64::new(0);
+pub static BC_AND_RHS: AtomicU64 = AtomicU64::new(0);
+pub static BC_OR_LHS: AtomicU64 = AtomicU64::new(0);
+pub static BC_OR_RHS: AtomicU64 = AtomicU64::new(0);
+pub static BC_ASSERT: AtomicU64 = AtomicU64::new(0);
+pub static BC_DECOMPOSE: AtomicU64 = AtomicU64::new(0);
+pub static BC_MUX_COND: AtomicU64 = AtomicU64::new(0);
+pub static BC_ENFORCE_N_RANGE: AtomicU64 = AtomicU64::new(0);
+pub static BC_IS_LT_VIA_BITS: AtomicU64 = AtomicU64::new(0);
+pub static BC_DECOMPOSE_1BIT: AtomicU64 = AtomicU64::new(0);
+
+pub fn snapshot_boolcheck_counters() -> [(&'static str, u64); 12] {
+    [
+        ("RangeCheck", BC_RANGE_CHECK.load(Ordering::Relaxed)),
+        ("Not", BC_NOT.load(Ordering::Relaxed)),
+        ("And.lhs", BC_AND_LHS.load(Ordering::Relaxed)),
+        ("And.rhs", BC_AND_RHS.load(Ordering::Relaxed)),
+        ("Or.lhs", BC_OR_LHS.load(Ordering::Relaxed)),
+        ("Or.rhs", BC_OR_RHS.load(Ordering::Relaxed)),
+        ("Assert", BC_ASSERT.load(Ordering::Relaxed)),
+        ("Decompose", BC_DECOMPOSE.load(Ordering::Relaxed)),
+        ("Mux.cond", BC_MUX_COND.load(Ordering::Relaxed)),
+        (
+            "enforce_n_range",
+            BC_ENFORCE_N_RANGE.load(Ordering::Relaxed),
+        ),
+        ("is_lt_via_bits", BC_IS_LT_VIA_BITS.load(Ordering::Relaxed)),
+        ("Decompose(1bit)", BC_DECOMPOSE_1BIT.load(Ordering::Relaxed)),
+    ]
+}
+
+pub fn reset_boolcheck_counters() {
+    BC_RANGE_CHECK.store(0, Ordering::Relaxed);
+    BC_NOT.store(0, Ordering::Relaxed);
+    BC_AND_LHS.store(0, Ordering::Relaxed);
+    BC_AND_RHS.store(0, Ordering::Relaxed);
+    BC_OR_LHS.store(0, Ordering::Relaxed);
+    BC_OR_RHS.store(0, Ordering::Relaxed);
+    BC_ASSERT.store(0, Ordering::Relaxed);
+    BC_DECOMPOSE.store(0, Ordering::Relaxed);
+    BC_MUX_COND.store(0, Ordering::Relaxed);
+    BC_ENFORCE_N_RANGE.store(0, Ordering::Relaxed);
+    BC_IS_LT_VIA_BITS.store(0, Ordering::Relaxed);
+    BC_DECOMPOSE_1BIT.store(0, Ordering::Relaxed);
+}
 
 use ir::types::{Instruction as IrInstruction, IrProgram, SsaVar, Visibility as IrVisibility};
 
@@ -340,6 +396,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
 
                 // Skip boolean enforcement if cond is proven boolean or already enforced
                 if !self.proven_boolean.contains(cond) && self.bool_enforced.insert(*cond) {
+                    BC_MUX_COND.fetch_add(1, Ordering::Relaxed);
                     let one = LinearCombination::from_constant(FieldElement::<F>::one());
                     let one_minus_cond = one - cond_lc.clone();
                     self.cs
@@ -371,6 +428,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 for i in 0..*bits {
                     let bit_var = self.cs.alloc_witness();
                     // b_i * (1 - b_i) = 0  (enforces b_i ∈ {0, 1})
+                    BC_RANGE_CHECK.fetch_add(1, Ordering::Relaxed);
                     self.cs.enforce(
                         LinearCombination::from_variable(bit_var),
                         LinearCombination::from_constant(FieldElement::<F>::one())
@@ -395,6 +453,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
                 // Skip boolean enforcement if proven boolean or already enforced
                 if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand) {
+                    BC_NOT.fetch_add(1, Ordering::Relaxed);
                     self.cs.enforce(
                         op_lc.clone(),
                         one.clone() - op_lc.clone(),
@@ -409,6 +468,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let b = self.lookup_lc(rhs)?;
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
                 if !self.proven_boolean.contains(lhs) && self.bool_enforced.insert(*lhs) {
+                    BC_AND_LHS.fetch_add(1, Ordering::Relaxed);
                     self.cs.enforce(
                         a.clone(),
                         one.clone() - a.clone(),
@@ -416,6 +476,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     );
                 }
                 if !self.proven_boolean.contains(rhs) && self.bool_enforced.insert(*rhs) {
+                    BC_AND_RHS.fetch_add(1, Ordering::Relaxed);
                     self.cs
                         .enforce(b.clone(), one - b.clone(), LinearCombination::zero());
                 }
@@ -428,6 +489,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let b = self.lookup_lc(rhs)?;
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
                 if !self.proven_boolean.contains(lhs) && self.bool_enforced.insert(*lhs) {
+                    BC_OR_LHS.fetch_add(1, Ordering::Relaxed);
                     self.cs.enforce(
                         a.clone(),
                         one.clone() - a.clone(),
@@ -435,6 +497,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     );
                 }
                 if !self.proven_boolean.contains(rhs) && self.bool_enforced.insert(*rhs) {
+                    BC_OR_RHS.fetch_add(1, Ordering::Relaxed);
                     self.cs
                         .enforce(b.clone(), one - b.clone(), LinearCombination::zero());
                 }
@@ -574,6 +637,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
                 // Skip boolean enforcement if proven boolean or already enforced
                 if !self.proven_boolean.contains(operand) && self.bool_enforced.insert(*operand) {
+                    BC_ASSERT.fetch_add(1, Ordering::Relaxed);
                     self.cs.enforce(
                         op_lc.clone(),
                         one.clone() - op_lc.clone(),
@@ -636,6 +700,10 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 for (i, bit_ssa) in bit_results.iter().enumerate() {
                     let bit_var = self.cs.alloc_witness();
                     // b_i * (1 - b_i) = 0
+                    BC_DECOMPOSE.fetch_add(1, Ordering::Relaxed);
+                    if *num_bits == 1 {
+                        BC_DECOMPOSE_1BIT.fetch_add(1, Ordering::Relaxed);
+                    }
                     self.cs.enforce(
                         LinearCombination::from_variable(bit_var),
                         LinearCombination::from_constant(FieldElement::<F>::one())
