@@ -45,7 +45,7 @@ fn sha256_source(circomlib: &std::path::Path, n_bits: usize, mix: bool) -> Strin
         }
         bits.push_str(if mix && i % 2 == 0 { "0p1" } else { "0p0" });
     }
-    bits.push_str("]");
+    bits.push(']');
     format!(
         r#"
 import {{ Sha256 }} from "{lib}/circuits/sha256/sha256.circom"
