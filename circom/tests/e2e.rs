@@ -1210,15 +1210,15 @@ fn mux4_circomlib() {
 /// instantiator as `CircuitExpr::Var("nBlocks")` and indexing failed
 /// with "indexed assignment requires a compile-time constant index".
 ///
-/// Also exercises the per-iter SSA-after-unroll spill discipline — the
-/// fourth padding loop (`paddedIn[nBlocks*512 - k - 1] <== (nBits >> k)
-/// & 1` for `k` in `0..64`) is wide enough that the walker engages the
-/// per-iter unroll path and a mid-emit split classifies the per-iter
-/// BitAnd recompose result as cold. Stripping body-defined SsaVars
-/// from `ssa_to_heap` at each iter restore (see
-/// `emit_loop_unroll_per_iter_inner`) gives each iter's body-defined
-/// values their own heap slot so the 64 `paddedIn[505..]` AssertEqs
-/// each see iter-fresh RHS bits instead of iter-0's stale value.
+/// All four padding loops have const-tractable bodies (every read
+/// resolves to a `Const`/`Capture` when the iter var is bound to
+/// `Const(i)`), so `emit_range_loop` takes the eager-unroll path:
+/// each iteration emits one `AssertEq(pub_var, const_v)` and the
+/// `(nBits >> k) & 1` value folds via `eval_const_expr` without
+/// materialising any Decompose. This fixture historically also
+/// exercised the Lysis walker's wide-body spill discipline; that
+/// path is now bypassed entirely for this pattern, so the test
+/// stands as a regression for the var-postdecl tracking only.
 #[test]
 fn var_postdecl_padding_e2e() {
     let n = circomlib_e2e_verify(
@@ -1227,8 +1227,10 @@ fn var_postdecl_padding_e2e() {
         &[],
     );
     assert_eq!(
-        n, 631,
-        "expected 631 constraints (512 signal slots + per-iter constraints from the four padding loops)"
+        n, 513,
+        "expected 513 constraints (512 output AssertEqs + 1 boundary; \
+         eager-unroll folds the `(nBits >> k) & 1` Decompose chain to \
+         constants per iter)"
     );
 }
 

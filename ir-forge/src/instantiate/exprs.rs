@@ -545,6 +545,15 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             // structurally so the two are plumbed separately into
             // [`emit_bitwise_binop`].
             CircuitExpr::BitAnd { lhs, rhs, .. } => {
+                // Fast path: full expression folds to a const (mirror of
+                // `emit_shift_dispatch`'s fast path 1). Skips emitting
+                // the Decompose chain for both operands when the result
+                // is statically determined — typically fires inside an
+                // eager-unrolled loop where the iter var is bound to a
+                // Const SSA, exposing the full expression's constness.
+                if let Ok(fe) = self.eval_const_expr(expr) {
+                    return Ok(self.emit_const(fe));
+                }
                 let lhs_w = structural_op_width(lhs);
                 let rhs_w = structural_op_width(rhs);
                 let l = self.emit_expr(lhs)?;
@@ -552,6 +561,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 self.emit_bitwise_binop(l, r, lhs_w, rhs_w, BitwiseOp::And)
             }
             CircuitExpr::BitOr { lhs, rhs, .. } => {
+                if let Ok(fe) = self.eval_const_expr(expr) {
+                    return Ok(self.emit_const(fe));
+                }
                 let lhs_w = structural_op_width(lhs);
                 let rhs_w = structural_op_width(rhs);
                 let l = self.emit_expr(lhs)?;
@@ -559,6 +571,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 self.emit_bitwise_binop(l, r, lhs_w, rhs_w, BitwiseOp::Or)
             }
             CircuitExpr::BitXor { lhs, rhs, .. } => {
+                if let Ok(fe) = self.eval_const_expr(expr) {
+                    return Ok(self.emit_const(fe));
+                }
                 let lhs_w = structural_op_width(lhs);
                 let rhs_w = structural_op_width(rhs);
                 let l = self.emit_expr(lhs)?;
@@ -566,6 +581,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 self.emit_bitwise_binop(l, r, lhs_w, rhs_w, BitwiseOp::Xor)
             }
             CircuitExpr::BitNot { operand, num_bits } => {
+                if let Ok(fe) = self.eval_const_expr(expr) {
+                    return Ok(self.emit_const(fe));
+                }
                 let op = self.emit_expr(operand)?;
                 self.emit_bitnot(op, *num_bits)
             }
