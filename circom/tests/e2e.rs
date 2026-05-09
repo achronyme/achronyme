@@ -2165,6 +2165,52 @@ fn fn_witness_lift_circomlib_long_div_integration() {
     );
 }
 
+/// Lift `mod_exp` from circomlib's bigint witness call graph at
+/// `n=32, k=2`. The outer `for (var i = k*n - 1; i >= 0; i--)` runs
+/// 64 iters, fitting under the lift's compile-time unroll cap; each
+/// iter exercises the new 1D-from-2D-row copy (`out = temp2[1]`),
+/// whole-array rebinds (`temp = prod(...)`, `temp2 = long_div(...)`),
+/// and the if-without-else branching path on `eBits[i] == 1`.
+#[test]
+fn fn_witness_lift_circomlib_mod_exp_unrolled_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_mod_exp_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("mod_exp integration failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall for mod_exp");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("mod_exp payload must decode and validate");
+
+    // Each unrolled iter that triggers a squaring branch emits a
+    // 200-cell `var temp[200]` AllocArray. With 64 outer iters and
+    // two inner ifs, the lifted body must surface at least one such
+    // allocation.
+    let alloc_lens: Vec<u32> = prog
+        .body
+        .iter()
+        .filter_map(|i| match i {
+            artik::Instr::AllocArray { len, .. } => Some(*len),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        alloc_lens.contains(&200),
+        "expected a 200-cell AllocArray (var temp[200] inside if-block); got {alloc_lens:?}"
+    );
+}
+
 /// Fase 2.1 lift extension: a nested function call inside another
 /// lifted function body is inlined into the same Artik program.
 /// `compute(x)` calls `helper` twice; both invocations lower into

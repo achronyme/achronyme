@@ -370,6 +370,41 @@ pub(super) fn stmt_has_return(stmt: &Stmt) -> bool {
     }
 }
 
+/// Collect every `var arr[...]` declaration the body would otherwise
+/// execute on each loop iteration. Walks recursively into if/else,
+/// for, while, and block bodies. Used by the runtime-while lift to
+/// hoist the allocations out of the loop body — without hoisting,
+/// each iter emits a fresh `AllocArray` and the heap explodes
+/// quadratically (256 iters × ~3 arrays × 200 cells crosses the
+/// per-program memory cap).
+pub(super) fn collect_array_decls<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+    for s in stmts {
+        collect_array_decls_in_stmt(s, out);
+    }
+}
+
+fn collect_array_decls_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Stmt>) {
+    match stmt {
+        Stmt::VarDecl { dimensions, .. } if !dimensions.is_empty() => out.push(stmt),
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_array_decls(&then_body.stmts, out);
+            match else_body {
+                Some(ElseBranch::Block(b)) => collect_array_decls(&b.stmts, out),
+                Some(ElseBranch::IfElse(boxed)) => collect_array_decls_in_stmt(boxed, out),
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => collect_array_decls(&body.stmts, out),
+        Stmt::While { body, .. } => collect_array_decls(&body.stmts, out),
+        Stmt::Block(b) => collect_array_decls(&b.stmts, out),
+        _ => {}
+    }
+}
+
 /// Map a circom compound-assignment operator to the plain binary op
 /// the lift knows how to emit. Returns `None` for unsupported shapes.
 pub(super) fn compound_to_binop(op: CompoundOp) -> Option<BinOp> {

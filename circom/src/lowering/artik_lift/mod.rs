@@ -250,6 +250,17 @@ struct LiftState<'f> {
     /// first scalar return; `Some` afterwards. Array returns continue
     /// to allocate per-element slots inline.
     output_slot: Option<u32>,
+    /// Arrays that have been pre-allocated by an enclosing
+    /// `lift_while`. When the body's `VarDecl` re-encounters one of
+    /// these names, it must skip the `AllocArray` — otherwise the
+    /// runtime loop allocates a fresh array on every iteration and
+    /// the heap budget explodes. The map records the *declared*
+    /// shape so the skip check survives later rebinds (a
+    /// `temp = prod(...)` rebind shrinks the live shape from 200 to
+    /// 100, but the next iter's `var temp[200]` declaration must
+    /// still match the originally-hoisted 200). Cleared when the
+    /// enclosing `lift_while` returns.
+    hoisted_arrays: std::collections::HashMap<String, ArrayShape>,
 }
 
 /// Value produced by a nested (inlined) function call. Arrays are
@@ -342,6 +353,7 @@ impl<'f> LiftState<'f> {
             nested_depth: 0,
             nested_result: None,
             output_slot: None,
+            hoisted_arrays: std::collections::HashMap::new(),
         }
     }
 }

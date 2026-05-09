@@ -73,6 +73,20 @@ struct PendingJump {
     label: u32,
 }
 
+/// Captured state of a [`ProgramBuilder`], usable as a rollback point
+/// for speculative emission. Produced by [`ProgramBuilder::snapshot`]
+/// and consumed by [`ProgramBuilder::restore`].
+#[derive(Debug, Clone, Copy)]
+pub struct BuilderSnapshot {
+    body_len: usize,
+    const_pool_len: usize,
+    next_reg: u32,
+    next_signal: u32,
+    next_slot: u32,
+    label_positions_len: usize,
+    pending_jumps_len: usize,
+}
+
 impl ProgramBuilder {
     /// Start a new builder for the given field family. The builder
     /// has zero registers, signals, slots, constants, or instructions
@@ -98,6 +112,46 @@ impl ProgramBuilder {
         let r = self.next_reg;
         self.next_reg += 1;
         r
+    }
+
+    /// Current register count — same as `next_reg`. The lift uses
+    /// this as a frame-size proxy when deciding whether to bail out
+    /// of a partial unroll attempt before exceeding the executor cap.
+    pub fn next_reg(&self) -> u32 {
+        self.next_reg
+    }
+
+    /// Snapshot the builder state so a speculative emission attempt
+    /// (e.g. trying to unroll a loop) can be rolled back on failure
+    /// without leaving partial instructions or register allocations
+    /// behind. The snapshot captures the current lengths of the
+    /// instruction body, const pool, label table, and pending-jump
+    /// queue, plus the current id counters. Restore via
+    /// [`Self::restore`].
+    pub fn snapshot(&self) -> BuilderSnapshot {
+        BuilderSnapshot {
+            body_len: self.body.len(),
+            const_pool_len: self.const_pool.len(),
+            next_reg: self.next_reg,
+            next_signal: self.next_signal,
+            next_slot: self.next_slot,
+            label_positions_len: self.label_positions.len(),
+            pending_jumps_len: self.pending_jumps.len(),
+        }
+    }
+
+    /// Roll back to a previously-captured [`BuilderSnapshot`]. All
+    /// instructions, constants, labels, and pending jumps emitted
+    /// since the snapshot are discarded; id counters revert to the
+    /// snapshotted values.
+    pub fn restore(&mut self, snapshot: BuilderSnapshot) {
+        self.body.truncate(snapshot.body_len);
+        self.const_pool.truncate(snapshot.const_pool_len);
+        self.next_reg = snapshot.next_reg;
+        self.next_signal = snapshot.next_signal;
+        self.next_slot = snapshot.next_slot;
+        self.label_positions.truncate(snapshot.label_positions_len);
+        self.pending_jumps.truncate(snapshot.pending_jumps_len);
     }
 
     /// Allocate a fresh input signal id. The caller is expected to

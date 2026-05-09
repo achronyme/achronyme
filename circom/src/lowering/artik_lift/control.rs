@@ -21,15 +21,23 @@ use artik::{IntW, Reg};
 use crate::ast::{self, BinOp, CompoundOp, Expr, Stmt};
 
 use super::helpers::{
-    collect_mutated_scalars, eval_const_expr, is_decrement_on, is_increment_on,
-    stmt_is_mux_compatible, stmts_are_mux_compatible, stmts_have_return,
+    collect_array_decls, collect_mutated_scalars, eval_const_expr, is_decrement_on,
+    is_increment_on, stmt_is_mux_compatible, stmts_are_mux_compatible, stmts_have_return,
 };
 use super::{ConstInt, LiftState};
 
 impl<'f> LiftState<'f> {
     /// Top-level `for` dispatcher. Tries the unroll path first; if
-    /// the bounds aren't compile-time-foldable, falls back to a real
-    /// loop emitted as `init; while (cond) { body; step; }`.
+    /// the unroll would emit more registers than the executor's
+    /// frame-size cap can hold, rolls back the builder and falls
+    /// through to the runtime-while path. Bounds that don't fold
+    /// compile-time also fall through to runtime.
+    ///
+    /// The rollback is the tricky bit: a partial unroll attempt
+    /// leaves instructions and register allocations in the builder,
+    /// and the runtime path would emit its own loop on top of that
+    /// junk. The dispatch snapshots the builder state before the
+    /// unroll and restores on bail.
     pub(super) fn lift_for_dispatch(
         &mut self,
         init: &Stmt,
@@ -37,9 +45,20 @@ impl<'f> LiftState<'f> {
         step: &Stmt,
         body: &[Stmt],
     ) -> Option<()> {
+        let snapshot = self.builder.snapshot();
+        let saved_locals = self.locals.clone();
+        let saved_const_locals = self.const_locals.clone();
+        let saved_arrays = self.arrays.clone();
         if let Some(()) = self.lift_for_unrolled(init, condition, step, body) {
             return Some(());
         }
+        // Unroll either bailed structurally or grew the frame past
+        // the cap. Restore the snapshot so the runtime emit starts
+        // from a clean slate.
+        self.builder.restore(snapshot);
+        self.locals = saved_locals;
+        self.const_locals = saved_const_locals;
+        self.arrays = saved_arrays;
         self.lift_for_runtime(init, condition, step, body)
     }
 
@@ -153,6 +172,14 @@ impl<'f> LiftState<'f> {
             Direction::Ascending => Box::new(lo..hi_exclusive),
             Direction::Descending => Box::new((lo..hi_exclusive).rev()),
         };
+        // Frame-size budget: the executor caps each program at
+        // `MAX_FRAME_SIZE = 65536` registers. A heavy unroll that
+        // inlines large callees per iter (e.g. `mod_exp`'s outer
+        // loop calling `prod` and `long_div`) blows past this in
+        // tens of iterations. Bail early once the running register
+        // count crosses 90 % of the cap so the dispatcher can roll
+        // back and retry via the runtime-while path.
+        const FRAME_BUDGET: u32 = 60_000;
         for i in iter {
             *self
                 .const_locals
@@ -166,6 +193,9 @@ impl<'f> LiftState<'f> {
             }
             if self.halted {
                 break;
+            }
+            if self.builder.next_reg() > FRAME_BUDGET {
+                return None;
             }
         }
         match prev {
@@ -333,11 +363,45 @@ impl<'f> LiftState<'f> {
     pub(super) fn lift_while(&mut self, condition: &Expr, body: &[Stmt]) -> Option<()> {
         let summary = collect_mutated_scalars(body);
 
-        if summary.declares_array || summary.writes_witness {
+        if summary.writes_witness {
             return None;
         }
         if stmts_have_return(body) {
             return None;
+        }
+
+        // Hoist `var arr[N]` declarations out of the loop body. The
+        // body's `temp = call(...)` rebinds via call-return on every
+        // iteration, so the alloc itself is wasted work — but emitted
+        // per-iter under a runtime while it accumulates fresh
+        // allocations and the heap explodes. Pre-allocate once before
+        // the loop_start label, register names in `arrays`, and mark
+        // each as hoisted; the body's VarDecl handler then skips the
+        // re-allocation. Required by `mod_exp`'s pattern of declaring
+        // `var temp[200]` and `var temp2[2][100]` inside if-blocks.
+        let mut newly_hoisted: Vec<String> = Vec::new();
+        if summary.declares_array {
+            let mut decls: Vec<&Stmt> = Vec::new();
+            collect_array_decls(body, &mut decls);
+            // Dedupe by name: the same `var temp[200]` may be declared
+            // in several branches (e.g. mod_exp's two if-blocks both
+            // declare it). Allocate once for the first occurrence and
+            // skip the rest.
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for decl in decls {
+                let Stmt::VarDecl { names, .. } = decl else {
+                    continue;
+                };
+                let Some(n) = names.first() else { continue };
+                if !seen.insert(n.clone()) {
+                    continue;
+                }
+                self.lift_stmt(decl)?;
+                if let Some(shape) = self.arrays.get(n).copied() {
+                    self.hoisted_arrays.insert(n.clone(), shape);
+                    newly_hoisted.push(n.clone());
+                }
+            }
         }
 
         let mut promoted: Vec<(String, Reg)> = Vec::new();
@@ -370,12 +434,26 @@ impl<'f> LiftState<'f> {
         let is_zero_int = self.builder.feq(cond_reg, zero);
         self.builder.jump_if_to(is_zero_int, loop_end);
 
-        for stmt in body {
-            self.lift_stmt(stmt)?;
-            if self.halted {
-                return None;
+        let lift_result: Option<()> = (|| {
+            for stmt in body {
+                self.lift_stmt(stmt)?;
+                if self.halted {
+                    return None;
+                }
             }
+            Some(())
+        })();
+
+        // Drop hoisted entries before propagating an outer error so the
+        // enclosing scope doesn't see leaked bindings. Restoring the
+        // declared shape into `arrays` here would mask later live-shape
+        // queries; leaving the rebound shape is fine because the next
+        // iteration's hoisted-skip check consults `hoisted_arrays`,
+        // not `arrays`, for its size match.
+        for n in &newly_hoisted {
+            self.hoisted_arrays.remove(n);
         }
+        lift_result?;
 
         for (name, slot) in &promoted {
             let cur = self.locals.get(name).copied()?;

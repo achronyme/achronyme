@@ -63,6 +63,33 @@ impl<'f> LiftState<'f> {
                         }
                         let len = size as u32;
 
+                        // The enclosing `lift_while` may have hoisted
+                        // this name out of the loop body to avoid
+                        // re-allocating on every iteration. The
+                        // pre-walk emitted the AllocArray once and
+                        // recorded the *declared* shape in
+                        // `hoisted_arrays`; the body's re-encounter
+                        // is a no-op as long as the declaration's
+                        // length matches the originally-hoisted
+                        // shape. (The live entry in `arrays` may be
+                        // shorter after a `temp = call(...)` rebind
+                        // shrunk the slot, but the hoisted shape
+                        // tracks the declaration size.)
+                        if let Some(hoisted_shape) = self.hoisted_arrays.get(name).copied() {
+                            if init.is_some() {
+                                return None;
+                            }
+                            if let ArrayShape::Flat1D {
+                                len: hoisted_len, ..
+                            } = hoisted_shape
+                            {
+                                if hoisted_len == len {
+                                    return Some(());
+                                }
+                            }
+                            return None;
+                        }
+
                         // Call-returning-array init: `var sumAndCarry[2]
                         // = SplitFn(...)`. Three shapes:
                         //   - exact match (`len == val_len`): alias the
@@ -140,6 +167,25 @@ impl<'f> LiftState<'f> {
                         }
                         let rows = rows_i as u32;
                         let cols = cols_i as u32;
+
+                        // Hoisted by an enclosing `lift_while` — see
+                        // the 1D branch above.
+                        if let Some(hoisted_shape) = self.hoisted_arrays.get(name).copied() {
+                            if init.is_some() {
+                                return None;
+                            }
+                            if let ArrayShape::Flat2D {
+                                rows: hoisted_rows,
+                                cols: hoisted_cols,
+                                ..
+                            } = hoisted_shape
+                            {
+                                if hoisted_rows == rows && hoisted_cols == cols {
+                                    return Some(());
+                                }
+                            }
+                            return None;
+                        }
 
                         // Call-returning-2D-array init: alias the
                         // callee's returned handle directly, mirroring
@@ -286,6 +332,49 @@ impl<'f> LiftState<'f> {
                 // swap, not a per-element copy. Required by `long_div`'s
                 // `remainder = long_sub(...)` and `mod_exp`'s
                 // `temp2 = long_div(...)` shapes.
+                // 1D row-slice assignment: `out = arr2d[r]` where the
+                // RHS is a 2D array indexed by a compile-time-foldable
+                // row index. Emit a per-element copy from the row's
+                // flat range into the destination 1D slot. Required by
+                // `mod_exp`'s `out = temp2[1]` shape, where the body
+                // pulls one row of the long_div quotient/remainder
+                // tuple back into a 1D running accumulator.
+                if let Some(ArrayShape::Flat1D {
+                    handle: dst_handle,
+                    len: dst_len,
+                }) = self.arrays.get(name).copied()
+                {
+                    if let Expr::Index {
+                        object: src_obj,
+                        index: src_idx,
+                        ..
+                    } = value
+                    {
+                        if let Expr::Ident { name: src_name, .. } = src_obj.as_ref() {
+                            if let Some(ArrayShape::Flat2D {
+                                handle: src_handle,
+                                rows,
+                                cols,
+                            }) = self.arrays.get(src_name).copied()
+                            {
+                                let row_const = eval_const_expr(src_idx, &self.const_locals)?;
+                                if !(0..i64::from(rows)).contains(&row_const) {
+                                    return None;
+                                }
+                                let row_base = (row_const as u32) * cols;
+                                let copy_len = dst_len.min(cols);
+                                for j in 0..copy_len {
+                                    let src_idx_reg = self.push_int_const((row_base + j) as u64)?;
+                                    let val_reg = self.builder.load_arr(src_handle, src_idx_reg);
+                                    let dst_idx_reg = self.push_int_const(j as u64)?;
+                                    self.builder.store_arr(dst_handle, dst_idx_reg, val_reg);
+                                }
+                                return Some(());
+                            }
+                        }
+                    }
+                }
+
                 if let Some(target_shape) = self.arrays.get(name).copied() {
                     if let Expr::Call { callee, args, .. } = value {
                         match target_shape {
