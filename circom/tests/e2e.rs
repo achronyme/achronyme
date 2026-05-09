@@ -5014,6 +5014,47 @@ fn r1cs_optimization_benchmark() {
     );
     sparse_summary.push(("Semaphore(32)", a, asp, "9383"));
 
+    // Poseidon arity sweep (t = 3, 4, 8, 16). The existing benchmark
+    // already covers t=2; this sweep tests how the optimiser scales
+    // with the t×t MDS-matrix multiplication and the
+    // `(t * nRoundsF + nRoundsP)`-element round-constant vector at
+    // wider hashes. Witness uses small consecutive integers.
+    for t in [3usize, 4, 8, 16] {
+        let label = format!("Poseidon({t})");
+        let circ = format!("test/circomlib/poseidon_{t}_test.circom");
+        let inputs: HashMap<String, FieldElement<Bn254Fr>> = (0..t)
+            .map(|i| {
+                (
+                    format!("inputs_{i}"),
+                    FieldElement::<Bn254Fr>::from_u64((i as u64) + 1),
+                )
+            })
+            .collect();
+        let t_w = std::time::Instant::now();
+        let (b, a, asp) = compile_and_measure(&label, &circ, &inputs);
+        let (cir_o0, cir_o1, cir_o2) = match t {
+            3 => ("931", "605", "261"),
+            4 => ("1163", "736", "297"),
+            8 => ("1965", "1171", "402"),
+            16 => ("3675", "2092", "609"),
+            _ => unreachable!(),
+        };
+        print_row(
+            &label,
+            b,
+            a,
+            cir_o0,
+            cir_o1,
+            cir_o2,
+            t_w.elapsed().as_secs_f64() * 1000.0,
+        );
+        // Leak the label into a 'static slice via Box::leak so the
+        // benchmark summary table can hold a stable &str. Fine in a
+        // test run — the leak lives until process exit.
+        let label_static: &'static str = Box::leak(label.into_boxed_str());
+        sparse_summary.push((label_static, a, asp, cir_o2));
+    }
+
     eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
     eprintln!(
         "║ Total achronyme time: {:>5.0}ms {:>42} ║",
