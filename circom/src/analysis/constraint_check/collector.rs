@@ -10,7 +10,7 @@ use std::collections::{HashMap, HashSet};
 use diagnostics::Span;
 
 use super::expr_helpers::{
-    collect_signal_refs, expr_signal_degree, extract_signal_name, is_quadratic_safe,
+    collect_signal_refs, expr_signal_degree, extract_signal_names, is_quadratic_safe,
 };
 use crate::ast::*;
 
@@ -55,8 +55,14 @@ impl ConstraintCollector {
                 op: AssignOp::SignalAssign,
                 span,
             } => {
-                // `target <-- expr` — record as unconstrained
-                if let Some(name) = extract_signal_name(target) {
+                // `target <-- expr` — every assigned signal is unconstrained
+                // until proven otherwise. `extract_signal_names` returns a
+                // `Vec` so tuple-destructured targets `(a, b) <-- expr;`
+                // surface every assigned name (otherwise the second through
+                // Nth signals would slip past E100 silently).
+                let names = extract_signal_names(target);
+                let safe = is_quadratic_safe(value);
+                for name in names {
                     self.unconstrained_assigns
                         .entry(name.clone())
                         .or_insert_with(|| span.clone());
@@ -66,7 +72,7 @@ impl ConstraintCollector {
                         .or_default()
                         .push(span.clone());
                     // W102: check if expression is quadratic (could use <==)
-                    if is_quadratic_safe(value) {
+                    if safe {
                         self.quadratic_safe_hints.push((name, span.clone()));
                     }
                 }
@@ -78,7 +84,9 @@ impl ConstraintCollector {
                 span,
             } => {
                 // `expr --> signal` — the signal being assigned is on the right (value side)
-                if let Some(name) = extract_signal_name(value) {
+                let names = extract_signal_names(value);
+                let safe = is_quadratic_safe(target);
+                for name in names {
                     self.unconstrained_assigns
                         .entry(name.clone())
                         .or_insert_with(|| span.clone());
@@ -88,7 +96,7 @@ impl ConstraintCollector {
                         .or_default()
                         .push(span.clone());
                     // W102: check if expr (LHS) is quadratic (could use ==>)
-                    if is_quadratic_safe(target) {
+                    if safe {
                         self.quadratic_safe_hints.push((name, span.clone()));
                     }
                 }
@@ -114,8 +122,9 @@ impl ConstraintCollector {
                 // `target <== expr` — both target and expr are in constraints
                 collect_signal_refs(target, &mut self.constrained_signals);
                 collect_signal_refs(value, &mut self.constrained_signals);
-                // E101: track signal assignment
-                if let Some(name) = extract_signal_name(target) {
+                // E101: track signal assignment for every name on the LHS
+                // (handles tuple-destructured `(a, b) <== ...`).
+                for name in extract_signal_names(target) {
                     self.signal_assignments
                         .entry(name)
                         .or_default()
@@ -137,8 +146,9 @@ impl ConstraintCollector {
                 // `expr ==> target` — both sides are in constraints
                 collect_signal_refs(target, &mut self.constrained_signals);
                 collect_signal_refs(value, &mut self.constrained_signals);
-                // E101: track signal assignment (target is on `value` side for reverse ops)
-                if let Some(name) = extract_signal_name(target) {
+                // E101: track signal assignment for every name in the
+                // assigned position (target is on `value` side for reverse ops).
+                for name in extract_signal_names(target) {
                     self.signal_assignments
                         .entry(name)
                         .or_default()
