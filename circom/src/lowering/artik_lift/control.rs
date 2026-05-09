@@ -21,15 +21,23 @@ use artik::{IntW, Reg};
 use crate::ast::{self, BinOp, CompoundOp, Expr, Stmt};
 
 use super::helpers::{
-    collect_mutated_scalars, eval_const_expr, is_increment_on, stmt_is_mux_compatible,
-    stmts_are_mux_compatible, stmts_have_return,
+    collect_array_decls, collect_mutated_scalars, eval_const_expr, is_decrement_on,
+    is_increment_on, stmt_is_mux_compatible, stmts_are_mux_compatible, stmts_have_return,
 };
 use super::{ConstInt, LiftState};
 
 impl<'f> LiftState<'f> {
     /// Top-level `for` dispatcher. Tries the unroll path first; if
-    /// the bounds aren't compile-time-foldable, falls back to a real
-    /// loop emitted as `init; while (cond) { body; step; }`.
+    /// the unroll would emit more registers than the executor's
+    /// frame-size cap can hold, rolls back the builder and falls
+    /// through to the runtime-while path. Bounds that don't fold
+    /// compile-time also fall through to runtime.
+    ///
+    /// The rollback is the tricky bit: a partial unroll attempt
+    /// leaves instructions and register allocations in the builder,
+    /// and the runtime path would emit its own loop on top of that
+    /// junk. The dispatch snapshots the builder state before the
+    /// unroll and restores on bail.
     pub(super) fn lift_for_dispatch(
         &mut self,
         init: &Stmt,
@@ -37,17 +45,29 @@ impl<'f> LiftState<'f> {
         step: &Stmt,
         body: &[Stmt],
     ) -> Option<()> {
+        let snapshot = self.builder.snapshot();
+        let saved_locals = self.locals.clone();
+        let saved_const_locals = self.const_locals.clone();
+        let saved_arrays = self.arrays.clone();
         if let Some(()) = self.lift_for_unrolled(init, condition, step, body) {
             return Some(());
         }
+        // Unroll either bailed structurally or grew the frame past
+        // the cap. Restore the snapshot so the runtime emit starts
+        // from a clean slate.
+        self.builder.restore(snapshot);
+        self.locals = saved_locals;
+        self.const_locals = saved_const_locals;
+        self.arrays = saved_arrays;
         self.lift_for_runtime(init, condition, step, body)
     }
 
-    /// Unroll a for loop at lift time. Only loops with literal bounds
-    /// and a `++` / `+= 1` step over a freshly declared integer loop
-    /// variable are supported. The loop variable is tracked as a
-    /// `ConstInt` in `const_locals` for the duration of each body
-    /// invocation; compile-time references to it fold to `PushConst`.
+    /// Unroll a for loop at lift time. Loops with literal bounds and
+    /// either a unit-increment (`++` / `+= 1`) ascending step or a
+    /// unit-decrement (`--` / `-= 1`) descending step are supported.
+    /// The loop variable is tracked as a `ConstInt` in `const_locals`
+    /// for the duration of each body invocation; compile-time
+    /// references to it fold to `PushConst`.
     pub(super) fn lift_for_unrolled(
         &mut self,
         init: &Stmt,
@@ -70,29 +90,20 @@ impl<'f> LiftState<'f> {
         let var_name = names[0].clone();
         let start = eval_const_expr(init_expr, &self.const_locals)?;
 
-        // Condition: `<var> < <bound>` or `<var> <= <bound>`
-        let (end_bound, inclusive) = match condition {
-            Expr::BinOp { op, lhs, rhs, .. } => {
-                let Expr::Ident { name, .. } = lhs.as_ref() else {
-                    return None;
-                };
-                if name != &var_name {
-                    return None;
-                }
-                let bound = eval_const_expr(rhs, &self.const_locals)?;
-                match op {
-                    BinOp::Lt => (bound, false),
-                    BinOp::Le => (bound, true),
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
-
-        // Step: `<var>++` / `++<var>` / `<var> += 1`
-        match step {
+        // Step direction: ascending (`++` / `+= 1`) or descending
+        // (`--` / `-= 1`). Determined first so the condition arm
+        // below can pair correctly.
+        enum Direction {
+            Ascending,
+            Descending,
+        }
+        let direction = match step {
             Stmt::Expr { expr, .. } => {
-                if !is_increment_on(expr, &var_name) {
+                if is_increment_on(expr, &var_name) {
+                    Direction::Ascending
+                } else if is_decrement_on(expr, &var_name) {
+                    Direction::Descending
+                } else {
                     return None;
                 }
             }
@@ -105,31 +116,71 @@ impl<'f> LiftState<'f> {
                 if name != &var_name {
                     return None;
                 }
-                if !matches!(op, CompoundOp::Add) {
-                    return None;
-                }
                 if eval_const_expr(value, &self.const_locals)? != 1 {
                     return None;
                 }
+                match op {
+                    CompoundOp::Add => Direction::Ascending,
+                    CompoundOp::Sub => Direction::Descending,
+                    _ => return None,
+                }
             }
             _ => return None,
-        }
+        };
+
+        // Condition shape pairs with direction:
+        //   ascending  + `<var> < B`  → `start..B`
+        //   ascending  + `<var> <= B` → `start..=B` (i.e. `B+1` exclusive)
+        //   descending + `<var> > B`  → iterate `start..B` reversed (B exclusive lower bound)
+        //   descending + `<var> >= B` → iterate `start..=B` reversed
+        let (lo, hi_exclusive) = match condition {
+            Expr::BinOp { op, lhs, rhs, .. } => {
+                let Expr::Ident { name, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                if name != &var_name {
+                    return None;
+                }
+                let bound = eval_const_expr(rhs, &self.const_locals)?;
+                match (&direction, op) {
+                    (Direction::Ascending, BinOp::Lt) => (start, bound),
+                    (Direction::Ascending, BinOp::Le) => (start, bound + 1),
+                    (Direction::Descending, BinOp::Gt) => (bound + 1, start + 1),
+                    (Direction::Descending, BinOp::Ge) => (bound, start + 1),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
 
         // Cheap bound on unroll work: the executor's frame size is
         // capped at MAX_FRAME_SIZE (65536 regs); each body iteration
         // can touch several registers. Reject loops beyond a safe
         // ceiling so a hostile circom source can't force the lift to
         // allocate a huge Artik body up front.
-        let raw_end = if inclusive { end_bound + 1 } else { end_bound };
-        let iterations = raw_end.saturating_sub(start);
+        let iterations = hi_exclusive.saturating_sub(lo);
         if !(0..=4096).contains(&iterations) {
             return None;
         }
 
-        // Unroll. Restore the previous const_locals entry on exit so
-        // nested loops with shadowing (rare) remain sound.
+        // Unroll. Iteration order follows the step direction so the
+        // body sees the loop variable monotonically — required for
+        // `var pieces[100][100]` patterns where prior iterations
+        // populate cells the current iteration reads.
         let prev = self.const_locals.insert(var_name.clone(), start);
-        for i in start..raw_end {
+        let iter: Box<dyn Iterator<Item = ConstInt>> = match direction {
+            Direction::Ascending => Box::new(lo..hi_exclusive),
+            Direction::Descending => Box::new((lo..hi_exclusive).rev()),
+        };
+        // Frame-size budget: the executor caps each program at
+        // `MAX_FRAME_SIZE = 65536` registers. A heavy unroll that
+        // inlines large callees per iter (e.g. `mod_exp`'s outer
+        // loop calling `prod` and `long_div`) blows past this in
+        // tens of iterations. Bail early once the running register
+        // count crosses 90 % of the cap so the dispatcher can roll
+        // back and retry via the runtime-while path.
+        const FRAME_BUDGET: u32 = 60_000;
+        for i in iter {
             *self
                 .const_locals
                 .get_mut(&var_name)
@@ -142,6 +193,9 @@ impl<'f> LiftState<'f> {
             }
             if self.halted {
                 break;
+            }
+            if self.builder.next_reg() > FRAME_BUDGET {
+                return None;
             }
         }
         match prev {
@@ -179,16 +233,24 @@ impl<'f> LiftState<'f> {
             return self.lift_if_else_folded(0, then_body, else_body);
         }
 
-        let then_returns = stmts_have_return(&then_body.stmts);
-        let else_returns = match else_body {
-            Some(ast::ElseBranch::Block(b)) => stmts_have_return(&b.stmts),
-            Some(ast::ElseBranch::IfElse(boxed)) => super::helpers::stmt_has_return(boxed),
-            None => false,
+        // Mux-style merge requires both arms to be free of side effects
+        // beyond scalar local updates: no `return`, no array writes, no
+        // witness writes. Anything else routes through the conditional
+        // branching path, which evaluates exactly one arm at runtime via
+        // `JumpIf`. The branching path's locals merge is narrow (only
+        // both-fall-through-with-no-scalar-modification or one-halts
+        // shapes are handled), so cases that need a richer merge bail
+        // back to E212.
+        let then_mux_ok = stmts_are_mux_compatible(&then_body.stmts);
+        let else_mux_ok = match else_body {
+            Some(ast::ElseBranch::Block(b)) => stmts_are_mux_compatible(&b.stmts),
+            Some(ast::ElseBranch::IfElse(boxed)) => stmt_is_mux_compatible(boxed),
+            None => true,
         };
-        if then_returns || else_returns {
-            return self.lift_if_else_branching(condition, then_body, else_body);
+        if then_mux_ok && else_mux_ok {
+            return self.lift_if_else_mux(condition, then_body, else_body);
         }
-        self.lift_if_else_mux(condition, then_body, else_body)
+        self.lift_if_else_branching(condition, then_body, else_body)
     }
 
     /// Real conditional-jump if/else. Used when at least one arm
@@ -301,11 +363,45 @@ impl<'f> LiftState<'f> {
     pub(super) fn lift_while(&mut self, condition: &Expr, body: &[Stmt]) -> Option<()> {
         let summary = collect_mutated_scalars(body);
 
-        if summary.declares_array || summary.writes_witness {
+        if summary.writes_witness {
             return None;
         }
         if stmts_have_return(body) {
             return None;
+        }
+
+        // Hoist `var arr[N]` declarations out of the loop body. The
+        // body's `temp = call(...)` rebinds via call-return on every
+        // iteration, so the alloc itself is wasted work — but emitted
+        // per-iter under a runtime while it accumulates fresh
+        // allocations and the heap explodes. Pre-allocate once before
+        // the loop_start label, register names in `arrays`, and mark
+        // each as hoisted; the body's VarDecl handler then skips the
+        // re-allocation. Required by `mod_exp`'s pattern of declaring
+        // `var temp[200]` and `var temp2[2][100]` inside if-blocks.
+        let mut newly_hoisted: Vec<String> = Vec::new();
+        if summary.declares_array {
+            let mut decls: Vec<&Stmt> = Vec::new();
+            collect_array_decls(body, &mut decls);
+            // Dedupe by name: the same `var temp[200]` may be declared
+            // in several branches (e.g. mod_exp's two if-blocks both
+            // declare it). Allocate once for the first occurrence and
+            // skip the rest.
+            let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+            for decl in decls {
+                let Stmt::VarDecl { names, .. } = decl else {
+                    continue;
+                };
+                let Some(n) = names.first() else { continue };
+                if !seen.insert(n.clone()) {
+                    continue;
+                }
+                self.lift_stmt(decl)?;
+                if let Some(shape) = self.arrays.get(n).copied() {
+                    self.hoisted_arrays.insert(n.clone(), shape);
+                    newly_hoisted.push(n.clone());
+                }
+            }
         }
 
         let mut promoted: Vec<(String, Reg)> = Vec::new();
@@ -338,12 +434,26 @@ impl<'f> LiftState<'f> {
         let is_zero_int = self.builder.feq(cond_reg, zero);
         self.builder.jump_if_to(is_zero_int, loop_end);
 
-        for stmt in body {
-            self.lift_stmt(stmt)?;
-            if self.halted {
-                return None;
+        let lift_result: Option<()> = (|| {
+            for stmt in body {
+                self.lift_stmt(stmt)?;
+                if self.halted {
+                    return None;
+                }
             }
+            Some(())
+        })();
+
+        // Drop hoisted entries before propagating an outer error so the
+        // enclosing scope doesn't see leaked bindings. Restoring the
+        // declared shape into `arrays` here would mask later live-shape
+        // queries; leaving the rebound shape is fine because the next
+        // iteration's hoisted-skip check consults `hoisted_arrays`,
+        // not `arrays`, for its size match.
+        for n in &newly_hoisted {
+            self.hoisted_arrays.remove(n);
         }
+        lift_result?;
 
         for (name, slot) in &promoted {
             let cur = self.locals.get(name).copied()?;

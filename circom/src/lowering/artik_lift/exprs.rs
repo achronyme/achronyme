@@ -76,6 +76,11 @@ impl<'f> LiftState<'f> {
                         _ => unreachable!(),
                     }
                 }
+                // `\` (IntDiv) and `%` (Mod) on field values: dispatch
+                // to `lift_int_div_mod` which recognizes
+                // `1 << <const k>` shapes (FShr / FAnd) and falls back
+                // to runtime FIDiv / FIRem otherwise.
+                BinOp::IntDiv | BinOp::Mod => self.lift_int_div_mod(*op, lhs, rhs),
                 _ => {
                     let a = self.lift_expr(lhs)?;
                     let c = self.lift_expr(rhs)?;
@@ -105,7 +110,26 @@ impl<'f> LiftState<'f> {
                 Some(self.promote_u32_to_field(not_int))
             }
             Expr::Index { object, index, .. } => {
-                // `arr[i]` where `arr` is a declared array. Two
+                // 2D index read: `arr[i][j]` is a nested Index AST.
+                if let Expr::Index {
+                    object: inner_obj,
+                    index: inner_idx,
+                    ..
+                } = object.as_ref()
+                {
+                    let Expr::Ident { name, .. } = inner_obj.as_ref() else {
+                        return None;
+                    };
+                    let shape = self.arrays.get(name).copied()?;
+                    let (handle, rows, cols) = match shape {
+                        super::ArrayShape::Flat2D { handle, rows, cols } => (handle, rows, cols),
+                        super::ArrayShape::Flat1D { .. } => return None,
+                    };
+                    let flat_idx_reg = self.flatten_2d_index(inner_idx, index, rows, cols)?;
+                    return Some(self.builder.load_arr(handle, flat_idx_reg));
+                }
+
+                // 1D `arr[i]` where `arr` is a declared array. Two
                 // index shapes are honored:
                 //   - compile-time index → range-check against the
                 //     declared length and materialize the index
@@ -122,16 +146,29 @@ impl<'f> LiftState<'f> {
                 let Expr::Ident { name, .. } = object.as_ref() else {
                     return None;
                 };
-                let (arr_reg, len) = self.arrays.get(name).copied()?;
-                let idx_reg = if let Some(idx) = eval_const_expr(index, &self.const_locals) {
-                    if !(0..i64::from(len)).contains(&idx) {
+                let (arr_reg, len) = self.arrays.get(name).copied()?.as_1d()?;
+                if let Some(idx) = eval_const_expr(index, &self.const_locals) {
+                    // Compile-time index. Negative is unconditionally a
+                    // bug — the lift bails. An index past the declared
+                    // length matches circom's witness-calculator
+                    // semantic of returning 0 for unwritten slots: the
+                    // bigint helpers in circomlib (`long_sub`,
+                    // `long_gt`) read `b[k]` past the caller's array
+                    // length under the assumption that out-of-bounds
+                    // yields zero. Emit a constant zero to preserve
+                    // those callers without paying for an alloc-time
+                    // pad.
+                    if idx < 0 {
                         return None;
                     }
-                    self.push_int_const(idx as u64)?
-                } else {
-                    let idx_field = self.lift_expr(index)?;
-                    self.builder.int_from_field(IntW::U32, idx_field)
-                };
+                    if idx >= i64::from(len) {
+                        return self.push_const_unsigned(0);
+                    }
+                    let idx_reg = self.push_int_const(idx as u64)?;
+                    return Some(self.builder.load_arr(arr_reg, idx_reg));
+                }
+                let idx_field = self.lift_expr(index)?;
+                let idx_reg = self.builder.int_from_field(IntW::U32, idx_field);
                 Some(self.builder.load_arr(arr_reg, idx_reg))
             }
             Expr::Call { callee, args, .. } => {
@@ -144,10 +181,42 @@ impl<'f> LiftState<'f> {
                 let name = extract_call_name(callee)?;
                 match self.lift_nested_call(&name, args)? {
                     NestedResult::Scalar(r) => Some(r),
-                    NestedResult::Array(_, _) => None,
+                    NestedResult::Array(_, _) | NestedResult::Array2D(_, _, _) => None,
                 }
             }
             _ => None,
+        }
+    }
+
+    /// Lift a callee that returns a 1D Field array — used by
+    /// `var arr[N] = call(...)` and `arr2d[i] = call(...)` patterns.
+    /// Returns `None` if the call doesn't lift, doesn't return an
+    /// array, or the call site is not a bare `Expr::Call`.
+    pub(super) fn lift_call_returning_array(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+    ) -> Option<(Reg, u32)> {
+        let name = extract_call_name(callee)?;
+        match self.lift_nested_call(&name, args)? {
+            NestedResult::Array(h, len) => Some((h, len)),
+            NestedResult::Scalar(_) | NestedResult::Array2D(_, _, _) => None,
+        }
+    }
+
+    /// Lift a callee that returns a 2D Field array. Used by
+    /// `var arr[R][C] = call(...)` (alias) and `arr2d = call(...)`
+    /// (whole-shape rebind) patterns where the callee's body ends in
+    /// `return <local 2D array>`.
+    pub(super) fn lift_call_returning_array_2d(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+    ) -> Option<(Reg, u32, u32)> {
+        let name = extract_call_name(callee)?;
+        match self.lift_nested_call(&name, args)? {
+            NestedResult::Array2D(h, rows, cols) => Some((h, rows, cols)),
+            NestedResult::Scalar(_) | NestedResult::Array(_, _) => None,
         }
     }
 
@@ -156,7 +225,15 @@ impl<'f> LiftState<'f> {
     /// a fresh one bound to the callee's params, walks the callee's
     /// body, captures the return value via `nested_result`, and
     /// restores the outer scope.
-    fn lift_nested_call(&mut self, name: &str, args: &[Expr]) -> Option<NestedResult> {
+    ///
+    /// Array arguments alias the caller's array handle directly into
+    /// the callee's `arrays` map under the callee's param name —
+    /// arrays live on the Artik heap and are passed by reference
+    /// across the inline boundary. Scalar arguments lift into a
+    /// register; compile-time-folded scalars also seed the callee's
+    /// `const_locals` so pow-of-2 patterns like `1 << n` recognize
+    /// the divisor at lift time.
+    pub(super) fn lift_nested_call(&mut self, name: &str, args: &[Expr]) -> Option<NestedResult> {
         let func = self.functions.get(name).copied()?;
         if args.len() != func.params.len() {
             return None;
@@ -171,10 +248,29 @@ impl<'f> LiftState<'f> {
             return None;
         }
 
-        // Evaluate args in the outer scope first.
-        let mut arg_regs = Vec::with_capacity(args.len());
+        // Classify each argument as scalar (lift to register) or array
+        // (alias caller's handle). Capture compile-time-folded scalars
+        // so the callee's frame can bind them into `const_locals` —
+        // this is what lets patterns like `1 << n` fold at lift time
+        // when the caller passes a literal for `n`.
+        enum NestedArg {
+            Scalar {
+                reg: Reg,
+                const_val: Option<super::ConstInt>,
+            },
+            Array(super::ArrayShape),
+        }
+        let mut nested_args: Vec<NestedArg> = Vec::with_capacity(args.len());
         for arg in args {
-            arg_regs.push(self.lift_expr(arg)?);
+            if let Expr::Ident { name: arg_name, .. } = arg {
+                if let Some(&shape) = self.arrays.get(arg_name) {
+                    nested_args.push(NestedArg::Array(shape));
+                    continue;
+                }
+            }
+            let reg = self.lift_expr(arg)?;
+            let const_val = super::helpers::eval_const_expr(arg, &self.const_locals);
+            nested_args.push(NestedArg::Scalar { reg, const_val });
         }
 
         // Swap scope.
@@ -186,8 +282,18 @@ impl<'f> LiftState<'f> {
         self.halted = false;
         self.nested_depth += 1;
 
-        for (param, reg) in func.params.iter().zip(arg_regs.iter()) {
-            self.locals.insert(param.clone(), *reg);
+        for (param, na) in func.params.iter().zip(nested_args.iter()) {
+            match na {
+                NestedArg::Scalar { reg, const_val } => {
+                    self.locals.insert(param.clone(), *reg);
+                    if let Some(v) = const_val {
+                        self.const_locals.insert(param.clone(), *v);
+                    }
+                }
+                NestedArg::Array(shape) => {
+                    self.arrays.insert(param.clone(), *shape);
+                }
+            }
         }
 
         // Lift the callee's body.

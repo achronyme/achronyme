@@ -345,6 +345,52 @@ fn step<F: FieldBackend>(
             state.write(*dst, Cell::Int(out))?;
             Ok(Flow::Next)
         }
+        Instr::FIDiv { dst, a, b } => {
+            let av = *state.read_field(*a)?;
+            let bv = *state.read_field(*b)?;
+            if bv.is_zero() {
+                return Err(ArtikError::FieldDivByZero);
+            }
+            let q = canonical_rep_div(av.to_canonical(), bv.to_canonical());
+            state.write(*dst, Cell::Field(FieldElement::<F>::from_canonical(q)))?;
+            Ok(Flow::Next)
+        }
+        Instr::FIRem { dst, a, b } => {
+            let av = *state.read_field(*a)?;
+            let bv = *state.read_field(*b)?;
+            if bv.is_zero() {
+                return Err(ArtikError::FieldDivByZero);
+            }
+            let r = canonical_rep_rem(av.to_canonical(), bv.to_canonical());
+            state.write(*dst, Cell::Field(FieldElement::<F>::from_canonical(r)))?;
+            Ok(Flow::Next)
+        }
+        Instr::FShr { dst, src, amount } => {
+            let s = *state.read_field(*src)?;
+            let shifted = canonical_rep_shr(s.to_canonical(), *amount);
+            state.write(
+                *dst,
+                Cell::Field(FieldElement::<F>::from_canonical(shifted)),
+            )?;
+            Ok(Flow::Next)
+        }
+        Instr::FAnd {
+            dst,
+            src,
+            mask_const_id,
+        } => {
+            let s = *state.read_field(*src)?;
+            let entry =
+                prog.const_pool
+                    .get(*mask_const_id as usize)
+                    .ok_or(ArtikError::InvalidConstId {
+                        const_id: *mask_const_id,
+                    })?;
+            let mask = canonical_rep_from_bytes(&entry.bytes);
+            let r = canonical_rep_and(s.to_canonical(), mask);
+            state.write(*dst, Cell::Field(FieldElement::<F>::from_canonical(r)))?;
+            Ok(Flow::Next)
+        }
 
         // ── Integer ops ────────────────────────────────────────────
         Instr::IBin { op, w, dst, a, b } => {
@@ -573,6 +619,113 @@ fn shr_w(w: IntW, a: u64, b: u64) -> u64 {
     }
 }
 
+// ── Canonical-representative arithmetic ─────────────────────────────────
+//
+// The four field-level opcodes (`FIDiv`, `FIRem`, `FShr`, `FAnd`) operate
+// on the 256-bit canonical representative of a field element. Inputs are
+// always `< p` (every Field cell carries a reduced value), so the
+// canonical rep is also the integer value, and the result is always
+// `< p` (each op is monotonically non-increasing in the operand).
+//
+// Layout: `[u64; 4]` little-endian — limb 0 carries the low 64 bits,
+// limb 3 the high 64 bits.
+
+/// Pad / truncate a const-pool entry to a 4-limb canonical mask. Used
+/// by `FAnd` to load the mask. Bytes beyond 32 are dropped (validator
+/// catches `> max_const_bytes` per backend earlier).
+///
+/// Asymmetry note: `PushConst` rejects const-pool bytes whose canonical
+/// rep is `>= p` (via `decode_const_fe`), but this loader does not.
+/// This is intentional: a mask is a bit pattern, not a field element.
+/// Even if the mask's bit pattern represents `>= p`, the AND result
+/// `(a < p) AND mask` is `≤ a < p`, so the output is always a valid
+/// canonical rep. Adding a modular-reduction here would silently
+/// change masks like `0xFF...FF` (all bits set) into something else.
+fn canonical_rep_from_bytes(bytes: &[u8]) -> [u64; 4] {
+    let mut buf = [0u8; 32];
+    let n = bytes.len().min(32);
+    buf[..n].copy_from_slice(&bytes[..n]);
+    [
+        u64::from_le_bytes(buf[0..8].try_into().unwrap()),
+        u64::from_le_bytes(buf[8..16].try_into().unwrap()),
+        u64::from_le_bytes(buf[16..24].try_into().unwrap()),
+        u64::from_le_bytes(buf[24..32].try_into().unwrap()),
+    ]
+}
+
+/// Limb-wise AND. No allocation, exact.
+fn canonical_rep_and(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    [a[0] & b[0], a[1] & b[1], a[2] & b[2], a[3] & b[3]]
+}
+
+/// Right-shift the 256-bit value by `amount` bits. `amount` ∈ [0, 253]
+/// is enforced by the validator; any value ≥ 256 would zero the result.
+fn canonical_rep_shr(a: [u64; 4], amount: u32) -> [u64; 4] {
+    if amount >= 256 {
+        return [0; 4];
+    }
+    let limb_shift = (amount / 64) as usize;
+    let bit_shift = amount % 64;
+    let mut out = [0u64; 4];
+    for (i, slot) in out.iter_mut().enumerate() {
+        let src_idx = i + limb_shift;
+        if src_idx >= 4 {
+            break;
+        }
+        let lo = a[src_idx] >> bit_shift;
+        let hi = if bit_shift > 0 && src_idx + 1 < 4 {
+            // `64 - bit_shift` is in [1, 63], so the shift is well-defined.
+            a[src_idx + 1] << (64 - bit_shift)
+        } else {
+            0
+        };
+        *slot = lo | hi;
+    }
+    out
+}
+
+/// Convert a 4-limb canonical rep to `BigUint` for div/rem.
+fn limbs_to_biguint(limbs: [u64; 4]) -> num_bigint::BigUint {
+    let mut bytes = [0u8; 32];
+    for (i, limb) in limbs.iter().enumerate() {
+        bytes[i * 8..(i + 1) * 8].copy_from_slice(&limb.to_le_bytes());
+    }
+    num_bigint::BigUint::from_bytes_le(&bytes)
+}
+
+/// Convert a `BigUint` back to a 4-limb canonical rep. Pads with zero
+/// limbs if the BigUint is shorter than 4 u64s; truncates higher limbs
+/// (only happens for adversarial intermediate values, never for `< p`
+/// inputs).
+fn biguint_to_limbs(n: &num_bigint::BigUint) -> [u64; 4] {
+    let bytes = n.to_bytes_le();
+    let mut buf = [0u8; 32];
+    let take = bytes.len().min(32);
+    buf[..take].copy_from_slice(&bytes[..take]);
+    [
+        u64::from_le_bytes(buf[0..8].try_into().unwrap()),
+        u64::from_le_bytes(buf[8..16].try_into().unwrap()),
+        u64::from_le_bytes(buf[16..24].try_into().unwrap()),
+        u64::from_le_bytes(buf[24..32].try_into().unwrap()),
+    ]
+}
+
+/// Truncated 256-bit unsigned division: `floor(a / b)`. Caller has
+/// already verified `b != 0`.
+fn canonical_rep_div(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let abi = limbs_to_biguint(a);
+    let bbi = limbs_to_biguint(b);
+    biguint_to_limbs(&(abi / bbi))
+}
+
+/// 256-bit unsigned remainder: `a mod b`. Caller has already verified
+/// `b != 0`.
+fn canonical_rep_rem(a: [u64; 4], b: [u64; 4]) -> [u64; 4] {
+    let abi = limbs_to_biguint(a);
+    let bbi = limbs_to_biguint(b);
+    biguint_to_limbs(&(abi % bbi))
+}
+
 /// Decode a const-pool entry into a field element. The bytes are
 /// stored length-prefixed and zero-padded up to the backend's canonical
 /// size (32 bytes for BN-like, 8 for Goldilocks). The backend's
@@ -742,6 +895,364 @@ mod tests {
         let mut slots = [FE::zero()];
         run_bn(&prog, &sig, &mut slots).unwrap();
         assert_eq!(slots[0], FE::zero());
+    }
+
+    // ── Field-level canonical-rep ops (FIDiv / FIRem / FShr / FAnd) ──
+
+    /// Drive an FIDiv computation from two signals, return the field result.
+    fn run_fidiv(a: FE, b: FE) -> Result<FE, ArtikError> {
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::ReadSignal {
+                dst: 1,
+                signal_id: 1,
+            },
+            Instr::FIDiv { dst: 2, a: 0, b: 1 },
+            Instr::WriteWitness { slot_id: 0, src: 2 },
+            Instr::Return,
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, Vec::new(), body));
+        let sig = [a, b];
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &sig, &mut slots)?;
+        Ok(slots[0])
+    }
+
+    fn run_firem(a: FE, b: FE) -> Result<FE, ArtikError> {
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::ReadSignal {
+                dst: 1,
+                signal_id: 1,
+            },
+            Instr::FIRem { dst: 2, a: 0, b: 1 },
+            Instr::WriteWitness { slot_id: 0, src: 2 },
+            Instr::Return,
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, Vec::new(), body));
+        let sig = [a, b];
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &sig, &mut slots)?;
+        Ok(slots[0])
+    }
+
+    fn run_fshr(a: FE, amount: u32) -> FE {
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::FShr {
+                dst: 1,
+                src: 0,
+                amount,
+            },
+            Instr::WriteWitness { slot_id: 0, src: 1 },
+            Instr::Return,
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
+        let sig = [a];
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &sig, &mut slots).unwrap();
+        slots[0]
+    }
+
+    fn run_fand(a: FE, mask_bytes: Vec<u8>) -> FE {
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::FAnd {
+                dst: 1,
+                src: 0,
+                mask_const_id: 0,
+            },
+            Instr::WriteWitness { slot_id: 0, src: 1 },
+            Instr::Return,
+        ];
+        let pool = vec![FieldConstEntry { bytes: mask_bytes }];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, pool, body));
+        let sig = [a];
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &sig, &mut slots).unwrap();
+        slots[0]
+    }
+
+    /// Helper: build a field element from a u128 value (zero-padded).
+    fn fe_from_u128(v: u128) -> FE {
+        let mut bytes = [0u8; 32];
+        bytes[0..16].copy_from_slice(&v.to_le_bytes());
+        FE::from_le_bytes(&bytes).expect("u128 fits canonical")
+    }
+
+    #[test]
+    fn fidiv_matches_u128_div_euclid_on_qhat_shape() {
+        // qhat shape: dividend = (max_u64 << 64) | (max_u64 - 7), divisor = 0x100000007.
+        // Verifies u128-class operands route through canonical-rep div.
+        let dividend_u128 = ((u64::MAX as u128) << 64) | ((u64::MAX - 7) as u128);
+        let divisor_u128: u128 = 0x100000007;
+        let a = fe_from_u128(dividend_u128);
+        let b = fe_from_u128(divisor_u128);
+        let expected = fe_from_u128(dividend_u128 / divisor_u128);
+        assert_eq!(run_fidiv(a, b).unwrap(), expected);
+    }
+
+    #[test]
+    fn fidiv_zero_divides_to_zero() {
+        // 0 / 5 = 0
+        assert_eq!(run_fidiv(FE::zero(), FE::from_u64(5)).unwrap(), FE::zero());
+    }
+
+    #[test]
+    fn fidiv_a_lt_b_yields_zero() {
+        assert_eq!(
+            run_fidiv(FE::from_u64(3), FE::from_u64(7)).unwrap(),
+            FE::zero()
+        );
+    }
+
+    #[test]
+    fn fidiv_a_eq_b_yields_one() {
+        assert_eq!(
+            run_fidiv(FE::from_u64(42), FE::from_u64(42)).unwrap(),
+            FE::from_u64(1)
+        );
+    }
+
+    #[test]
+    fn fidiv_traps_on_zero_b() {
+        let err = run_fidiv(FE::from_u64(7), FE::zero()).unwrap_err();
+        assert_eq!(err, ArtikError::FieldDivByZero);
+    }
+
+    #[test]
+    fn firem_matches_u128_rem_euclid_on_qhat_shape() {
+        let dividend_u128 = ((u64::MAX as u128) << 64) | ((u64::MAX - 7) as u128);
+        let divisor_u128: u128 = 0x100000007;
+        let a = fe_from_u128(dividend_u128);
+        let b = fe_from_u128(divisor_u128);
+        let expected = fe_from_u128(dividend_u128 % divisor_u128);
+        assert_eq!(run_firem(a, b).unwrap(), expected);
+    }
+
+    #[test]
+    fn firem_traps_on_zero_b() {
+        let err = run_firem(FE::from_u64(7), FE::zero()).unwrap_err();
+        assert_eq!(err, ArtikError::FieldDivByZero);
+    }
+
+    #[test]
+    fn fidiv_firem_round_trip_identity() {
+        // For 20 deterministic (a, b) with b != 0 and a, b < 2^128:
+        // FIDiv(a, b) * b + FIRem(a, b) == a, and quotient/remainder
+        // each match host u128 arithmetic. Mix of small, mid, edge,
+        // and qhat-shape vectors.
+        let cases: [(u128, u128); 20] = [
+            (0, 1),
+            (1, 1),
+            (12345, 67),
+            (0, u64::MAX as u128),
+            (u64::MAX as u128, 1),
+            (u64::MAX as u128, u64::MAX as u128),
+            (u64::MAX as u128, u64::MAX as u128 - 1),
+            ((u64::MAX as u128) << 60, 0xDEAD_BEEF),
+            (0xCAFEBABE_F00DBEEFu128, 0x123456789ABCDEFu128),
+            (
+                (u64::MAX as u128) * (u64::MAX as u128 - 1),
+                u64::MAX as u128,
+            ),
+            ((u64::MAX as u128) << 64, 0x100000007),
+            (((u64::MAX as u128) << 64) | 1, u64::MAX as u128),
+            (((u64::MAX as u128) << 64) | (u64::MAX as u128 / 2), 0x12345),
+            (1u128 << 127, 1u128 << 63),
+            ((1u128 << 127) - 1, (1u128 << 63) - 1),
+            (0xFEDC_BA98_7654_3210_FEDC_BA98_7654_3210u128, 0x1FFu128),
+            (u128::MAX - 1, 2),
+            (u128::MAX, 1),
+            (u128::MAX, u128::MAX / 2),
+            (u128::MAX, 0xFFFF_FFFFu128),
+        ];
+        for (a_v, b_v) in cases {
+            let a = fe_from_u128(a_v);
+            let b = fe_from_u128(b_v);
+            let q = run_fidiv(a, b).unwrap();
+            let r = run_firem(a, b).unwrap();
+            // q*b + r == a in field arithmetic — values stay below p so
+            // canonical rep matches integer math.
+            assert_eq!(q.mul(&b).add(&r), a, "round-trip failed for ({a_v}, {b_v})");
+            assert_eq!(
+                q,
+                fe_from_u128(a_v / b_v),
+                "quotient mismatch for ({a_v}, {b_v})"
+            );
+            assert_eq!(
+                r,
+                fe_from_u128(a_v % b_v),
+                "remainder mismatch for ({a_v}, {b_v})"
+            );
+        }
+    }
+
+    #[test]
+    fn fshr_amount_zero_is_identity() {
+        let v = fe_from_u128((u64::MAX as u128) << 64 | 0xCAFEBABE);
+        assert_eq!(run_fshr(v, 0), v);
+    }
+
+    #[test]
+    fn fshr_64_drops_low_limb() {
+        // (max_u64 << 64 | low) >> 64 == max_u64
+        let v = fe_from_u128((u64::MAX as u128) << 64 | 0x1234_5678_9ABC_DEF0u128);
+        let expected = FE::from_u64(u64::MAX);
+        assert_eq!(run_fshr(v, 64), expected);
+    }
+
+    #[test]
+    fn fshr_128_zeroes_anything_under_2_to_128() {
+        let v = fe_from_u128(((u64::MAX as u128) << 64) | (u64::MAX as u128));
+        assert_eq!(run_fshr(v, 128), FE::zero());
+    }
+
+    #[test]
+    fn fshr_full_canonical_rep_matches_native_at_192() {
+        // Build a value at the high end of the canonical rep (within
+        // BN254's `p ≈ 2^254`). 2^192 fits because p has its high limb
+        // around 2^61. Choose `a = 1 << 192` (high limb = 1, others 0)
+        // and shift by 192 to recover 1.
+        let a_canonical: [u64; 4] = [0, 0, 0, 1];
+        let a = FE::from_canonical(a_canonical);
+        assert_eq!(run_fshr(a, 192), FE::from_u64(1));
+    }
+
+    #[test]
+    fn fshr_amount_253_boundary_accepted() {
+        // 253 is the highest amount the validator accepts. Pick a
+        // canonical-rep value with bit 253 set (limb 3 = 1 << 61) and
+        // shift by 253 — should recover 1. Confirms the boundary is
+        // inclusive and the limb math is correct at the extreme.
+        let limbs: [u64; 4] = [0, 0, 0, 1u64 << 61];
+        let a = FE::from_canonical(limbs);
+        assert_eq!(run_fshr(a, 253), FE::from_u64(1));
+    }
+
+    #[test]
+    fn fshr_amount_above_253_rejected_by_validator() {
+        // `decode` runs the validator. We construct a body with FShr amount=254,
+        // encode it, then expect decode to reject.
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::FShr {
+                dst: 1,
+                src: 0,
+                amount: 254,
+            },
+            Instr::Return,
+        ];
+        let prog = Program::new(FieldFamily::BnLike256, 2, Vec::new(), body);
+        let bytes = encode(&prog);
+        let err = decode(&bytes, Some(FieldFamily::BnLike256)).unwrap_err();
+        assert_eq!(err, ArtikError::InvalidShiftAmount { amount: 254 });
+    }
+
+    #[test]
+    fn fand_extracts_low_64_bits() {
+        // Mask = 2^64 - 1 (low 64 bits set) → keep only the bottom limb.
+        let mut mask_bytes = vec![0xFFu8; 8];
+        mask_bytes.extend(vec![0u8; 24]); // pad to 32 bytes
+        let v = fe_from_u128((u64::MAX as u128) << 64 | 0xDEAD_BEEF_CAFE_BABEu128);
+        let expected = FE::from_u64(0xDEAD_BEEF_CAFE_BABE);
+        assert_eq!(run_fand(v, mask_bytes), expected);
+    }
+
+    #[test]
+    fn fand_with_zero_mask_yields_zero() {
+        // `% 1` lowers to `FAnd(src, mask=0)`. The result must be zero
+        // for any input — the lift's `intern_low_bit_mask(0)` path
+        // depends on this so callers like `temp \ (1 << 0)` (vacuous
+        // shift) and `temp % (1 << 0)` (always zero) compose correctly.
+        let v = fe_from_u128(0xDEAD_BEEF_CAFE_BABE_F00D_C0DE_8BAD_F00Du128);
+        let mask_bytes = vec![0u8];
+        assert_eq!(run_fand(v, mask_bytes), FE::from_u64(0));
+    }
+
+    #[test]
+    fn fand_extracts_high_limb_via_shift_then_mask() {
+        // Confirm the FShr/FAnd pair extracts limb-1 cleanly:
+        // ((max_u64 << 64) | low) >> 64 == max_u64, then & 0xFFFF_FFFF == 0xFFFF_FFFF.
+        let v = fe_from_u128((u64::MAX as u128) << 64 | 0x1234u128);
+        let shifted = run_fshr(v, 64);
+        let mask_bytes = vec![0xFFu8, 0xFF, 0xFF, 0xFF]; // 4 bytes ⇒ low 32 bits of limb0
+        let masked = run_fand(shifted, mask_bytes);
+        assert_eq!(masked, FE::from_u64(0xFFFF_FFFF));
+    }
+
+    #[test]
+    fn fshr_fand_round_trip_recovers_low_n_bits() {
+        // For x < 2^128, n ∈ {32, 64, 96}: (x >> n) << n + (x & ((1 << n) - 1)) == x.
+        for &x_v in &[
+            0xDEAD_BEEF_CAFE_BABE_F00D_C0DE_8BAD_F00Du128,
+            12345,
+            u128::MAX,
+        ] {
+            for &n in &[32u32, 64, 96] {
+                let x = fe_from_u128(x_v);
+                let shifted = run_fshr(x, n);
+                let mut mask_bytes = vec![0u8; 32];
+                let mask_bits = 1u128 << n;
+                let mask = mask_bits.wrapping_sub(1);
+                mask_bytes[0..16].copy_from_slice(&mask.to_le_bytes());
+                let low = run_fand(x, mask_bytes);
+                // Compose back: `shifted << n` is field arithmetic
+                // shift via repeated *2; here we just do it with mul.
+                let factor = fe_from_u128(1u128 << n);
+                let restored = shifted.mul(&factor).add(&low);
+                assert_eq!(restored, x, "round-trip failed for x={x_v:#x}, n={n}");
+            }
+        }
+    }
+
+    #[test]
+    fn new_opcodes_round_trip_through_bytecode() {
+        // Encode all 4 new opcodes in one body and verify decode agrees.
+        let pool = vec![FieldConstEntry {
+            bytes: vec![0xFF, 0xFF],
+        }];
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::ReadSignal {
+                dst: 1,
+                signal_id: 1,
+            },
+            Instr::FIDiv { dst: 2, a: 0, b: 1 },
+            Instr::FIRem { dst: 3, a: 0, b: 1 },
+            Instr::FShr {
+                dst: 4,
+                src: 0,
+                amount: 17,
+            },
+            Instr::FAnd {
+                dst: 5,
+                src: 0,
+                mask_const_id: 0,
+            },
+            Instr::Return,
+        ];
+        let prog = Program::new(FieldFamily::BnLike256, 6, pool, body.clone());
+        let prog = roundtrip(prog);
+        assert_eq!(prog.body, body);
     }
 
     // ── Integer arithmetic ─────────────────────────────────────────

@@ -1,6 +1,13 @@
 //! Lysis lifter — consumes [`ExtendedInstruction<F>`] and emits Lysis
 //! bytecode.
 //!
+//! The emitted program is the Bytecode-Oriented Compilation (BOC) form
+//! of the source circuit: when the Lysis VM executes it, the
+//! side-effect is the SSA IR that the rest of the pipeline consumes.
+//! This module is the AST→Bytecode half of the BOC pipeline; the
+//! corresponding Run-on-VM→Compile-output half lives in the `lysis`
+//! crate.
+//!
 //! The lifter lives in `ir` rather than `lysis` because:
 //!
 //! 1. An `ir → lysis` bridge already exists (see `lysis_bridge.rs`

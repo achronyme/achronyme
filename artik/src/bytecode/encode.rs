@@ -83,6 +83,14 @@ fn encode_instr(instr: &Instr, out: &mut Vec<u8>) {
             out.extend_from_slice(&src.to_le_bytes());
         }
         Instr::FEq { dst, a, b } => emit_rrr(out, OpTag::FEq, *dst, *a, *b),
+        Instr::FIDiv { dst, a, b } => emit_rrr(out, OpTag::FIDiv, *dst, *a, *b),
+        Instr::FIRem { dst, a, b } => emit_rrr(out, OpTag::FIRem, *dst, *a, *b),
+        Instr::FShr { dst, src, amount } => emit_rrr(out, OpTag::FShr, *dst, *src, *amount),
+        Instr::FAnd {
+            dst,
+            src,
+            mask_const_id,
+        } => emit_rrr(out, OpTag::FAnd, *dst, *src, *mask_const_id),
         Instr::IBin { op, w, dst, a, b } => {
             out.push(OpTag::IBin as u8);
             out.push(*op as u8);

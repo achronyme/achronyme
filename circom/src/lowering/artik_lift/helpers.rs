@@ -70,6 +70,42 @@ pub(super) fn extract_call_name(callee: &Expr) -> Option<String> {
     }
 }
 
+/// Recognize the shape `1 << <const k>` and return the shift amount
+/// `k` if it fits in `0..=253`. Used by the IntDiv / Mod lift to detect
+/// a compile-time-power-of-2 divisor without going through
+/// `eval_const_expr` (which can't represent values exceeding `i64`,
+/// such as `1 << 64`).
+pub(super) fn match_one_shl_const(
+    expr: &Expr,
+    const_locals: &HashMap<String, ConstInt>,
+) -> Option<u32> {
+    let Expr::BinOp {
+        op: BinOp::ShiftL,
+        lhs,
+        rhs,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let one_lhs = match lhs.as_ref() {
+        Expr::Number { value, .. } => value == "1",
+        Expr::HexNumber { value, .. } => {
+            let trimmed = value.strip_prefix("0x").unwrap_or(value);
+            trimmed == "1"
+        }
+        _ => false,
+    };
+    if !one_lhs {
+        return None;
+    }
+    let k = eval_const_expr(rhs, const_locals)?;
+    if !(0..=253).contains(&k) {
+        return None;
+    }
+    Some(k as u32)
+}
+
 /// Is `expr` an increment on the named variable (`name++` or `++name`)?
 pub(super) fn is_increment_on(expr: &Expr, name: &str) -> bool {
     let (op, operand) = match expr {
@@ -77,6 +113,18 @@ pub(super) fn is_increment_on(expr: &Expr, name: &str) -> bool {
         _ => return false,
     };
     if !matches!(op, PostfixOp::Increment) {
+        return false;
+    }
+    matches!(operand.as_ref(), Expr::Ident { name: n, .. } if n == name)
+}
+
+/// Is `expr` a decrement on the named variable (`name--` or `--name`)?
+pub(super) fn is_decrement_on(expr: &Expr, name: &str) -> bool {
+    let (op, operand) = match expr {
+        Expr::PostfixOp { op, operand, .. } | Expr::PrefixOp { op, operand, .. } => (op, operand),
+        _ => return false,
+    };
+    if !matches!(op, PostfixOp::Decrement) {
         return false;
     }
     matches!(operand.as_ref(), Expr::Ident { name: n, .. } if n == name)
@@ -319,6 +367,41 @@ pub(super) fn stmt_has_return(stmt: &Stmt) -> bool {
         Stmt::While { body, .. } => stmts_have_return(&body.stmts),
         Stmt::Block(b) => stmts_have_return(&b.stmts),
         _ => false,
+    }
+}
+
+/// Collect every `var arr[...]` declaration the body would otherwise
+/// execute on each loop iteration. Walks recursively into if/else,
+/// for, while, and block bodies. Used by the runtime-while lift to
+/// hoist the allocations out of the loop body — without hoisting,
+/// each iter emits a fresh `AllocArray` and the heap explodes
+/// quadratically (256 iters × ~3 arrays × 200 cells crosses the
+/// per-program memory cap).
+pub(super) fn collect_array_decls<'a>(stmts: &'a [Stmt], out: &mut Vec<&'a Stmt>) {
+    for s in stmts {
+        collect_array_decls_in_stmt(s, out);
+    }
+}
+
+fn collect_array_decls_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Stmt>) {
+    match stmt {
+        Stmt::VarDecl { dimensions, .. } if !dimensions.is_empty() => out.push(stmt),
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_array_decls(&then_body.stmts, out);
+            match else_body {
+                Some(ElseBranch::Block(b)) => collect_array_decls(&b.stmts, out),
+                Some(ElseBranch::IfElse(boxed)) => collect_array_decls_in_stmt(boxed, out),
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => collect_array_decls(&body.stmts, out),
+        Stmt::While { body, .. } => collect_array_decls(&body.stmts, out),
+        Stmt::Block(b) => collect_array_decls(&b.stmts, out),
+        _ => {}
     }
 }
 

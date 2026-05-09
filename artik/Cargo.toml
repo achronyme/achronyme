@@ -12,5 +12,6 @@ categories.workspace = true
 
 [dependencies]
 memory = { path = "../memory" }
+num-bigint = "0.4"
 
 [dev-dependencies]

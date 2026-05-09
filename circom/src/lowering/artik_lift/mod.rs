@@ -103,6 +103,7 @@ pub enum ParamShape {
 pub fn lift_function_to_artik(
     function_name: &str,
     params: &[(String, ParamShape)],
+    param_consts: &[Option<ConstInt>],
     body: &[Stmt],
     ctx: &mut LoweringContext<'_>,
     span: &Span,
@@ -116,7 +117,7 @@ pub fn lift_function_to_artik(
         .iter()
         .map(|(&k, &v)| (k.to_string(), v))
         .collect();
-    let mut state = LiftState::new(params, &functions);
+    let mut state = LiftState::new(params, param_consts, &functions);
 
     for stmt in body {
         state.lift_stmt(stmt)?;
@@ -163,11 +164,48 @@ enum ReturnShape {
     Array(u32),
 }
 
+/// Shape of a local array allocation: either a flat 1D field array of
+/// `len` cells, or a 2D field array of `rows × cols` flattened with
+/// row-major stride. The Artik VM has no native 2D primitive; we
+/// flatten at lift time and emit the index computation `i * cols + j`
+/// before each LoadArr / StoreArr.
+#[derive(Clone, Copy)]
+pub(super) enum ArrayShape {
+    Flat1D { handle: Reg, len: u32 },
+    Flat2D { handle: Reg, rows: u32, cols: u32 },
+}
+
+impl ArrayShape {
+    pub(super) fn handle(self) -> Reg {
+        match self {
+            Self::Flat1D { handle, .. } => handle,
+            Self::Flat2D { handle, .. } => handle,
+        }
+    }
+
+    /// Total flattened length — `len` for 1D, `rows * cols` for 2D.
+    pub(super) fn total_len(self) -> u32 {
+        match self {
+            Self::Flat1D { len, .. } => len,
+            Self::Flat2D { rows, cols, .. } => rows.saturating_mul(cols),
+        }
+    }
+
+    /// View as a 1D shape if applicable. 2D shapes return None — the
+    /// caller has to handle the multi-index path explicitly.
+    pub(super) fn as_1d(self) -> Option<(Reg, u32)> {
+        match self {
+            Self::Flat1D { handle, len } => Some((handle, len)),
+            Self::Flat2D { .. } => None,
+        }
+    }
+}
+
 /// Compile-time-known integer for loop variables. Circom integers can
 /// in principle reach 254 bits, but loop bounds in witness functions
 /// are consistently small (nbits, array lengths, round counts). i64
 /// comfortably covers the entire circomlib corpus.
-type ConstInt = i64;
+pub type ConstInt = i64;
 
 struct LiftState<'f> {
     builder: ProgramBuilder,
@@ -179,10 +217,11 @@ struct LiftState<'f> {
     /// plus any purely constant vars we recognize. Takes precedence
     /// over `locals` when an identifier is looked up.
     const_locals: HashMap<String, ConstInt>,
-    /// Array locals — each entry maps `name → (handle_reg, length)`.
-    /// Writes via `arr[i] = expr` emit `StoreArr`; reads via
-    /// `Expr::Index { object: Ident(arr), index }` emit `LoadArr`.
-    arrays: HashMap<String, (Reg, u32)>,
+    /// Array locals — each entry maps `name → ArrayShape`. 1D arrays
+    /// route through `LoadArr` / `StoreArr` directly; 2D arrays
+    /// flatten the row-major index `i * cols + j` at lift time before
+    /// dispatching to the same opcodes.
+    arrays: HashMap<String, ArrayShape>,
     /// Set to `true` once a `return` has been lowered. The outer loop
     /// stops walking more statements and the program is finalized.
     halted: bool,
@@ -208,28 +247,64 @@ struct LiftState<'f> {
     /// Lazily populated on the first scalar `return` so multi-return
     /// shapes (e.g. early-exit `if (cond) return X;` followed by a
     /// later `return Y;`) all write to the same slot. `None` until the
-    /// first scalar return; `Some` afterwards. Array returns continue
-    /// to allocate per-element slots inline.
+    /// first scalar return; `Some` afterwards.
     output_slot: Option<u32>,
+    /// Witness slots reserved for the function's array return value.
+    /// Functions with multiple array-returning paths (e.g.
+    /// `mod_inv`'s `if (isZero) return ret;` early-exit followed by a
+    /// later `return out;`) must reuse the same slot range across all
+    /// returns — otherwise each path allocates a fresh range and the
+    /// caller sees the wrong count. Lazily populated on the first
+    /// array return; subsequent returns require a matching length.
+    output_array_slots: Option<Vec<u32>>,
+    /// Arrays that have been pre-allocated by an enclosing
+    /// `lift_while`. When the body's `VarDecl` re-encounters one of
+    /// these names, it must skip the `AllocArray` — otherwise the
+    /// runtime loop allocates a fresh array on every iteration and
+    /// the heap budget explodes. The map records the *declared*
+    /// shape so the skip check survives later rebinds (a
+    /// `temp = prod(...)` rebind shrinks the live shape from 200 to
+    /// 100, but the next iter's `var temp[200]` declaration must
+    /// still match the originally-hoisted 200). Cleared when the
+    /// enclosing `lift_while` returns.
+    hoisted_arrays: std::collections::HashMap<String, ArrayShape>,
 }
 
 /// Value produced by a nested (inlined) function call. Arrays are
 /// kept as handle + length so the caller can thread them through the
-/// rest of the body identically to a `var arr[N];` local.
+/// rest of the body identically to a `var arr[N];` local. 2D arrays
+/// preserve their `(rows, cols)` shape so the caller can rebind them
+/// to a `Flat2D` slot without losing the row-major stride.
 #[derive(Clone, Copy)]
 enum NestedResult {
     Scalar(Reg),
     Array(Reg, u32),
+    Array2D(Reg, u32, u32),
 }
 
 impl<'f> LiftState<'f> {
     fn new(
         params: &[(String, ParamShape)],
+        param_consts: &[Option<ConstInt>],
         functions: &'f HashMap<String, &'f FunctionDef>,
     ) -> Self {
         let mut builder = ProgramBuilder::new(FieldFamily::BnLike256);
         let mut locals = HashMap::new();
-        let mut arrays: HashMap<String, (Reg, u32)> = HashMap::new();
+        let mut const_locals: HashMap<String, ConstInt> = HashMap::new();
+        let mut arrays: HashMap<String, ArrayShape> = HashMap::new();
+
+        // Bind any compile-time-known scalar args into the callee's
+        // const_locals so patterns like `1 << n` fold at lift time and
+        // dispatch to FShr / FAnd instead of falling through to a
+        // runtime IntW::U32 demote (or, worse, a runtime FIDiv / FIRem
+        // when both operands are field cells).
+        for (i, (name, shape)) in params.iter().enumerate() {
+            if matches!(shape, ParamShape::Scalar) {
+                if let Some(Some(v)) = param_consts.get(i) {
+                    const_locals.insert(name.clone(), *v);
+                }
+            }
+        }
 
         // Materialize a small index cache so the StoreArr sequence
         // below doesn't emit a fresh PushConst+IntFromField pair for
@@ -270,14 +345,14 @@ impl<'f> LiftState<'f> {
                         });
                         builder.store_arr(handle, idx_reg, elem_reg);
                     }
-                    arrays.insert(name.clone(), (handle, *len));
+                    arrays.insert(name.clone(), ArrayShape::Flat1D { handle, len: *len });
                 }
             }
         }
         Self {
             builder,
             locals,
-            const_locals: HashMap::new(),
+            const_locals,
             arrays,
             halted: false,
             return_shape: ReturnShape::Scalar,
@@ -285,6 +360,8 @@ impl<'f> LiftState<'f> {
             nested_depth: 0,
             nested_result: None,
             output_slot: None,
+            output_array_slots: None,
+            hoisted_arrays: std::collections::HashMap::new(),
         }
     }
 }

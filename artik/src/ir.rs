@@ -163,6 +163,20 @@ pub enum OpTag {
     FDiv = 0x23,
     FInv = 0x24,
     FEq = 0x25,
+    /// `dst (Field) = floor(a / b)` on the canonical representative.
+    /// Operands stay as Field cells; the canonical rep is interpreted
+    /// as an unsigned 256-bit integer < p. Traps on `b == 0`.
+    FIDiv = 0x26,
+    /// `dst (Field) = a mod b` on the canonical representative.
+    /// Same operand semantics as FIDiv. Traps on `b == 0`.
+    FIRem = 0x27,
+    /// `dst (Field) = src >> amount` on the canonical representative.
+    /// `amount` is a compile-time constant ≤ 253. Result is always a
+    /// valid canonical rep because `(x < p) >> n ≤ x < p`.
+    FShr = 0x28,
+    /// `dst (Field) = src AND mask`, mask loaded from the const pool.
+    /// Result is always a valid canonical rep because `(x < p) AND m ≤ x < p`.
+    FAnd = 0x29,
 
     // Integer ops
     IBin = 0x30,
@@ -200,6 +214,10 @@ impl OpTag {
             0x23 => Some(FDiv),
             0x24 => Some(FInv),
             0x25 => Some(FEq),
+            0x26 => Some(FIDiv),
+            0x27 => Some(FIRem),
+            0x28 => Some(FShr),
+            0x29 => Some(FAnd),
             0x30 => Some(IBin),
             0x31 => Some(INot),
             0x32 => Some(Rotl32),
@@ -277,6 +295,26 @@ pub enum Instr {
         dst: Reg,
         a: Reg,
         b: Reg,
+    },
+    FIDiv {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    FIRem {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
+    FShr {
+        dst: Reg,
+        src: Reg,
+        amount: u32,
+    },
+    FAnd {
+        dst: Reg,
+        src: Reg,
+        mask_const_id: u32,
     },
 
     // ── Integer ops ────────────────────────────────────────────────
@@ -357,6 +395,10 @@ impl Instr {
             | Instr::FMul { .. }
             | Instr::FDiv { .. }
             | Instr::FEq { .. }
+            | Instr::FIDiv { .. }
+            | Instr::FIRem { .. }
+            | Instr::FShr { .. }
+            | Instr::FAnd { .. }
             | Instr::Rotl32 { .. }
             | Instr::Rotr32 { .. }
             | Instr::Rotl8 { .. }

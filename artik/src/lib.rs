@@ -49,7 +49,7 @@ pub mod ir;
 pub mod program;
 pub mod validate;
 
-pub use builder::{BuilderError, Label, ProgramBuilder};
+pub use builder::{BuilderError, BuilderSnapshot, Label, ProgramBuilder};
 pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::ArtikHeader;

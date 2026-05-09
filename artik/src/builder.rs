@@ -73,6 +73,20 @@ struct PendingJump {
     label: u32,
 }
 
+/// Captured state of a [`ProgramBuilder`], usable as a rollback point
+/// for speculative emission. Produced by [`ProgramBuilder::snapshot`]
+/// and consumed by [`ProgramBuilder::restore`].
+#[derive(Debug, Clone, Copy)]
+pub struct BuilderSnapshot {
+    body_len: usize,
+    const_pool_len: usize,
+    next_reg: u32,
+    next_signal: u32,
+    next_slot: u32,
+    label_positions_len: usize,
+    pending_jumps_len: usize,
+}
+
 impl ProgramBuilder {
     /// Start a new builder for the given field family. The builder
     /// has zero registers, signals, slots, constants, or instructions
@@ -98,6 +112,46 @@ impl ProgramBuilder {
         let r = self.next_reg;
         self.next_reg += 1;
         r
+    }
+
+    /// Current register count — same as `next_reg`. The lift uses
+    /// this as a frame-size proxy when deciding whether to bail out
+    /// of a partial unroll attempt before exceeding the executor cap.
+    pub fn next_reg(&self) -> u32 {
+        self.next_reg
+    }
+
+    /// Snapshot the builder state so a speculative emission attempt
+    /// (e.g. trying to unroll a loop) can be rolled back on failure
+    /// without leaving partial instructions or register allocations
+    /// behind. The snapshot captures the current lengths of the
+    /// instruction body, const pool, label table, and pending-jump
+    /// queue, plus the current id counters. Restore via
+    /// [`Self::restore`].
+    pub fn snapshot(&self) -> BuilderSnapshot {
+        BuilderSnapshot {
+            body_len: self.body.len(),
+            const_pool_len: self.const_pool.len(),
+            next_reg: self.next_reg,
+            next_signal: self.next_signal,
+            next_slot: self.next_slot,
+            label_positions_len: self.label_positions.len(),
+            pending_jumps_len: self.pending_jumps.len(),
+        }
+    }
+
+    /// Roll back to a previously-captured [`BuilderSnapshot`]. All
+    /// instructions, constants, labels, and pending jumps emitted
+    /// since the snapshot are discarded; id counters revert to the
+    /// snapshotted values.
+    pub fn restore(&mut self, snapshot: BuilderSnapshot) {
+        self.body.truncate(snapshot.body_len);
+        self.const_pool.truncate(snapshot.const_pool_len);
+        self.next_reg = snapshot.next_reg;
+        self.next_signal = snapshot.next_signal;
+        self.next_slot = snapshot.next_slot;
+        self.label_positions.truncate(snapshot.label_positions_len);
+        self.pending_jumps.truncate(snapshot.pending_jumps_len);
     }
 
     /// Allocate a fresh input signal id. The caller is expected to
@@ -244,6 +298,43 @@ impl ProgramBuilder {
     pub fn feq(&mut self, a: Reg, b: Reg) -> Reg {
         let dst = self.alloc_reg();
         self.emit(Instr::FEq { dst, a, b });
+        dst
+    }
+
+    /// Truncated unsigned division on the canonical representative.
+    /// Both operands are field cells; result is a field cell carrying
+    /// `floor(a / b)`. Traps at execute time on `b == 0`.
+    pub fn fidiv(&mut self, a: Reg, b: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FIDiv { dst, a, b });
+        dst
+    }
+
+    /// Unsigned remainder on the canonical representative.
+    pub fn firem(&mut self, a: Reg, b: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FIRem { dst, a, b });
+        dst
+    }
+
+    /// Right-shift the canonical representative by a compile-time
+    /// constant amount (≤ 253). Useful for extracting a high bit
+    /// range (e.g. `prod_val[i] \ (1 << 64)`).
+    pub fn fshr(&mut self, src: Reg, amount: u32) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FShr { dst, src, amount });
+        dst
+    }
+
+    /// AND the canonical representative with a const-pool mask.
+    /// Useful for extracting a low bit range (e.g. `temp % (1 << 64)`).
+    pub fn fand(&mut self, src: Reg, mask_const_id: u32) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FAnd {
+            dst,
+            src,
+            mask_const_id,
+        });
         dst
     }
 
