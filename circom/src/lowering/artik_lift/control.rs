@@ -21,8 +21,8 @@ use artik::{IntW, Reg};
 use crate::ast::{self, BinOp, CompoundOp, Expr, Stmt};
 
 use super::helpers::{
-    collect_mutated_scalars, eval_const_expr, is_increment_on, stmt_is_mux_compatible,
-    stmts_are_mux_compatible, stmts_have_return,
+    collect_mutated_scalars, eval_const_expr, is_decrement_on, is_increment_on,
+    stmt_is_mux_compatible, stmts_are_mux_compatible, stmts_have_return,
 };
 use super::{ConstInt, LiftState};
 
@@ -43,11 +43,12 @@ impl<'f> LiftState<'f> {
         self.lift_for_runtime(init, condition, step, body)
     }
 
-    /// Unroll a for loop at lift time. Only loops with literal bounds
-    /// and a `++` / `+= 1` step over a freshly declared integer loop
-    /// variable are supported. The loop variable is tracked as a
-    /// `ConstInt` in `const_locals` for the duration of each body
-    /// invocation; compile-time references to it fold to `PushConst`.
+    /// Unroll a for loop at lift time. Loops with literal bounds and
+    /// either a unit-increment (`++` / `+= 1`) ascending step or a
+    /// unit-decrement (`--` / `-= 1`) descending step are supported.
+    /// The loop variable is tracked as a `ConstInt` in `const_locals`
+    /// for the duration of each body invocation; compile-time
+    /// references to it fold to `PushConst`.
     pub(super) fn lift_for_unrolled(
         &mut self,
         init: &Stmt,
@@ -70,29 +71,20 @@ impl<'f> LiftState<'f> {
         let var_name = names[0].clone();
         let start = eval_const_expr(init_expr, &self.const_locals)?;
 
-        // Condition: `<var> < <bound>` or `<var> <= <bound>`
-        let (end_bound, inclusive) = match condition {
-            Expr::BinOp { op, lhs, rhs, .. } => {
-                let Expr::Ident { name, .. } = lhs.as_ref() else {
-                    return None;
-                };
-                if name != &var_name {
-                    return None;
-                }
-                let bound = eval_const_expr(rhs, &self.const_locals)?;
-                match op {
-                    BinOp::Lt => (bound, false),
-                    BinOp::Le => (bound, true),
-                    _ => return None,
-                }
-            }
-            _ => return None,
-        };
-
-        // Step: `<var>++` / `++<var>` / `<var> += 1`
-        match step {
+        // Step direction: ascending (`++` / `+= 1`) or descending
+        // (`--` / `-= 1`). Determined first so the condition arm
+        // below can pair correctly.
+        enum Direction {
+            Ascending,
+            Descending,
+        }
+        let direction = match step {
             Stmt::Expr { expr, .. } => {
-                if !is_increment_on(expr, &var_name) {
+                if is_increment_on(expr, &var_name) {
+                    Direction::Ascending
+                } else if is_decrement_on(expr, &var_name) {
+                    Direction::Descending
+                } else {
                     return None;
                 }
             }
@@ -105,31 +97,63 @@ impl<'f> LiftState<'f> {
                 if name != &var_name {
                     return None;
                 }
-                if !matches!(op, CompoundOp::Add) {
-                    return None;
-                }
                 if eval_const_expr(value, &self.const_locals)? != 1 {
                     return None;
                 }
+                match op {
+                    CompoundOp::Add => Direction::Ascending,
+                    CompoundOp::Sub => Direction::Descending,
+                    _ => return None,
+                }
             }
             _ => return None,
-        }
+        };
+
+        // Condition shape pairs with direction:
+        //   ascending  + `<var> < B`  → `start..B`
+        //   ascending  + `<var> <= B` → `start..=B` (i.e. `B+1` exclusive)
+        //   descending + `<var> > B`  → iterate `start..B` reversed (B exclusive lower bound)
+        //   descending + `<var> >= B` → iterate `start..=B` reversed
+        let (lo, hi_exclusive) = match condition {
+            Expr::BinOp { op, lhs, rhs, .. } => {
+                let Expr::Ident { name, .. } = lhs.as_ref() else {
+                    return None;
+                };
+                if name != &var_name {
+                    return None;
+                }
+                let bound = eval_const_expr(rhs, &self.const_locals)?;
+                match (&direction, op) {
+                    (Direction::Ascending, BinOp::Lt) => (start, bound),
+                    (Direction::Ascending, BinOp::Le) => (start, bound + 1),
+                    (Direction::Descending, BinOp::Gt) => (bound + 1, start + 1),
+                    (Direction::Descending, BinOp::Ge) => (bound, start + 1),
+                    _ => return None,
+                }
+            }
+            _ => return None,
+        };
 
         // Cheap bound on unroll work: the executor's frame size is
         // capped at MAX_FRAME_SIZE (65536 regs); each body iteration
         // can touch several registers. Reject loops beyond a safe
         // ceiling so a hostile circom source can't force the lift to
         // allocate a huge Artik body up front.
-        let raw_end = if inclusive { end_bound + 1 } else { end_bound };
-        let iterations = raw_end.saturating_sub(start);
+        let iterations = hi_exclusive.saturating_sub(lo);
         if !(0..=4096).contains(&iterations) {
             return None;
         }
 
-        // Unroll. Restore the previous const_locals entry on exit so
-        // nested loops with shadowing (rare) remain sound.
+        // Unroll. Iteration order follows the step direction so the
+        // body sees the loop variable monotonically — required for
+        // `var pieces[100][100]` patterns where prior iterations
+        // populate cells the current iteration reads.
         let prev = self.const_locals.insert(var_name.clone(), start);
-        for i in start..raw_end {
+        let iter: Box<dyn Iterator<Item = ConstInt>> = match direction {
+            Direction::Ascending => Box::new(lo..hi_exclusive),
+            Direction::Descending => Box::new((lo..hi_exclusive).rev()),
+        };
+        for i in iter {
             *self
                 .const_locals
                 .get_mut(&var_name)

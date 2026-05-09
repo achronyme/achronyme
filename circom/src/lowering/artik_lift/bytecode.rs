@@ -41,21 +41,22 @@ impl<'f> LiftState<'f> {
             BinOp::BitXor => Some(self.apply_int_binop_u32(IntBinOp::Xor, a, b)),
             BinOp::ShiftL => Some(self.apply_int_binop_u32(IntBinOp::Shl, a, b)),
             BinOp::ShiftR => Some(self.apply_int_binop_u32(IntBinOp::Shr, a, b)),
-            // Ordered comparisons demote to `IntW::U32` and dispatch
+            // Ordered comparisons demote to `IntW::U64` and dispatch
             // through `IntBinOp::CmpLt` (the only ordered int op
-            // Artik exposes), inverting where necessary. The U32
-            // domain covers loop counters and small integer
-            // accumulators; values exceeding `2^32` truncate
-            // unsoundly, but that's outside the lift's contract for
-            // ordered comparisons today.
+            // Artik exposes), inverting where necessary. U64 covers
+            // the bigint witness call graph at `n=64, k=4` where
+            // every limb register fits 2^64. Values exceeding `2^64`
+            // would truncate unsoundly — the lift's contract is that
+            // ordered comparisons run on register-width values, not
+            // on accumulators that exceed U64.
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => self.apply_field_compare(op, a, b),
             _ => None,
         }
     }
 
     fn apply_field_compare(&mut self, op: BinOp, a: Reg, b: Reg) -> Option<Reg> {
-        let a_int = self.demote_to_u32(a);
-        let b_int = self.demote_to_u32(b);
+        let a_int = self.builder.int_from_field(IntW::U64, a);
+        let b_int = self.builder.int_from_field(IntW::U64, b);
         let (lhs_int, rhs_int, invert) = match op {
             BinOp::Lt => (a_int, b_int, false),
             BinOp::Gt => (b_int, a_int, false),
@@ -69,7 +70,7 @@ impl<'f> LiftState<'f> {
         // to keep register types consistent.
         let cmp_int = self
             .builder
-            .ibin(artik::IntBinOp::CmpLt, IntW::U32, lhs_int, rhs_int);
+            .ibin(artik::IntBinOp::CmpLt, IntW::U64, lhs_int, rhs_int);
         let cmp_field = self.builder.field_from_int(cmp_int, IntW::U8);
         if invert {
             let one = self.push_const_unsigned(1)?;
@@ -210,5 +211,45 @@ impl<'f> LiftState<'f> {
     pub(super) fn push_int_const(&mut self, v: u64) -> Option<Reg> {
         let field_reg = self.push_const_unsigned(v as u128)?;
         Some(self.builder.int_from_field(IntW::U32, field_reg))
+    }
+
+    /// Compute a flat index for a 2D row-major array as `i * cols + j`.
+    /// Both `i` and `j` may be compile-time-known (folded into a
+    /// single PushConst) or runtime expressions (lifted to U32 ints
+    /// then combined with IBin Add/Mul). Returns the U32-typed index
+    /// register the executor's LoadArr / StoreArr expects.
+    ///
+    /// Bounds check: when both indices fold compile-time, reject if
+    /// `i >= rows` or `j >= cols`. Runtime indices defer the check to
+    /// the executor's `ArrayIndexOutOfBounds` trap.
+    pub(super) fn flatten_2d_index(
+        &mut self,
+        i: &crate::ast::Expr,
+        j: &crate::ast::Expr,
+        rows: u32,
+        cols: u32,
+    ) -> Option<Reg> {
+        let i_const = super::helpers::eval_const_expr(i, &self.const_locals);
+        let j_const = super::helpers::eval_const_expr(j, &self.const_locals);
+        if let (Some(i_v), Some(j_v)) = (i_const, j_const) {
+            if !(0..i64::from(rows)).contains(&i_v) || !(0..i64::from(cols)).contains(&j_v) {
+                return None;
+            }
+            let flat = (i_v as u64) * (cols as u64) + (j_v as u64);
+            return self.push_int_const(flat);
+        }
+        // Runtime index: lift each component into a field register,
+        // demote to U32, combine via IBin (multiply by `cols`, add).
+        let i_field = self.lift_expr(i)?;
+        let j_field = self.lift_expr(j)?;
+        let i_int = self.demote_to_u32(i_field);
+        let j_int = self.demote_to_u32(j_field);
+        let cols_field = self.push_const_unsigned(cols as u128)?;
+        let cols_int = self.builder.int_from_field(IntW::U32, cols_field);
+        let row_offset = self.builder.ibin(IntBinOp::Mul, IntW::U32, i_int, cols_int);
+        Some(
+            self.builder
+                .ibin(IntBinOp::Add, IntW::U32, row_offset, j_int),
+        )
     }
 }

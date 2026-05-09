@@ -163,6 +163,43 @@ enum ReturnShape {
     Array(u32),
 }
 
+/// Shape of a local array allocation: either a flat 1D field array of
+/// `len` cells, or a 2D field array of `rows × cols` flattened with
+/// row-major stride. The Artik VM has no native 2D primitive; we
+/// flatten at lift time and emit the index computation `i * cols + j`
+/// before each LoadArr / StoreArr.
+#[derive(Clone, Copy)]
+pub(super) enum ArrayShape {
+    Flat1D { handle: Reg, len: u32 },
+    Flat2D { handle: Reg, rows: u32, cols: u32 },
+}
+
+impl ArrayShape {
+    pub(super) fn handle(self) -> Reg {
+        match self {
+            Self::Flat1D { handle, .. } => handle,
+            Self::Flat2D { handle, .. } => handle,
+        }
+    }
+
+    /// Total flattened length — `len` for 1D, `rows * cols` for 2D.
+    pub(super) fn total_len(self) -> u32 {
+        match self {
+            Self::Flat1D { len, .. } => len,
+            Self::Flat2D { rows, cols, .. } => rows.saturating_mul(cols),
+        }
+    }
+
+    /// View as a 1D shape if applicable. 2D shapes return None — the
+    /// caller has to handle the multi-index path explicitly.
+    pub(super) fn as_1d(self) -> Option<(Reg, u32)> {
+        match self {
+            Self::Flat1D { handle, len } => Some((handle, len)),
+            Self::Flat2D { .. } => None,
+        }
+    }
+}
+
 /// Compile-time-known integer for loop variables. Circom integers can
 /// in principle reach 254 bits, but loop bounds in witness functions
 /// are consistently small (nbits, array lengths, round counts). i64
@@ -179,10 +216,11 @@ struct LiftState<'f> {
     /// plus any purely constant vars we recognize. Takes precedence
     /// over `locals` when an identifier is looked up.
     const_locals: HashMap<String, ConstInt>,
-    /// Array locals — each entry maps `name → (handle_reg, length)`.
-    /// Writes via `arr[i] = expr` emit `StoreArr`; reads via
-    /// `Expr::Index { object: Ident(arr), index }` emit `LoadArr`.
-    arrays: HashMap<String, (Reg, u32)>,
+    /// Array locals — each entry maps `name → ArrayShape`. 1D arrays
+    /// route through `LoadArr` / `StoreArr` directly; 2D arrays
+    /// flatten the row-major index `i * cols + j` at lift time before
+    /// dispatching to the same opcodes.
+    arrays: HashMap<String, ArrayShape>,
     /// Set to `true` once a `return` has been lowered. The outer loop
     /// stops walking more statements and the program is finalized.
     halted: bool,
@@ -229,7 +267,7 @@ impl<'f> LiftState<'f> {
     ) -> Self {
         let mut builder = ProgramBuilder::new(FieldFamily::BnLike256);
         let mut locals = HashMap::new();
-        let mut arrays: HashMap<String, (Reg, u32)> = HashMap::new();
+        let mut arrays: HashMap<String, ArrayShape> = HashMap::new();
 
         // Materialize a small index cache so the StoreArr sequence
         // below doesn't emit a fresh PushConst+IntFromField pair for
@@ -270,7 +308,7 @@ impl<'f> LiftState<'f> {
                         });
                         builder.store_arr(handle, idx_reg, elem_reg);
                     }
-                    arrays.insert(name.clone(), (handle, *len));
+                    arrays.insert(name.clone(), ArrayShape::Flat1D { handle, len: *len });
                 }
             }
         }

@@ -105,7 +105,26 @@ impl<'f> LiftState<'f> {
                 Some(self.promote_u32_to_field(not_int))
             }
             Expr::Index { object, index, .. } => {
-                // `arr[i]` where `arr` is a declared array. Two
+                // 2D index read: `arr[i][j]` is a nested Index AST.
+                if let Expr::Index {
+                    object: inner_obj,
+                    index: inner_idx,
+                    ..
+                } = object.as_ref()
+                {
+                    let Expr::Ident { name, .. } = inner_obj.as_ref() else {
+                        return None;
+                    };
+                    let shape = self.arrays.get(name).copied()?;
+                    let (handle, rows, cols) = match shape {
+                        super::ArrayShape::Flat2D { handle, rows, cols } => (handle, rows, cols),
+                        super::ArrayShape::Flat1D { .. } => return None,
+                    };
+                    let flat_idx_reg = self.flatten_2d_index(inner_idx, index, rows, cols)?;
+                    return Some(self.builder.load_arr(handle, flat_idx_reg));
+                }
+
+                // 1D `arr[i]` where `arr` is a declared array. Two
                 // index shapes are honored:
                 //   - compile-time index → range-check against the
                 //     declared length and materialize the index
@@ -122,7 +141,7 @@ impl<'f> LiftState<'f> {
                 let Expr::Ident { name, .. } = object.as_ref() else {
                     return None;
                 };
-                let (arr_reg, len) = self.arrays.get(name).copied()?;
+                let (arr_reg, len) = self.arrays.get(name).copied()?.as_1d()?;
                 let idx_reg = if let Some(idx) = eval_const_expr(index, &self.const_locals) {
                     if !(0..i64::from(len)).contains(&idx) {
                         return None;

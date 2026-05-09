@@ -15,7 +15,7 @@ use artik::ElemT;
 use crate::ast::{BinOp, Expr, PostfixOp, Stmt};
 
 use super::helpers::{compound_to_binop, eval_const_expr};
-use super::{LiftState, NestedResult, ReturnShape};
+use super::{ArrayShape, LiftState, NestedResult, ReturnShape};
 
 impl<'f> LiftState<'f> {
     pub(super) fn lift_stmt(&mut self, stmt: &Stmt) -> Option<()> {
@@ -36,11 +36,12 @@ impl<'f> LiftState<'f> {
                 }
                 let name = &names[0];
 
-                // Array declaration: `var arr[N];` — allocate backing
-                // storage once, at the declaration site. Multi-dim
-                // arrays (`[N][M]`) are out of scope for this release.
+                // Array declaration. 1D and 2D shapes are honored;
+                // dim ≥ 3 is out of scope. The two-dim case flattens
+                // row-major into a single Artik array of `rows*cols`
+                // cells.
                 //
-                // Two init shapes are honored:
+                // Two init shapes are honored on 1D arrays:
                 //   - no init (`var arr[N];`) — leave the backing
                 //     store empty; the body must write to it before
                 //     reading.
@@ -50,35 +51,61 @@ impl<'f> LiftState<'f> {
                 //     circomlib SHA-256 (`var k[64] = [0x..., ...]`
                 //     inside `sha256K`).
                 //
+                // 2D arrays (`var arr[N][M];`) require a non-init
+                // shape — initialized 2D literals are not yet supported.
                 // Non-literal initializers (e.g. `var a[n] = b;`
                 // aliasing another array) still bail to the inliner.
                 if !dimensions.is_empty() {
-                    if dimensions.len() != 1 {
-                        return None;
-                    }
-                    let size = eval_const_expr(&dimensions[0], &self.const_locals)?;
-                    if !(0..=i64::from(u32::MAX)).contains(&size) {
-                        return None;
-                    }
-                    let len = size as u32;
-                    let handle = self.builder.alloc_array(len, ElemT::Field);
-
-                    if let Some(init_expr) = init {
-                        let Expr::ArrayLit { elements, .. } = init_expr else {
-                            return None;
-                        };
-                        if usize::try_from(len).ok()? != elements.len() {
+                    if dimensions.len() == 1 {
+                        let size = eval_const_expr(&dimensions[0], &self.const_locals)?;
+                        if !(0..=i64::from(u32::MAX)).contains(&size) {
                             return None;
                         }
-                        for (i, elem) in elements.iter().enumerate() {
-                            let val_reg = self.lift_expr(elem)?;
-                            let idx_reg = self.push_int_const(i as u64)?;
-                            self.builder.store_arr(handle, idx_reg, val_reg);
-                        }
-                    }
+                        let len = size as u32;
+                        let handle = self.builder.alloc_array(len, ElemT::Field);
 
-                    self.arrays.insert(name.clone(), (handle, len));
-                    return Some(());
+                        if let Some(init_expr) = init {
+                            let Expr::ArrayLit { elements, .. } = init_expr else {
+                                return None;
+                            };
+                            if usize::try_from(len).ok()? != elements.len() {
+                                return None;
+                            }
+                            for (i, elem) in elements.iter().enumerate() {
+                                let val_reg = self.lift_expr(elem)?;
+                                let idx_reg = self.push_int_const(i as u64)?;
+                                self.builder.store_arr(handle, idx_reg, val_reg);
+                            }
+                        }
+
+                        self.arrays
+                            .insert(name.clone(), ArrayShape::Flat1D { handle, len });
+                        return Some(());
+                    }
+                    if dimensions.len() == 2 {
+                        if init.is_some() {
+                            // 2D literal init not yet implemented —
+                            // bigint witness funcs always declare
+                            // uninitialized 2D arrays and fill via
+                            // indexed writes.
+                            return None;
+                        }
+                        let rows_i = eval_const_expr(&dimensions[0], &self.const_locals)?;
+                        let cols_i = eval_const_expr(&dimensions[1], &self.const_locals)?;
+                        if !(0..=i64::from(u32::MAX)).contains(&rows_i)
+                            || !(0..=i64::from(u32::MAX)).contains(&cols_i)
+                        {
+                            return None;
+                        }
+                        let rows = rows_i as u32;
+                        let cols = cols_i as u32;
+                        let total = rows.checked_mul(cols)?;
+                        let handle = self.builder.alloc_array(total, ElemT::Field);
+                        self.arrays
+                            .insert(name.clone(), ArrayShape::Flat2D { handle, rows, cols });
+                        return Some(());
+                    }
+                    return None;
                 }
 
                 let Some(expr) = init else {
@@ -97,15 +124,43 @@ impl<'f> LiftState<'f> {
                 Some(())
             }
             Stmt::Substitution { target, value, .. } => {
-                // Indexed assignment: `arr[i] = expr`. Supported when
-                // `arr` is a declared array and `i` folds to a
-                // compile-time index in bounds.
-                if let Expr::Index { object, index, .. } = target {
-                    let Expr::Ident { name, .. } = object.as_ref() else {
+                // 2D indexed assignment: `arr[i][j] = expr`. Detected
+                // by a nested-Index AST shape. Both indices may be
+                // compile-time or runtime; the lift composes the flat
+                // index `i * cols + j` accordingly.
+                if let Expr::Index {
+                    object: outer_obj,
+                    index: outer_idx,
+                    ..
+                } = target
+                {
+                    if let Expr::Index {
+                        object: inner_obj,
+                        index: inner_idx,
+                        ..
+                    } = outer_obj.as_ref()
+                    {
+                        let Expr::Ident { name, .. } = inner_obj.as_ref() else {
+                            return None;
+                        };
+                        let shape = self.arrays.get(name).copied()?;
+                        let (handle, rows, cols) = match shape {
+                            ArrayShape::Flat2D { handle, rows, cols } => (handle, rows, cols),
+                            ArrayShape::Flat1D { .. } => return None,
+                        };
+                        let flat_idx_reg =
+                            self.flatten_2d_index(inner_idx, outer_idx, rows, cols)?;
+                        let val_reg = self.lift_expr(value)?;
+                        self.builder.store_arr(handle, flat_idx_reg, val_reg);
+                        return Some(());
+                    }
+
+                    // 1D indexed assignment: `arr[i] = expr`.
+                    let Expr::Ident { name, .. } = outer_obj.as_ref() else {
                         return None;
                     };
-                    let (arr_reg, len) = self.arrays.get(name).copied()?;
-                    let idx = eval_const_expr(index, &self.const_locals)?;
+                    let (arr_reg, len) = self.arrays.get(name).copied()?.as_1d()?;
+                    let idx = eval_const_expr(outer_idx, &self.const_locals)?;
                     if !(0..i64::from(len)).contains(&idx) {
                         return None;
                     }
@@ -138,12 +193,41 @@ impl<'f> LiftState<'f> {
                 // SHA-256's `H[i] += hin[i*32+j] << j` and
                 // `w[i] += inp[i*32+31-j] << j` accumulators.
                 let binop = compound_to_binop(*op)?;
-                if let Expr::Index { object, index, .. } = target {
-                    let Expr::Ident { name, .. } = object.as_ref() else {
+                if let Expr::Index {
+                    object: outer_obj,
+                    index: outer_idx,
+                    ..
+                } = target
+                {
+                    // 2D compound assignment: `arr[i][j] op= expr`.
+                    if let Expr::Index {
+                        object: inner_obj,
+                        index: inner_idx,
+                        ..
+                    } = outer_obj.as_ref()
+                    {
+                        let Expr::Ident { name, .. } = inner_obj.as_ref() else {
+                            return None;
+                        };
+                        let shape = self.arrays.get(name).copied()?;
+                        let (handle, rows, cols) = match shape {
+                            ArrayShape::Flat2D { handle, rows, cols } => (handle, rows, cols),
+                            ArrayShape::Flat1D { .. } => return None,
+                        };
+                        let flat_idx_reg =
+                            self.flatten_2d_index(inner_idx, outer_idx, rows, cols)?;
+                        let cur = self.builder.load_arr(handle, flat_idx_reg);
+                        let rhs_reg = self.lift_expr(value)?;
+                        let new_val = self.apply_field_binop(binop, cur, rhs_reg)?;
+                        self.builder.store_arr(handle, flat_idx_reg, new_val);
+                        return Some(());
+                    }
+
+                    let Expr::Ident { name, .. } = outer_obj.as_ref() else {
                         return None;
                     };
-                    let (arr_reg, len) = self.arrays.get(name).copied()?;
-                    let idx = eval_const_expr(index, &self.const_locals)?;
+                    let (arr_reg, len) = self.arrays.get(name).copied()?.as_1d()?;
+                    let idx = eval_const_expr(outer_idx, &self.const_locals)?;
                     if !(0..i64::from(len)).contains(&idx) {
                         return None;
                     }
@@ -201,9 +285,23 @@ impl<'f> LiftState<'f> {
                 // a `CircuitNode::LetArray`. For a nested inlined
                 // call, hand the array handle back to the caller's
                 // lift_expr via `nested_result` — no slot allocation.
+                //
+                // 2D arrays return their flattened layout (row-major,
+                // `rows * cols` slots). The caller side is responsible
+                // for re-bundling into a 2D shape if needed; for a
+                // nested call, only the 1D return path is supported
+                // today (2D nested-return would need NestedResult to
+                // carry the (rows, cols) tuple — Phase 4 territory).
                 if let Expr::Ident { name, .. } = value {
-                    if let Some(&(arr_reg, len)) = self.arrays.get(name) {
+                    if let Some(&shape) = self.arrays.get(name) {
+                        let len = shape.total_len();
+                        let arr_reg = shape.handle();
                         if self.nested_depth > 0 {
+                            // Nested-call return — only 1D supported
+                            // today. 2D nested return is Phase 4.
+                            if !matches!(shape, ArrayShape::Flat1D { .. }) {
+                                return None;
+                            }
                             self.nested_result = Some(NestedResult::Array(arr_reg, len));
                             self.halted = true;
                             return Some(());

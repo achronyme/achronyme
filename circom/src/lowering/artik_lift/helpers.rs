@@ -82,6 +82,18 @@ pub(super) fn is_increment_on(expr: &Expr, name: &str) -> bool {
     matches!(operand.as_ref(), Expr::Ident { name: n, .. } if n == name)
 }
 
+/// Is `expr` a decrement on the named variable (`name--` or `--name`)?
+pub(super) fn is_decrement_on(expr: &Expr, name: &str) -> bool {
+    let (op, operand) = match expr {
+        Expr::PostfixOp { op, operand, .. } | Expr::PrefixOp { op, operand, .. } => (op, operand),
+        _ => return false,
+    };
+    if !matches!(op, PostfixOp::Decrement) {
+        return false;
+    }
+    matches!(operand.as_ref(), Expr::Ident { name: n, .. } if n == name)
+}
+
 /// Are all of `stmts` safe to lift under the mux scheme (both arms
 /// executing unconditionally at runtime)?
 pub(super) fn stmts_are_mux_compatible(stmts: &[Stmt]) -> bool {

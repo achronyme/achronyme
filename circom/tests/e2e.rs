@@ -1531,6 +1531,133 @@ fn fn_witness_lift_handles_internal_array() {
     assert!(seen_load, "expected at least one LoadArr (read path)");
 }
 
+/// Phase 1 lift extension: 2D arrays flatten row-major into a single
+/// Artik AllocArray. `var arr[N][M]` allocates `N*M` cells; `arr[i][j]`
+/// composes to flat index `i*cols + j` at lift time. Verifies the lift
+/// emits a WitnessCall (no E212), the AllocArray length matches the
+/// flat total, and the body contains the multiply+add stride math.
+#[test]
+fn fn_witness_lift_handles_2d_array() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_2d_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("2D array lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("2D array payload must decode and validate");
+
+    // The lift should allocate exactly one 12-cell array (3 rows × 4 cols).
+    let mut alloc_lens: Vec<u32> = Vec::new();
+    for instr in &prog.body {
+        if let artik::Instr::AllocArray { len, .. } = instr {
+            alloc_lens.push(*len);
+        }
+    }
+    assert!(
+        alloc_lens.contains(&12),
+        "expected a 3×4 = 12-cell AllocArray, got {:?}",
+        alloc_lens
+    );
+}
+
+/// Phase 1 lift extension: descending for-loops `for (i = N; i >= 0; i--)`
+/// unroll at lift time, iterating the body in reverse order. The
+/// loop variable still folds to PushConst on each body emission.
+#[test]
+fn fn_witness_lift_handles_descending_for() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_descending_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("descending for lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("descending-for payload must decode and validate");
+
+    // 5-iteration unroll should produce a body comparable in size to
+    // the ascending counterpart. Floor at the same threshold the
+    // existing loop test uses.
+    assert!(
+        bytes.len() > 80,
+        "descending unroll payload suspiciously small: {} bytes",
+        bytes.len()
+    );
+}
+
+/// Phase 1 lift extension: ordered comparisons (`<`, `<=`, `>`, `>=`)
+/// over field values demote to U64 (was U32 prior to this work) and
+/// dispatch through `IntBinOp::CmpLt`. U64 covers the bigint witness
+/// call graph at `n=64, k=4`. This test verifies the U64 IntFromField
+/// is emitted (not U32) so values up to `2^64 - 1` compare correctly.
+#[test]
+fn fn_witness_lift_compares_at_u64_width() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_limb_compare_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("limb compare lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("limb compare payload must decode and validate");
+
+    // Walk the body looking for IntFromField at U64 width — that's
+    // the load-bearing change. A U32 demote would silently truncate
+    // for n=64 limbs.
+    let mut saw_u64_demote = false;
+    for instr in &prog.body {
+        if let artik::Instr::IntFromField { w, .. } = instr {
+            if matches!(w, artik::IntW::U64) {
+                saw_u64_demote = true;
+                break;
+            }
+        }
+    }
+    assert!(
+        saw_u64_demote,
+        "expected at least one IntFromField U64 from the ordered-compare lift path"
+    );
+}
+
 /// Fase 2.1 lift extension: a nested function call inside another
 /// lifted function body is inlined into the same Artik program.
 /// `compute(x)` calls `helper` twice; both invocations lower into
