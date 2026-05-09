@@ -8,14 +8,12 @@
 //!
 //! ## Why fixture-by-source instead of pre-compiled bytes
 //!
-//! The advisor flagged that ProveIR fixture loading is historically
-//! more expensive than estimated, and suggested hardcoding 2-3 small
-//! ProveIR templates inline rather than compiling fixtures from
-//! `test/prove/*.ach` at fuzz time. We use a middle path: compile a
-//! single tiny prove block via `ProveIrCompiler::compile_prove_block`
-//! once at fuzz target startup (cached in `OnceLock`), so we don't
-//! incur compilation cost per iteration but also avoid hand-encoding
-//! version-coupled bincode bytes that would silently break on
+//! ProveIR fixture loading is more expensive than it looks. We use a
+//! middle path: compile a single tiny prove block via
+//! `ProveIrCompiler::compile_prove_block` once at fuzz target startup
+//! (cached in `OnceLock`) so we don't pay compilation cost per
+//! iteration, while still avoiding hand-encoded version-coupled
+//! bincode bytes that would silently break on
 //! `PROVE_IR_FORMAT_VERSION` bumps.
 //!
 //! ## Input shape

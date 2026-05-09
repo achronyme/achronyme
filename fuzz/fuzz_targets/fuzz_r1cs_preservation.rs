@@ -14,7 +14,7 @@
 //! the fuzz target derives `(a, b)` from raw bytes), but the oracle
 //! is identical.
 //!
-//! ## The narrowed property (advisor §2b — see proptest docstring)
+//! ## The narrowed property
 //!
 //! Forward simulation: `R(w) = 0  ⟹  R'(π(w)) = 0`. Concretely, the
 //! pre-O1 satisfying witness `w_pre` after `apply_substitutions` must
@@ -27,8 +27,7 @@
 //! Same blind spot as the proptest: catches "wrong LC" optimizer
 //! regressions but not "drop a constraint without recording in
 //! substitution_map". Closing that requires a different oracle
-//! (constraint-count accounting or adversarial witness sampling) —
-//! tracked in the proptest's docstring §"Discriminator coverage gap".
+//! (constraint-count accounting or adversarial witness sampling).
 //! This target ships at parity with the proptest, not as an extension.
 //!
 //! ## Discriminator (verified during development)

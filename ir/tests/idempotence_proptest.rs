@@ -198,10 +198,9 @@ proptest! {
 }
 
 // ============================================================================
-// Vacuity guard (advisor §2c): catch a degenerate optimizer that
-// always returns ⊥. Hand-built positive example is enough for this —
-// proptest shrinks toward all-tautological inputs which spuriously
-// trip the property.
+// Vacuity guard: catch a degenerate optimizer that always returns ⊥.
+// Hand-built positive example is enough for this — proptest shrinks
+// toward all-tautological inputs which spuriously trip the property.
 // ============================================================================
 
 /// Non-degenerate program: two distinct Consts plus a non-tautological
