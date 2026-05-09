@@ -14,10 +14,6 @@
 //!   - 0xPARC zk-bug-tracker: under-constrained mux vulnerabilities
 //!     https://github.com/0xPARC/zk-bug-tracker
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
-//! para Entornos de Compilación de Conocimiento Cero" (2026), §Pruebas de
-//! Complejidad Moderada — Multiplexores (Mux/Select).
-//!
 //! Note: only numerical test vectors (not code) are used here.
 //! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 

@@ -3,7 +3,7 @@
 //! Stores every emitted `InstructionKind` in a plain `Vec` in the
 //! order received. No hash-consing, no deduplication, no
 //! side-effect separation — those features live in [`InterningSink`]
-//! (RFC §5.1-5.3). The stub exists so the executor has something
+//!. The stub exists so the executor has something
 //! concrete to write to and so tests can assert exact emission
 //! sequences.
 

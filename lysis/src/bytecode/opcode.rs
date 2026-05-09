@@ -1,5 +1,5 @@
 //! `Opcode` — the 35 instructions Lysis understands, exactly matching
-//! the table in RFC §4.3.
+//! the table in
 //!
 //! Each variant carries its operands inline so that after a successful
 //! [`decode`](super::encoding::decode) the executor never has to
@@ -26,11 +26,11 @@
 
 use crate::intern::Visibility;
 
-/// All 35 Lysis opcodes, grouped per RFC §4.3 section.
+/// All 35 Lysis opcodes, grouped  section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     // -----------------------------------------------------------------
-    // §4.3.1 Capture / environment (5)
+    // Capture / environment (5)
     // -----------------------------------------------------------------
     LoadCapture {
         dst: u8,
@@ -49,7 +49,7 @@ pub enum Opcode {
     ExitScope,
 
     // -----------------------------------------------------------------
-    // §4.3.2 Control flow (5)
+    // Control flow (5)
     // -----------------------------------------------------------------
     Jump {
         offset: i16,
@@ -65,7 +65,7 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.3 Loop semantics (3)
+    // Loop semantics (3)
     // -----------------------------------------------------------------
     LoopUnroll {
         iter_var: u8,
@@ -86,7 +86,7 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.4 Template instantiation (3)
+    // Template instantiation (3)
     // -----------------------------------------------------------------
     DefineTemplate {
         template_id: u16,
@@ -106,7 +106,7 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.5 IR emission (14)
+    // IR emission (14)
     // -----------------------------------------------------------------
     EmitConst {
         dst: u8,
@@ -150,7 +150,7 @@ pub enum Opcode {
     ///
     /// The message lives in [`crate::bytecode::ConstPoolEntry::String`]
     /// at index `msg_idx`. The executor reconstructs an
-    /// `InstructionKind::AssertEq { message: Some(_), .. }` so the IR
+    /// `InstructionKind::AssertEq { message: Some(_),.. }` so the IR
     /// evaluator can surface the custom string through
     /// `EvalError::AssertEqFailed.message` (see `ir/src/eval/mod.rs`).
     ///
@@ -210,9 +210,9 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.6 Heap spill — captures-overflow escape valve.
+    // Heap spill — captures-overflow escape valve.
     //
-    // Both opcodes operate on a program-global heap (RFC §4.3.6).
+    // Both opcodes operate on a program-global heap.
     // `slot` is u16 → up to 65 535 distinct entries; the
     // `heap_size_hint` field on the v2 bytecode header sizes the
     // executor's heap vector at load time. The walker emits these
@@ -230,7 +230,7 @@ pub enum Opcode {
     },
 
     // -----------------------------------------------------------------
-    // §4.3.7 Heap-output WitnessCall
+    // Heap-output WitnessCall
     //
     // `EmitWitnessCallHeap` is the heap-destination twin of
     // `EmitWitnessCall`. The walker emits this variant when the
@@ -278,33 +278,33 @@ pub const INPUT_SRC_REG: u8 = 0x00;
 /// Wire-format tag for [`InputSrc::Slot`].
 pub const INPUT_SRC_SLOT: u8 = 0x01;
 
-/// Raw byte identifiers from RFC §4.3.
+/// Raw byte identifiers from
 pub mod code {
-    // §4.3.1
+    //
     pub const LOAD_CAPTURE: u8 = 0x01;
     pub const LOAD_CONST: u8 = 0x02;
     pub const LOAD_INPUT: u8 = 0x03;
     pub const ENTER_SCOPE: u8 = 0x04;
     pub const EXIT_SCOPE: u8 = 0x05;
 
-    // §4.3.2
+    //
     pub const JUMP: u8 = 0x10;
     pub const JUMP_IF: u8 = 0x11;
     pub const RETURN: u8 = 0x12;
     pub const HALT: u8 = 0x13;
     pub const TRAP: u8 = 0x14;
 
-    // §4.3.3
+    //
     pub const LOOP_UNROLL: u8 = 0x20;
     pub const LOOP_ROLLED: u8 = 0x21;
     pub const LOOP_RANGE: u8 = 0x22;
 
-    // §4.3.4
+    //
     pub const DEFINE_TEMPLATE: u8 = 0x30;
     pub const INSTANTIATE_TEMPLATE: u8 = 0x31;
     pub const TEMPLATE_OUTPUT: u8 = 0x32;
 
-    // §4.3.5
+    //
     pub const EMIT_CONST: u8 = 0x40;
     pub const EMIT_ADD: u8 = 0x41;
     pub const EMIT_SUB: u8 = 0x42;
@@ -322,19 +322,19 @@ pub mod code {
     pub const EMIT_INT_MOD: u8 = 0x4E;
     pub const EMIT_DIV: u8 = 0x4F;
 
-    // §4.3.6 — heap spill
+    // heap spill
     pub const STORE_HEAP: u8 = 0x50;
     pub const LOAD_HEAP: u8 = 0x51;
 
-    // §4.3.7 — heap-output WitnessCall
+    // heap-output WitnessCall
     pub const EMIT_WITNESS_CALL_HEAP: u8 = 0x52;
 
-    // §4.3.5 follow-up — message-bearing AssertEq.
+    //  follow-up — message-bearing AssertEq.
     pub const EMIT_ASSERT_EQ_MSG: u8 = 0x53;
 }
 
 impl Opcode {
-    /// Raw byte identifier from RFC §4.3.
+    /// Raw byte identifier from
     pub fn code(&self) -> u8 {
         use code::*;
         match self {
@@ -462,7 +462,7 @@ mod tests {
 
     #[test]
     fn every_variant_has_a_stable_code() {
-        // Sentinels match the RFC §4.3 table.
+        // Sentinels match the  table.
         assert_eq!(Opcode::Return.code(), code::RETURN);
         assert_eq!(Opcode::Halt.code(), code::HALT);
         assert_eq!(
@@ -552,7 +552,7 @@ mod tests {
             code::LOAD_HEAP,
             code::EMIT_WITNESS_CALL_HEAP,
         ];
-        assert_eq!(all.len(), 34, "RFC §4.3 lists 34 opcodes");
+        assert_eq!(all.len(), 34, " lists 34 opcodes");
         let mut sorted = all.to_vec();
         sorted.sort_unstable();
         sorted.dedup();

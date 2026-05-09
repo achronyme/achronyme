@@ -7,7 +7,7 @@
 //! itself (`interner`) with the per-instruction tier wired up.
 //! Materialization to a flat `Vec<InstructionKind>` lives in
 //! `materialize`. The per-template-body tier sits on top once
-//! template lifting is in play. See RFC §§5.1–5.6 for the contract.
+//! template lifting is in play.
 //!
 //! [`NodeId`], [`NodeIdGen`], [`InstructionKind`], [`Visibility`] live
 //! in the `lysis-types` leaf crate so they can be consumed by both

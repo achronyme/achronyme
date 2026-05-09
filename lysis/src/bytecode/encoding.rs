@@ -14,12 +14,12 @@
 //!    `Vec<Instr>` + a parallel `Vec<Template>` harvested from
 //!    `DefineTemplate` opcodes. Fails fast on truncated input or
 //!    unknown opcodes.
-//! 2. **Semantic validation** ([`super::validate`]): the 11 rules of
-//!    RFC §4.5. Operates on the decoded `Program` and never looks at
+//! 2. **Semantic validation** ([`super::validate`]): the structural
+//!    rules. Operates on the decoded `Program` and never looks at
 //!    raw bytes.
 //!
-//! Every operand here is little-endian, matching RFC §4.3 and the
-//! encoding already used by Artik.
+//! Every operand here is little-endian, matching the encoding already
+//! used by Artik.
 
 use memory::field::FieldBackend;
 
@@ -269,7 +269,7 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
 
 /// Decode a full program from canonical bytes. Returns the structural
 /// form of [`Program`] plus an implicit `templates` vector harvested
-/// from `DefineTemplate` opcodes. Semantic validation (RFC §4.5) is
+/// from `DefineTemplate` opcodes. Semantic validation is
 /// *not* performed here — call [`super::validate`] before handing the
 /// program to an executor.
 pub fn decode<F: FieldBackend>(bytes: &[u8]) -> Result<Program<F>, LysisError> {
@@ -894,7 +894,7 @@ mod tests {
 
     #[test]
     fn heap_ops_emit_4_bytes() {
-        // Wire-format invariant from research report §2.2: each heap
+        // Wire-format invariant from: each heap
         // op is `u8 opcode + u8 reg + u16 slot = 4 bytes`. A change
         // in this number is an ABI break.
         let mut buf = Vec::new();

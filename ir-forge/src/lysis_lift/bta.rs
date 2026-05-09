@@ -1,4 +1,4 @@
-//! Binding-time analysis — the 3-point classifier (RFC §6.1.1 v1.1).
+//! Binding-time analysis — the 3-point classifier (v1.1).
 //!
 //! Given a [`ExtendedInstruction::LoopUnroll`], decide whether its
 //! body is safe to lift into a `TemplateBody` + `LoopRolled`
@@ -134,7 +134,7 @@ pub fn classify<F: FieldBackend>(
         // All three agree on shape and on the slot set → Uniform.
         // We require `s01 == s02` because a slot that's present in
         // 0↔1 but not in 0↔2 would indicate a non-monotonic
-        // dependency on i (e.g., `if i == 0 { ... }`) — safer to
+        // dependency on i (e.g., `if i == 0 {... }`) — safer to
         // treat as DataDependent than to promote.
         (Diff::OnlyConstants(s01), Diff::OnlyConstants(s02), Diff::OnlyConstants(_))
             if s01 == s02 =>
@@ -260,7 +260,7 @@ mod tests {
 
     #[test]
     fn body_not_using_iter_classifies_uniform_with_captures_if_probe_values_seen() {
-        // body references iter_var's Mul(x, iter) ... wait, if we
+        // body references iter_var's Mul(x, iter)... wait, if we
         // don't reference iter, the slot node still exists in each
         // probe tree (n_slots = 1), and its value changes, so slot 0
         // IS recorded.

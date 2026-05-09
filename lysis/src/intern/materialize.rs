@@ -1,12 +1,12 @@
 //! Materialization: consume a [`NodeInterner<F>`] into a flat
-//! `Vec<InstructionKind<F>>` (RFC §5.6 + §5.6.1).
+//! `Vec<InstructionKind<F>>`.
 //!
 //! The walk is linear because `IndexMap` insertion order is already
 //! topological — every pure node's operands were interned before it,
 //! which means they appear earlier in the iteration and later
 //! references are always to already-emitted ids.
 //!
-//! ## Ownership transfer (§5.6.1 route (c))
+//! ## Ownership transfer
 //!
 //! [`NodeInterner::materialize`] takes `self` by value. As the
 //! IndexMap is drained and the effects Vec consumed, their backing

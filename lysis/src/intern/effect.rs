@@ -1,5 +1,5 @@
 //! `SideEffect<F>` — the channel for instructions that **must not**
-//! be hash-consed (RFC §5.3).
+//! be hash-consed.
 //!
 //! Side-effects stay on a separate `Vec<SideEffect<F>>` inside the
 //! interner, ordered by emission. Two textually-identical `AssertEq`

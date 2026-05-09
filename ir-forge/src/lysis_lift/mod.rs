@@ -14,11 +14,11 @@
 //!
 //! | Module | Deliverable | RFC |
 //! |---|---|---|
-//! | [`symbolic`] | `SymbolicTree` and `symbolic_emit` — symbolic walk of a body with placeholder slots for loop_var-derived constants | §6.1 |
-//! | `diff` | `structural_diff` with AST-path slot identity | §6.1.1 |
-//! | `bta` | 3-point classifier | §6.1.1 |
-//! | `extract` | Template extraction (lambda-lifting) and `compute_frame_size` | §6.2 |
-//! | `walker` | Main dispatcher driving the whole pass | §6.3 |
+//! | [`symbolic`] | `SymbolicTree` and `symbolic_emit` — symbolic walk of a body with placeholder slots for loop_var-derived constants | |
+//! | `diff` | `structural_diff` with AST-path slot identity | |
+//! | `bta` | 3-point classifier | |
+//! | `extract` | Template extraction (lambda-lifting) and `compute_frame_size` | |
+//! | `walker` | Main dispatcher driving the whole pass | |
 //!
 //! [`ExtendedInstruction<F>`]: crate::prove_ir::ExtendedInstruction
 

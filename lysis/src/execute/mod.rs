@@ -266,7 +266,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
 
     match &instr.opcode {
         // -----------------------------------------------------------
-        // §4.3.1 Capture / environment
+        // Capture / environment
         // -----------------------------------------------------------
         LoadCapture { dst, idx } => {
             if (*idx as usize) >= captures.len() {
@@ -349,7 +349,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         }
 
         // -----------------------------------------------------------
-        // §4.3.2 Control flow
+        // Control flow
         // -----------------------------------------------------------
         Jump { offset: rel } => {
             let target = (offset as i64) + (*rel as i64);
@@ -377,7 +377,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         }),
 
         // -----------------------------------------------------------
-        // §4.3.3 Loop semantics
+        // Loop semantics
         // -----------------------------------------------------------
         LoopUnroll {
             iter_var,
@@ -410,7 +410,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         }
 
         // -----------------------------------------------------------
-        // §4.3.4 Template instantiation
+        // Template instantiation
         // -----------------------------------------------------------
         DefineTemplate { .. } => {
             // Pure metadata: already harvested during decode. Skip.
@@ -485,7 +485,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         }
 
         // -----------------------------------------------------------
-        // §4.3.5 IR emission
+        // IR emission
         // -----------------------------------------------------------
         EmitConst { dst, src_reg } => {
             // `src_reg` already holds a Const-emitted NodeId (produced
@@ -694,9 +694,9 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 .iter()
                 .map(|r| read_reg(&frames[frame_idx], *r, offset))
                 .collect::<Result<_, _>>()?;
-            // RFC §4.3.5 shows `PoseidonHash(result, left, right)` — the
-            // mirror enum matches, so we treat the first two inputs as
-            // left/right. Hashes with arity ≠ 2 are future work.
+            // The mirror enum is `PoseidonHash(result, left, right)`,
+            // so we treat the first two inputs as left/right. Hashes
+            // with arity ≠ 2 are future work.
             if inputs.len() != 2 {
                 return Err(LysisError::ValidationFailed {
                     rule: 0,
@@ -1388,7 +1388,7 @@ mod tests {
     // -----------------------------------------------------------------
 
     /// Body of the loop below:
-    ///   EmitMul r1, r0, r0   ; 1 + 1 + 1 + 1 = 4 bytes
+    ///   EmitMul r1, r0, r0; 1 + 1 + 1 + 1 = 4 bytes
     /// (opcode size for EmitMul = 1 tag + 3 regs = 4 bytes)
     const MUL_BODY_BYTES: u16 = 4;
 
@@ -1485,7 +1485,7 @@ mod tests {
         };
 
         // Root body:
-        //   LoadConst r0, 0       ; r0 = 7 (the value to square)
+        //   LoadConst r0, 0; r0 = 7 (the value to square)
         //   DefineTemplate 1, frame_size=2, n_params=1, body_offset=?, body_len=?
         //   InstantiateTemplate 1, captures=[r0], outputs=[r1]
         //   Halt
@@ -1643,7 +1643,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // §4.3.6 Heap spill
+    // Heap spill
     // -----------------------------------------------------------------
 
     #[test]
@@ -1758,7 +1758,7 @@ mod tests {
     }
 
     // -----------------------------------------------------------------
-    // §4.3.7 EmitWitnessCallHeap
+    // EmitWitnessCallHeap
     // -----------------------------------------------------------------
 
     #[test]

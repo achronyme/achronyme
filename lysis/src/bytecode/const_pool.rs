@@ -1,4 +1,4 @@
-//! Const-pool encoding per RFC §4.4.
+//! Const-pool encoding
 //!
 //! The pool is an ordered list of tagged entries that precedes the
 //! body in a serialized Lysis program. It carries:
@@ -15,7 +15,7 @@
 //! the pool acts like an append-only list, and `LoadConst idx` or
 //! `EmitConst` refers to the entry by index. A future dedup pass
 //! could collapse equal field constants before serializing (see
-//! RFC §4.4, final paragraph: "duplicate field constants map to the
+//!, final paragraph: "duplicate field constants map to the
 //! same index").
 
 use memory::field::{Bn254Fr, FieldBackend, FieldElement};
@@ -23,7 +23,7 @@ use memory::FieldFamily;
 
 use crate::error::LysisError;
 
-/// Tag byte for const pool entries (RFC §4.4).
+/// Tag byte for const pool entries.
 pub mod tag {
     pub const FIELD: u8 = 0x00;
     pub const STRING: u8 = 0x01;
@@ -46,7 +46,7 @@ pub enum ConstPoolEntry<F: FieldBackend = Bn254Fr> {
 }
 
 impl<F: FieldBackend> ConstPoolEntry<F> {
-    /// Raw tag byte from RFC §4.4.
+    /// Raw tag byte from
     pub fn tag(&self) -> u8 {
         match self {
             Self::Field(_) => tag::FIELD,

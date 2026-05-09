@@ -160,7 +160,7 @@ impl SymbolTable {
     ///
     /// Returns the final non-alias [`SymbolId`] on success. Used by both
     /// compilers when dispatching through a `let a = p::fn` binding —
-    /// see RFC §3.7.
+    ///
     ///
     /// ## Cycle detection
     ///

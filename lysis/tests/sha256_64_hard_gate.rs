@@ -1,6 +1,6 @@
 //! HARD GATE — per-instruction hash-consing must shrink a
 //! SHA-256(64)-shaped skeleton by at least 10× on the pure channel
-//! (RFC §11.2). Failure here invalidates the hash-consing premise.
+//!. Failure here invalidates the hash-consing premise.
 //!
 //! ## What the skeleton is (and isn't)
 //!
@@ -53,7 +53,7 @@ fn fe(x: u64) -> FieldElement<Bn254Fr> {
 /// using r0 / r1 as inputs. `InterningSink` collapses the 20 shapes
 /// to 20 unique pure nodes for the whole program; `StubSink` keeps
 /// `20 × R` entries. Per-round `AssertEq(r0, r1)` is a side-effect
-/// that survives intact in both sinks (RFC §5.3).
+/// that survives intact in both sinks.
 fn build_sha256_64_skeleton(rounds: usize) -> Program<Bn254Fr> {
     let mut b = ProgramBuilder::<Bn254Fr>::new(FieldFamily::BnLike256);
     b.intern_field(fe(1));
@@ -141,7 +141,7 @@ fn hard_gate_pure_channel_reduction_at_least_10x() {
     assert_eq!(stub_effects, ROUNDS);
     assert_eq!(intern_effects, ROUNDS);
 
-    // Pure-channel reduction HARD GATE (RFC §11.2).
+    // Pure-channel reduction HARD GATE.
     assert!(
         ratio >= 10.0,
         "HARD GATE failed: pure reduction {ratio:.1}× < 10× required"

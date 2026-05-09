@@ -16,11 +16,6 @@
 //!   - circomspect (trailofbits): under-constrained division analysis
 //!     https://github.com/trailofbits/circomspect
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
-//! para Entornos de Compilación de Conocimiento Cero" (2026), §Inversión Multiplicativa.
-//!
-//! Note: only numerical test vectors (not code) are used here.
-//! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 
 use std::collections::HashMap;
 

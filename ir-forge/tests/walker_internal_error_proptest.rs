@@ -315,7 +315,7 @@ proptest! {
                 prop_assert!(
                     !is_forbidden_walk_error(&e),
                     "Walker emitted forbidden internal-error variant {e:?} on lift-shaped input. \
-                     This is a regression on the lift contract — see test docstring §2a."
+                     This is a regression on the lift contract — see this test's module docstring."
                 );
             }
         }

@@ -11,10 +11,6 @@
 //!   - 0xPARC zk-bug-tracker:        https://github.com/0xPARC/zk-bug-tracker
 //!     Under-constrained boolean vulnerability catalog.
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
-//! para Entornos de Compilación de Conocimiento Cero" (2026), §Vulnerabilidades y
-//! Restricciones en Desigualdades Lógicas.
-//!
 //! Note: only numerical test vectors (not code) are used here.
 //! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 

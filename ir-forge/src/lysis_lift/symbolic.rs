@@ -1,13 +1,13 @@
-//! Symbolic emission for BTA (RFC §6.1).
+//! Symbolic emission for BTA.
 //!
 //! Walks a body once with a specific `loop_var → concrete_value`
 //! binding and produces a flat linear-tree ([`SymbolicTree`]) whose
 //! `Const` nodes carry a `from_slot` flag when the constant was
 //! injected through the binding rather than appearing literally in
 //! the source. The BTA classifier calls this twice (actually three
-//! times per RFC §6.1.1 v1.1) with different probe values and then
-//! runs [`super::diff::structural_diff`] to check whether the bodies
-//! differ only in slot positions.
+//! times under the v1.1 algorithm) with different probe values and
+//! then runs [`super::diff::structural_diff`] to check whether the
+//! bodies differ only in slot positions.
 //!
 //! ## What "symbolic" means here
 //!

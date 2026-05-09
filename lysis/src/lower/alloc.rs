@@ -1,4 +1,4 @@
-//! Frame-register allocation for a single template body (RFC §6.2).
+//! Frame-register allocation for a single template body.
 //!
 //! Lysis templates live in a fixed-size register file — the
 //! `frame_size` field of a `DefineTemplate` opcode is a `u8`, so at
@@ -85,7 +85,7 @@ impl RegAllocator {
     }
 
     /// Start with the first `n` slots already reserved — the
-    /// convention used for captures: `LoadCapture r0, 0`, ...,
+    /// convention used for captures: `LoadCapture r0, 0`,...,
     /// `LoadCapture r{n-1}, {n-1}`. Subsequent `alloc` calls hand
     /// out `r{n}` and up.
     pub fn new_after_captures(n: u8) -> Self {

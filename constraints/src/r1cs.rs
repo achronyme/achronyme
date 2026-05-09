@@ -151,7 +151,7 @@ impl<F: FieldBackend> LinearCombination<F> {
     /// `terms` field when you only need to iterate — it decouples
     /// callers from the storage representation and will keep working
     /// after the field becomes `pub(crate)` in the post-cleanup
-    /// encapsulation pass (structural-cleanup.md §3.4).
+    /// encapsulation pass.
     pub fn terms(&self) -> &[(Variable, FieldElement<F>)] {
         &self.terms
     }
@@ -373,7 +373,7 @@ impl<F: FieldBackend> Constraint<F> {
 ///     LinearCombination::from_variable(a),
 ///     LinearCombination::from_variable(b),
 ///     LinearCombination::from_variable(c),
-/// );
+///);
 ///
 /// assert_eq!(cs.num_constraints(), 1);
 ///
@@ -572,7 +572,7 @@ impl<F: FieldBackend> ConstraintSystem<F> {
     /// let product = cs.mul_lc(
     ///     &LinearCombination::from_variable(a),
     ///     &LinearCombination::from_variable(b),
-    /// );
+    ///);
     /// assert_eq!(cs.num_constraints(), 1);
     ///
     /// // Verify: a=6, b=7, product=42

@@ -1,4 +1,4 @@
-//! Span-list policy for hash-consed nodes (RFC §5.5).
+//! Span-list policy for hash-consed nodes.
 //!
 //! A single interned `NodeId` often represents code that appeared in
 //! many source locations — the 64 round bodies of SHA-256 collapse

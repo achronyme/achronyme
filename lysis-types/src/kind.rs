@@ -1,7 +1,7 @@
 //! `InstructionKind<F>` — Lysis-facing mirror of `ir::Instruction<F>`.
 //!
 //! This type cannot depend on the `ir` crate (that would pull a deep
-//! tree of dependencies — parser, diagnostics, resolve, ... — into
+//! tree of dependencies — parser, diagnostics, resolve,... — into
 //! anyone who wants to emit Lysis nodes). Keeping a parallel enum here
 //! in a tiny leaf crate is the minimum wedge that lets both `lysis`
 //! and its consumers speak the same schema without a cycle.
@@ -31,8 +31,8 @@
 //! | `Or { result, lhs, rhs }`                 | `Or`          |
 //! | `Decompose { result, bit_results, operand, num_bits }` | `Decompose` |
 //! | `IsEq / IsNeq / IsLt / IsLe`              | same names    |
-//! | `IsLtBounded / IsLeBounded { .., bitwidth }` | same       |
-//! | `IntDiv / IntMod { .., max_bits }`        | same          |
+//! | `IsLtBounded / IsLeBounded {.., bitwidth }` | same       |
+//! | `IntDiv / IntMod {.., max_bits }`        | same          |
 //! | `AssertEq { result, lhs, rhs, message }`  | `AssertEq`    |
 //! | `Assert { result, operand, message }`     | `Assert`      |
 //! | `RangeCheck { result, operand, bits }`    | `RangeCheck`  |
@@ -281,7 +281,7 @@ impl<F: FieldBackend> InstructionKind<F> {
     /// `true` when the instruction must not be hash-consed: two
     /// textually-identical side-effecting instructions can still both
     /// be required for soundness (e.g., two `AssertEq` in different
-    /// scopes). See RFC §5.3 for the full argument.
+    /// scopes).
     pub fn is_side_effect(&self) -> bool {
         matches!(
             self,

@@ -16,7 +16,7 @@
 //! (or [`InterningSink::into_interner`] then
 //! [`NodeInterner::materialize`]) to produce the flat
 //! `Vec<InstructionKind<F>>` that the R1CS backend consumes. The
-//! interner drops before the Vec returns (RFC §5.6.1 route (c)).
+//! interner drops before the Vec returns ( route (c)).
 
 use memory::field::{Bn254Fr, FieldBackend};
 

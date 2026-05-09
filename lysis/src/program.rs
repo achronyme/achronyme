@@ -4,8 +4,7 @@
 //! `Program` is produced by [`crate::bytecode::decode`] (which itself
 //! calls [`crate::bytecode::validate`] before returning) and consumed
 //! by [`crate::execute`]. Once you hold a `Program` you can trust
-//! every structural invariant from RFC §4.5 — that's the contract the
-//! decoder-validator pair enforces.
+//! every structural invariant the decoder-validator pair enforces.
 
 use memory::field::{Bn254Fr, FieldBackend};
 
@@ -39,7 +38,7 @@ pub struct Instr {
 
 /// Decoded Lysis program: header, interned const pool, template
 /// table, and a linear body. Every well-formedness invariant from
-/// RFC §4.5 holds when a `Program` is produced by the public
+///  holds when a `Program` is produced by the public
 /// [`crate::bytecode::decode`] path.
 #[derive(Debug, Clone)]
 pub struct Program<F: FieldBackend = Bn254Fr> {

@@ -89,7 +89,7 @@ use super::utils::EvalValue;
 /// taken at memoize-loop entry (see `memoize_loop` in
 /// `statements/loops.rs`). Late-bound entries created during body
 /// lowering are rare today but a dedicated risk noted in the Option II
-/// plan §7; verify per call site.
+///; verify per call site.
 pub fn fold_known_array_indices(slice: &mut [CircuitNode], kav: &HashMap<String, EvalValue>) {
     for node in slice {
         fold_node(node, kav);

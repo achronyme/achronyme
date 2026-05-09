@@ -1,7 +1,7 @@
 //! Lysis execution / validation configuration.
 //!
 //! Currently carries a single knob — `max_call_depth` — that the
-//! validator enforces via the longest-path analysis of RFC §4.5
+//! validator enforces via the longest-path analysis of
 //! rule 11 and the executor enforces at runtime as a safety net.
 //! Future phases will grow this struct with an instruction budget,
 //! array-memory budget, and optimization toggles.
@@ -11,7 +11,7 @@
 pub struct LysisConfig {
     /// Maximum `InstantiateTemplate` depth reached during execution.
     /// Statically enforced via longest-path on the acyclic call graph
-    /// (RFC §4.5 rule 11) and re-checked at runtime as a safety net.
+    /// and re-checked at runtime as a safety net.
     ///
     /// The RFC's nominal default was 64, which assumed walker output
     /// where each split chained at most a handful of templates. The

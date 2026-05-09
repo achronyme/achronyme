@@ -144,7 +144,7 @@ impl Arity {
 ///   without touching the parser's storage model.
 /// - [`CallableKind::FnAlias`] exists so `let a = p::fn; a()` works
 ///   uniformly in VM mode and prove blocks when the RHS const-resolves to
-///   a known symbol (§3.7 of the RFC).
+///   a known symbol.
 #[derive(Clone, Debug)]
 pub enum CallableKind {
     /// A registered builtin. The variant carries an index into the
@@ -164,7 +164,7 @@ pub enum CallableKind {
     /// the [`Stmt::FnDecl`](achronyme_parser::ast::Stmt::FnDecl) inside
     /// that module's [`Program.stmts`](achronyme_parser::ast::Program).
     /// The graph retains ownership of the AST; the symbol table never
-    /// clones function bodies. The RFC §3.2 sketch of `ast: Arc<FnDecl>`
+    /// clones function bodies. The  sketch of `ast: Arc<FnDecl>`
     /// lands as this indirection.
     ///
     /// `availability` is computed during the availability-inference

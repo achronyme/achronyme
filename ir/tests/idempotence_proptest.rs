@@ -4,7 +4,7 @@
 //! optimizer pipeline twice produces the same instruction sequence as
 //! running it once. This is the *fixed-point property* of the dataflow
 //! framework underlying each pass (Cooper & Torczon, "Engineering a
-//! Compiler", §10).
+//! Compiler", ).
 //!
 //! Reference implementation: Noir's
 //! `compiler/noirc_evaluator/src/ssa/opt/brillig_entry_points.rs`
