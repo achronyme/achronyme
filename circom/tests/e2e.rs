@@ -4995,6 +4995,25 @@ fn r1cs_optimization_benchmark() {
     );
     sparse_summary.push(("Tornado Withdraw(20)", a, asp, "28275"));
 
+    // Semaphore(32) — semaphore-protocol/semaphore v4 main circuit.
+    // Body: LessThan(251) + BabyPbk + 2× Poseidon(2) +
+    // BinaryMerkleRoot(32) (32× Poseidon(2) inside). Witness-less
+    // because constructing a valid (secret, merkle proof) pair requires
+    // the Semaphore identity setup off-line.
+    let t = std::time::Instant::now();
+    let (b, a, asp) =
+        compile_and_measure_witnessless("Semaphore(32)", "test/circomlib/semaphore_test.circom");
+    print_row(
+        "Semaphore(32)",
+        b,
+        a,
+        "37044",
+        "22216",
+        "9383",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("Semaphore(32)", a, asp, "9383"));
+
     eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
     eprintln!(
         "║ Total achronyme time: {:>5.0}ms {:>42} ║",
