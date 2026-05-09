@@ -13,7 +13,7 @@
 //! 1. **R1CS preservation oracle helpers**: `compile_and_solve` +
 //!    `apply_substitutions`. See
 //!    `zkc/tests/r1cs_preservation_proptest.rs` for the property
-//!    framing (CompCert two-sided simulation, advisor §2b).
+//!    framing (CompCert two-sided simulation).
 //!
 //! 2. **Frozen-baseline regression machinery**: the canonical-multiset
 //!    hash + `FrozenBaseline` snapshot used by the cross-path

@@ -678,8 +678,8 @@ mod tests {
 
         // Iter-0 capture body shape: out_$LV0$ <== in_$LV0$ + C[i + 1]
         // (r = 1 picked deliberately so the index is an Add, not a
-        // bare LoopVar — this is the Ark-with-r-offset case the
-        // advisor flagged as the dominant production shape).
+        // bare LoopVar — this is the Ark-with-r-offset case, the
+        // dominant production shape).
         let template = vec![CircuitNode::Let {
             name: "out_$LV0$".to_string(),
             value: CircuitExpr::BinOp {

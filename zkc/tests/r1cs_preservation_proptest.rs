@@ -48,7 +48,7 @@
 //! ## Discriminator coverage gap (intentional)
 //!
 //! The "wrong LC" discriminator is *one* class of optimizer regression.
-//! The advisor flagged a second class that this test does NOT cover:
+//! A second class that this test does NOT cover:
 //! "drop a constraint without recording in `substitution_map`". For
 //! that class the substitution_map is *missing* an entry rather than
 //! holding a wrong one, so the consistency check has nothing to
