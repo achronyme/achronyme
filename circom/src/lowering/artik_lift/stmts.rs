@@ -62,6 +62,29 @@ impl<'f> LiftState<'f> {
                             return None;
                         }
                         let len = size as u32;
+
+                        // Call-returning-array init: `var sumAndCarry[2]
+                        // = SplitFn(...)`. The callee already allocated
+                        // its own backing array on the heap and handed
+                        // back a handle via `NestedResult::Array`.
+                        // Alias the handle directly — no fresh
+                        // `AllocArray`, no per-element copy.
+                        if let Some(Expr::Call { callee, args, .. }) = init {
+                            let (val_handle, val_len) =
+                                self.lift_call_returning_array(callee, args)?;
+                            if val_len != len {
+                                return None;
+                            }
+                            self.arrays.insert(
+                                name.clone(),
+                                ArrayShape::Flat1D {
+                                    handle: val_handle,
+                                    len,
+                                },
+                            );
+                            return Some(());
+                        }
+
                         let handle = self.builder.alloc_array(len, ElemT::Field);
 
                         if let Some(init_expr) = init {
@@ -155,11 +178,46 @@ impl<'f> LiftState<'f> {
                         return Some(());
                     }
 
-                    // 1D indexed assignment: `arr[i] = expr`.
                     let Expr::Ident { name, .. } = outer_obj.as_ref() else {
                         return None;
                     };
-                    let (arr_reg, len) = self.arrays.get(name).copied()?.as_1d()?;
+                    let target_shape = self.arrays.get(name).copied()?;
+
+                    // Whole-row 2D assignment: `split[i] = call(...)`
+                    // where `split` is 2D and the call returns a 1D
+                    // array of length matching `cols`. The returned
+                    // handle's elements are copied into the row at
+                    // offset `i * cols`. `i` must fold compile-time so
+                    // the row offset is a literal.
+                    if let ArrayShape::Flat2D {
+                        handle: dst_handle,
+                        rows,
+                        cols,
+                    } = target_shape
+                    {
+                        let Expr::Call { callee, args, .. } = value else {
+                            return None;
+                        };
+                        let (val_handle, val_len) = self.lift_call_returning_array(callee, args)?;
+                        if val_len != cols {
+                            return None;
+                        }
+                        let i_const = eval_const_expr(outer_idx, &self.const_locals)?;
+                        if !(0..i64::from(rows)).contains(&i_const) {
+                            return None;
+                        }
+                        let row_base = (i_const as u32) * cols;
+                        for j in 0..cols {
+                            let src_idx = self.push_int_const(j as u64)?;
+                            let val_reg = self.builder.load_arr(val_handle, src_idx);
+                            let dst_idx = self.push_int_const((row_base + j) as u64)?;
+                            self.builder.store_arr(dst_handle, dst_idx, val_reg);
+                        }
+                        return Some(());
+                    }
+
+                    // 1D indexed assignment: `arr[i] = expr`.
+                    let (arr_reg, len) = target_shape.as_1d()?;
                     let idx = eval_const_expr(outer_idx, &self.const_locals)?;
                     if !(0..i64::from(len)).contains(&idx) {
                         return None;

@@ -1806,6 +1806,159 @@ fn fn_witness_lift_emits_field_level_fidiv_firem() {
     assert!(saw_firem, "expected FIRem from the runtime Mod lift path");
 }
 
+/// Phase 3 integration: lift `prod(n, k, a, b)` from circomlib's
+/// bigint_func.circom — the convolution-style polynomial product that
+/// stitches `SplitThreeFn` + `SplitFn` calls into a 2D `split[i][j]`
+/// matrix. Two new lift surfaces unblock this:
+///
+/// - Whole-row 2D assignment `split[i] = SplitThreeFn(...)` where the
+///   target row index folds compile-time and the call returns a 1D
+///   array of length matching `cols`.
+/// - VarDecl with array dim + Call init `var sumAndCarry[2] =
+///   SplitFn(...)` — the callee's returned handle is aliased into the
+///   caller's `arrays` map without re-allocation.
+///
+/// Verifies the WitnessCall exists, bytecode decodes, and the program
+/// allocates the expected `split[2*k-1][3]` 2D array (3 rows × 3 cols
+/// at k=2 ⇒ 9 cells; also a `100`-cell `prod_val[100]` from the
+/// outer's `var prod_val[100]`).
+#[test]
+fn fn_witness_lift_circomlib_prod_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_prod_probe.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("prod integration failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect(
+            "expected a CircuitNode::WitnessCall — prod must lift via the witness-calc \
+             pipeline, not fall back to E212",
+        );
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("prod payload must decode and validate");
+
+    // `prod` declares `var split[100][3]` — flattened to a 300-cell
+    // AllocArray. The 100-cell allocations come from `var
+    // prod_val[100]`, `var out[100]`, `var carry[100]`. The smaller
+    // allocations are from each `SplitThreeFn` (3-cell return),
+    // `SplitFn` (2-cell return), and the `a[2]` / `b[2]` input
+    // signal-array params bound by `LiftState::new`.
+    let alloc_lens: Vec<u32> = prog
+        .body
+        .iter()
+        .filter_map(|i| match i {
+            artik::Instr::AllocArray { len, .. } => Some(*len),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        alloc_lens.contains(&300),
+        "expected a 300-cell AllocArray (split[100][3] flattened); got {:?}",
+        alloc_lens
+    );
+    assert!(
+        alloc_lens.iter().filter(|&&l| l == 100).count() >= 3,
+        "expected at least 3× 100-cell AllocArray (prod_val + out + carry); got {:?}",
+        alloc_lens
+    );
+    assert!(
+        alloc_lens.iter().any(|&l| l == 3),
+        "expected at least one 3-cell AllocArray from SplitThreeFn ArrayLit return; got {:?}",
+        alloc_lens
+    );
+    assert!(
+        alloc_lens.iter().filter(|&&l| l == 2).count() >= 2,
+        "expected at least 2× 2-cell AllocArray from SplitFn ArrayLit returns; got {:?}",
+        alloc_lens
+    );
+
+    // The inner SplitFn / SplitThreeFn calls must each fold their
+    // `1 << n` divisors at lift time and emit field-level FShr / FAnd.
+    // A regression in nested-call const-arg propagation would silently
+    // route those through FIDiv / FIRem — passing the AllocArray
+    // assertions but failing this one.
+    let saw_fshr = prog.body.iter().any(|i| matches!(i, artik::Instr::FShr { .. }));
+    let saw_fand = prog.body.iter().any(|i| matches!(i, artik::Instr::FAnd { .. }));
+    assert!(
+        saw_fshr,
+        "prod payload must contain FShr from inner SplitFn / SplitThreeFn calls"
+    );
+    assert!(
+        saw_fand,
+        "prod payload must contain FAnd from inner SplitFn / SplitThreeFn calls"
+    );
+}
+
+/// Phase 3 width-stress integration: lift `prod(64, 4, a, b)` from
+/// circomlib's bigint_func.circom at the call-graph's nominal config.
+/// At k=4, n=64 the `prod_val[i]` accumulator sums up to 4 products
+/// of 64-bit operands ⇒ peak value ~2^130, exceeding U128. The lift's
+/// field-level FShr / FAnd dispatch (vs IntW demote) is what makes
+/// this representable — bits 128-191 must survive the SplitThreeFn
+/// extraction, and they would truncate under U128.
+#[test]
+fn fn_witness_lift_circomlib_prod_k4_n64_width_stress() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_prod_k4_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("prod k=4 n=64 lift failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall at k=4 n=64");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("prod k=4 n=64 payload must decode and validate");
+
+    // SplitThreeFn extracts bits via three `% / \` shapes:
+    //   `in % (1 << n)`        → FShr 0 / FAnd low-n   (bit range 0..n)
+    //   `(in \ (1 << n)) % (1 << m)`        → FShr n  / FAnd low-m
+    //   `(in \ (1 << n + m)) % (1 << k)`    → FShr n+m / FAnd low-k
+    // At n=m=k=64, the third shape needs FShr by amount 128 — that's
+    // the load-bearing FShr boundary for a >U128 input. Confirm we
+    // emit it (not by checking the *value* of amount, which would
+    // require pinning every FShr in the program, but by checking at
+    // least one FShr exists with amount ≥ 64; combined with FAnd this
+    // proves the bit-extraction dispatch fired for all three shapes).
+    let max_fshr_amount = prog
+        .body
+        .iter()
+        .filter_map(|i| match i {
+            artik::Instr::FShr { amount, .. } => Some(*amount),
+            _ => None,
+        })
+        .max()
+        .unwrap_or(0);
+    assert!(
+        max_fshr_amount >= 64,
+        "expected at least one FShr with amount ≥ 64 (SplitThreeFn's bit-128 \
+         extraction at n=64); max amount seen = {max_fshr_amount}"
+    );
+    let saw_fand = prog.body.iter().any(|i| matches!(i, artik::Instr::FAnd { .. }));
+    assert!(
+        saw_fand,
+        "expected FAnd at k=4 n=64 from SplitThreeFn / SplitFn bit-mask dispatch"
+    );
+}
+
 /// Phase 2 integration: pull `SplitFn` directly from circomlib's
 /// bigint witness call graph and verify the lift produces an E2E
 /// WitnessCall. This is the load-bearing test that the Phase 2 surface

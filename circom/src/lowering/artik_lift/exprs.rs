@@ -175,12 +175,28 @@ impl<'f> LiftState<'f> {
         }
     }
 
+    /// Lift a callee that returns a 1D Field array — used by
+    /// `var arr[N] = call(...)` and `arr2d[i] = call(...)` patterns.
+    /// Returns `None` if the call doesn't lift, doesn't return an
+    /// array, or the call site is not a bare `Expr::Call`.
+    pub(super) fn lift_call_returning_array(
+        &mut self,
+        callee: &Expr,
+        args: &[Expr],
+    ) -> Option<(Reg, u32)> {
+        let name = extract_call_name(callee)?;
+        match self.lift_nested_call(&name, args)? {
+            NestedResult::Array(h, len) => Some((h, len)),
+            NestedResult::Scalar(_) => None,
+        }
+    }
+
     /// Inline a nested function call into the current Artik program.
     /// Swaps the current scope (locals / arrays / const_locals) for
     /// a fresh one bound to the callee's params, walks the callee's
     /// body, captures the return value via `nested_result`, and
     /// restores the outer scope.
-    fn lift_nested_call(&mut self, name: &str, args: &[Expr]) -> Option<NestedResult> {
+    pub(super) fn lift_nested_call(&mut self, name: &str, args: &[Expr]) -> Option<NestedResult> {
         let func = self.functions.get(name).copied()?;
         if args.len() != func.params.len() {
             return None;
