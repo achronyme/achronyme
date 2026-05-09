@@ -12,6 +12,25 @@
 //! fitting the triad akron (summit/endpoint) + artik
 //! (articulation/proper fit) + lysis (resolution).
 //!
+//! ## Bytecode-Oriented Compilation
+//!
+//! Lysis is the canonical example of **Bytecode-Oriented Compilation
+//! (BOC)** in Achronyme: a compiler architecture where the compilation
+//! step is itself a bytecode program, and the *output of compilation*
+//! is the side-effect of running that bytecode on a VM. The shape is
+//!
+//! ```text
+//! Source → Bytecode → Run on VM → Compile output
+//! ```
+//!
+//! In Lysis the output entries are SSA IR nodes that go on to become
+//! R1CS constraints. This is distinct from "a compiler that emits
+//! bytecode" (Java, CPython): there the bytecode is the artifact;
+//! here it is the engine. The frame model, spill heap, and
+//! single-static-store invariant exist because the meta-program is a
+//! real program subject to real resource limits — the compiler's
+//! compile-time is reified as this VM's runtime.
+//!
 //! ## Status
 //!
 //! Bytecode, executor, lifter and walker integration are in place;
