@@ -15,8 +15,10 @@ fn check(src: &str) -> Vec<ConstraintReport> {
 fn has_error(reports: &[ConstraintReport], signal: &str) -> bool {
     reports.iter().any(|r| {
         r.diagnostics.iter().any(|d| {
-            d.message
-                .contains(&format!("signal `{signal}` is assigned with `<--`"))
+            d.message.contains(&format!(
+                "signal `{}::{signal}` is assigned with `<--`",
+                r.template_name
+            ))
         })
     })
 }

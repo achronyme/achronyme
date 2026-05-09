@@ -4059,10 +4059,7 @@ fn ecdsa_verify_boss_fight() {
         stats.rounds,
     );
 
-    eprintln!(
-        "[ECDSAVerify] [total]        {:?}",
-        total.elapsed()
-    );
+    eprintln!("[ECDSAVerify] [total]        {:?}", total.elapsed());
     eprintln!("[ECDSAVerify] [circom 2.2.3 baseline]  --O1 1,640,623, --O2 1,508,904");
     eprintln!(
         "[ECDSAVerify] [Δ vs circom O2]  {:+} constraints ({:+.2}%)",

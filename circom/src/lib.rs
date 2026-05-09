@@ -68,9 +68,15 @@ impl std::fmt::Display for CircomError {
                 Ok(())
             }
             CircomError::ConstraintError(diags) => {
-                write!(f, "constraint error: ")?;
-                for d in diags {
-                    write!(f, "{}", d.message)?;
+                // Render the full diagnostic — including primary span — so
+                // panics from `compile_file().unwrap()` give the reader a
+                // file:line:col they can grep, not just a bare message that
+                // hides which of dozens of like-named signals tripped.
+                for (i, d) in diags.iter().enumerate() {
+                    if i > 0 {
+                        f.write_str("\n")?;
+                    }
+                    write!(f, "{d}")?;
                 }
                 Ok(())
             }

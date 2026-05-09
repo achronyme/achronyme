@@ -692,6 +692,7 @@ mod tests {
                 span: dummy_span(),
             },
             span: dummy_span(),
+            source_file: None,
         }
     }
 
