@@ -17,9 +17,10 @@ use artik::{ElemT, IntBinOp, IntW, Reg};
 use num_bigint::BigUint;
 use num_traits::Zero;
 
-use crate::ast::BinOp;
+use crate::ast::{BinOp, Expr};
 
 use super::big_eval::big_to_le_bytes_trimmed;
+use super::helpers::{eval_const_expr, match_one_shl_const};
 use super::{ConstInt, LiftState};
 
 impl<'f> LiftState<'f> {
@@ -78,6 +79,75 @@ impl<'f> LiftState<'f> {
         } else {
             Some(cmp_field)
         }
+    }
+
+    /// Lift `lhs \ rhs` (`BinOp::IntDiv`) or `lhs % rhs` (`BinOp::Mod`)
+    /// at field level. Three dispatch paths:
+    ///
+    /// - **`1 << <const k>` divisor** (e.g. `temp \ (1 << n)` with `n`
+    ///   tracked compile-time): emit `FShr { src, amount: k }` for
+    ///   IntDiv, `FAnd { src, mask = (1 << k) - 1 }` for Mod. The mask
+    ///   is interned in the const pool. Cheap path — no runtime
+    ///   division.
+    /// - **Power-of-2 const divisor that fits `i64`** (e.g. `x \ 4`):
+    ///   same as above with `k = trailing_zeros(rhs_const)`.
+    /// - **Runtime or non-pow-2 divisor**: emit `FIDiv` / `FIRem` with
+    ///   both operands lifted to field registers. The executor performs
+    ///   raw unsigned truncated division on the canonical representative
+    ///   and traps on `b == 0`.
+    pub(super) fn lift_int_div_mod(&mut self, op: BinOp, lhs: &Expr, rhs: &Expr) -> Option<Reg> {
+        debug_assert!(matches!(op, BinOp::IntDiv | BinOp::Mod));
+        if let Some(k) = match_one_shl_const(rhs, &self.const_locals) {
+            return self.emit_pow2_div_mod(op, lhs, k);
+        }
+        if let Some(rhs_const) = eval_const_expr(rhs, &self.const_locals) {
+            if rhs_const > 0 {
+                let v = rhs_const as u64;
+                if v.is_power_of_two() {
+                    let k = v.trailing_zeros();
+                    if k <= 253 {
+                        return self.emit_pow2_div_mod(op, lhs, k);
+                    }
+                }
+            }
+        }
+        let lhs_reg = self.lift_expr(lhs)?;
+        let rhs_reg = self.lift_expr(rhs)?;
+        match op {
+            BinOp::IntDiv => Some(self.builder.fidiv(lhs_reg, rhs_reg)),
+            BinOp::Mod => Some(self.builder.firem(lhs_reg, rhs_reg)),
+            _ => unreachable!(),
+        }
+    }
+
+    fn emit_pow2_div_mod(&mut self, op: BinOp, lhs: &Expr, k: u32) -> Option<Reg> {
+        let lhs_reg = self.lift_expr(lhs)?;
+        match op {
+            BinOp::IntDiv => Some(self.builder.fshr(lhs_reg, k)),
+            BinOp::Mod => {
+                let mask_id = self.intern_low_bit_mask(k);
+                Some(self.builder.fand(lhs_reg, mask_id))
+            }
+            _ => unreachable!(),
+        }
+    }
+
+    /// Build the `(1 << k) - 1` mask as little-endian bytes and intern
+    /// it in the const pool. The encoding mirrors `push_const_unsigned`:
+    /// trailing zero bytes are trimmed, but for a low-bit mask each
+    /// byte that the mask covers is `0xFF` so trimming is a no-op except
+    /// for the `k == 0` edge case (which produces a single `0` byte).
+    fn intern_low_bit_mask(&mut self, k: u32) -> u32 {
+        if k == 0 {
+            return self.builder.intern_const(vec![0]);
+        }
+        let full_bytes = (k / 8) as usize;
+        let leftover_bits = k % 8;
+        let mut bytes = vec![0xFFu8; full_bytes];
+        if leftover_bits > 0 {
+            bytes.push((1u8 << leftover_bits) - 1);
+        }
+        self.builder.intern_const(bytes)
     }
 
     /// Demote a field reg to `IntW::U32` via `IntFromField`.

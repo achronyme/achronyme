@@ -76,6 +76,11 @@ impl<'f> LiftState<'f> {
                         _ => unreachable!(),
                     }
                 }
+                // `\` (IntDiv) and `%` (Mod) on field values: dispatch
+                // to `lift_int_div_mod` which recognizes
+                // `1 << <const k>` shapes (FShr / FAnd) and falls back
+                // to runtime FIDiv / FIRem otherwise.
+                BinOp::IntDiv | BinOp::Mod => self.lift_int_div_mod(*op, lhs, rhs),
                 _ => {
                     let a = self.lift_expr(lhs)?;
                     let c = self.lift_expr(rhs)?;
@@ -190,10 +195,16 @@ impl<'f> LiftState<'f> {
             return None;
         }
 
-        // Evaluate args in the outer scope first.
+        // Evaluate args in the outer scope first. Capture each arg's
+        // compile-time-folded value (if any) so the callee's frame can
+        // bind it into `const_locals` — this is what lets patterns like
+        // `1 << n` fold at lift time when the caller passes a literal
+        // for `n`.
         let mut arg_regs = Vec::with_capacity(args.len());
+        let mut arg_consts = Vec::with_capacity(args.len());
         for arg in args {
             arg_regs.push(self.lift_expr(arg)?);
+            arg_consts.push(super::helpers::eval_const_expr(arg, &self.const_locals));
         }
 
         // Swap scope.
@@ -205,8 +216,16 @@ impl<'f> LiftState<'f> {
         self.halted = false;
         self.nested_depth += 1;
 
-        for (param, reg) in func.params.iter().zip(arg_regs.iter()) {
+        for ((param, reg), const_val) in func
+            .params
+            .iter()
+            .zip(arg_regs.iter())
+            .zip(arg_consts.iter())
+        {
             self.locals.insert(param.clone(), *reg);
+            if let Some(v) = const_val {
+                self.const_locals.insert(param.clone(), *v);
+            }
         }
 
         // Lift the callee's body.

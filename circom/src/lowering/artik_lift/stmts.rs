@@ -319,6 +319,38 @@ impl<'f> LiftState<'f> {
                     }
                 }
 
+                // Array-literal return: `return [e0, e1, ..., eN];`.
+                // Allocate a fresh 1D field array, lift each element
+                // into a register, store at index `i`. From there the
+                // path is identical to a named-array return — nested
+                // calls get a NestedResult::Array handle, outer
+                // functions emit per-cell witness slots.
+                if let Expr::ArrayLit { elements, .. } = value {
+                    let len_usize = elements.len();
+                    let len = u32::try_from(len_usize).ok()?;
+                    let handle = self.builder.alloc_array(len, ElemT::Field);
+                    for (i, elem) in elements.iter().enumerate() {
+                        let val_reg = self.lift_expr(elem)?;
+                        let idx_reg = self.push_int_const(i as u64)?;
+                        self.builder.store_arr(handle, idx_reg, val_reg);
+                    }
+                    if self.nested_depth > 0 {
+                        self.nested_result = Some(NestedResult::Array(handle, len));
+                        self.halted = true;
+                        return Some(());
+                    }
+                    for i in 0..len {
+                        let slot = self.builder.alloc_witness_slot();
+                        let idx_reg = self.push_int_const(i as u64)?;
+                        let val_reg = self.builder.load_arr(handle, idx_reg);
+                        self.builder.write_witness(slot, val_reg);
+                    }
+                    self.builder.ret();
+                    self.halted = true;
+                    self.return_shape = ReturnShape::Array(len);
+                    return Some(());
+                }
+
                 // Scalar return.
                 let r = self.lift_expr(value)?;
                 if self.nested_depth > 0 {

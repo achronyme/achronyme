@@ -152,8 +152,9 @@ fn inline_function_call(
         // The shape of an `Expr::Ident { name }` is Array(len) iff
         // the caller's env tracks `name` as an array; anything else
         // is scalar.
-        use super::super::artik_lift::ParamShape;
+        use super::super::artik_lift::{ConstInt, ParamShape};
         let mut param_shapes: Vec<(String, ParamShape)> = Vec::with_capacity(func.params.len());
+        let mut param_consts: Vec<Option<ConstInt>> = Vec::with_capacity(func.params.len());
         for (arg, param_name) in args.iter().zip(func.params.iter()) {
             let shape = match arg {
                 crate::ast::Expr::Ident { name, .. } => match env.arrays.get(name.as_str()) {
@@ -175,11 +176,21 @@ fn inline_function_call(
                 _ => ParamShape::Scalar,
             };
             param_shapes.push((param_name.clone(), shape));
+            // Try to fold the arg expression to a compile-time integer.
+            // Used by the lift to bind callee `const_locals` so patterns
+            // like `1 << n` recognize a const-pow-2 divisor.
+            let const_val = try_eval_arg_const(arg, ctx);
+            param_consts.push(const_val);
         }
 
-        if let Some(lifted) =
-            super::super::artik_lift::lift_function_to_artik(name, &param_shapes, body, ctx, span)
-        {
+        if let Some(lifted) = super::super::artik_lift::lift_function_to_artik(
+            name,
+            &param_shapes,
+            &param_consts,
+            body,
+            ctx,
+            span,
+        ) {
             // Now lower each argument. Array args expand into one
             // `CircuitExpr` per element (lookup via
             // `env.resolve_array_element`); scalars lower directly.
@@ -327,11 +338,69 @@ fn inline_function_call(
 /// statements — only the return expression — and the body's internal
 /// variables would silently collide with the caller's scope.
 fn function_body_has_internal_state(stmts: &[crate::ast::Stmt]) -> bool {
-    // Trivial form: body is a single `return <expr>;` statement.
-    if stmts.len() == 1 && matches!(stmts[0], crate::ast::Stmt::Return { .. }) {
-        return false;
+    // Trivial form: body is a single `return <scalar expr>;` statement.
+    // An array-literal return (`return [a, b, ...]`) cannot be inlined
+    // on the constraint side — there is no `CircuitExpr::ArrayLit` —
+    // so route it to the witness-calc lift even when the body has no
+    // other statements. The lift's `Stmt::Return Expr::ArrayLit`
+    // handler allocates a 1D field array, fills it, and returns the
+    // handle to the caller.
+    if stmts.len() == 1 {
+        if let crate::ast::Stmt::Return { value, .. } = &stmts[0] {
+            return matches!(value, crate::ast::Expr::ArrayLit { .. });
+        }
     }
     true
+}
+
+/// Try to fold a call-site argument expression to a compile-time
+/// integer that fits `i64`. Walks `Number`, `HexNumber`, common
+/// arithmetic / shift / bit `BinOp`s, and looks up identifier args in
+/// the caller's `param_values` (template params + outer-call known
+/// scalars). Returns `None` for anything signal-derived or out of
+/// `i64` range — the lift then treats the param as runtime-only.
+///
+/// Used to populate the lifted callee's `const_locals` so patterns
+/// like `1 << n` recognize a const-pow-2 divisor at lift time.
+fn try_eval_arg_const(
+    expr: &Expr,
+    ctx: &super::super::context::LoweringContext<'_>,
+) -> Option<super::super::artik_lift::ConstInt> {
+    type CI = super::super::artik_lift::ConstInt;
+    match expr {
+        Expr::Number { value, .. } => value.parse().ok(),
+        Expr::HexNumber { value, .. } => {
+            let trimmed = value.strip_prefix("0x").unwrap_or(value);
+            CI::from_str_radix(trimmed, 16).ok()
+        }
+        Expr::Ident { name, .. } => {
+            let fc = ctx.param_values.get(name.as_str()).copied()?;
+            let v = fc.to_u64()?;
+            CI::try_from(v).ok()
+        }
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            let a = try_eval_arg_const(lhs, ctx)?;
+            let b = try_eval_arg_const(rhs, ctx)?;
+            match op {
+                crate::ast::BinOp::Add => a.checked_add(b),
+                crate::ast::BinOp::Sub => a.checked_sub(b),
+                crate::ast::BinOp::Mul => a.checked_mul(b),
+                crate::ast::BinOp::Eq => Some(CI::from(a == b)),
+                crate::ast::BinOp::Neq => Some(CI::from(a != b)),
+                crate::ast::BinOp::Lt => Some(CI::from(a < b)),
+                crate::ast::BinOp::Le => Some(CI::from(a <= b)),
+                crate::ast::BinOp::Gt => Some(CI::from(a > b)),
+                crate::ast::BinOp::Ge => Some(CI::from(a >= b)),
+                _ => None,
+            }
+        }
+        Expr::UnaryOp {
+            op: crate::ast::UnaryOp::Neg,
+            operand,
+            ..
+        } => try_eval_arg_const(operand, ctx).and_then(CI::checked_neg),
+        _ => None,
+    }
 }
 
 /// Strip the trailing `_<i>` suffix from an Artik array-slot binding

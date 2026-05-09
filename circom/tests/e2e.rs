@@ -1658,6 +1658,207 @@ fn fn_witness_lift_compares_at_u64_width() {
     );
 }
 
+/// Phase 2 lift extension: `return [a, b]` allocates a 1D Artik field
+/// array, lifts each element, stores at index `i`, and routes through
+/// the named-array return path. Combined with the field-level FShr /
+/// FAnd dispatch for `1 << n` (where `n` propagates from the caller's
+/// literal arg), the lift emits a 2-cell AllocArray, two FAnd opcodes,
+/// and one FShr with no IntW::U32 demote round-trip in the body.
+#[test]
+fn fn_witness_lift_emits_array_lit_return_with_field_pow2_ops() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_array_lit_return_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("array-lit return lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("array-lit-return payload must decode and validate");
+
+    let mut alloc_lens: Vec<u32> = Vec::new();
+    let mut saw_fshr = false;
+    let mut saw_fand = false;
+    for instr in &prog.body {
+        match instr {
+            artik::Instr::AllocArray { len, .. } => alloc_lens.push(*len),
+            artik::Instr::FShr { .. } => saw_fshr = true,
+            artik::Instr::FAnd { .. } => saw_fand = true,
+            _ => {}
+        }
+    }
+    assert!(
+        alloc_lens.contains(&2),
+        "expected a 2-cell AllocArray for the array-literal return; got {:?}",
+        alloc_lens
+    );
+    assert!(
+        saw_fshr,
+        "expected FShr for `\\ (1 << n)` with n const-folded"
+    );
+    assert!(
+        saw_fand,
+        "expected FAnd for `% (1 << n)` with n const-folded"
+    );
+}
+
+/// Phase 2 lift extension: runtime `if / else` whose arms only do
+/// array writes routes through `lift_if_else_branching` rather than
+/// the mux path. The branching path emits a real `JumpIf`, so the
+/// resulting bytecode contains conditional-jump opcodes (no
+/// branchless mux merge).
+#[test]
+fn fn_witness_lift_emits_branching_for_array_write_arms() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circomlib/fn_witness_lift_runtime_if_array_writes_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("runtime-if array-write lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("runtime-if array-write payload must decode and validate");
+
+    let mut saw_jump_if = false;
+    let mut saw_store_arr = false;
+    for instr in &prog.body {
+        match instr {
+            artik::Instr::JumpIf { .. } => saw_jump_if = true,
+            artik::Instr::StoreArr { .. } => saw_store_arr = true,
+            _ => {}
+        }
+    }
+    assert!(
+        saw_jump_if,
+        "expected JumpIf opcodes from the branching if/else path"
+    );
+    assert!(
+        saw_store_arr,
+        "expected StoreArr opcodes from the array-write arms"
+    );
+}
+
+/// Phase 2 lift extension: `\` and `%` with a runtime (non-pow-2)
+/// divisor emit field-level FIDiv / FIRem directly on the canonical
+/// representative. No IntW demote / promote round-trip.
+#[test]
+fn fn_witness_lift_emits_field_level_fidiv_firem() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_runtime_div_mod_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("runtime div/mod lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("runtime div/mod payload must decode and validate");
+
+    let mut saw_fidiv = false;
+    let mut saw_firem = false;
+    for instr in &prog.body {
+        match instr {
+            artik::Instr::FIDiv { .. } => saw_fidiv = true,
+            artik::Instr::FIRem { .. } => saw_firem = true,
+            _ => {}
+        }
+    }
+    assert!(
+        saw_fidiv,
+        "expected FIDiv from the runtime IntDiv lift path"
+    );
+    assert!(saw_firem, "expected FIRem from the runtime Mod lift path");
+}
+
+/// Phase 2 integration: pull `SplitFn` directly from circomlib's
+/// bigint witness call graph and verify the lift produces an E2E
+/// WitnessCall. This is the load-bearing test that the Phase 2 surface
+/// works on a real call-graph function (not a hand-rolled lookalike).
+/// Asserts the WitnessCall exists, its body decodes, and FShr / FAnd
+/// fire — proving the const-pow-2 dispatch flows through the actual
+/// circomlib source.
+#[test]
+fn fn_witness_lift_circomlib_split_fn_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_split_fn_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("circomlib SplitFn integration failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect(
+            "expected a CircuitNode::WitnessCall — SplitFn must lift via the witness-calc \
+             pipeline, not fall back to E212",
+        );
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("circomlib SplitFn payload must decode and validate");
+
+    let mut saw_fshr = false;
+    let mut saw_fand = false;
+    for instr in &prog.body {
+        match instr {
+            artik::Instr::FShr { .. } => saw_fshr = true,
+            artik::Instr::FAnd { .. } => saw_fand = true,
+            _ => {}
+        }
+    }
+    assert!(
+        saw_fshr,
+        "circomlib SplitFn lift must emit FShr for `\\ (1 << n)` with const n"
+    );
+    assert!(
+        saw_fand,
+        "circomlib SplitFn lift must emit FAnd for `% (1 << n)` with const n"
+    );
+}
+
 /// Fase 2.1 lift extension: a nested function call inside another
 /// lifted function body is inlined into the same Artik program.
 /// `compute(x)` calls `helper` twice; both invocations lower into

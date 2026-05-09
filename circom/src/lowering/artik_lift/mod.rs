@@ -103,6 +103,7 @@ pub enum ParamShape {
 pub fn lift_function_to_artik(
     function_name: &str,
     params: &[(String, ParamShape)],
+    param_consts: &[Option<ConstInt>],
     body: &[Stmt],
     ctx: &mut LoweringContext<'_>,
     span: &Span,
@@ -116,7 +117,7 @@ pub fn lift_function_to_artik(
         .iter()
         .map(|(&k, &v)| (k.to_string(), v))
         .collect();
-    let mut state = LiftState::new(params, &functions);
+    let mut state = LiftState::new(params, param_consts, &functions);
 
     for stmt in body {
         state.lift_stmt(stmt)?;
@@ -204,7 +205,7 @@ impl ArrayShape {
 /// in principle reach 254 bits, but loop bounds in witness functions
 /// are consistently small (nbits, array lengths, round counts). i64
 /// comfortably covers the entire circomlib corpus.
-type ConstInt = i64;
+pub type ConstInt = i64;
 
 struct LiftState<'f> {
     builder: ProgramBuilder,
@@ -263,11 +264,26 @@ enum NestedResult {
 impl<'f> LiftState<'f> {
     fn new(
         params: &[(String, ParamShape)],
+        param_consts: &[Option<ConstInt>],
         functions: &'f HashMap<String, &'f FunctionDef>,
     ) -> Self {
         let mut builder = ProgramBuilder::new(FieldFamily::BnLike256);
         let mut locals = HashMap::new();
+        let mut const_locals: HashMap<String, ConstInt> = HashMap::new();
         let mut arrays: HashMap<String, ArrayShape> = HashMap::new();
+
+        // Bind any compile-time-known scalar args into the callee's
+        // const_locals so patterns like `1 << n` fold at lift time and
+        // dispatch to FShr / FAnd instead of falling through to a
+        // runtime IntW::U32 demote (or, worse, a runtime FIDiv / FIRem
+        // when both operands are field cells).
+        for (i, (name, shape)) in params.iter().enumerate() {
+            if matches!(shape, ParamShape::Scalar) {
+                if let Some(Some(v)) = param_consts.get(i) {
+                    const_locals.insert(name.clone(), *v);
+                }
+            }
+        }
 
         // Materialize a small index cache so the StoreArr sequence
         // below doesn't emit a fresh PushConst+IntFromField pair for
@@ -315,7 +331,7 @@ impl<'f> LiftState<'f> {
         Self {
             builder,
             locals,
-            const_locals: HashMap::new(),
+            const_locals,
             arrays,
             halted: false,
             return_shape: ReturnShape::Scalar,

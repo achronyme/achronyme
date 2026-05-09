@@ -1175,6 +1175,17 @@ mod tests {
     }
 
     #[test]
+    fn fand_with_zero_mask_yields_zero() {
+        // `% 1` lowers to `FAnd(src, mask=0)`. The result must be zero
+        // for any input — the lift's `intern_low_bit_mask(0)` path
+        // depends on this so callers like `temp \ (1 << 0)` (vacuous
+        // shift) and `temp % (1 << 0)` (always zero) compose correctly.
+        let v = fe_from_u128(0xDEAD_BEEF_CAFE_BABE_F00D_C0DE_8BAD_F00Du128);
+        let mask_bytes = vec![0u8];
+        assert_eq!(run_fand(v, mask_bytes), FE::from_u64(0));
+    }
+
+    #[test]
     fn fand_extracts_high_limb_via_shift_then_mask() {
         // Confirm the FShr/FAnd pair extracts limb-1 cleanly:
         // ((max_u64 << 64) | low) >> 64 == max_u64, then & 0xFFFF_FFFF == 0xFFFF_FFFF.

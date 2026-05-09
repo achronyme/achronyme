@@ -70,6 +70,42 @@ pub(super) fn extract_call_name(callee: &Expr) -> Option<String> {
     }
 }
 
+/// Recognize the shape `1 << <const k>` and return the shift amount
+/// `k` if it fits in `0..=253`. Used by the IntDiv / Mod lift to detect
+/// a compile-time-power-of-2 divisor without going through
+/// `eval_const_expr` (which can't represent values exceeding `i64`,
+/// such as `1 << 64`).
+pub(super) fn match_one_shl_const(
+    expr: &Expr,
+    const_locals: &HashMap<String, ConstInt>,
+) -> Option<u32> {
+    let Expr::BinOp {
+        op: BinOp::ShiftL,
+        lhs,
+        rhs,
+        ..
+    } = expr
+    else {
+        return None;
+    };
+    let one_lhs = match lhs.as_ref() {
+        Expr::Number { value, .. } => value == "1",
+        Expr::HexNumber { value, .. } => {
+            let trimmed = value.strip_prefix("0x").unwrap_or(value);
+            trimmed == "1"
+        }
+        _ => false,
+    };
+    if !one_lhs {
+        return None;
+    }
+    let k = eval_const_expr(rhs, const_locals)?;
+    if !(0..=253).contains(&k) {
+        return None;
+    }
+    Some(k as u32)
+}
+
 /// Is `expr` an increment on the named variable (`name++` or `++name`)?
 pub(super) fn is_increment_on(expr: &Expr, name: &str) -> bool {
     let (op, operand) = match expr {

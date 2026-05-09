@@ -203,16 +203,24 @@ impl<'f> LiftState<'f> {
             return self.lift_if_else_folded(0, then_body, else_body);
         }
 
-        let then_returns = stmts_have_return(&then_body.stmts);
-        let else_returns = match else_body {
-            Some(ast::ElseBranch::Block(b)) => stmts_have_return(&b.stmts),
-            Some(ast::ElseBranch::IfElse(boxed)) => super::helpers::stmt_has_return(boxed),
-            None => false,
+        // Mux-style merge requires both arms to be free of side effects
+        // beyond scalar local updates: no `return`, no array writes, no
+        // witness writes. Anything else routes through the conditional
+        // branching path, which evaluates exactly one arm at runtime via
+        // `JumpIf`. The branching path's locals merge is narrow (only
+        // both-fall-through-with-no-scalar-modification or one-halts
+        // shapes are handled), so cases that need a richer merge bail
+        // back to E212.
+        let then_mux_ok = stmts_are_mux_compatible(&then_body.stmts);
+        let else_mux_ok = match else_body {
+            Some(ast::ElseBranch::Block(b)) => stmts_are_mux_compatible(&b.stmts),
+            Some(ast::ElseBranch::IfElse(boxed)) => stmt_is_mux_compatible(boxed),
+            None => true,
         };
-        if then_returns || else_returns {
-            return self.lift_if_else_branching(condition, then_body, else_body);
+        if then_mux_ok && else_mux_ok {
+            return self.lift_if_else_mux(condition, then_body, else_body);
         }
-        self.lift_if_else_mux(condition, then_body, else_body)
+        self.lift_if_else_branching(condition, then_body, else_body)
     }
 
     /// Real conditional-jump if/else. Used when at least one arm
