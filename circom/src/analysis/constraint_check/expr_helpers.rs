@@ -3,8 +3,8 @@
 //!
 //! These walk Circom AST [`Expr`] nodes to:
 //!
-//! - extract simple signal names from assignment targets
-//!   ([`extract_signal_name`]),
+//! - extract every signal name from an assignment target
+//!   ([`extract_signal_names`]),
 //! - collect every identifier reference in a constraint expression
 //!   ([`collect_signal_refs`]),
 //! - convert a parser [`Span`] into a diagnostic [`SpanRange`]
@@ -23,16 +23,33 @@ use diagnostics::{Span, SpanRange};
 
 use crate::ast::*;
 
-/// Extract the simple signal name from an expression target.
+/// Extract every signal name being assigned to by an `<--` / `<==` /
+/// `==>` / `-->` target expression.
 ///
-/// Handles: `x`, `x[i]`, `x[i][j]` — returns `"x"` in all cases.
-/// Does NOT handle `c.out` (component access) since component outputs
-/// are constrained by the component's own template.
-pub(super) fn extract_signal_name(expr: &Expr) -> Option<String> {
+/// Returns a `Vec` so tuple-destructured targets (`(a, b) <-- expr;`)
+/// surface every assigned signal — `Option<String>` would silently drop
+/// every name except the first and let an unconstrained `<--` slip
+/// past E100. Handles:
+///
+/// - `x` → `["x"]`
+/// - `x[i]`, `x[i][j]` → `["x"]` (index stripped — line/col disambiguates)
+/// - `c.out`, `c[i].out`, `c.out[i]` → `["c.out"]` (component-access
+///   targets get a qualified name so a `c.out <-- v;` without a paired
+///   `===` is no longer silently accepted)
+/// - `(a, b)` → `["a", "b"]` (recursive — nested tuples flatten)
+///
+/// Returns an empty `Vec` for shapes that aren't valid assignment
+/// targets in any circom syntax (literals, calls, etc.).
+pub(super) fn extract_signal_names(expr: &Expr) -> Vec<String> {
     match expr {
-        Expr::Ident { name, .. } => Some(name.clone()),
-        Expr::Index { object, .. } => extract_signal_name(object),
-        _ => None,
+        Expr::Ident { name, .. } => vec![name.clone()],
+        Expr::Index { object, .. } => extract_signal_names(object),
+        Expr::DotAccess { object, field, .. } => extract_signal_names(object)
+            .into_iter()
+            .map(|base| format!("{base}.{field}"))
+            .collect(),
+        Expr::Tuple { elements, .. } => elements.iter().flat_map(extract_signal_names).collect(),
+        _ => Vec::new(),
     }
 }
 
@@ -77,6 +94,14 @@ pub(super) fn collect_signal_refs(expr: &Expr, signals: &mut HashSet<String>) {
         }
         Expr::DotAccess { object, .. } => {
             collect_signal_refs(object, signals);
+            // Also register the qualified `c.out` form so a `c.out <-- v`
+            // target (tracked under the qualified name) matches a paired
+            // `c.out === expr` constraint here. Without this, every legal
+            // sub-template-output handwritten constraint would E100 after
+            // we start tracking DotAccess targets in `<--`.
+            for name in extract_signal_names(expr) {
+                signals.insert(name);
+            }
         }
         Expr::ArrayLit { elements, .. } | Expr::Tuple { elements, .. } => {
             for e in elements {
