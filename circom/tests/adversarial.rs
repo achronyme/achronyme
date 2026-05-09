@@ -529,8 +529,8 @@ fn mux2_forge_output_with_active_selector_rejected() {
 // were verified to catch a soundness regression by patching the wrapper
 // `mux2_test.circom` to leave `out` unconstrained (`out <-- mux.out`
 // without paired `===`). Achronyme's circom frontend rejects this at
-// the static-check stage with "signal `out` is assigned with `<--` but
-// has no `===` constraint", which is *itself* a form of soundness
+// the static-check stage with "signal `Mux2::out` is assigned with `<--`
+// but has no `===` constraint", which is *itself* a form of soundness
 // detection (compile-time rather than R1CS-time). The combination of
 // the static-check + R1CS-verify catches the targeted class of
 // under-constrainment regressions.

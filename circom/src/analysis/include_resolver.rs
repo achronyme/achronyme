@@ -133,8 +133,21 @@ impl Resolver {
         let source = std::fs::read_to_string(canonical_path)
             .map_err(|e| IncludeError::Io(canonical_path.to_path_buf(), e))?;
 
-        let (prog, parse_diags) = parse_circom(&source)
+        let (mut prog, parse_diags) = parse_circom(&source)
             .map_err(|e| IncludeError::Parse(canonical_path.to_path_buf(), e))?;
+
+        // Tag each definition with the file it came from so downstream
+        // diagnostics (notably constraint analysis) can render the original
+        // `.circom` location after include resolution flattens everything
+        // into a single program.
+        let owner = canonical_path.to_path_buf();
+        for def in &mut prog.definitions {
+            match def {
+                Definition::Template(t) => t.source_file = Some(owner.clone()),
+                Definition::Function(f) => f.source_file = Some(owner.clone()),
+                Definition::Bus(b) => b.source_file = Some(owner.clone()),
+            }
+        }
 
         self.diagnostics.extend(parse_diags);
 

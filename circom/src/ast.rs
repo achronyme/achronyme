@@ -3,6 +3,8 @@
 //! Represents the parsed structure of a Circom 2.x program. Every node
 //! carries a [`Span`] for precise source location tracking in diagnostics.
 
+use std::path::PathBuf;
+
 use diagnostics::Span;
 
 // ---------------------------------------------------------------------------
@@ -69,6 +71,10 @@ pub struct TemplateDef {
     pub modifiers: TemplateModifiers,
     pub body: Block,
     pub span: Span,
+    /// Canonical path of the `.circom` file this definition was parsed from.
+    /// Populated by the include resolver after parsing; stays `None` for
+    /// in-memory sources (tests, library fixtures) where no file backs the AST.
+    pub source_file: Option<PathBuf>,
 }
 
 /// `function name(params) { body }`
@@ -78,6 +84,8 @@ pub struct FunctionDef {
     pub params: Vec<String>,
     pub body: Block,
     pub span: Span,
+    /// See [`TemplateDef::source_file`].
+    pub source_file: Option<PathBuf>,
 }
 
 /// `bus Name(params) { body }` (Circom 2.2.0+)
@@ -87,6 +95,8 @@ pub struct BusDef {
     pub params: Vec<String>,
     pub body: Block,
     pub span: Span,
+    /// See [`TemplateDef::source_file`].
+    pub source_file: Option<PathBuf>,
 }
 
 /// `component main {public [sig1, sig2]} = Template(args);`

@@ -3,26 +3,50 @@
 //! and folds the recorded state into the five diagnostic categories
 //! (E100, W101, W102, W103, E102).
 
-use diagnostics::Diagnostic;
+use std::path::PathBuf;
+
+use diagnostics::{Diagnostic, Span, SpanRange};
 
 use super::collector::ConstraintCollector;
 use super::expr_helpers::span_to_range;
 use super::ConstraintReport;
 use crate::ast::{SignalType, TemplateDef};
 
+/// Build a `SpanRange` for a span that lives inside the given template,
+/// attaching the template's source `.circom` file when known so the
+/// diagnostic renderer prints `path/to/file.circom:line:col` instead of
+/// a bare `line:col` (the latter is unactionable when an `include` chain
+/// has pulled the offending template in from a vendored library).
+fn span_to_range_in(span: &Span, source_file: &Option<PathBuf>) -> SpanRange {
+    let mut sr = span_to_range(span);
+    if let Some(f) = source_file {
+        sr = sr.with_file(f.clone());
+    }
+    sr
+}
+
+/// Format a signal name for messages as `Template::name` so users can
+/// disambiguate among the dozens of `out` / `in` signals that real
+/// circomlib templates declare.
+fn qualified(template: &TemplateDef, name: &str) -> String {
+    format!("{}::{name}", template.name)
+}
+
 pub(super) fn check_template(template: &TemplateDef) -> ConstraintReport {
     let mut collector = ConstraintCollector::new();
     collector.walk_stmts(&template.body.stmts);
 
     let mut diagnostics = Vec::new();
+    let source_file = &template.source_file;
 
     // Find unconstrained signals: assigned via <-- but never in ===
     for (name, assign_span) in &collector.unconstrained_assigns {
         if !collector.constrained_signals.contains(name) {
-            let span_range = span_to_range(assign_span);
+            let span_range = span_to_range_in(assign_span, source_file);
+            let qname = qualified(template, name);
 
             let diag = Diagnostic::error(
-                format!("signal `{name}` is assigned with `<--` but has no `===` constraint"),
+                format!("signal `{qname}` is assigned with `<--` but has no `===` constraint"),
                 span_range,
             )
             .with_code("E100")
@@ -41,9 +65,10 @@ pub(super) fn check_template(template: &TemplateDef) -> ConstraintReport {
     // Circom's official compiler allows this pattern.
     for (name, spans) in &collector.signal_assignments {
         if spans.len() > 1 {
+            let qname = qualified(template, name);
             let diag = Diagnostic::warning(
-                format!("signal `{name}` is assigned more than once"),
-                span_to_range(&spans[1]),
+                format!("signal `{qname}` is assigned more than once"),
+                span_to_range_in(&spans[1], source_file),
             )
             .with_code("W103")
             .with_note("first assignment was here".to_string())
@@ -60,14 +85,15 @@ pub(super) fn check_template(template: &TemplateDef) -> ConstraintReport {
         match sig_type {
             SignalType::Input | SignalType::Output => {
                 if !collector.constrained_signals.contains(name) {
-                    let span_range = span_to_range(decl_span);
+                    let span_range = span_to_range_in(decl_span, source_file);
+                    let qname = qualified(template, name);
                     let kind = match sig_type {
                         SignalType::Input => "input",
                         SignalType::Output => "output",
                         SignalType::Intermediate => "intermediate",
                     };
                     let diag = Diagnostic::warning(
-                        format!("{kind} signal `{name}` is not referenced in any constraint"),
+                        format!("{kind} signal `{qname}` is not referenced in any constraint"),
                         span_range,
                     )
                     .with_code("W101")
@@ -89,12 +115,13 @@ pub(super) fn check_template(template: &TemplateDef) -> ConstraintReport {
     // Mirrors circom 2.0.8+ behavior: the #1 source of under-constrained bugs
     // is using <-- where <== would have been appropriate.
     for (name, hint_span) in &collector.quadratic_safe_hints {
+        let qname = qualified(template, name);
         let diag = Diagnostic::warning(
             format!(
-                "signal `{name}` uses `<--` but the expression is quadratic — \
+                "signal `{qname}` uses `<--` but the expression is quadratic — \
                  consider using `<==`"
             ),
-            span_to_range(hint_span),
+            span_to_range_in(hint_span, source_file),
         )
         .with_code("W102")
         .with_note("`<--` only computes the witness value without adding a constraint".to_string())
@@ -109,10 +136,11 @@ pub(super) fn check_template(template: &TemplateDef) -> ConstraintReport {
     for (eq_span, degree) in &collector.non_quadratic_constraints {
         let diag = Diagnostic::error(
             format!(
-                "constraint expression has degree {degree} in signals, \
-                 but R1CS requires degree ≤ 2"
+                "constraint expression in template `{}` has degree {degree} in signals, \
+                 but R1CS requires degree ≤ 2",
+                template.name
             ),
-            span_to_range(eq_span),
+            span_to_range_in(eq_span, source_file),
         )
         .with_code("E102")
         .with_note(

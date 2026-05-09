@@ -376,6 +376,7 @@ impl Parser {
             modifiers,
             body,
             span: self.span_to_prev(&sp),
+            source_file: None,
         })
     }
 
@@ -393,6 +394,7 @@ impl Parser {
             params,
             body,
             span: self.span_to_prev(&sp),
+            source_file: None,
         })
     }
 
@@ -410,6 +412,7 @@ impl Parser {
             params,
             body,
             span: self.span_to_prev(&sp),
+            source_file: None,
         })
     }
 
