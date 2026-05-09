@@ -3979,6 +3979,98 @@ fn eddsa_verifier_compile() {
     );
 }
 
+/// secp256k1 ECDSA signature verification — boss-fight constraint
+/// measurement against `0xPARC/circom-ecdsa`.
+///
+/// Tree-of-bigint emulation that does **not** route through
+/// Num2Bits → CompConstant chains; the `proven_boolean`
+/// cross-template lever that drives the Pointbits-derived advantage
+/// in EdDSAVerifier should not fire here. This gate measures
+/// whether achronyme reaches parity (or beats) circom on a circuit
+/// shape the existing benchmark templates don't exercise: bigint
+/// register arithmetic over secp256k1's 256-bit field emulated via
+/// 4 × u64 limbs (n=64 bits/register, k=4 registers).
+///
+/// circom 2.2.3 baseline:
+///   --O1: 1,640,623 constraints (~25 s on a modern desktop)
+///   --O2: 1,508,904 constraints (~78 s) — DEDUCE only saves 8 %
+///         because most constraints are bigint quadratic.
+///
+/// Heavy enough that `#[ignore]` — run with
+/// `cargo test --release ecdsa_verify_boss_fight -- --ignored
+/// --nocapture` to capture wall-clock + constraint shape.
+#[test]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Run with --ignored only."]
+fn ecdsa_verify_boss_fight() {
+    use std::time::Instant;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/ecdsa_verify_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let total = Instant::now();
+
+    let t0 = Instant::now();
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("ECDSAVerify compile failed: {e}"));
+    eprintln!("[ECDSAVerify] [compile]      {:?}", t0.elapsed());
+
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let t1 = Instant::now();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("ECDSAVerify instantiate failed: {e}"));
+    eprintln!(
+        "[ECDSAVerify] [instantiate]  {:?}  instructions={}",
+        t1.elapsed(),
+        program.len()
+    );
+
+    let t2 = Instant::now();
+    ir::passes::optimize(&mut program);
+    eprintln!(
+        "[ECDSAVerify] [ir-optimize]  {:?}  instructions={}",
+        t2.elapsed(),
+        program.len()
+    );
+
+    let t3 = Instant::now();
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).expect("ECDSAVerify R1CS compile");
+    let pre_o1 = rc.cs.num_constraints();
+    eprintln!(
+        "[ECDSAVerify] [r1cs build]   {:?}  constraints={pre_o1}",
+        t3.elapsed()
+    );
+
+    let t4 = Instant::now();
+    let stats = rc.optimize_r1cs();
+    let post_o1 = rc.cs.num_constraints();
+    eprintln!(
+        "[ECDSAVerify] [r1cs O1]      {:?}  constraints={post_o1}  vars_eliminated={}  rounds={}",
+        t4.elapsed(),
+        stats.variables_eliminated,
+        stats.rounds,
+    );
+
+    eprintln!(
+        "[ECDSAVerify] [total]        {:?}",
+        total.elapsed()
+    );
+    eprintln!("[ECDSAVerify] [circom 2.2.3 baseline]  --O1 1,640,623, --O2 1,508,904");
+    eprintln!(
+        "[ECDSAVerify] [Δ vs circom O2]  {:+} constraints ({:+.2}%)",
+        post_o1 as i64 - 1_508_904,
+        (post_o1 as f64 / 1_508_904.0 - 1.0) * 100.0
+    );
+}
+
 /// EscalarMul(8, base): generic scalar multiplication on BabyJubJub
 /// using the windowed-add algorithm. Exercises array-literal template
 /// arguments (`base = [Gx, Gy]`) propagating through nested template
