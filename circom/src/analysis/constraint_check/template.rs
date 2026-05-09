@@ -35,6 +35,13 @@ fn qualified(template: &TemplateDef, name: &str) -> String {
 pub(super) fn check_template(template: &TemplateDef) -> ConstraintReport {
     let mut collector = ConstraintCollector::new();
     collector.walk_stmts(&template.body.stmts);
+    // Polynomial-fingerprint expansion: a constraint of the form
+    // `P[i] === ...` where `P` is a compile-time `var` populated from a
+    // signal array transitively pins the signal. Without this pass the
+    // walker would treat such signals as unconstrained and emit a
+    // false-positive E100 on every bigint-emulation circuit (the
+    // `BigMultNoCarry` shape and its friends).
+    collector.expand_var_refs();
 
     let mut diagnostics = Vec::new();
     let source_file = &template.source_file;
