@@ -4974,6 +4974,27 @@ fn r1cs_optimization_benchmark() {
     );
     sparse_summary.push(("EdDSAVerifier(1)", a, asp, "7417"));
 
+    // Tornado Cash Withdraw(20) — vendored from tornadocash/tornado-core,
+    // ported to circom 2.0. Tree depth 20 (mainnet). Body: 2× Pedersen +
+    // 2× Num2Bits(248) + 20× MiMCSponge + 20× DualMux + 4 binding
+    // squares. Witness-less because constructing a valid Pedersen-MiMC
+    // merkle proof witness requires running the deposit ceremony off-line.
+    let t = std::time::Instant::now();
+    let (b, a, asp) = compile_and_measure_witnessless(
+        "Tornado Withdraw(20)",
+        "test/circomlib/tornado_test.circom",
+    );
+    print_row(
+        "Tornado Withdraw(20)",
+        b,
+        a,
+        "59009",
+        "36451",
+        "28275",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("Tornado Withdraw(20)", a, asp, "28275"));
+
     eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
     eprintln!(
         "║ Total achronyme time: {:>5.0}ms {:>42} ║",
