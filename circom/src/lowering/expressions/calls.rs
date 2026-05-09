@@ -115,17 +115,25 @@ fn inline_function_call(
         return Ok(CircuitExpr::Const(result));
     }
 
-    // Find the return expression in the function body.
+    // Find the return expression in the function body. Only the
+    // trivial-inline path needs a top-level tail return — bodies with
+    // internal state route through the Artik lift, which walks
+    // returns nested inside if/else / for / while branches via the
+    // statement lifter.
     let body = &func.body.stmts;
-    let return_expr = find_return_expr(body).ok_or_else(|| {
-        LoweringError::new(
-            format!(
-                "function `{name}` must end with a `return` statement \
-                 for circuit inlining"
-            ),
-            span,
-        )
-    })?;
+    let return_expr = if function_body_has_internal_state(body) {
+        None
+    } else {
+        Some(find_return_expr(body).ok_or_else(|| {
+            LoweringError::new(
+                format!(
+                    "function `{name}` must end with a `return` statement \
+                     for circuit inlining"
+                ),
+                span,
+            )
+        })?)
+    };
 
     // Compile-time evaluation failed — the function carries runtime signal
     // arguments. A function body that declares internal state (vars, loops,
@@ -322,7 +330,11 @@ fn inline_function_call(
         param_env.locals.insert(param.clone());
     }
 
-    let result = lower_expr_with_substitution(return_expr, &param_env, ctx, &param_map)?;
+    // The trivial-body path only runs when the function had no internal
+    // state, in which case `return_expr` was populated above.
+    let trivial_return =
+        return_expr.expect("trivial-inline path requires a return expression — gated above");
+    let result = lower_expr_with_substitution(trivial_return, &param_env, ctx, &param_map)?;
 
     ctx.inline_depth -= 1;
     Ok(result)

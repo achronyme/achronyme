@@ -1887,8 +1887,14 @@ fn fn_witness_lift_circomlib_prod_integration() {
     // A regression in nested-call const-arg propagation would silently
     // route those through FIDiv / FIRem — passing the AllocArray
     // assertions but failing this one.
-    let saw_fshr = prog.body.iter().any(|i| matches!(i, artik::Instr::FShr { .. }));
-    let saw_fand = prog.body.iter().any(|i| matches!(i, artik::Instr::FAnd { .. }));
+    let saw_fshr = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::FShr { .. }));
+    let saw_fand = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::FAnd { .. }));
     assert!(
         saw_fshr,
         "prod payload must contain FShr from inner SplitFn / SplitThreeFn calls"
@@ -1952,7 +1958,10 @@ fn fn_witness_lift_circomlib_prod_k4_n64_width_stress() {
         "expected at least one FShr with amount ≥ 64 (SplitThreeFn's bit-128 \
          extraction at n=64); max amount seen = {max_fshr_amount}"
     );
-    let saw_fand = prog.body.iter().any(|i| matches!(i, artik::Instr::FAnd { .. }));
+    let saw_fand = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::FAnd { .. }));
     assert!(
         saw_fand,
         "expected FAnd at k=4 n=64 from SplitThreeFn / SplitFn bit-mask dispatch"
@@ -2009,6 +2018,150 @@ fn fn_witness_lift_circomlib_split_fn_integration() {
     assert!(
         saw_fand,
         "circomlib SplitFn lift must emit FAnd for `% (1 << n)` with const n"
+    );
+}
+
+/// Lift `short_div_norm` from circomlib's bigint witness call graph.
+/// Exercises the runtime FIDiv dispatch on the qhat shape
+/// `(a[k] * (1 << n) + a[k-1]) \ b[k-1]` (non-power-of-2 divisor, both
+/// operands runtime), the runtime if/else qhat clamp (mux-compatible
+/// scalar reassignment), and the whole-array reassignment from a call
+/// (`mult = long_sub(...)`) which re-binds an existing array slot to
+/// the callee's returned heap handle.
+#[test]
+fn fn_witness_lift_circomlib_short_div_norm_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circomlib/fn_witness_lift_bigint_short_div_norm_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("short_div_norm integration failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect(
+            "expected a CircuitNode::WitnessCall — short_div_norm must lift via the \
+             witness-calc pipeline, not fall back to E212",
+        );
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("short_div_norm payload must decode and validate");
+
+    // The qhat shape `(a[k] * (1 << n) + a[k-1]) \ b[k-1]` divides by a
+    // runtime-valued register (`b[k-1]`), so the divisor never folds to
+    // a const power of two — the lift must dispatch through FIDiv. A
+    // regression to FShr / FAnd would silently drop the high bits of
+    // the dividend.
+    let saw_fidiv = prog
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::FIDiv { .. }));
+    assert!(
+        saw_fidiv,
+        "short_div_norm lift must emit at least one FIDiv (qhat shape with runtime divisor)"
+    );
+}
+
+/// Lift `short_div` from circomlib's bigint witness call graph.
+/// Composes `short_div_norm` + `long_scalar_mult` and adds another
+/// runtime FIDiv (`scale = (1 << n) \ (1 + b[k-1])`).
+#[test]
+fn fn_witness_lift_circomlib_short_div_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_short_div_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("short_div integration failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall for short_div");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("short_div payload must decode and validate");
+
+    // short_div emits at least two FIDiv calls: one for the `scale =
+    // (1 << n) \ (1 + b[k-1])` shape and one inside the nested
+    // short_div_norm for qhat. Both have non-power-of-2 divisors so
+    // they fall into the runtime FIDiv path, not FShr / FAnd.
+    let fidiv_count = prog
+        .body
+        .iter()
+        .filter(|i| matches!(i, artik::Instr::FIDiv { .. }))
+        .count();
+    assert!(
+        fidiv_count >= 2,
+        "short_div lift must emit at least 2× FIDiv (scale + qhat); got {fidiv_count}"
+    );
+}
+
+/// Lift `long_div` from circomlib's bigint witness call graph.
+/// Returns a 2D `out[2][100]` array — exercises the new
+/// `NestedResult::Array2D` path and exposes the flattened layout as
+/// 200 witness slots at the top level. Composes `short_div`,
+/// `long_scalar_mult`, and `long_sub` (whole-array reassignment from
+/// a call).
+#[test]
+fn fn_witness_lift_circomlib_long_div_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_long_div_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("long_div integration failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall for long_div");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("long_div payload must decode and validate");
+
+    // 200-slot witness output (2 * 100 flattened) is the load-bearing
+    // signature of the 2D return path.
+    let witness_writes = prog
+        .body
+        .iter()
+        .filter(|i| matches!(i, artik::Instr::WriteWitness { .. }))
+        .count();
+    assert_eq!(
+        witness_writes, 200,
+        "long_div's 2D return must expose rows*cols = 2*100 witness slots; got {witness_writes}"
+    );
+
+    // The 2D `out[2][100]` declaration becomes a single 200-cell
+    // AllocArray after the row-major flattening.
+    let alloc_lens: Vec<u32> = prog
+        .body
+        .iter()
+        .filter_map(|i| match i {
+            artik::Instr::AllocArray { len, .. } => Some(*len),
+            _ => None,
+        })
+        .collect();
+    assert!(
+        alloc_lens.contains(&200),
+        "expected a 200-cell AllocArray (out[2][100] flattened); got {alloc_lens:?}"
     );
 }
 

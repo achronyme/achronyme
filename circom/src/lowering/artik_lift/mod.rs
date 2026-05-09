@@ -254,11 +254,14 @@ struct LiftState<'f> {
 
 /// Value produced by a nested (inlined) function call. Arrays are
 /// kept as handle + length so the caller can thread them through the
-/// rest of the body identically to a `var arr[N];` local.
+/// rest of the body identically to a `var arr[N];` local. 2D arrays
+/// preserve their `(rows, cols)` shape so the caller can rebind them
+/// to a `Flat2D` slot without losing the row-major stride.
 #[derive(Clone, Copy)]
 enum NestedResult {
     Scalar(Reg),
     Array(Reg, u32),
+    Array2D(Reg, u32, u32),
 }
 
 impl<'f> LiftState<'f> {
