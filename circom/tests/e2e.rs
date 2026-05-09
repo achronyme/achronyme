@@ -1103,8 +1103,11 @@ fn eddsaposeidon_r1cs() {
         &inputs,
     );
     eprintln!("  Constraints (post-opt): {n_opt}");
-    eprintln!("  circom --O1 reference: 8086");
-    eprintln!("  Ratio: {:.2}x", n_opt as f64 / 8086.0);
+    eprintln!("  circom 2.2.3 --O0: 21254, --O1: 8086, --O2: 4217");
+    eprintln!(
+        "  Ratio vs circom O2 baseline: {:.3}x",
+        n_opt as f64 / 4217.0
+    );
 }
 
 /// CompConstant standalone R1CS verify — isolates the 1<<128 BigVal fix.
@@ -3918,9 +3921,18 @@ fn bits2point_strict_compile() {
 /// The first form pins the Class B classifier's reverse-assign
 /// branch — pre-fix this template failed at instantiation with
 /// `symbolic indexed write into compConstant.in but the array is
-/// not declared in this scope`. Compile + instantiate is the test
-/// surface; full witness verification requires valid Pedersen-hash
-/// signature data which is out of scope for a compile-time gate.
+/// not declared in this scope`. Compile + instantiate + R1CS-build
+/// is the test surface; full witness verification requires valid
+/// Pedersen-hash signature data which is out of scope for a compile-
+/// time gate.
+///
+/// Constraint-count baseline (circom 2.2.3, `eddsa_test.circom`):
+/// `--O1` = 16,498 (16,003 non-linear + 495 linear), `--O2` = 7,417
+/// (all non-linear). Achronyme's post-O1 number is the comparison
+/// surface; the template uses `Bits2Point_Strict` and
+/// `Point2Bits_Strict` heavily and should inherit the
+/// cross-template `proven_boolean` advantage measured in
+/// `point2bits_strict_*` / `bits2point_strict_*`.
 #[test]
 fn eddsa_verifier_compile() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -3945,6 +3957,25 @@ fn eddsa_verifier_compile() {
         "  EdDSAVerifier(1) — {} nodes → {} instructions — INSTANTIATED ✓",
         result.prove_ir.body.len(),
         program.len()
+    );
+
+    // Build R1CS (witness-less — this gate measures constraint shape,
+    // not signature validity). Apply O1, then compare to circom O2.
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).expect("EdDSAVerifier R1CS compile");
+    let pre_o1 = rc.cs.num_constraints();
+    let stats = rc.optimize_r1cs();
+    let post_o1 = rc.cs.num_constraints();
+    eprintln!(
+        "  EdDSAVerifier(1) R1CS: pre-O1 {pre_o1} → post-O1 {post_o1} \
+         (vars eliminated: {}, rounds: {})",
+        stats.variables_eliminated, stats.rounds
+    );
+    eprintln!("  circom 2.2.3 baseline: --O1 16,498, --O2 7,417");
+    eprintln!(
+        "  Δ vs circom O2: {} constraints ({:+.2}%)",
+        post_o1 as i64 - 7_417,
+        (post_o1 as f64 / 7_417.0 - 1.0) * 100.0
     );
 }
 
@@ -4524,6 +4555,78 @@ fn r1cs_optimization_benchmark() {
         (before, after_o1, after_o2_s)
     }
 
+    /// Witness-less variant of `compile_and_measure` for circuits whose
+    /// witness path needs domain-specific inputs the benchmark can't
+    /// fabricate (e.g. EdDSAVerifier requires a valid signature). Builds
+    /// R1CS without a witness, runs O1 + sparse-O2 against the resulting
+    /// constraint set, and reports the same `(before, after_o1, after_o2_s)`
+    /// triple. Skips `cs.verify` because no witness exists.
+    fn compile_and_measure_witnessless(name: &str, circom_file: &str) -> (usize, usize, usize) {
+        let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+        let path = manifest_dir.join(circom_file);
+        let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+        let tp = std::time::Instant::now();
+        let compile_result = circom::compile_file(&path, &lib_dirs)
+            .unwrap_or_else(|e| panic!("{name} compilation failed: {e}"));
+        let t_lower = tp.elapsed();
+
+        let prove_ir = &compile_result.prove_ir;
+        let capture_values = &compile_result.capture_values;
+        let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = capture_values
+            .iter()
+            .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect();
+
+        let tp = std::time::Instant::now();
+        let mut program = prove_ir
+            .instantiate_lysis_with_outputs(&fe_captures, &compile_result.output_names)
+            .unwrap_or_else(|e| panic!("{name} instantiation failed: {e}"));
+        let t_inst = tp.elapsed();
+
+        let tp = std::time::Instant::now();
+        ir::passes::optimize(&mut program);
+        let t_opt = tp.elapsed();
+
+        let tp = std::time::Instant::now();
+        let mut compiler = R1CSCompiler::<Bn254Fr>::new();
+        compiler
+            .compile_ir(&program)
+            .unwrap_or_else(|e| panic!("{name} R1CS compile failed: {e}"));
+        let t_r1cs = tp.elapsed();
+
+        let before = compiler.cs.num_constraints();
+
+        let pre_opt_constraints: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
+            compiler.cs.constraints().to_vec();
+        let num_pub_inputs = compiler.cs.num_pub_inputs();
+
+        let tp = std::time::Instant::now();
+        let stats = compiler.optimize_r1cs();
+        let after_o1 = stats.constraints_after;
+        let t_r1cs_opt = tp.elapsed();
+
+        let tp = std::time::Instant::now();
+        let mut sparse_constraints = pre_opt_constraints;
+        let (_subs, sparse_stats) =
+            constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
+        let after_o2_s = sparse_stats.constraints_after;
+        let t_r1cs_o2_sparse = tp.elapsed();
+
+        eprintln!(
+            "||  {name:24} lower={:.0}ms inst={:.0}ms opt={:.0}ms r1cs={:.0}ms r1csO1={:.0}ms r1csO2s={:.0}ms nodes={} (witness-less)",
+            t_lower.as_secs_f64() * 1000.0,
+            t_inst.as_secs_f64() * 1000.0,
+            t_opt.as_secs_f64() * 1000.0,
+            t_r1cs.as_secs_f64() * 1000.0,
+            t_r1cs_opt.as_secs_f64() * 1000.0,
+            t_r1cs_o2_sparse.as_secs_f64() * 1000.0,
+            prove_ir.body.len(),
+        );
+
+        (before, after_o1, after_o2_s)
+    }
+
     eprintln!("\n╔════════════════════════════════════════════════════════════════════════════╗");
     eprintln!("║            R1CS Constraint Benchmark: achronyme vs circom               ║");
     eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
@@ -4734,6 +4837,143 @@ fn r1cs_optimization_benchmark() {
     );
     sparse_summary.push(("MiMCSponge(2,220,1)", a, asp, "1320"));
 
+    // Point2Bits_Strict (BabyJubjub Edwards point → 256-bit packing)
+    // Identity point input — cross-template `proven_boolean` lever
+    // surfaces here because Num2Bits feeds CompConstant + AliasCheck
+    // chain in a single template, a pattern not present in the eight
+    // legacy circuits above.
+    let t = std::time::Instant::now();
+    let (b, a, asp) = compile_and_measure(
+        "Point2Bits_Strict",
+        "test/circomlib/point2bits_test.circom",
+        &[("in_0", 0), ("in_1", 1)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    print_row(
+        "Point2Bits_Strict",
+        b,
+        a,
+        "2838",
+        "1301",
+        "1293",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("Point2Bits_Strict", a, asp, "1293"));
+
+    // Bits2Point_Strict (256-bit packing → BabyJubjub Edwards point)
+    // Inputs marked public via `{public [in]}` in the fixture so the
+    // `in[254] === 0` and `signCalc.out === in[255]` constraints
+    // survive optimisation rather than being lawfully substituted away.
+    let t = std::time::Instant::now();
+    let mut b2p_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    b2p_inputs.insert("in_0".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    for i in 1..256 {
+        b2p_inputs.insert(format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    let (b, a, asp) = compile_and_measure(
+        "Bits2Point_Strict",
+        "test/circomlib/bits2point_test.circom",
+        &b2p_inputs,
+    );
+    print_row(
+        "Bits2Point_Strict",
+        b,
+        a,
+        "2589",
+        "1050",
+        "1043",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("Bits2Point_Strict", a, asp, "1043"));
+
+    // Sha256_2 (2 × 216-bit field-element inputs → 216-bit truncated
+    // SHA-256 digest). Distinct shape from `Sha256(N)`: hardcoded
+    // length encoding + 2× Num2Bits(216) + Bits2Num(216).
+    let t = std::time::Instant::now();
+    let (b, a, asp) = compile_and_measure(
+        "Sha256_2",
+        "test/circomlib/sha256_2_test.circom",
+        &[("a", 1), ("b", 2)]
+            .iter()
+            .map(|(k, v)| (k.to_string(), FieldElement::<Bn254Fr>::from_u64(*v)))
+            .collect(),
+    );
+    print_row(
+        "Sha256_2",
+        b,
+        a,
+        "204462",
+        "31699",
+        "30134",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("Sha256_2", a, asp, "30134"));
+
+    // EdDSAPoseidon (Poseidon-hash variant of the EdDSA verifier).
+    // Inherits the Pointbits cross-template advantage via its single
+    // internal `Point2Bits_Strict` invocation on the hash output.
+    let t = std::time::Instant::now();
+    let fe = |s: &str| {
+        FieldElement::<Bn254Fr>::from_decimal_str(s)
+            .unwrap_or_else(|| panic!("bad field element: {s}"))
+    };
+    let mut eddsa_p_inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    eddsa_p_inputs.insert("enabled".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    eddsa_p_inputs.insert(
+        "Ax".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    eddsa_p_inputs.insert(
+        "Ay".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    eddsa_p_inputs.insert("S".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    eddsa_p_inputs.insert(
+        "R8x".to_string(),
+        fe("5299619240641551281634865583518297030282874472190772894086521144482721001553"),
+    );
+    eddsa_p_inputs.insert(
+        "R8y".to_string(),
+        fe("16950150798460657717958625567821834550301663161624707787222815936182638968203"),
+    );
+    eddsa_p_inputs.insert("M".to_string(), FieldElement::<Bn254Fr>::from_u64(42));
+    let (b, a, asp) = compile_and_measure(
+        "EdDSAPoseidon",
+        "test/circomlib/eddsaposeidon_test.circom",
+        &eddsa_p_inputs,
+    );
+    print_row(
+        "EdDSAPoseidon",
+        b,
+        a,
+        "21254",
+        "8086",
+        "4217",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("EdDSAPoseidon", a, asp, "4217"));
+
+    // EdDSAVerifier(1) — Pedersen-hash variant. No `enabled` escape,
+    // verifier always asserts a valid signature, so the benchmark
+    // measures constraint shape via the witness-less path. Inherits
+    // the Pointbits advantage 3× over (2× Bits2Point_Strict + 1×
+    // Point2Bits_Strict in the verifier body).
+    let t = std::time::Instant::now();
+    let (b, a, asp) =
+        compile_and_measure_witnessless("EdDSAVerifier(1)", "test/circomlib/eddsa_test.circom");
+    print_row(
+        "EdDSAVerifier(1)",
+        b,
+        a,
+        "42919",
+        "16498",
+        "7417",
+        t.elapsed().as_secs_f64() * 1000.0,
+    );
+    sparse_summary.push(("EdDSAVerifier(1)", a, asp, "7417"));
+
     eprintln!("╠════════════════════════════════════════════════════════════════════════════╣");
     eprintln!(
         "║ Total achronyme time: {:>5.0}ms {:>42} ║",
@@ -4913,4 +5153,134 @@ fn hex_encode(bytes: &[u8]) -> String {
         s.push_str(&format!("{b:02x}"));
     }
     s
+}
+
+/// Sha256_2: 2-input SHA-256 variant (a, b ∈ [0, 2^216)).
+///
+/// Distinct shape from the parametric `Sha256(N)` already covered by
+/// `sha256_64_*` tests:
+///   - Hardcoded length encoding via raw `inp[i] <== const` (vs. a
+///     parametric padding loop).
+///   - Two `Num2Bits(216)` decompositions (216-bit inputs are an
+///     unusual size — most templates use 32, 64, or 254).
+///   - `Sha256compression` invoked directly without the `Sha256(N)`
+///     wrapper.
+///
+/// Smoke test: compile + instantiate + R1CS-build + verify on small
+/// constants. Surfaces any frame-overflow, instantiation amplification,
+/// or witness-vs-IR drift specific to this template shape.
+#[test]
+#[ignore = "Sha256_2 compile + instantiate + R1CS — heavy (single Sha256compression dominates). Run with --ignored sha256_2_real_circomlib."]
+fn sha256_2_real_circomlib() {
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    inputs.insert("b".to_string(), FieldElement::<Bn254Fr>::from_u64(2));
+
+    let n = circomlib_e2e_optimized("Sha256_2", "test/circomlib/sha256_2_test.circom", &inputs);
+    assert!(n > 0, "Sha256_2 must produce non-empty constraint set");
+}
+
+/// Point2Bits_Strict at the identity point (0, 1).
+///
+/// The identity point is degenerate: x = 0 collapses every bit of
+/// `Num2Bits(x)` to 0, alias-check becomes trivial, CompConstant on
+/// all-zero bits short-circuits. This probe exists *because* of that
+/// degeneracy — it surfaces how aggressively each compiler folds
+/// dead constraints when an input is statically known.
+#[test]
+#[ignore = "Pointbits compile + instantiate + R1CS — moderate. Run with --ignored point2bits_strict_identity."]
+fn point2bits_strict_identity() {
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("in_0".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    inputs.insert("in_1".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+
+    let n = circomlib_e2e_optimized(
+        "Point2Bits_Strict (identity)",
+        "test/circomlib/point2bits_test.circom",
+        &inputs,
+    );
+    assert!(
+        n > 0,
+        "Point2Bits_Strict must produce non-empty constraint set"
+    );
+}
+
+/// Point2Bits_Strict at the BabyJubjub generator (Gx, Gy).
+///
+/// Non-degenerate input — every bit of `Num2Bits(Gx)` is meaningful
+/// and the AliasCheck / CompConstant constraints can't be statically
+/// folded away. Provides a clean apples-to-apples comparison vs
+/// circom's O2 baseline; any constraint-count gap here is structural,
+/// not an artifact of the test's input choice.
+///
+/// Generator coordinates from circomlib `babyjub.circom`.
+#[test]
+#[ignore = "Pointbits compile + instantiate + R1CS — moderate. Run with --ignored point2bits_strict_generator."]
+fn point2bits_strict_generator() {
+    let gx = FieldElement::<Bn254Fr>::from_decimal_str(
+        "5299619240641551281634865583518297030282874472190772894086521144482721001553",
+    )
+    .expect("Gx parse");
+    let gy = FieldElement::<Bn254Fr>::from_decimal_str(
+        "16950150798460657717958625567821834550301663161624707787222815936182638968203",
+    )
+    .expect("Gy parse");
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("in_0".to_string(), gx);
+    inputs.insert("in_1".to_string(), gy);
+
+    let n = circomlib_e2e_optimized(
+        "Point2Bits_Strict (generator)",
+        "test/circomlib/point2bits_test.circom",
+        &inputs,
+    );
+    assert!(
+        n > 0,
+        "Point2Bits_Strict must produce non-empty constraint set"
+    );
+}
+
+/// Bits2Point_Strict: 256-bit packed → Edwards curve point.
+///
+/// Inverse of Point2Bits_Strict. Adds two pattern classes the
+/// existing benchmark doesn't cover:
+///   - **Witness hint via `<--`**: x is computed at witness time as
+///     `sqrt((1-y²)/(a-d·y²))` with a sign flip from in[255]. The
+///     `<--` operator is a free assignment — the constraint that
+///     pins x to a valid value is `BabyCheck(x, y)`, a quadratic
+///     constraint on the Edwards curve equation.
+///   - **Conditional sign negation in witness logic**: the witness
+///     algorithm has to honour `if (in[255] == 1) x = -x`; if the
+///     witness path didn't, BabyCheck would still verify against
+///     the unsigned x but the sign-bit assertion at the end would
+///     reject. This test surfaces any drift between the witness
+///     pipeline and the constraint pipeline.
+///
+/// Test point: identity (0, 1) packed. Bits 0=1 (y=1 lsb), 1..253=0,
+/// 254=0 (hardcoded), 255=0 (x=0 sign).
+#[test]
+#[ignore = "Pointbits compile + instantiate + R1CS — moderate. Run with --ignored bits2point_strict_real_circomlib."]
+fn bits2point_strict_real_circomlib() {
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    // bit 0 = lsb of y = 1
+    inputs.insert("in_0".to_string(), FieldElement::<Bn254Fr>::from_u64(1));
+    // bits 1..253 = 0
+    for i in 1..254 {
+        inputs.insert(format!("in_{i}"), FieldElement::<Bn254Fr>::from_u64(0));
+    }
+    // bit 254 hardcoded to 0
+    inputs.insert("in_254".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+    // bit 255 sign of x (x=0 → 0)
+    inputs.insert("in_255".to_string(), FieldElement::<Bn254Fr>::from_u64(0));
+
+    let n = circomlib_e2e_optimized(
+        "Bits2Point_Strict (identity)",
+        "test/circomlib/bits2point_test.circom",
+        &inputs,
+    );
+    assert!(
+        n > 0,
+        "Bits2Point_Strict must produce non-empty constraint set"
+    );
 }

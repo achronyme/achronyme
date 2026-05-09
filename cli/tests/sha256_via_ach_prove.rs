@@ -121,3 +121,32 @@ fn sha256_8_mixed_inputs_compiles() {
     let source = sha256_source(&circomlib, 8, true);
     run_ach(&source).expect("Sha256(8) mixed via .ach prove must compile + run");
 }
+
+/// Sha256_2 dispatched from a `.ach` prove block.
+///
+/// Distinct shape from `Sha256(N)`: hardcoded length encoding via raw
+/// `inp[i] <== const` assignments + 2× Num2Bits(216) + Bits2Num(216),
+/// not a parametric padding loop. Two 216-bit field-element inputs
+/// instead of a bit array. Pure-circom path matches circom O2 ±0.05%
+/// (see `sha256_2_real_circomlib` in `circom/tests/e2e.rs`); this test
+/// pins the same template through the `CallCircomTemplate` dispatch
+/// path that historically tripped Lysis's 255-slot frame ceiling.
+#[test]
+fn sha256_2_compiles() {
+    let circomlib = workspace_root().join("test/circomlib");
+    if !circomlib.join("circuits/sha256/sha256_2.circom").exists() {
+        eprintln!("skipping: circomlib/sha256 not present at {circomlib:?}");
+        return;
+    }
+    let source = format!(
+        r#"
+import {{ Sha256_2 }} from "{lib}/circuits/sha256/sha256_2.circom"
+
+prove() {{
+    let _r = Sha256_2()(0p1, 0p2)
+}}
+"#,
+        lib = circomlib.to_str().unwrap(),
+    );
+    run_ach(&source).expect("Sha256_2 via .ach prove must compile + run");
+}
