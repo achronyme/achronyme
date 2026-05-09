@@ -409,6 +409,7 @@ name = "artik"
 version = "0.1.0-beta.21"
 dependencies = [
  "memory",
+ "num-bigint",
 ]
 
 [[package]]

@@ -147,6 +147,36 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 // Result is boolean-as-U8.
                 bind(&mut reg_types, *dst, RegType::Int(IntW::U8))?;
             }
+            Instr::FIDiv { dst, a, b } | Instr::FIRem { dst, a, b } => {
+                read(&reg_types, *a, RegType::Field)?;
+                read(&reg_types, *b, RegType::Field)?;
+                bind(&mut reg_types, *dst, RegType::Field)?;
+            }
+            Instr::FShr { dst, src, amount } => {
+                // 256 bits in a canonical rep; shifting by 256+ is
+                // always zero, but we cap at 253 because BN254 / similar
+                // BN-like fields have p < 2^254 — values above 2^254
+                // are unreachable and an out-of-range amount usually
+                // signals a lift bug.
+                if *amount > 253 {
+                    return Err(ArtikError::InvalidShiftAmount { amount: *amount });
+                }
+                read(&reg_types, *src, RegType::Field)?;
+                bind(&mut reg_types, *dst, RegType::Field)?;
+            }
+            Instr::FAnd {
+                dst,
+                src,
+                mask_const_id,
+            } => {
+                if *mask_const_id >= const_count {
+                    return Err(ArtikError::InvalidConstId {
+                        const_id: *mask_const_id,
+                    });
+                }
+                read(&reg_types, *src, RegType::Field)?;
+                bind(&mut reg_types, *dst, RegType::Field)?;
+            }
             Instr::IBin { op, w, dst, a, b } => {
                 read(&reg_types, *a, RegType::Int(*w))?;
                 read(&reg_types, *b, RegType::Int(*w))?;

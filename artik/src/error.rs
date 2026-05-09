@@ -44,6 +44,11 @@ pub enum ArtikError {
     /// will allocate. Prevents adversarial bytecode from requesting a
     /// multi-gigabyte buffer in one call.
     ArrayTooLarge { len: u32, max: u32 },
+    /// `FShr` was given an amount above the canonical-rep width cap
+    /// (253). Higher amounts make no observational difference (the
+    /// result is always zero for any value below `p`), so a lift that
+    /// emits one signals a bug — flag it instead of silently zeroing.
+    InvalidShiftAmount { amount: u32 },
 
     // ── Runtime (executor) ──────────────────────────────────────────
     /// A `PushConst` referenced bytes that could not be decoded as a
@@ -162,6 +167,12 @@ impl fmt::Display for ArtikError {
                 f,
                 "Artik cumulative array cells {cells} exceeds limit {max}"
             ),
+            Self::InvalidShiftAmount { amount } => {
+                write!(
+                    f,
+                    "Artik FShr amount {amount} exceeds canonical-rep cap 253"
+                )
+            }
         }
     }
 }

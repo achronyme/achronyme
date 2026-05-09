@@ -247,6 +247,43 @@ impl ProgramBuilder {
         dst
     }
 
+    /// Truncated unsigned division on the canonical representative.
+    /// Both operands are field cells; result is a field cell carrying
+    /// `floor(a / b)`. Traps at execute time on `b == 0`.
+    pub fn fidiv(&mut self, a: Reg, b: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FIDiv { dst, a, b });
+        dst
+    }
+
+    /// Unsigned remainder on the canonical representative.
+    pub fn firem(&mut self, a: Reg, b: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FIRem { dst, a, b });
+        dst
+    }
+
+    /// Right-shift the canonical representative by a compile-time
+    /// constant amount (≤ 253). Useful for extracting a high bit
+    /// range (e.g. `prod_val[i] \ (1 << 64)`).
+    pub fn fshr(&mut self, src: Reg, amount: u32) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FShr { dst, src, amount });
+        dst
+    }
+
+    /// AND the canonical representative with a const-pool mask.
+    /// Useful for extracting a low bit range (e.g. `temp % (1 << 64)`).
+    pub fn fand(&mut self, src: Reg, mask_const_id: u32) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FAnd {
+            dst,
+            src,
+            mask_const_id,
+        });
+        dst
+    }
+
     // ── Integer ops ──────────────────────────────────────────────────
 
     pub fn ibin(&mut self, op: IntBinOp, w: IntW, a: Reg, b: Reg) -> Reg {
