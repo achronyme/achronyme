@@ -1,4 +1,4 @@
-//! Template extraction (lambda-lifting) — RFC §6.2.
+//! Template extraction (lambda-lifting).
 //!
 //! Takes a [`SymbolicTree`] that BTA classified as
 //! [`BindingTime::Uniform`] and produces a [`TemplateSpec`] the
@@ -20,13 +20,13 @@
 //!
 //! ## What lives in a later iteration
 //!
-//! - **Canonical bytecode hash-based dedup**: RFC §6.2 mentions
-//!   deduplicating two templates whose emitted bytecode is byte-
-//!   identical. The current pass allocates a fresh id for every
-//!   extraction instead; a future pass will hash the emitted
-//!   bytecode and merge matches. This is a size-not-correctness
-//!   optimization — a pair of redundant templates just costs extra
-//!   metadata, they don't produce wrong constraints.
+//! - **Canonical bytecode hash-based dedup**: deduplicating two
+//!   templates whose emitted bytecode is byte-identical. The current
+//!   pass allocates a fresh id for every extraction instead; a future
+//!   pass will hash the emitted bytecode and merge matches. This is
+//!   a size-not-correctness optimization — a pair of redundant
+//!   templates just costs extra metadata, they don't produce wrong
+//!   constraints.
 //! - **True liveness-based frame sizing**: we over-allocate today
 //!   (one slot per producing node). A future pass will do
 //!   linear-scan liveness.
@@ -493,7 +493,7 @@ fn lift_one<F: FieldBackend>(
                         // Graceful degradation: a Uniform body whose
                         // symbolic skeleton would need more than
                         // `MAX_FRAME_SIZE = 255` producing slots can't
-                        // fit one template frame (RFC §5.1's u8 cap on
+                        // fit one template frame (u8 cap on
                         // `InstantiateTemplate.frame_size`). Rather
                         // than erroring out the whole compile — which
                         // for SHA-256-class circuits would block at

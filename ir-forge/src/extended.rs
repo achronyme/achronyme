@@ -18,9 +18,9 @@
 //!   wrapping in `Plain(...)`.
 //! - [`ExtendedInstruction::TemplateBody`] declares a reusable body
 //!   that will be instantiated N times with different captures.
-//!   Produced by the lifter's template extraction pass
-//!   (RFC §6.2); NOT a language surface construct — `D5` in RFC
-//!   §2 is explicit about no syntax change.
+//!   Produced by the lifter's template extraction pass; not a
+//!   language surface construct — the source language emits no
+//!   syntax for it.
 //! - [`ExtendedInstruction::TemplateCall`] instantiates a
 //!   previously-declared body. The `outputs` slots are the SSA
 //!   vars the call binds in the caller's frame.
@@ -56,7 +56,7 @@ impl std::fmt::Display for TemplateId {
 }
 
 /// ProveIR instruction with the four additional shapes the Lysis
-/// lifter needs (RFC §3.1.1, §6.3).
+/// lifter needs (, ).
 ///
 /// The generic parameter matches `Instruction<F>`'s so `Plain`
 /// passes straight through without type-state gymnastics.
@@ -68,7 +68,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     Plain(Instruction<F>),
 
     /// Declare a reusable template body. Produced by the BTA +
-    /// lambda-lifting pass (RFC §6.1, §6.2). The body is itself an
+    /// lambda-lifting pass. The body is itself an
     /// `ExtendedInstruction` list so nested templates / loops
     /// nest naturally.
     ///
@@ -106,7 +106,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     },
 
     /// A loop whose body varies by iteration in a way BTA could
-    /// not lift (RFC §6.1.1 `DataDependent`). The bytecode emitter
+    /// not lift ( `DataDependent`). The bytecode emitter
     /// writes a `Lysis::Opcode::LoopUnroll` and inlines the body.
     ///
     /// `start` / `end` are compile-time-known bounds (if they
@@ -125,7 +125,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     /// compile-time constant.
     ///
     /// Without this variant, every `paddedIn[i] <-- 0` /
-    /// `out[i] <-- ...` in a circom loop would have to be
+    /// `out[i] <--...` in a circom loop would have to be
     /// force-unrolled at the circom lowering layer (see
     /// `circom/src/lowering/statements/loops.rs::LoopLowering::IndexedAssignmentLoop`),
     /// making the IR stream balloon to N inline copies of every
@@ -142,7 +142,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
     ///   a constraint.
     /// - `array_slots` — pre-resolved list of element SSA vars (the
     ///   instantiate-time materialization of the array's elements,
-    ///   e.g. `[paddedIn_0, paddedIn_1, ..., paddedIn_N-1]`).
+    ///   e.g. `[paddedIn_0, paddedIn_1,..., paddedIn_N-1]`).
     ///   Walker indexes into this with the const-folded index at
     ///   per-iteration unfolding time. Carrying the list directly
     ///   avoids round-tripping through the instantiate-time `env`,

@@ -18,10 +18,6 @@
 //!   - n constraints for bit decomposition (one boolean per bit)
 //!   - 1 constraint for sum equality (reconstruct value from bits)
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
-//! para Entornos de Compilación de Conocimiento Cero" (2026), §Vulnerabilidades y
-//! Restricciones en Desigualdades Lógicas, Dark Forest case study.
-//!
 //! Note: only numerical test vectors (not code) are referenced here.
 //! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 

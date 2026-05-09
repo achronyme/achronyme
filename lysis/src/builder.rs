@@ -122,7 +122,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     }
 
     // -----------------------------------------------------------------
-    // Opcode helpers (§4.3.1 capture / environment)
+    // Opcode helpers (capture / environment)
     // -----------------------------------------------------------------
 
     pub fn load_capture(&mut self, dst: u8, idx: u16) -> &mut Self {
@@ -146,7 +146,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     }
 
     // -----------------------------------------------------------------
-    // Opcode helpers (§4.3.2 control flow)
+    // Opcode helpers (control flow)
     // -----------------------------------------------------------------
 
     pub fn jump(&mut self, offset: i16) -> &mut Self {
@@ -170,7 +170,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     }
 
     // -----------------------------------------------------------------
-    // Opcode helpers (§4.3.3 loop semantics)
+    // Opcode helpers (loop semantics)
     // -----------------------------------------------------------------
 
     pub fn loop_unroll(&mut self, iter_var: u8, start: u32, end: u32, body_len: u16) -> &mut Self {
@@ -206,7 +206,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     }
 
     // -----------------------------------------------------------------
-    // Opcode helpers (§4.3.4 template instantiation)
+    // Opcode helpers (template instantiation)
     // -----------------------------------------------------------------
 
     pub fn define_template(
@@ -247,7 +247,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     }
 
     // -----------------------------------------------------------------
-    // Opcode helpers (§4.3.5 IR emission)
+    // Opcode helpers (IR emission)
     // -----------------------------------------------------------------
 
     pub fn emit_const(&mut self, dst: u8, src_reg: u8) -> &mut Self {

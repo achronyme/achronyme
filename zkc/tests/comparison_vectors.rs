@@ -21,10 +21,6 @@
 //!   - IsLt 64-bit: Circom ~65, Gnark ~65, Achronyme ~760 constraints
 //!   - This 12× gap is weakness D7 (STRATEGY.md), tracked by constraint count tests below.
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
-//! para Entornos de Compilación de Conocimiento Cero" (2026), §Vulnerabilidades y
-//! Restricciones en Desigualdades Lógicas.
-//!
 //! Note: only numerical test vectors (not code) are referenced here.
 //! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 

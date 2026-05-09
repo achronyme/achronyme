@@ -3,13 +3,14 @@
 //! Mirror of Artik's header in spirit but with its own magic and a
 //! different payload: Lysis has **no** `frame_size` in the header
 //! because frame sizes are per-template and encoded in `DefineTemplate`
-//! opcodes inside the body (see RFC §4.3.4). In exchange, the Lysis
+//! opcodes inside the body. In exchange, the Lysis
 //! header reserves one flag bit for `has_witness_calls`, which tells
 //! the runtime whether the const pool contains Artik bytecode blobs
 //! (const pool tag `0x02`) and whether the executor must be initialized
 //! with an Artik dispatcher.
 //!
-//! See RFC `§4.2 — Header layout` for the normative specification.
+//! Wire format is fixed; see [`Header::encode`] / [`Header::decode`]
+//! for the normative byte layout.
 
 use memory::FieldFamily;
 
@@ -121,7 +122,7 @@ impl LysisHeader {
     /// the canonical writer always tags new programs with the latest
     /// version. To re-emit a decoded v1 header in v1 form, callers
     /// would need a v1-specific encoder; none exists today (zero
-    /// in-tree v1 streams per research report §6.7).
+    /// in-tree v1 streams).
     pub fn encode(&self) -> [u8; HEADER_SIZE_V2] {
         let mut out = [0u8; HEADER_SIZE_V2];
         out[0..4].copy_from_slice(&MAGIC);
@@ -295,7 +296,7 @@ mod tests {
     fn v1_stream_decodes_with_zero_heap_hint() {
         // Hand-construct a 16-byte v1 stream and confirm the v2
         // decoder reads it with heap_size_hint = 0 (backward-compat
-        // contract from research report §6.7).
+        // contract from).
         let mut bytes = [0u8; HEADER_SIZE_V1];
         bytes[0..4].copy_from_slice(&MAGIC);
         bytes[4..6].copy_from_slice(&VERSION_V1.to_le_bytes());
@@ -326,7 +327,7 @@ mod tests {
     #[test]
     fn v2_max_heap_hint_roundtrips() {
         // Boundary: u16::MAX is the documented maximum (research
-        // report §6.2). Make sure encode/decode preserves it.
+        //). Make sure encode/decode preserves it.
         let h = LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0).with_heap_size_hint(u16::MAX);
         let decoded = LysisHeader::decode(&h.encode()).unwrap();
         assert_eq!(decoded.heap_size_hint, u16::MAX);

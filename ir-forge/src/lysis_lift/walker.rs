@@ -1,4 +1,4 @@
-//! ExtendedInstruction walker (RFC §6.3).
+//! ExtendedInstruction walker.
 //!
 //! Consumes a `Vec<ExtendedInstruction<F>>` and emits a Lysis
 //! `Program<F>` whose execution reproduces the original instruction
@@ -56,7 +56,7 @@
 //!
 //! ## Top-level template wrapping
 //!
-//! The Lysis bytecode caps a frame at 255 registers (RFC §5.1 "dense
+//! The Lysis bytecode caps a frame at 255 registers ( "dense
 //! bytecode" — frame_size is `u8`), so emitting an entire body into
 //! the root frame would trip `FrameOverflow` whenever the lowered SSA
 //! exceeds that width even if the underlying memory is nowhere near
@@ -85,7 +85,7 @@ use crate::extended::{IndexedEffectKind, ShiftDirection};
 use crate::{ExtendedInstruction, TemplateId};
 use ir_core::{Instruction, SsaVar, Visibility};
 
-/// Hard cap on the frame size (`u8` in RFC §5.1). The walker keeps
+/// Hard cap on the frame size (`u8` in). The walker keeps
 /// each template strictly below this — see [`reg_cost_of_emit`] for
 /// the per-emit cost estimator that informs the split decision.
 const FRAME_CAP: u32 = 255;
@@ -761,7 +761,7 @@ impl<F: FieldBackend> Walker<F> {
 
     /// Assemble the final Program. The body order is
     /// `[DefineTemplate(i)]*  +  InstantiateTemplate(0, [], [])  +  Halt
-    /// +  [Template 0 body]  +  [Template 1 body]  +  ...`. Offsets
+    /// +  [Template 0 body]  +  [Template 1 body]  +...`. Offsets
     /// are stamped on each `DefineTemplate` so the executor can
     /// resolve `body_offset` → instruction index.
     fn finalize(mut self) -> Result<Program<F>, WalkError> {
@@ -3065,7 +3065,7 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
         // heap and the post-split `resolve()` auto-faults them via
         // `LoadHeap`. Without this, the synth-on-demand fallback at
         // `emit_symbolic_indexed_effect`'s `ssa_to_reg.get(target)
-        // .is_none()` branch would mint a fresh `LoadInput` wire
+        //.is_none()` branch would mint a fresh `LoadInput` wire
         // inside the post-split template, turning e.g.
         // `paddedIn_X (Public)` into `__lysis_sym_slot_X (Witness)`
         // and leaving the public output wire unconstrained. The

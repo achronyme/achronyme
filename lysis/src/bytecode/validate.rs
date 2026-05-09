@@ -1,5 +1,5 @@
 //! Bytecode validator — the pre-execution well-formedness gate
-//! (RFC §4.5).
+//!.
 //!
 //! The validator consumes a [`Program`] that has already been
 //! structurally decoded (opcodes parsed, body byte-length matches
@@ -68,7 +68,7 @@ use crate::config::LysisConfig;
 use crate::error::LysisError;
 use crate::program::Program;
 
-/// Run every RFC §4.5 rule that is *statically* decidable (i.e., that
+/// Run every  rule that is *statically* decidable (i.e., that
 /// does not depend on runtime captures). Rule 5 and rule 2 are the
 /// executor's responsibility.
 pub fn validate<F: FieldBackend>(
@@ -267,7 +267,7 @@ fn check_jump_targets<F: FieldBackend>(program: &Program<F>) -> Result<(), Lysis
         };
 
         // Jump is relative to the end of the current opcode per RFC
-        // §4.3.2 (`pc += offset`). We can compute the expected
+        // (`pc += offset`). We can compute the expected
         // absolute offset from the current instruction's offset plus
         // its own encoded length. The current check simply requires
         // the target to land on *some* opcode boundary inside the

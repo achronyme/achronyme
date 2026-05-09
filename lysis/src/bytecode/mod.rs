@@ -2,11 +2,11 @@
 //!
 //! Components:
 //!
-//! - [`opcode::Opcode`] — all Lysis opcodes (RFC §4.3).
-//! - [`const_pool::ConstPool`] — the tagged constant pool (RFC §4.4).
+//! - [`opcode::Opcode`] — all Lysis opcodes.
+//! - [`const_pool::ConstPool`] — the tagged constant pool.
 //! - [`encoding::encode`] / [`encoding::decode`] — round-trip the
 //!   whole program.
-//! - [`validate::validate`] — the well-formedness rules (RFC §4.5).
+//! - [`validate::validate`] — the well-formedness rules.
 //!
 //! Downstream modules consume the decoded [`crate::program::Program`]
 //! and never touch raw bytes again.

@@ -16,8 +16,6 @@
 //!
 //! Bytecode, executor, lifter and walker integration are in place;
 //! template-body lifting and the heap spill path land progressively.
-//! Crate layout follows the Lysis RFC §3.2 and the
-//! opcode/const-pool/validator details follow RFC §4.
 
 pub mod builder;
 pub mod bytecode;

@@ -1,8 +1,8 @@
 //! Structural diff between two [`SymbolicTree`]s produced by the
-//! same body at different probe values (RFC §6.1, watchpoint #3).
+//! same body at different probe values.
 //!
 //! The BTA classifier calls [`symbolic_emit`] at least twice (three
-//! times under the RFC §6.1.1 v1.1 algorithm) with different
+//! times under the v1.1 algorithm) with different
 //! `(loop_var, concrete_i)` bindings; the results differ iff the
 //! loop body's structure depends on the loop variable. This module
 //! answers the question "how do they differ?" in one of two shapes:
@@ -14,7 +14,7 @@
 //!   the lifter can turn them into template captures.
 //! - [`Diff::Structural`] — at least one topological mismatch
 //!   (different kinds, arities, operand wiring, input names,
-//!   tags, ...). The caller classifies the enclosing loop as
+//!   tags,...). The caller classifies the enclosing loop as
 //!   `DataDependent` and falls back to inline unrolling.
 //!
 //! ## Why position-based comparison is sound (watchpoint #3)

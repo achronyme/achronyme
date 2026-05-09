@@ -13,9 +13,6 @@
 //! tool (snarkjs, iden3, GPL-3.0) independently certifies that our witness
 //! satisfies our constraints, and wire values match industry golden vectors.
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba" (2026),
-//! §Arquitectura Recomendada para el Ecosistema de Pruebas — Opción C (Golden Files).
-//!
 //! All tests gracefully skip if snarkjs is not available.
 
 use std::collections::HashMap;

@@ -15,14 +15,6 @@
 //!   - Ethereum Research: constraint benchmarks for Merkle+Poseidon
 //!     https://ethresear.ch/t/gas-and-circuit-constraint-benchmarks
 //!
-//! Reference: "Análisis Integral de Vectores de Prueba y Evaluación de Rendimiento
-//! para Entornos de Compilación de Conocimiento Cero" (2026), §Cadenas de Merkle.
-//!
-//! Constraint benchmark (Table 1):
-//!   Circom depth-20: ~4,380 | Gnark depth-20: ~5,000 | Achronyme: TBD
-//!
-//! Note: only numerical test vectors (merkle roots, hashes — not code) are used here.
-//! These are facts, not copyrightable expression — compatible with our Apache-2.0.
 
 use std::collections::HashMap;
 

@@ -1,6 +1,6 @@
 //! Deterministic structural hashing for [`crate::intern::NodeInterner`].
 //!
-//! Uses SipHash-2-4 with a **fixed 16-byte key** (RFC §5.4). The fixed
+//! Uses SipHash-2-4 with a **fixed 16-byte key**. The fixed
 //! key is what makes two independent runs of Lysis produce identical
 //! hashes for identical input — `std::collections::hash_map::RandomState`
 //! is seeded per-process and would make the `NodeMeta.hash` field

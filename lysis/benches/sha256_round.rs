@@ -1,7 +1,7 @@
 //! Microbenchmark: SHA-256 round body through the Lysis pipeline
 //! vs. equivalent emit-into-vec straight-line Rust.
 //!
-//! Per RFC §10's exit criterion ("SHA-256 round microbenchmark
+//! Exit criterion ("SHA-256 round microbenchmark
 //! within 2× of inline Rust"), this bench validates VM dispatch
 //! overhead is acceptable. It measures three costs:
 //!

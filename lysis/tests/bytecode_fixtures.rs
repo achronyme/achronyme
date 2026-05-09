@@ -3,10 +3,10 @@
 //! Three fixtures — `Num2Bits(8)`, a Poseidon round, and a SHA-256
 //! round — are built as raw `Vec<u8>` so the decoder and validator
 //! have something credible to exercise. The bodies are not
-//! executable as-is, but they follow the opcode layout of RFC §4.3
+//! executable as-is, but they follow the opcode layout of
 //! so the decoder can ingest them without rewriting the fixtures.
 //!
-//! What this file actually verifies (per RFC §10 "Exit criteria:
+//! What this file actually verifies ( "Exit criteria:
 //! fixtures parse"):
 //!
 //! 1. Each fixture's 16-byte header decodes via `LysisHeader::decode`.
@@ -20,7 +20,7 @@ use lysis::{LysisHeader, HEADER_SIZE};
 use memory::FieldFamily;
 
 // ---------------------------------------------------------------------
-// Opcode + tag constants (mirrors of RFC §4.3 + §4.4).
+// Opcode + tag constants (mirrors of the public `Opcode` enum).
 //
 // These are duplicated here, not imported from `lysis`, on purpose:
 // keeping them as plain `u8` constants documents the byte layout of
@@ -28,27 +28,27 @@ use memory::FieldFamily;
 // `Opcode` enum.
 // ---------------------------------------------------------------------
 
-// §4.3.1 Capture / environment
+// Capture / environment
 const OP_LOAD_CAPTURE: u8 = 0x01;
 const OP_LOAD_CONST: u8 = 0x02;
 const OP_LOAD_INPUT: u8 = 0x03;
 
-// §4.3.2 Control flow
+// Control flow
 const OP_HALT: u8 = 0x13;
 
-// §4.3.5 IR emission
+// IR emission
 const OP_EMIT_ADD: u8 = 0x41;
 const OP_EMIT_MUL: u8 = 0x43;
 const OP_EMIT_DECOMPOSE: u8 = 0x46;
 const OP_EMIT_RANGE_CHECK: u8 = 0x48;
 
-// §4.4 Const pool tags
+// Const pool tags
 const TAG_FIELD_CONST: u8 = 0x00;
 const TAG_STRING: u8 = 0x01;
 // const TAG_ARTIK_BYTECODE: u8 = 0x02;  // unused by these fixtures.
 // const TAG_SPAN: u8 = 0x03;
 
-// Input visibility bits for OP_LOAD_INPUT (§4.3.1).
+// Input visibility bits for OP_LOAD_INPUT.
 const VIS_PUBLIC: u8 = 0;
 const VIS_WITNESS: u8 = 1;
 
@@ -107,10 +107,10 @@ fn assemble(
 //
 // Lysis lowered sketch (n is a capture; fixture freezes n = 8):
 //
-//   LoadCapture  r0, captures[0]            ; r0 = n = 8 (sanity only)
-//   LoadInput    r1, "in", witness          ; r1 = in (public input)
-//   EmitDecompose r2, r1, 8                 ; r2 = base of out[0..8]
-//   EmitRangeCheck r2,  1                   ; each out[i] ∈ {0,1}
+//   LoadCapture  r0, captures[0]; r0 = n = 8 (sanity only)
+//   LoadInput    r1, "in", witness; r1 = in (public input)
+//   EmitDecompose r2, r1, 8; r2 = base of out[0..8]
+//   EmitRangeCheck r2,  1; each out[i] ∈ {0,1}
 //   EmitRangeCheck r3,  1
 //   EmitRangeCheck r4,  1
 //   EmitRangeCheck r5,  1

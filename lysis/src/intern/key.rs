@@ -1,11 +1,11 @@
 //! `NodeKey<F>` — the structural key that [`NodeInterner`] hashes
-//! and dedupes on (RFC §5.1).
+//! and dedupes on.
 //!
 //! Every pure [`InstructionKind`] variant maps 1:1 to a `NodeKey`
 //! variant. Side-effecting variants (`Input`, `AssertEq`, `Assert`,
 //! `RangeCheck`, `Decompose`, `WitnessCall`) do **not** appear here
 //! — they flow through [`crate::intern::effect::SideEffect`] instead
-//! (RFC §5.3).
+//!.
 //!
 //! Two textually-identical pure instructions produce identical
 //! `NodeKey` values; that's what the interner depends on to dedup.

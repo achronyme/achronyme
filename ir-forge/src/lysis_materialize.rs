@@ -7,9 +7,9 @@
 //! flat `Vec<Instruction<F>>`. The two steps combined — consume the
 //! interner, flatten to the mirror enum, convert each node through
 //! the bridge — are what the lifter uses to close the
-//! `ProveIR-extended → ... → ir::Instruction<F>` pipeline.
+//! `ProveIR-extended →... → ir::Instruction<F>` pipeline.
 //!
-//! ## Memory handoff (RFC §5.6.1 route (c))
+//! ## Memory handoff ( route (c))
 //!
 //! The interner is consumed by value so its backing `IndexMap` +
 //! span storage drop before we return. The intermediate

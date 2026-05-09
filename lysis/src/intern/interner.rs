@@ -1,4 +1,4 @@
-//! `NodeInterner<F>` — the hash-consing core (RFC §5.1–5.3, §5.5).
+//! `NodeInterner<F>` — the hash-consing core.
 //!
 //! Two disjoint channels:
 //!

@@ -158,9 +158,9 @@ impl From<RoundTripError> for LysisInstantiateError {
 /// it exercises the bytecode wire format on every call so any future
 /// schema drift trips here, not at a downstream gate. The semantic
 /// validator (`lysis::bytecode::validate`) is **debug-only**. It
-/// checks RFC §4.5 well-formedness rules (const bounds, jump targets,
-/// register bounds, dataflow, reachability, call graph, heap slots)
-/// — the executor backstops every one of those at runtime, so
+/// checks the structural well-formedness rules (const bounds, jump
+/// targets, register bounds, dataflow, reachability, call graph, heap
+/// slots) — the executor backstops every one of those at runtime, so
 /// skipping in release trades a ~741 ms cost on SHA-256(64) for a
 /// debug-mode-only safety net. Schema drift detection moves to
 /// `cargo test --workspace` (which runs in debug mode unless

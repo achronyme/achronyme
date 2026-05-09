@@ -6,7 +6,7 @@
 //! and records spans in a side-band `var_spans: HashMap<SsaVar,
 //! SpanRange>`. When migrating the compiler to emit
 //! `ExtendedInstruction<F>` for Lysis, the question was: where do
-//! spans live now? The three options (see RFC §3.1.1 notes):
+//! spans live now? The three options ( notes):
 //!
 //! - **(a) `Plain(Instruction<F>, Span)`** — explicit span per
 //!   entry. Rejected: forces every caller to plumb a span even

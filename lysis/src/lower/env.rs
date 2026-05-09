@@ -1,12 +1,12 @@
-//! Scoped capture environment for template bodies (RFC §6.4).
+//! Scoped capture environment for template bodies.
 //!
 //! The lowering pass maps **source names** (the `String` identifiers
 //! carried on `SsaVar` / `ExtendedInstruction::TemplateCall.outputs`
 //! bindings) to **register ids** (`u8` slots in the current frame).
 //! When a template body opens a new scope, any bindings introduced
 //! inside must die at `ExitScope`; otherwise per-iteration binding
-//! trails would grow unbounded — the exact pathology RFC §1 calls
-//! out as the cause of the 6.4 GB peak RSS on SHA-256(64).
+//! trails grow unbounded — the pathology that drove the 6.4 GB peak
+//! RSS observed on SHA-256(64).
 //!
 //! ## Design — "Tarjan-stack" semantics
 //!
@@ -32,7 +32,7 @@
 //!   instead of collapsing the structure.
 //! - Shadowing inside a single scope is allowed — `lookup` returns
 //!   the most recent binding. This tolerates the rare
-//!   `let x = ...; let x = ...;` pattern the ProveIR compiler already
+//!   `let x =...; let x =...;` pattern the ProveIR compiler already
 //!   emits.
 //! - `enter_scope` / `exit_scope` must be paired by the caller. An
 //!   imbalance is a lifter bug, not an end-user error.
@@ -41,12 +41,12 @@ use std::borrow::Borrow;
 use std::hash::Hash;
 
 /// Register index in a Lysis frame. Matches the `u8` slot width used
-/// throughout the bytecode (see RFC §4.3, §6.2).
+/// throughout the bytecode (, ).
 pub type RegId = u8;
 
 /// Errors raised by [`ScopedMap`]. Only surfaces when the caller
 /// misuses the API — the executor never sees one of these at runtime
-/// because the bytecode validator (RFC §4.5 rules 4/8) has already
+/// because the bytecode validator has already
 /// rejected programs with unbalanced scopes before execution.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ScopedMapError {
@@ -67,7 +67,7 @@ impl std::fmt::Display for ScopedMapError {
 impl std::error::Error for ScopedMapError {}
 
 /// A lexically-scoped key/value map with `enter_scope` / `exit_scope`
-/// semantics (RFC §6.4).
+/// semantics.
 ///
 /// The canonical instantiation in the Lysis lifter is
 /// `ScopedMap<String, RegId>`. The type is generic so the unit tests

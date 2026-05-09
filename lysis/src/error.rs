@@ -47,9 +47,9 @@ pub enum LysisError {
     BodyLenMismatch { declared: u32, actual: u32 },
 
     // -----------------------------------------------------------------
-    // Validator errors — see RFC §4.5
+    // Validator errors —
     // -----------------------------------------------------------------
-    /// A generic structural-invariant violation. `rule` is the RFC §4.5
+    /// A generic structural-invariant violation. `rule` is the
     /// rule number (1-indexed, 1–11); `location` is the byte offset in
     /// the body where the check failed, or 0 if global.
     ValidationFailed {

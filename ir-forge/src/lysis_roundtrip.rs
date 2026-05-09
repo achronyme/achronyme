@@ -102,8 +102,8 @@ impl From<LysisError> for RoundTripError {
 ///    format on every call so future schema drift trips the smoke
 ///    test, not a downstream gate).
 /// 4. In **debug builds**, run `lysis::bytecode::validate` on the
-///    decoded program. The validator enforces RFC §4.5
-///    well-formedness, fully backstopped by the executor at runtime;
+///    decoded program. The validator enforces structural well-
+///    formedness, fully backstopped by the executor at runtime;
 ///    release builds skip it for speed.
 /// 5. Execute the bytecode against an [`InterningSink`].
 /// 6. Materialize the sink to a flat `Vec<Instruction<F>>`.

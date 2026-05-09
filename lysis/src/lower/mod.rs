@@ -1,7 +1,7 @@
 //! Lowering-side primitives that the Lysis lifter uses.
 //!
 //! This module holds the **leaf** pieces of the lowering machinery
-//! (RFC §6): data structures that operate on Lysis-native types only.
+//!: data structures that operate on Lysis-native types only.
 //! Everything that consumes `ir_forge::ExtendedInstruction<F>` —
 //! the walker, BTA, symbolic emission, structural diff, template
 //! extraction — lives under `ir_forge::lysis_lower` because the
@@ -11,8 +11,8 @@
 //! What stays here:
 //!
 //! - [`env`] — scoped capture map (`ScopedMap<String, RegId>`) with
-//!   Tarjan-stack semantics (RFC §6.4).
-//! - [`alloc`] — frame register allocator (RFC §6.2).
+//!   Tarjan-stack semantics.
+//! - [`alloc`] — frame register allocator.
 //!
 //! What lives on the `ir` side:
 //!
