@@ -2211,6 +2211,55 @@ fn fn_witness_lift_circomlib_mod_exp_unrolled_integration() {
     );
 }
 
+/// Lift `mod_inv` from circomlib's bigint witness call graph at
+/// `n=32, k=2`. Composes the full Phase 1-5 surface: outer for with
+/// runtime if + scalar mux, an early-return branching on `isZero`,
+/// compile-time-folded inner if/else for the `pCopy` fill, and two
+/// whole-array rebinds — `pMinusTwo = long_sub(...)` and the
+/// runtime-while-lifted `out = mod_exp(...)`.
+#[test]
+fn fn_witness_lift_circomlib_mod_inv_integration() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_bigint_mod_inv_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("mod_inv integration failed to compile: {e}"));
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall for mod_inv");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("mod_inv payload must decode and validate");
+
+    // mod_inv has two return paths (`if (isZero) return ret;` and the
+    // tail `return out;`); each path emits its own write-witness loop
+    // at lift time, but both must target the *same* slot ids so the
+    // function's effective witness signature stays at 100 outputs.
+    let unique_slots: std::collections::HashSet<u32> = prog
+        .body
+        .iter()
+        .filter_map(|i| match i {
+            artik::Instr::WriteWitness { slot_id, .. } => Some(*slot_id),
+            _ => None,
+        })
+        .collect();
+    assert_eq!(
+        unique_slots.len(),
+        100,
+        "mod_inv must reuse the same 100 witness slots across its two \
+         return paths; saw {} unique ids",
+        unique_slots.len()
+    );
+}
+
 /// Fase 2.1 lift extension: a nested function call inside another
 /// lifted function body is inlined into the same Artik program.
 /// `compute(x)` calls `helper` twice; both invocations lower into
@@ -4680,7 +4729,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Currently blocked at the post-mod_inv constraint-lowering path: multi-dim component-array assignment (e.g. `pubkey_mult.point[0][idx] <== pubkey[0][idx]`) errors with `assignment target must be an identifier in circuit context`. Closing this gap is downstream of the witness-calc lift work that closed `mod_inv`. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 

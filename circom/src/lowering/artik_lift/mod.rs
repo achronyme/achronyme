@@ -247,9 +247,16 @@ struct LiftState<'f> {
     /// Lazily populated on the first scalar `return` so multi-return
     /// shapes (e.g. early-exit `if (cond) return X;` followed by a
     /// later `return Y;`) all write to the same slot. `None` until the
-    /// first scalar return; `Some` afterwards. Array returns continue
-    /// to allocate per-element slots inline.
+    /// first scalar return; `Some` afterwards.
     output_slot: Option<u32>,
+    /// Witness slots reserved for the function's array return value.
+    /// Functions with multiple array-returning paths (e.g.
+    /// `mod_inv`'s `if (isZero) return ret;` early-exit followed by a
+    /// later `return out;`) must reuse the same slot range across all
+    /// returns — otherwise each path allocates a fresh range and the
+    /// caller sees the wrong count. Lazily populated on the first
+    /// array return; subsequent returns require a matching length.
+    output_array_slots: Option<Vec<u32>>,
     /// Arrays that have been pre-allocated by an enclosing
     /// `lift_while`. When the body's `VarDecl` re-encounters one of
     /// these names, it must skip the `AllocArray` — otherwise the
@@ -353,6 +360,7 @@ impl<'f> LiftState<'f> {
             nested_depth: 0,
             nested_result: None,
             output_slot: None,
+            output_array_slots: None,
             hoisted_arrays: std::collections::HashMap::new(),
         }
     }

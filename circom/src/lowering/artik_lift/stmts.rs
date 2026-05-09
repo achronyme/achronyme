@@ -568,8 +568,18 @@ impl<'f> LiftState<'f> {
                             self.halted = true;
                             return Some(());
                         }
-                        for i in 0..len {
-                            let slot = self.builder.alloc_witness_slot();
+                        let slots = match self.output_array_slots.as_ref() {
+                            Some(s) if s.len() == len as usize => s.clone(),
+                            Some(_) => return None,
+                            None => {
+                                let s: Vec<u32> = (0..len)
+                                    .map(|_| self.builder.alloc_witness_slot())
+                                    .collect();
+                                self.output_array_slots = Some(s.clone());
+                                s
+                            }
+                        };
+                        for (i, slot) in slots.iter().copied().enumerate() {
                             let idx_reg = self.push_int_const(i as u64)?;
                             let val_reg = self.builder.load_arr(arr_reg, idx_reg);
                             self.builder.write_witness(slot, val_reg);
@@ -601,8 +611,18 @@ impl<'f> LiftState<'f> {
                         self.halted = true;
                         return Some(());
                     }
-                    for i in 0..len {
-                        let slot = self.builder.alloc_witness_slot();
+                    let slots = match self.output_array_slots.as_ref() {
+                        Some(s) if s.len() == len as usize => s.clone(),
+                        Some(_) => return None,
+                        None => {
+                            let s: Vec<u32> = (0..len)
+                                .map(|_| self.builder.alloc_witness_slot())
+                                .collect();
+                            self.output_array_slots = Some(s.clone());
+                            s
+                        }
+                    };
+                    for (i, slot) in slots.iter().copied().enumerate() {
                         let idx_reg = self.push_int_const(i as u64)?;
                         let val_reg = self.builder.load_arr(handle, idx_reg);
                         self.builder.write_witness(slot, val_reg);

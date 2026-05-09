@@ -216,6 +216,57 @@ fn inline_function_call(
                                 "shape Array(_) was derived from an Ident arg just above"
                             ),
                         };
+
+                        // Compile-time-known array (e.g. `var order[100]
+                        // = get_secp256k1_order(n, k)` in ECDSAVerify):
+                        // expand each element to a `CircuitExpr::Const`
+                        // straight from `known_array_values`. The
+                        // signal-array path below requires `env.resolve`
+                        // to find the name in inputs/locals/captures;
+                        // compile-time arrays don't appear there
+                        // because their elements aren't signals.
+                        if let Some(eval_value) = env.known_array_values.get(arg_name) {
+                            let elems = match eval_value {
+                                super::super::utils::EvalValue::Array(es) => es,
+                                _ => {
+                                    ctx.inline_depth -= 1;
+                                    return Err(LoweringError::new(
+                                        format!(
+                                            "array argument `{arg_name}` has a known compile-time \
+                                             value but is not an array shape"
+                                        ),
+                                        arg_span,
+                                    ));
+                                }
+                            };
+                            if elems.len() < *len as usize {
+                                ctx.inline_depth -= 1;
+                                return Err(LoweringError::new(
+                                    format!(
+                                        "array argument `{arg_name}` has {} compile-time elements \
+                                         but the lift expected {}",
+                                        elems.len(),
+                                        *len
+                                    ),
+                                    arg_span,
+                                ));
+                            }
+                            for (i, elem) in elems.iter().enumerate().take(*len as usize) {
+                                let scalar = elem.as_scalar().ok_or_else(|| {
+                                    LoweringError::new(
+                                        format!(
+                                            "compile-time array `{arg_name}` element {i} is not a \
+                                             scalar value — Artik can only bind scalar field \
+                                             constants"
+                                        ),
+                                        arg_span,
+                                    )
+                                })?;
+                                lowered_args.push(CircuitExpr::Const(scalar.to_field_const()));
+                            }
+                            continue;
+                        }
+
                         // Element names (`arr_0`, `arr_1`, ...) are
                         // materialized at instantiate time, not at
                         // lower time — `lower_expr(Ident("inp_0"))`
