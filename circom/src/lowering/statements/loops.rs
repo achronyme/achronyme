@@ -1282,6 +1282,57 @@ fn stmt_is_var_only(stmt: &Stmt) -> bool {
 ///
 /// Does NOT match simple loops like Num2Bits where `lc1 += out[i] * 2**i`
 /// is a direct var mutation (no if-branched signal ops).
+/// `true` if any statement (possibly nested in if/for/while/block) is
+/// an indexed `=` Substitution or compound-assign whose target is a
+/// chain of `Index`/`DotAccess` rooted at a bare `Ident`.
+///
+/// Signal arrays use `<==` / `<--` / `==>` / `-->` (distinct op
+/// variants), so this predicate fires only on var-array writes. The
+/// lowering-time unroll regime that consumes this signal materialises
+/// per-iter SSA Lets via `env.resolve_array_element`, which requires
+/// concrete indices at lowering time.
+fn body_has_local_var_array_indexed_writes(stmts: &[Stmt]) -> bool {
+    stmts.iter().any(stmt_has_local_var_array_indexed_write)
+}
+
+fn stmt_has_local_var_array_indexed_write(stmt: &Stmt) -> bool {
+    match stmt {
+        Stmt::Substitution {
+            target,
+            op: AssignOp::Assign,
+            ..
+        } => matches!(target, Expr::Index { .. }),
+        Stmt::CompoundAssign { target, .. } => matches!(target, Expr::Index { .. }),
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            then_body
+                .stmts
+                .iter()
+                .any(stmt_has_local_var_array_indexed_write)
+                || match else_body {
+                    Some(ElseBranch::Block(b)) => b
+                        .stmts
+                        .iter()
+                        .any(stmt_has_local_var_array_indexed_write),
+                    Some(ElseBranch::IfElse(s)) => stmt_has_local_var_array_indexed_write(s),
+                    None => false,
+                }
+        }
+        Stmt::Block(b) => b
+            .stmts
+            .iter()
+            .any(stmt_has_local_var_array_indexed_write),
+        Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => body
+            .stmts
+            .iter()
+            .any(stmt_has_local_var_array_indexed_write),
+        _ => false,
+    }
+}
+
 fn body_mixes_signals_and_vars(stmts: &[Stmt]) -> bool {
     // Pattern: if/else containing signal ops + var mutations at the same level
     let has_branched_signal_ops = stmts.iter().any(|s| match s {
@@ -1699,6 +1750,18 @@ pub(super) fn classify_loop_body(
     env: &LoweringEnv,
     loop_var: &str,
 ) -> Option<LoopLowering> {
+    // Indexed `=` / compound-assign writes to a template-local `var`
+    // array (BigMultNoCarry's `prod_val[i] = 0;` and
+    // `prod_val[i+j] += a[i] * b[j];`) need the loop unroller to
+    // resolve `i` to a constant per iteration, because the lowering
+    // path emits one SSA `Let { name: "prod_val_<flat>", value: … }`
+    // per iter. Signal-array writes (`<==` / `<--`) use a different
+    // op variant, so this predicate uniquely fires on var-array
+    // writes — the lowering-time unroll regime is mandatory for
+    // them.
+    if body_has_local_var_array_indexed_writes(stmts) {
+        return Some(LoopLowering::IndexedAssignmentLoop);
+    }
     if body_mixes_signals_and_vars(stmts) {
         return Some(LoopLowering::MixedSignalVar);
     }

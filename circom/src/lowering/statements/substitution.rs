@@ -299,6 +299,35 @@ fn lower_var_assign<'a>(
         return Ok(());
     }
 
+    // Indexed `=` write to a template-local var array (e.g.
+    // `prod_val[i] = 0;` in BigMultNoCarry's polynomial-fingerprint
+    // pattern). Re-bind the element's SSA slot under its flat name
+    // (`prod_val_3`) via Let-shadow; subsequent reads of `prod_val[3]`
+    // resolve to `Var(prod_val_3)` through `env.resolve_array_element`.
+    if let Some(assign_target) = extract_assign_target_ctx(target, ctx, env) {
+        match assign_target {
+            AssignTarget::Indexed { array, index } => {
+                if env.arrays.contains_key(&array) {
+                    let idx_refs: [&Expr; 1] = [index.as_ref()];
+                    return lower_local_array_element_assign(
+                        &array, &idx_refs, value, span, &sr, env, nodes, ctx,
+                    );
+                }
+            }
+            AssignTarget::MultiIndexed { array, indices } => {
+                if env.arrays.contains_key(&array) {
+                    let idx_refs: Vec<&Expr> = indices.iter().collect();
+                    return lower_local_array_element_assign(
+                        &array, &idx_refs, value, span, &sr, env, nodes, ctx,
+                    );
+                }
+            }
+            AssignTarget::Scalar(_) => {
+                // Falls through to the Ident-only path below.
+            }
+        }
+    }
+
     let name = extract_target_name(target).ok_or_else(|| {
         LoweringError::new(
             "assignment target must be an identifier in circuit context",
@@ -383,6 +412,102 @@ fn lower_var_assign<'a>(
     });
 
     Ok(())
+}
+
+/// Lower an indexed `=` write to a registered local var array.
+///
+/// `prod_val[const_i] = expr` → `Let { name: "prod_val_i", value: lowered_expr }`.
+/// For multi-dim, `split[i][j]` flattens via `env.strides` to a single
+/// element index, then the same SSA shadow applies. Symbolic indices are
+/// rejected with a structured error — circomlib's polynomial-fingerprint
+/// patterns always run inside loops where `i` const-folds per iteration.
+#[allow(clippy::too_many_arguments)]
+fn lower_local_array_element_assign(
+    array: &str,
+    indices: &[&Expr],
+    value: &Expr,
+    span: &diagnostics::Span,
+    sr: &Option<SpanRange>,
+    env: &mut LoweringEnv,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'_>,
+) -> Result<(), LoweringError> {
+    let elem_name = resolve_local_array_element_name(array, indices, span, env, ctx)?;
+    let lowered = lower_expr(value, env, ctx)?;
+    nodes.push(CircuitNode::Let {
+        name: elem_name,
+        value: lowered,
+        span: sr.clone(),
+    });
+    Ok(())
+}
+
+/// Resolve `array` + `indices` to a flat element name like `"prod_val_3"`.
+///
+/// Indices must const-fold (loop unroll bakes in the iteration index, so
+/// the only callers that hit symbolic indices are misuse cases — surface
+/// them as a clean lowering error). Each index is bounds-checked against
+/// the registered array length; out-of-bounds writes also surface as a
+/// clean error rather than silently materialising a slot that nothing
+/// allocated.
+fn resolve_local_array_element_name(
+    array: &str,
+    indices: &[&Expr],
+    span: &diagnostics::Span,
+    env: &LoweringEnv,
+    ctx: &LoweringContext<'_>,
+) -> Result<String, LoweringError> {
+    let total_len = *env.arrays.get(array).ok_or_else(|| {
+        LoweringError::new(
+            format!("array `{array}` is not registered as a local var array"),
+            span,
+        )
+    })?;
+
+    let mut idx_values: Vec<usize> = Vec::with_capacity(indices.len());
+    for idx_expr in indices {
+        let fc = crate::lowering::utils::const_eval_ctx(idx_expr, ctx, env).ok_or_else(|| {
+            LoweringError::new(
+                format!(
+                    "symbolic index in write to var array `{array}` is not supported \
+                     in circuit context — circomlib patterns assume the loop unroller \
+                     resolves `i` to a constant per iteration"
+                ),
+                span,
+            )
+        })?;
+        let v = fc.to_u64().ok_or_else(|| {
+            LoweringError::new(
+                format!("index in write to var array `{array}` exceeds u64::MAX"),
+                span,
+            )
+        })?;
+        idx_values.push(v as usize);
+    }
+
+    let strides = env.strides.get(array);
+    let n = idx_values.len();
+    let mut linear: usize = 0;
+    for (dim, &val) in idx_values.iter().enumerate() {
+        let stride = if dim < n - 1 {
+            strides.and_then(|s| s.get(dim)).copied().unwrap_or(1)
+        } else {
+            1
+        };
+        linear += val * stride;
+    }
+
+    if linear >= total_len {
+        return Err(LoweringError::new(
+            format!(
+                "write to var array `{array}` at flat index {linear} is out of bounds \
+                 ({total_len} elements registered)"
+            ),
+            span,
+        ));
+    }
+
+    Ok(format!("{array}_{linear}"))
 }
 
 /// Lower a tuple destructuring substitution.
