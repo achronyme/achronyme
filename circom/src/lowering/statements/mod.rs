@@ -579,6 +579,35 @@ fn lower_var_decl(
                     });
                     if let Some(elements) = matching {
                         let len = elements.len();
+                        // Multi-dim destination (`var X[R][C] = call(...)`):
+                        // the Artik lift flattens 2D returns to a 1D
+                        // `LetArray` with `rows*cols` slots, losing the
+                        // declared shape. Seed `env.strides` from the
+                        // syntactic dimensions so subsequent `X[i][j]`
+                        // reads linearise via `linearize_multi_index`
+                        // (i * cols + j) instead of falling back to
+                        // stride=1 or surfacing E213 when the outer
+                        // index lands on a memoization placeholder.
+                        if dimensions.len() > 1 {
+                            let dim_values =
+                                resolve_const_dimensions(dimensions, span, env, ctx)?;
+                            let declared_total: usize = dim_values.iter().product();
+                            if declared_total != len {
+                                return Err(LoweringError::new(
+                                    format!(
+                                        "declared shape of `{}` has {} cells \
+                                         (dimensions {:?}) but the initializer \
+                                         produced {} elements",
+                                        names[0], declared_total, dim_values, len
+                                    ),
+                                    span,
+                                ));
+                            }
+                            let strides = compute_row_major_strides(&dim_values);
+                            if !strides.is_empty() {
+                                env.strides.insert(names[0].clone(), strides);
+                            }
+                        }
                         nodes.push(CircuitNode::LetArray {
                             name: names[0].clone(),
                             elements,
