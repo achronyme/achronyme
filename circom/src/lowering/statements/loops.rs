@@ -1675,6 +1675,23 @@ pub(super) struct ParsedLoopCond {
 /// Descending: `i != -1`. Returns `bound = LoopBound::Literal(0)`
 /// (lower-inclusive end) and `is_descending = true`. The unroll path
 /// iterates the loop variable from `start` down to `0` inclusive.
+/// Build `rhs + 1` as a fresh AST node so the loop classifier can lift
+/// `i <= rhs` to the upper-exclusive form `i < rhs + 1` and let the
+/// downstream `LoopBound::Expr` path evaluate it uniformly. The span
+/// of the resulting expression points back at the original `rhs`.
+fn make_inclusive_to_exclusive(rhs: &Expr) -> Expr {
+    let span = rhs.span().clone();
+    Expr::BinOp {
+        op: BinOp::Add,
+        lhs: Box::new(rhs.clone()),
+        rhs: Box::new(Expr::Number {
+            value: "1".to_string(),
+            span: span.clone(),
+        }),
+        span,
+    }
+}
+
 fn extract_loop_bound(
     condition: &Expr,
     var_name: &str,
@@ -1747,22 +1764,36 @@ fn extract_loop_bound(
                             bound: LoopBound::Capture(name.clone()),
                             is_descending: false,
                         }),
-                        // i <= capture: not directly representable as WithCapture
-                        // (would need capture + 1). For now, only support <.
+                        // `i <= capture` becomes `i < capture + 1`. The
+                        // `Capture` variant carries only the bare name,
+                        // so the inclusive form rebinds through the
+                        // `Expr` variant — which the downstream
+                        // `resolve_bound_to_u64` / `LoopBound → ForRange`
+                        // path already evaluates against bound captures.
+                        BinOp::Le => Some(ParsedLoopCond {
+                            bound: LoopBound::Expr(make_inclusive_to_exclusive(rhs.as_ref())),
+                            is_descending: false,
+                        }),
                         _ => None,
                     };
                 }
             }
 
-            // Expression bound (e.g., `i < n + 1`) — defer lowering to caller
-            if matches!(op, BinOp::Lt) {
-                return Some(ParsedLoopCond {
+            // Expression bound (e.g., `i < n + 1` or `i <= n + m`).
+            // `<=` rewrites to `<` over `rhs + 1` so the downstream
+            // path sees a single exclusive-upper-bound representation
+            // regardless of the source-level operator.
+            match op {
+                BinOp::Lt => Some(ParsedLoopCond {
                     bound: LoopBound::Expr(rhs.as_ref().clone()),
                     is_descending: false,
-                });
+                }),
+                BinOp::Le => Some(ParsedLoopCond {
+                    bound: LoopBound::Expr(make_inclusive_to_exclusive(rhs.as_ref())),
+                    is_descending: false,
+                }),
+                _ => None,
             }
-
-            None
         }
         _ => None,
     }
