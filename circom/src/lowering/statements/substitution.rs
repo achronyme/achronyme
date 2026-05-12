@@ -310,7 +310,7 @@ fn lower_var_assign<'a>(
                 if env.arrays.contains_key(&array) {
                     let idx_refs: [&Expr; 1] = [index.as_ref()];
                     return lower_local_array_element_assign(
-                        &array, &idx_refs, value, span, &sr, env, nodes, ctx,
+                        &array, &idx_refs, value, span, sr, env, nodes, ctx,
                     );
                 }
             }
@@ -318,7 +318,7 @@ fn lower_var_assign<'a>(
                 if env.arrays.contains_key(&array) {
                     let idx_refs: Vec<&Expr> = indices.iter().collect();
                     return lower_local_array_element_assign(
-                        &array, &idx_refs, value, span, &sr, env, nodes, ctx,
+                        &array, &idx_refs, value, span, sr, env, nodes, ctx,
                     );
                 }
             }

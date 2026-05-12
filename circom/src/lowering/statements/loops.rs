@@ -1324,18 +1324,14 @@ fn stmt_has_local_var_array_indexed_write(stmt: &Stmt) -> bool {
                 .iter()
                 .any(stmt_has_local_var_array_indexed_write)
                 || match else_body {
-                    Some(ElseBranch::Block(b)) => b
-                        .stmts
-                        .iter()
-                        .any(stmt_has_local_var_array_indexed_write),
+                    Some(ElseBranch::Block(b)) => {
+                        b.stmts.iter().any(stmt_has_local_var_array_indexed_write)
+                    }
                     Some(ElseBranch::IfElse(s)) => stmt_has_local_var_array_indexed_write(s),
                     None => false,
                 }
         }
-        Stmt::Block(b) => b
-            .stmts
-            .iter()
-            .any(stmt_has_local_var_array_indexed_write),
+        Stmt::Block(b) => b.stmts.iter().any(stmt_has_local_var_array_indexed_write),
         Stmt::For { body, .. } | Stmt::While { body, .. } | Stmt::DoWhile { body, .. } => body
             .stmts
             .iter()

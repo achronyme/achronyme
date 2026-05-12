@@ -304,9 +304,7 @@ fn lower_stmt<'a>(
             // The loop classifier preempts to `IndexedAssignmentLoop` for
             // any body with indexed assignments, so `i` / `j` const-fold
             // per iteration.
-            if let Some(assign_target) =
-                targets::extract_assign_target_ctx(target, ctx, env)
-            {
+            if let Some(assign_target) = targets::extract_assign_target_ctx(target, ctx, env) {
                 let (array, idx_refs_owned) = match &assign_target {
                     targets::AssignTarget::Indexed { array, index } => {
                         (array.clone(), vec![(**index).clone()])
@@ -323,8 +321,7 @@ fn lower_stmt<'a>(
                     )?;
                     let current = CircuitExpr::Var(elem_name.clone());
                     let rhs = lower_expr(value, env, ctx)?;
-                    let bin_op =
-                        substitution::compound_to_binop(*op, &current, rhs, span)?;
+                    let bin_op = substitution::compound_to_binop(*op, &current, rhs, span)?;
                     nodes.push(CircuitNode::Let {
                         name: elem_name,
                         value: bin_op,
@@ -679,9 +676,7 @@ fn lower_uninit_array_var_decl(
     for base in names {
         if env.inputs.contains(base) || env.captures.contains(base) {
             return Err(LoweringError::new(
-                format!(
-                    "var `{base}` shadows a template input or capture of the same name"
-                ),
+                format!("var `{base}` shadows a template input or capture of the same name"),
                 span,
             ));
         }
