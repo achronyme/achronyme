@@ -241,9 +241,12 @@ fn lower_stmt<'a>(
 
         // ── Variable declarations ───────────────────────────────────
         Stmt::VarDecl {
-            names, init, span, ..
+            names,
+            dimensions,
+            init,
+            span,
         } => {
-            lower_var_decl(names, init.as_ref(), span, env, nodes, ctx)?;
+            lower_var_decl(names, dimensions, init.as_ref(), span, env, nodes, ctx)?;
         }
 
         // ── Substitutions (signal assignments) ──────────────────────
@@ -431,12 +434,22 @@ fn lower_stmt<'a>(
 /// Lower a variable declaration statement.
 fn lower_var_decl(
     names: &[String],
+    dimensions: &[Expr],
     init: Option<&Expr>,
     span: &diagnostics::Span,
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'_>,
 ) -> Result<(), LoweringError> {
+    // `var X[N1][N2]...;` (no init): allocate zero-initialized
+    // per-element Lets when all dimensions are compile-time constants.
+    // The polynomial-fingerprint pattern in circomlib's BigMultNoCarry /
+    // BigMultShortLong needs this so subsequent `X[i] = expr` writes have
+    // a backing slot to land in via the SSA shadow path.
+    if init.is_none() && !dimensions.is_empty() {
+        return lower_uninit_array_var_decl(names, dimensions, span, env, nodes, ctx);
+    }
+
     if let Some(value) = init {
         if names.len() == 1 {
             // Skip nested (2D+) array literals already resolved by precompute_all
@@ -569,12 +582,105 @@ fn lower_var_decl(
             }
         }
     } else {
-        // Uninitialized var — just register name, will be assigned later.
+        // Uninitialized scalar var — just register name, will be assigned later.
         for name in names {
             env.locals.insert(name.clone());
         }
     }
     Ok(())
+}
+
+/// Allocate per-element zero-initialized slots for an uninitialized
+/// array var declaration (`var X[N];`, `var X[N][M];`).
+///
+/// Each leaf slot becomes a `CircuitNode::Let { name: "X_i_..._j", value: Const(0) }`,
+/// registered as an array of `total_len` elements with row-major
+/// strides. Subsequent indexed writes (`X[i] = expr`, `X[i] += expr`)
+/// re-bind these slots under the same flat element name via SSA shadow,
+/// and indexed reads resolve through `env.resolve_array_element` →
+/// `CircuitExpr::Var("X_i")` exactly like signal-array reads.
+///
+/// Errors:
+/// - any dimension that is not compile-time-foldable
+/// - any dimension that exceeds `u32::MAX` (defensive — `Vec` capacity)
+/// - a name already registered as an array, input, or capture
+fn lower_uninit_array_var_decl(
+    names: &[String],
+    dimensions: &[Expr],
+    span: &diagnostics::Span,
+    env: &mut LoweringEnv,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'_>,
+) -> Result<(), LoweringError> {
+    let mut dim_values: Vec<usize> = Vec::with_capacity(dimensions.len());
+    for d in dimensions {
+        let fc = crate::lowering::utils::const_eval_ctx(d, ctx, env).ok_or_else(|| {
+            LoweringError::new(
+                "var array dimension must be a compile-time constant in circuit context",
+                span,
+            )
+        })?;
+        let v = fc.to_u64().ok_or_else(|| {
+            LoweringError::new(
+                "var array dimension exceeds u64::MAX in circuit context",
+                span,
+            )
+        })?;
+        if v > u32::MAX as u64 {
+            return Err(LoweringError::new(
+                "var array dimension exceeds u32::MAX in circuit context",
+                span,
+            ));
+        }
+        dim_values.push(v as usize);
+    }
+
+    let total_len: usize = dim_values.iter().product();
+    let strides = compute_row_major_strides(&dim_values);
+    let sr = Some(SpanRange::from_span(span));
+
+    for base in names {
+        if env.inputs.contains(base) || env.captures.contains(base) {
+            return Err(LoweringError::new(
+                format!(
+                    "var `{base}` shadows a template input or capture of the same name"
+                ),
+                span,
+            ));
+        }
+        for i in 0..total_len {
+            let elem_name = format!("{base}_{i}");
+            nodes.push(CircuitNode::Let {
+                name: elem_name.clone(),
+                value: CircuitExpr::Const(ir_forge::types::FieldConst::from_u64(0)),
+                span: sr.clone(),
+            });
+            env.locals.insert(elem_name);
+        }
+        env.register_array(base.clone(), total_len);
+        if !strides.is_empty() {
+            env.strides.insert(base.clone(), strides.clone());
+        }
+        env.locals.insert(base.clone());
+    }
+
+    Ok(())
+}
+
+/// Row-major strides for a multi-dimensional array shape.
+///
+/// `[a, b, c]` → strides `[b*c, c]` (the trailing stride is implicit
+/// 1 — `lower_multi_index` already treats the last dim that way).
+/// `[a]` → empty vec.
+fn compute_row_major_strides(dims: &[usize]) -> Vec<usize> {
+    if dims.len() <= 1 {
+        return Vec::new();
+    }
+    let mut strides = Vec::with_capacity(dims.len() - 1);
+    for i in 0..dims.len() - 1 {
+        strides.push(dims[i + 1..].iter().product());
+    }
+    strides
 }
 
 /// Lower an if/else statement.
