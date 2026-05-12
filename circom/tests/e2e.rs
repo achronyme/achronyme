@@ -4729,7 +4729,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Currently blocked downstream of the var-array indexed-write path: bigint.circom:373 `var longdiv[2][100] = long_div(n, k, k, a, b);` reads through `longdiv[i][j]` against the memoization placeholder loop variable without registered strides (E213). The pattern needs strides derived from the 2D known-array-value or the loop disqualified from memoization. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Blocked at bigint.circom:373 `var longdiv[2][100] = long_div(n, k, k, a, b);`: `longdiv[i][j]` reads against the memoization placeholder loop var without registered strides (E213). 2D known-array-value reads need either strides seeded at lowering time or the enclosing loop disqualified from memoization. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 
@@ -4797,8 +4797,6 @@ fn ecdsa_verify_boss_fight() {
     );
 }
 
-// ── Var-array indexed writes (Gate 3) ────────────────────────────
-//
 // circomlib's bigint-emulation templates (BigMultNoCarry,
 // BigMultShortLong, BigSub, etc.) use template-local `var` arrays as
 // symbolic accumulators for the polynomial-fingerprint witness-hint
@@ -4812,9 +4810,9 @@ fn ecdsa_verify_boss_fight() {
 /// Positive: zero-init then read back a 1D var-array slot.
 ///
 /// Smallest unit that exercises:
-/// 1. `var X[N];` with no init (S1 path) materialising N zero Lets.
-/// 2. `X[i] = 0;` (S2 path) re-binding the slot under the const-folded
-///    iter index.
+/// 1. `var X[N];` with no init materialising N zero Lets.
+/// 2. `X[i] = 0;` re-binding the slot under the const-folded iter
+///    index via SSA shadow.
 /// 3. `out[i] <-- X[i];` reading the slot back through
 ///    `env.resolve_array_element` and emitting a witness hint.
 #[test]
@@ -4835,7 +4833,7 @@ fn var_array_indexed_assign_smoke() {
         }
         component main = T(3);
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_smoke.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_smoke.circom");
     std::fs::write(&tmp, src).unwrap();
     let result = circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
     assert!(
@@ -4872,7 +4870,7 @@ fn var_array_compound_add_accumulator_smoke() {
         }
         component main = T(2);
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_accumulator.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_accumulator.circom");
     std::fs::write(&tmp, src).unwrap();
     circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
 }
@@ -4901,7 +4899,7 @@ fn var_array_2d_indexed_assign_smoke() {
         }
         component main = T(3);
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_2d.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_2d.circom");
     std::fs::write(&tmp, src).unwrap();
     circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
 }
@@ -4919,7 +4917,7 @@ fn var_array_non_const_dim_rejected() {
         }
         component main = T();
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_nonconst_dim.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_nonconst_dim.circom");
     std::fs::write(&tmp, src).unwrap();
     let err = match circom::compile_file(&tmp, &[]) {
         Ok(_) => panic!("expected compile failure on non-const dim, got success"),
@@ -4947,7 +4945,7 @@ fn var_array_out_of_bounds_write_rejected() {
         }
         component main = T();
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_oob.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_oob.circom");
     std::fs::write(&tmp, src).unwrap();
     let err = match circom::compile_file(&tmp, &[]) {
         Ok(_) => panic!("expected compile failure on OOB write, got success"),
@@ -4989,7 +4987,7 @@ fn var_array_accumulator_witness_verify() {
         }
         component main {public [a, b]} = Poly2(2);
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_witness.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_witness.circom");
     std::fs::write(&tmp, src).unwrap();
 
     let result = circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
@@ -5067,7 +5065,7 @@ fn var_array_shadows_signal_output_rejected() {
         }
         component main = T(2);
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_shadow_signal.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_shadow_signal.circom");
     std::fs::write(&tmp, src).unwrap();
     let err = match circom::compile_file(&tmp, &[]) {
         Ok(_) => panic!("expected compile failure on shadowing signal output, got success"),
@@ -5093,7 +5091,7 @@ fn var_array_shadows_input_rejected() {
         }
         component main = T(2);
     "#;
-    let tmp = std::env::temp_dir().join("ach_gate3_shadow.circom");
+    let tmp = std::env::temp_dir().join("ach_var_array_shadow_input.circom");
     std::fs::write(&tmp, src).unwrap();
     let err = match circom::compile_file(&tmp, &[]) {
         Ok(_) => panic!("expected compile failure on shadowing input, got success"),
