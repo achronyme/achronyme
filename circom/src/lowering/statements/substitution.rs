@@ -304,6 +304,16 @@ fn lower_var_assign<'a>(
     // pattern). Re-bind the element's SSA slot under its flat name
     // (`prod_val_3`) via Let-shadow; subsequent reads of `prod_val[3]`
     // resolve to `Var(prod_val_3)` through `env.resolve_array_element`.
+    //
+    // **Discrimination from signal arrays:** signal arrays use `<==`
+    // (`AssignOp::ConstraintAssign`) and `<--` (`AssignOp::SignalAssign`);
+    // the `AssignOp::Assign` arm above is uniquely entered for var
+    // statements. Do not widen this branch to the constraint / witness
+    // ops — those have their own `LetIndexed` / `WitnessHintIndexed`
+    // paths above that emit IR shapes the instantiate pass understands
+    // (signal arrays carry a `WitnessArrayDecl` shape; var arrays do
+    // not). A widened path would emit an SSA-shadow `Let` on a signal
+    // wire name and silently underconstraint the signal.
     if let Some(assign_target) = extract_assign_target_ctx(target, ctx, env) {
         match assign_target {
             AssignTarget::Indexed { array, index } => {

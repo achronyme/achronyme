@@ -690,6 +690,7 @@ fn lower_uninit_array_var_decl(
             env.locals.insert(elem_name);
         }
         env.register_array(base.clone(), total_len);
+        env.local_var_arrays.insert(base.clone());
         if !strides.is_empty() {
             env.strides.insert(base.clone(), strides.clone());
         }
