@@ -41,6 +41,14 @@ pub struct LoweringEnv {
     pub strides: HashMap<String, Vec<usize>>,
     /// Component array names — declared via `component muls[n]`.
     pub component_arrays: HashSet<String>,
+    /// Template-local `var` array names — declared via `var prod_val[N];`
+    /// (compile-time storage, materialised as per-slot `Let` shadows).
+    /// Distinct from `arrays` (which also tracks signal arrays); the
+    /// loop classifier consults this set to force lowering-time unroll
+    /// for any body that reads or writes a slot, because the per-slot
+    /// SSA bindings have no `WitnessArrayDecl` shape at instantiate
+    /// time — symbolic-indexed reads cannot be deferred.
+    pub local_var_arrays: HashSet<String>,
     /// Known constants — loop variables during manual unrolling.
     /// When set, `lower_expr` for `Ident("i")` emits `Const(val)`.
     pub known_constants: HashMap<String, FieldConst>,
@@ -78,6 +86,7 @@ impl LoweringEnv {
             arrays: HashMap::new(),
             strides: HashMap::new(),
             component_arrays: HashSet::new(),
+            local_var_arrays: HashSet::new(),
             known_constants: HashMap::new(),
             bound_const_vars: HashMap::new(),
             known_array_values: HashMap::new(),

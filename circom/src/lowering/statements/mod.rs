@@ -33,7 +33,7 @@ use super::utils::extract_ident_name;
 
 use arrays::{expand_eval_value_to_nodes, try_eval_array_init};
 use loops::{eval_while_compile_time, lower_for_loop, stmts_are_var_only};
-use substitution::{compound_to_binop, extract_component_call, lower_substitution};
+use substitution::{extract_component_call, lower_substitution};
 use wiring::{collect_value_component_refs, flush_specific_component, PendingComponent};
 
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
@@ -241,9 +241,12 @@ fn lower_stmt<'a>(
 
         // ── Variable declarations ───────────────────────────────────
         Stmt::VarDecl {
-            names, init, span, ..
+            names,
+            dimensions,
+            init,
+            span,
         } => {
-            lower_var_decl(names, init.as_ref(), span, env, nodes, ctx)?;
+            lower_var_decl(names, dimensions, init.as_ref(), span, env, nodes, ctx)?;
         }
 
         // ── Substitutions (signal assignments) ──────────────────────
@@ -294,6 +297,40 @@ fn lower_stmt<'a>(
             value,
             span,
         } => {
+            // Indexed compound write to a local var array (e.g. circomlib's
+            // `prod_val[i + j] += a[i] * b[j]`): resolve the flat element
+            // name through the same path as the indexed `=` lowering and
+            // emit `Let { name: "X_<flat>", value: Var("X_<flat>") op rhs }`.
+            // The loop classifier preempts to `IndexedAssignmentLoop` for
+            // any body with indexed assignments, so `i` / `j` const-fold
+            // per iteration.
+            if let Some(assign_target) = targets::extract_assign_target_ctx(target, ctx, env) {
+                let (array, idx_refs_owned) = match &assign_target {
+                    targets::AssignTarget::Indexed { array, index } => {
+                        (array.clone(), vec![(**index).clone()])
+                    }
+                    targets::AssignTarget::MultiIndexed { array, indices } => {
+                        (array.clone(), indices.clone())
+                    }
+                    targets::AssignTarget::Scalar(_) => (String::new(), Vec::new()),
+                };
+                if env.arrays.contains_key(&array) {
+                    let idx_refs: Vec<&Expr> = idx_refs_owned.iter().collect();
+                    let elem_name = substitution::resolve_local_array_element_name(
+                        &array, &idx_refs, span, env, ctx,
+                    )?;
+                    let current = CircuitExpr::Var(elem_name.clone());
+                    let rhs = lower_expr(value, env, ctx)?;
+                    let bin_op = substitution::compound_to_binop(*op, &current, rhs, span)?;
+                    nodes.push(CircuitNode::Let {
+                        name: elem_name,
+                        value: bin_op,
+                        span: Some(SpanRange::from_span(span)),
+                    });
+                    return Ok(());
+                }
+            }
+
             let name = extract_ident_name(target).ok_or_else(|| {
                 LoweringError::new(
                     "compound assignment target must be a simple identifier",
@@ -302,7 +339,7 @@ fn lower_stmt<'a>(
             })?;
             let current = CircuitExpr::Var(name.clone());
             let rhs = lower_expr(value, env, ctx)?;
-            let bin_op = compound_to_binop(*op, &current, rhs, span)?;
+            let bin_op = substitution::compound_to_binop(*op, &current, rhs, span)?;
 
             // In circuit context, variables are SSA-like. We create a new
             // binding with the same name (shadowing).
@@ -431,12 +468,22 @@ fn lower_stmt<'a>(
 /// Lower a variable declaration statement.
 fn lower_var_decl(
     names: &[String],
+    dimensions: &[Expr],
     init: Option<&Expr>,
     span: &diagnostics::Span,
     env: &mut LoweringEnv,
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'_>,
 ) -> Result<(), LoweringError> {
+    // `var X[N1][N2]...;` (no init): allocate zero-initialized
+    // per-element Lets when all dimensions are compile-time constants.
+    // The polynomial-fingerprint pattern in circomlib's BigMultNoCarry /
+    // BigMultShortLong needs this so subsequent `X[i] = expr` writes have
+    // a backing slot to land in via the SSA shadow path.
+    if init.is_none() && !dimensions.is_empty() {
+        return lower_uninit_array_var_decl(names, dimensions, span, env, nodes, ctx);
+    }
+
     if let Some(value) = init {
         if names.len() == 1 {
             // Skip nested (2D+) array literals already resolved by precompute_all
@@ -466,6 +513,17 @@ fn lower_var_decl(
                     env.locals.insert(elem_name);
                 }
                 env.register_array(names[0].clone(), elements.len());
+                // NB: array-literal `var X = [1,2,3];` inits are NOT
+                // registered in `env.local_var_arrays`. Reads of `X[i]`
+                // already resolve at lowering time via the constant
+                // expansion above (each slot becomes a const-valued
+                // `Let`), and the loop classifier's read-side preempt
+                // is only required for the uninit-then-shadowed-write
+                // case (`var X[N]; X[i] = expr;`) where slot values
+                // can be CircuitExprs that the const-fold path cannot
+                // collapse. A future template that writes through
+                // `X[i] +=` after such a literal init would need a
+                // separate gate — none in the current circomlib corpus.
             } else if let Some(eval_val) = try_eval_array_init(value, env, ctx) {
                 // Function call or expression that evaluates to an array
                 // at compile time (e.g. `var C[n] = POSEIDON_C(t)`).
@@ -569,12 +627,116 @@ fn lower_var_decl(
             }
         }
     } else {
-        // Uninitialized var — just register name, will be assigned later.
+        // Uninitialized scalar var — just register name, will be assigned later.
         for name in names {
             env.locals.insert(name.clone());
         }
     }
     Ok(())
+}
+
+/// Allocate per-element zero-initialized slots for an uninitialized
+/// array var declaration (`var X[N];`, `var X[N][M];`).
+///
+/// Each leaf slot becomes a `CircuitNode::Let { name: "X_i_..._j", value: Const(0) }`,
+/// registered as an array of `total_len` elements with row-major
+/// strides. Subsequent indexed writes (`X[i] = expr`, `X[i] += expr`)
+/// re-bind these slots under the same flat element name via SSA shadow,
+/// and indexed reads resolve through `env.resolve_array_element` →
+/// `CircuitExpr::Var("X_i")` exactly like signal-array reads.
+///
+/// Errors:
+/// - any dimension that is not compile-time-foldable
+/// - any dimension that exceeds `u32::MAX` (defensive — `Vec` capacity)
+/// - a name already registered as an array, input, or capture
+fn lower_uninit_array_var_decl(
+    names: &[String],
+    dimensions: &[Expr],
+    span: &diagnostics::Span,
+    env: &mut LoweringEnv,
+    nodes: &mut Vec<CircuitNode>,
+    ctx: &mut LoweringContext<'_>,
+) -> Result<(), LoweringError> {
+    let mut dim_values: Vec<usize> = Vec::with_capacity(dimensions.len());
+    for d in dimensions {
+        let fc = crate::lowering::utils::const_eval_ctx(d, ctx, env).ok_or_else(|| {
+            LoweringError::new(
+                "var array dimension must be a compile-time constant in circuit context",
+                span,
+            )
+        })?;
+        let v = fc.to_u64().ok_or_else(|| {
+            LoweringError::new(
+                "var array dimension exceeds u64::MAX in circuit context",
+                span,
+            )
+        })?;
+        if v > u32::MAX as u64 {
+            return Err(LoweringError::new(
+                "var array dimension exceeds u32::MAX in circuit context",
+                span,
+            ));
+        }
+        dim_values.push(v as usize);
+    }
+
+    let total_len: usize = dim_values.iter().product();
+    let strides = compute_row_major_strides(&dim_values);
+    let sr = Some(SpanRange::from_span(span));
+
+    for base in names {
+        // Shadow check: reject collisions against any existing binding
+        // that already owns the same flat slot namespace
+        // (`<base>_<i>`). Signals (inputs / locals / captures) and
+        // pre-existing array registrations all qualify — a silent
+        // shadow would let the zero-init `Let`s mask real signal
+        // bindings and produce wrong constraints.
+        if env.inputs.contains(base)
+            || env.captures.contains(base)
+            || env.locals.contains(base)
+            || env.arrays.contains_key(base)
+        {
+            return Err(LoweringError::new(
+                format!(
+                    "var `{base}` shadows an existing signal, capture, or array of the same name"
+                ),
+                span,
+            ));
+        }
+        for i in 0..total_len {
+            let elem_name = format!("{base}_{i}");
+            nodes.push(CircuitNode::Let {
+                name: elem_name.clone(),
+                value: CircuitExpr::Const(ir_forge::types::FieldConst::from_u64(0)),
+                span: sr.clone(),
+            });
+            env.locals.insert(elem_name);
+        }
+        env.register_array(base.clone(), total_len);
+        env.local_var_arrays.insert(base.clone());
+        if !strides.is_empty() {
+            env.strides.insert(base.clone(), strides.clone());
+        }
+        env.locals.insert(base.clone());
+    }
+
+    Ok(())
+}
+
+/// Row-major strides for a multi-dimensional array shape.
+///
+/// `[a, b, c]` → strides `[b*c, c]` (the trailing stride is implicit
+/// 1 — `lower_multi_index` already treats the last dim that way).
+/// `[a]` → empty vec.
+fn compute_row_major_strides(dims: &[usize]) -> Vec<usize> {
+    if dims.len() <= 1 {
+        return Vec::new();
+    }
+    let mut strides = Vec::with_capacity(dims.len() - 1);
+    for i in 0..dims.len() - 1 {
+        strides.push(dims[i + 1..].iter().product());
+    }
+    strides
 }
 
 /// Lower an if/else statement.
