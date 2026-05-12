@@ -589,8 +589,7 @@ fn lower_var_decl(
                         // stride=1 or surfacing E213 when the outer
                         // index lands on a memoization placeholder.
                         if dimensions.len() > 1 {
-                            let dim_values =
-                                resolve_const_dimensions(dimensions, span, env, ctx)?;
+                            let dim_values = resolve_const_dimensions(dimensions, span, env, ctx)?;
                             let declared_total: usize = dim_values.iter().product();
                             if declared_total != len {
                                 return Err(LoweringError::new(
