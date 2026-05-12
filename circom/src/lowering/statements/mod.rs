@@ -33,7 +33,7 @@ use super::utils::extract_ident_name;
 
 use arrays::{expand_eval_value_to_nodes, try_eval_array_init};
 use loops::{eval_while_compile_time, lower_for_loop, stmts_are_var_only};
-use substitution::{compound_to_binop, extract_component_call, lower_substitution};
+use substitution::{extract_component_call, lower_substitution};
 use wiring::{collect_value_component_refs, flush_specific_component, PendingComponent};
 
 /// Lower a sequence of Circom statements to ProveIR `CircuitNode`s.
@@ -297,6 +297,43 @@ fn lower_stmt<'a>(
             value,
             span,
         } => {
+            // Indexed compound write to a local var array (e.g. circomlib's
+            // `prod_val[i + j] += a[i] * b[j]`): resolve the flat element
+            // name through the same path as the indexed `=` lowering and
+            // emit `Let { name: "X_<flat>", value: Var("X_<flat>") op rhs }`.
+            // The loop classifier preempts to `IndexedAssignmentLoop` for
+            // any body with indexed assignments, so `i` / `j` const-fold
+            // per iteration.
+            if let Some(assign_target) =
+                targets::extract_assign_target_ctx(target, ctx, env)
+            {
+                let (array, idx_refs_owned) = match &assign_target {
+                    targets::AssignTarget::Indexed { array, index } => {
+                        (array.clone(), vec![(**index).clone()])
+                    }
+                    targets::AssignTarget::MultiIndexed { array, indices } => {
+                        (array.clone(), indices.clone())
+                    }
+                    targets::AssignTarget::Scalar(_) => (String::new(), Vec::new()),
+                };
+                if env.arrays.contains_key(&array) {
+                    let idx_refs: Vec<&Expr> = idx_refs_owned.iter().collect();
+                    let elem_name = substitution::resolve_local_array_element_name(
+                        &array, &idx_refs, span, env, ctx,
+                    )?;
+                    let current = CircuitExpr::Var(elem_name.clone());
+                    let rhs = lower_expr(value, env, ctx)?;
+                    let bin_op =
+                        substitution::compound_to_binop(*op, &current, rhs, span)?;
+                    nodes.push(CircuitNode::Let {
+                        name: elem_name,
+                        value: bin_op,
+                        span: Some(SpanRange::from_span(span)),
+                    });
+                    return Ok(());
+                }
+            }
+
             let name = extract_ident_name(target).ok_or_else(|| {
                 LoweringError::new(
                     "compound assignment target must be a simple identifier",
@@ -305,7 +342,7 @@ fn lower_stmt<'a>(
             })?;
             let current = CircuitExpr::Var(name.clone());
             let rhs = lower_expr(value, env, ctx)?;
-            let bin_op = compound_to_binop(*op, &current, rhs, span)?;
+            let bin_op = substitution::compound_to_binop(*op, &current, rhs, span)?;
 
             // In circuit context, variables are SSA-like. We create a new
             // binding with the same name (shadowing).
