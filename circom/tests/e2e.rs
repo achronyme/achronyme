@@ -4729,7 +4729,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Blocked at bigint.circom:373 `var longdiv[2][100] = long_div(n, k, k, a, b);`: `longdiv[i][j]` reads against the memoization placeholder loop var without registered strides (E213). 2D known-array-value reads need either strides seeded at lowering time or the enclosing loop disqualified from memoization. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Blocked at bigint.circom:378 `for (var i = 0; i <= k; i++)` where `k` is a template parameter: lowering reports `for loop condition must be ``i < <bound>``, ``i <= <bound>``, or ``i != -1`` where <bound> is a constant or template parameter`. The `i <= <template-parameter>` form is not being recognised by the loop classifier here. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 
@@ -5100,6 +5100,127 @@ fn var_array_shadows_input_rejected() {
     let msg = format!("{err}");
     assert!(
         msg.contains("shadows an existing signal"),
+        "unexpected error: {msg}"
+    );
+}
+
+// circomlib bigint emulation declares working buffers via the shape
+// `var X[R][C] = call(signal_array, …);` where `call` lifts to Artik
+// (`long_div`, `secp256k1_addunequal_func`, `secp256k1_double_func`,
+// …) and returns a 2D var array. The lift flattens the return into a
+// 1D `LetArray` of `R*C` slots, so without the dimension-aware
+// stride seeding the downstream `X[i][j]` reads either fold to the
+// wrong slot (stride=1 default) or surface E213 against the R1″
+// memoization placeholder when the outer index is the loop variable.
+
+/// Positive: 2D var assigned from an Artik-lifted call has its
+/// declared `[R][C]` strides registered. `X[i][j]` reads inside a
+/// memoizable loop linearise to `i * C + j` instead of fingering a
+/// non-existent flat slot.
+#[test]
+fn multidim_var_from_call_seeds_strides() {
+    let src = r#"
+        pragma circom 2.0.0;
+        function pair(N, a, b) {
+            var out[2][N];
+            for (var i = 0; i < N; i++) {
+                out[0][i] = a[i] + b[i];
+                out[1][i] = a[i] - b[i];
+            }
+            return out;
+        }
+        template T(N) {
+            signal input a[N];
+            signal input b[N];
+            signal output sums[N];
+            signal output diffs[N];
+
+            var pr[2][N] = pair(N, a, b);
+            for (var i = 0; i < N; i++) {
+                sums[i]  <-- pr[0][i];
+                sums[i]  === pr[0][i];
+                diffs[i] <-- pr[1][i];
+                diffs[i] === pr[1][i];
+            }
+        }
+        component main {public [a, b]} = T(8);
+    "#;
+    let tmp = std::env::temp_dir().join("ach_multidim_call_strides.circom");
+    std::fs::write(&tmp, src).unwrap();
+    circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
+}
+
+/// Positive: a memoizable read loop over a 2D var bound from a call
+/// compiles cleanly (the read body crosses the memoize threshold,
+/// `end - start >= 4`, so the inner `i` is held as the R1″
+/// placeholder). Without the dimension-aware stride seeding, the
+/// `pr[0][i]` lowering would surface E213 against the placeholder.
+#[test]
+fn multidim_var_from_call_memoizable_loop_compiles() {
+    let src = r#"
+        pragma circom 2.0.0;
+        function pair(N, a, b) {
+            var out[2][N];
+            for (var i = 0; i < N; i++) {
+                out[0][i] = a[i] + b[i];
+                out[1][i] = a[i] - b[i];
+            }
+            return out;
+        }
+        template T(N) {
+            signal input a[N];
+            signal input b[N];
+            signal output sums[N];
+            signal output diffs[N];
+
+            var pr[2][N] = pair(N, a, b);
+            for (var i = 0; i < N; i++) {
+                sums[i]  <-- pr[0][i];
+                sums[i]  === pr[0][i];
+                diffs[i] <-- pr[1][i];
+                diffs[i] === pr[1][i];
+            }
+        }
+        component main {public [a, b]} = T(8);
+    "#;
+    let tmp = std::env::temp_dir().join("ach_multidim_call_memoizable.circom");
+    std::fs::write(&tmp, src).unwrap();
+    circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
+}
+
+/// Adversarial: declared multi-dim shape whose cell count disagrees
+/// with the initializer's flat length surfaces a clean error, not a
+/// silently mis-strided array.
+#[test]
+fn multidim_var_from_call_dim_mismatch_rejected() {
+    let src = r#"
+        pragma circom 2.0.0;
+        function pair_len(N, a) {
+            var out[N];
+            for (var i = 0; i < N; i++) {
+                out[i] = a[i];
+            }
+            return out;
+        }
+        template T(N) {
+            signal input a[N];
+            signal output sums[N];
+            // Declared shape [2][N] = 2*N cells, but pair_len returns N.
+            var bad[2][N] = pair_len(N, a);
+            sums[0] <-- bad[0][0];
+            sums[0] === bad[0][0];
+        }
+        component main {public [a]} = T(4);
+    "#;
+    let tmp = std::env::temp_dir().join("ach_multidim_call_mismatch.circom");
+    std::fs::write(&tmp, src).unwrap();
+    let err = match circom::compile_file(&tmp, &[]) {
+        Ok(_) => panic!("expected compile failure on shape mismatch, got success"),
+        Err(e) => e,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("declared shape") && msg.contains("but the initializer produced"),
         "unexpected error: {msg}"
     );
 }

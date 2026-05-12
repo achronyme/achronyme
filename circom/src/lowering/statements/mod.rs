@@ -579,6 +579,34 @@ fn lower_var_decl(
                     });
                     if let Some(elements) = matching {
                         let len = elements.len();
+                        // Multi-dim destination (`var X[R][C] = call(...)`):
+                        // the Artik lift flattens 2D returns to a 1D
+                        // `LetArray` with `rows*cols` slots, losing the
+                        // declared shape. Seed `env.strides` from the
+                        // syntactic dimensions so subsequent `X[i][j]`
+                        // reads linearise via `linearize_multi_index`
+                        // (i * cols + j) instead of falling back to
+                        // stride=1 or surfacing E213 when the outer
+                        // index lands on a memoization placeholder.
+                        if dimensions.len() > 1 {
+                            let dim_values = resolve_const_dimensions(dimensions, span, env, ctx)?;
+                            let declared_total: usize = dim_values.iter().product();
+                            if declared_total != len {
+                                return Err(LoweringError::new(
+                                    format!(
+                                        "declared shape of `{}` has {} cells \
+                                         (dimensions {:?}) but the initializer \
+                                         produced {} elements",
+                                        names[0], declared_total, dim_values, len
+                                    ),
+                                    span,
+                                ));
+                            }
+                            let strides = compute_row_major_strides(&dim_values);
+                            if !strides.is_empty() {
+                                env.strides.insert(names[0].clone(), strides);
+                            }
+                        }
                         nodes.push(CircuitNode::LetArray {
                             name: names[0].clone(),
                             elements,
@@ -657,29 +685,7 @@ fn lower_uninit_array_var_decl(
     nodes: &mut Vec<CircuitNode>,
     ctx: &mut LoweringContext<'_>,
 ) -> Result<(), LoweringError> {
-    let mut dim_values: Vec<usize> = Vec::with_capacity(dimensions.len());
-    for d in dimensions {
-        let fc = crate::lowering::utils::const_eval_ctx(d, ctx, env).ok_or_else(|| {
-            LoweringError::new(
-                "var array dimension must be a compile-time constant in circuit context",
-                span,
-            )
-        })?;
-        let v = fc.to_u64().ok_or_else(|| {
-            LoweringError::new(
-                "var array dimension exceeds u64::MAX in circuit context",
-                span,
-            )
-        })?;
-        if v > u32::MAX as u64 {
-            return Err(LoweringError::new(
-                "var array dimension exceeds u32::MAX in circuit context",
-                span,
-            ));
-        }
-        dim_values.push(v as usize);
-    }
-
+    let dim_values = resolve_const_dimensions(dimensions, span, env, ctx)?;
     let total_len: usize = dim_values.iter().product();
     let strides = compute_row_major_strides(&dim_values);
     let sr = Some(SpanRange::from_span(span));
@@ -721,6 +727,42 @@ fn lower_uninit_array_var_decl(
     }
 
     Ok(())
+}
+
+/// Resolve a sequence of array-dimension expressions to `usize` values.
+///
+/// Each dimension must const-fold against `ctx + env`. Errors loudly on
+/// non-const dimensions and on values that exceed `u32::MAX` (defensive
+/// — `Vec` capacity).
+fn resolve_const_dimensions(
+    dimensions: &[Expr],
+    span: &diagnostics::Span,
+    env: &LoweringEnv,
+    ctx: &LoweringContext<'_>,
+) -> Result<Vec<usize>, LoweringError> {
+    let mut dim_values: Vec<usize> = Vec::with_capacity(dimensions.len());
+    for d in dimensions {
+        let fc = crate::lowering::utils::const_eval_ctx(d, ctx, env).ok_or_else(|| {
+            LoweringError::new(
+                "var array dimension must be a compile-time constant in circuit context",
+                span,
+            )
+        })?;
+        let v = fc.to_u64().ok_or_else(|| {
+            LoweringError::new(
+                "var array dimension exceeds u64::MAX in circuit context",
+                span,
+            )
+        })?;
+        if v > u32::MAX as u64 {
+            return Err(LoweringError::new(
+                "var array dimension exceeds u32::MAX in circuit context",
+                span,
+            ));
+        }
+        dim_values.push(v as usize);
+    }
+    Ok(dim_values)
 }
 
 /// Row-major strides for a multi-dimensional array shape.
