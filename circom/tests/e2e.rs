@@ -5052,6 +5052,34 @@ fn var_array_accumulator_witness_verify() {
         .unwrap_or_else(|e| panic!("R1CS verify failed: {e}"));
 }
 
+/// Adversarial: shadowing a signal output (or any signal-array local)
+/// with a `var X[N];` must be rejected. Without the shadow check the
+/// zero-init Lets would mask the signal's slot bindings and produce
+/// wrong constraints.
+#[test]
+fn var_array_shadows_signal_output_rejected() {
+    let src = r#"
+        pragma circom 2.0.0;
+        template T(n) {
+            signal output out[n];
+            var out[n];
+            out[0] = 0;
+        }
+        component main = T(2);
+    "#;
+    let tmp = std::env::temp_dir().join("ach_gate3_shadow_signal.circom");
+    std::fs::write(&tmp, src).unwrap();
+    let err = match circom::compile_file(&tmp, &[]) {
+        Ok(_) => panic!("expected compile failure on shadowing signal output, got success"),
+        Err(e) => e,
+    };
+    let msg = format!("{err}");
+    assert!(
+        msg.contains("shadows an existing signal"),
+        "unexpected error: {msg}"
+    );
+}
+
 /// Adversarial: shadowing a template input with a `var` array of the
 /// same name must be rejected so reads after the decl stay unambiguous.
 #[test]
@@ -5073,7 +5101,7 @@ fn var_array_shadows_input_rejected() {
     };
     let msg = format!("{err}");
     assert!(
-        msg.contains("shadows a template input"),
+        msg.contains("shadows an existing signal"),
         "unexpected error: {msg}"
     );
 }

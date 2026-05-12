@@ -513,6 +513,17 @@ fn lower_var_decl(
                     env.locals.insert(elem_name);
                 }
                 env.register_array(names[0].clone(), elements.len());
+                // NB: array-literal `var X = [1,2,3];` inits are NOT
+                // registered in `env.local_var_arrays`. Reads of `X[i]`
+                // already resolve at lowering time via the constant
+                // expansion above (each slot becomes a const-valued
+                // `Let`), and the loop classifier's read-side preempt
+                // is only required for the uninit-then-shadowed-write
+                // case (`var X[N]; X[i] = expr;`) where slot values
+                // can be CircuitExprs that the const-fold path cannot
+                // collapse. A future template that writes through
+                // `X[i] +=` after such a literal init would need a
+                // separate gate — none in the current circomlib corpus.
             } else if let Some(eval_val) = try_eval_array_init(value, env, ctx) {
                 // Function call or expression that evaluates to an array
                 // at compile time (e.g. `var C[n] = POSEIDON_C(t)`).
@@ -674,9 +685,21 @@ fn lower_uninit_array_var_decl(
     let sr = Some(SpanRange::from_span(span));
 
     for base in names {
-        if env.inputs.contains(base) || env.captures.contains(base) {
+        // Shadow check: reject collisions against any existing binding
+        // that already owns the same flat slot namespace
+        // (`<base>_<i>`). Signals (inputs / locals / captures) and
+        // pre-existing array registrations all qualify — a silent
+        // shadow would let the zero-init `Let`s mask real signal
+        // bindings and produce wrong constraints.
+        if env.inputs.contains(base)
+            || env.captures.contains(base)
+            || env.locals.contains(base)
+            || env.arrays.contains_key(base)
+        {
             return Err(LoweringError::new(
-                format!("var `{base}` shadows a template input or capture of the same name"),
+                format!(
+                    "var `{base}` shadows an existing signal, capture, or array of the same name"
+                ),
                 span,
             ));
         }
