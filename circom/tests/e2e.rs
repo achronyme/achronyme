@@ -1872,7 +1872,7 @@ fn fn_witness_lift_circomlib_prod_integration() {
         alloc_lens
     );
     assert!(
-        alloc_lens.iter().any(|&l| l == 3),
+        alloc_lens.contains(&3),
         "expected at least one 3-cell AllocArray from SplitThreeFn ArrayLit return; got {:?}",
         alloc_lens
     );
