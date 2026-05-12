@@ -450,7 +450,7 @@ fn lower_local_array_element_assign(
 /// the registered array length; out-of-bounds writes also surface as a
 /// clean error rather than silently materialising a slot that nothing
 /// allocated.
-fn resolve_local_array_element_name(
+pub(super) fn resolve_local_array_element_name(
     array: &str,
     indices: &[&Expr],
     span: &diagnostics::Span,

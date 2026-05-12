@@ -386,6 +386,17 @@ fn is_memoizable(
     ) {
         return None;
     }
+    // Indexed writes to template-local var arrays (`prod_val[i] = 0;`,
+    // `prod_val[i+j] += a[i] * b[j];`) need real iter constants to
+    // resolve the flat element name at capture time. The memoize path
+    // holds the loop var as a `LoopVar(token)` placeholder and re-runs
+    // only `substitute_loop_var` per replay — there is no `const_eval_ctx`
+    // pass after substitution that would re-resolve the var-array
+    // element write. Bail to the direct unroll path, which seeds
+    // `env.known_constants[loop_var]` per iter.
+    if body_has_local_var_array_indexed_writes(body) {
+        return None;
+    }
     if end <= start || (end - start) < 4 {
         return None;
     }
