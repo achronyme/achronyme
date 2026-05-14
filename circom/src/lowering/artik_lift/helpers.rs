@@ -47,6 +47,15 @@ pub(super) fn eval_const_expr(
                 BinOp::Le => Some((a <= b) as ConstInt),
                 BinOp::Gt => Some((a > b) as ConstInt),
                 BinOp::Ge => Some((a >= b) as ConstInt),
+                // Boolean connectives — both operands already folded to
+                // ConstInt above (any non-zero value reads as true), so
+                // the result is the usual integer logic-op. Circomlib's
+                // shape-guard asserts like
+                // `(n == 86 && k == 3) || (n == 64 && k == 4)` need
+                // these to fold; without them the lift would treat the
+                // predicate as runtime and bail.
+                BinOp::And => Some(((a != 0) && (b != 0)) as ConstInt),
+                BinOp::Or => Some(((a != 0) || (b != 0)) as ConstInt),
                 _ => None,
             }
         }

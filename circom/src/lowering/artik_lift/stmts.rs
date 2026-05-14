@@ -591,6 +591,58 @@ impl<'f> LiftState<'f> {
                     }
                 }
 
+                // Row-slice return: `return arr2d[row_idx];` where the
+                // local is a Flat2D and the row index const-folds.
+                // Materialize the row as a fresh Flat1D and fall
+                // through to the 1D array-return path (per-cell witness
+                // slots or `NestedResult::Array`). Shape lookup happens
+                // on the syntactic base name; a chained `arr2d[r][c]`
+                // would shape-match the inner index and fall through to
+                // the scalar path further down, which is the correct
+                // behaviour for a fully-indexed read.
+                if let Expr::Index { object, index, .. } = value {
+                    if let Expr::Ident { name, .. } = object.as_ref() {
+                        if let Some(ArrayShape::Flat2D {
+                            handle: src_handle,
+                            rows,
+                            cols,
+                        }) = self.arrays.get(name).copied()
+                        {
+                            let row_shape =
+                                self.materialize_row_slice(src_handle, rows, cols, index)?;
+                            let (dst_handle, len) = match row_shape {
+                                ArrayShape::Flat1D { handle, len } => (handle, len),
+                                ArrayShape::Flat2D { .. } => return None,
+                            };
+                            if self.nested_depth > 0 {
+                                self.nested_result = Some(NestedResult::Array(dst_handle, len));
+                                self.halted = true;
+                                return Some(());
+                            }
+                            let slots = match self.output_array_slots.as_ref() {
+                                Some(s) if s.len() == len as usize => s.clone(),
+                                Some(_) => return None,
+                                None => {
+                                    let s: Vec<u32> = (0..len)
+                                        .map(|_| self.builder.alloc_witness_slot())
+                                        .collect();
+                                    self.output_array_slots = Some(s.clone());
+                                    s
+                                }
+                            };
+                            for (i, slot) in slots.iter().copied().enumerate() {
+                                let idx_reg = self.push_int_const(i as u64)?;
+                                let val_reg = self.builder.load_arr(dst_handle, idx_reg);
+                                self.builder.write_witness(slot, val_reg);
+                            }
+                            self.builder.ret();
+                            self.halted = true;
+                            self.return_shape = ReturnShape::Array(len);
+                            return Some(());
+                        }
+                    }
+                }
+
                 // Array-literal return: `return [e0, e1, ..., eN];`.
                 // Allocate a fresh 1D field array, lift each element
                 // into a register, store at index `i`. From there the
@@ -654,6 +706,25 @@ impl<'f> LiftState<'f> {
                 self.return_shape = ReturnShape::Scalar;
                 Some(())
             }
+            Stmt::Assert { arg, .. } => {
+                // Asserts inside a witness function are advisory checks
+                // — they abort witness computation on failure but emit
+                // no constraints. The Artik VM has no assert opcode, so
+                // the lift evaluates the predicate at compile time:
+                // a const-true predicate is dropped, a const-false
+                // predicate bails so the caller surfaces an explicit
+                // gap, and a runtime-valued predicate also bails so a
+                // semantic the function relied on is not silently
+                // skipped. Circomlib's witness functions invariably
+                // gate on shape parameters (`n == 64 && k == 4`) which
+                // fold cleanly under `try_eval_arg_const` at the call
+                // site.
+                let v = eval_const_expr(arg, &self.const_locals)?;
+                if v == 0 {
+                    return None;
+                }
+                Some(())
+            }
             Stmt::Expr { expr, .. } => {
                 // Bare expression statement. Only supported when it's
                 // a postfix/prefix increment/decrement on a loop var —
@@ -704,5 +775,36 @@ impl<'f> LiftState<'f> {
         }
 
         None
+    }
+
+    // Materialize a single row of a Flat2D source as a fresh Flat1D
+    // array. Used when a row slice (`arr[r]`) flows into a position
+    // that requires a standalone 1D array — return value of a function
+    // body, or array argument to a nested call. The row index must
+    // const-fold; runtime row indices would need a copy loop, deferred
+    // until a circomlib template exercises that shape.
+    pub(super) fn materialize_row_slice(
+        &mut self,
+        src_handle: artik::Reg,
+        rows: u32,
+        cols: u32,
+        row_idx_expr: &Expr,
+    ) -> Option<ArrayShape> {
+        let row_const = eval_const_expr(row_idx_expr, &self.const_locals)?;
+        if !(0..i64::from(rows)).contains(&row_const) {
+            return None;
+        }
+        let row_base = (row_const as u32) * cols;
+        let dst_handle = self.builder.alloc_array(cols, ElemT::Field);
+        for j in 0..cols {
+            let src_idx_reg = self.push_int_const((row_base + j) as u64)?;
+            let val_reg = self.builder.load_arr(src_handle, src_idx_reg);
+            let dst_idx_reg = self.push_int_const(j as u64)?;
+            self.builder.store_arr(dst_handle, dst_idx_reg, val_reg);
+        }
+        Some(ArrayShape::Flat1D {
+            handle: dst_handle,
+            len: cols,
+        })
     }
 }

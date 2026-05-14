@@ -6747,3 +6747,98 @@ fn bits2point_strict_real_circomlib() {
         "Bits2Point_Strict must produce non-empty constraint set"
     );
 }
+
+/// Asserts inside a witness function are advisory (no R1CS
+/// constraints). The lift skips a const-foldable-true predicate and
+/// bails on a const-foldable-false or runtime predicate. circomlib's
+/// `get_secp256k1_prime` opens with
+/// `assert((n == 86 && k == 3) || (n == 64 && k == 4))` — without
+/// this handling the whole secp256k1 helper chain falls back to E212.
+#[test]
+fn fn_witness_lift_assert_const_drop() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_assert_const_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("const-assert lift failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("const-assert payload must decode and validate");
+}
+
+/// Row slice as return: `return arr2d[row]` where the local is a
+/// Flat2D. The lift materializes the row as a fresh 1D field array
+/// and emits per-cell witness slots. Without this, the lift bails to
+/// E212 — the symptom that surfaced in circomlib's `prod_mod_p`,
+/// which builds `result[2][100]` and returns `result[1]`.
+#[test]
+fn fn_witness_lift_row_slice_return() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_row_slice_return_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("row-slice return lift failed to compile: {e}"));
+
+    let call = result.prove_ir.body.iter().find_map(|n| match n {
+        CircuitNode::WitnessCall {
+            program_bytes,
+            output_bindings,
+            ..
+        } => Some((program_bytes.clone(), output_bindings.clone())),
+        _ => None,
+    });
+    let (bytes, outputs) = call.expect("expected a CircuitNode::WitnessCall in ProveIR");
+    assert_eq!(
+        outputs.len(),
+        3,
+        "row-slice return should expose 3 witness slots (one per row cell), got {outputs:?}"
+    );
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("row-slice return payload must decode and validate");
+}
+
+/// Row slice as nested-call argument: `f(..., arr2d[row], ...)`
+/// where the source is a Flat2D local. The lift materializes the row
+/// as a fresh Flat1D so the callee binds it as an array parameter.
+/// Without this, the lift bails to E212 — the symptom that surfaced
+/// in circomlib's `secp256k1_addunequal_func`, which passes `b[1]`
+/// and `a[1]` (rows of `var a[2][100]` / `var b[2][100]`) to
+/// `long_sub_mod_p`.
+#[test]
+fn fn_witness_lift_row_slice_arg() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_row_slice_arg_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("row-slice arg lift failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("row-slice arg payload must decode and validate");
+}

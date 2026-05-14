@@ -268,6 +268,30 @@ impl<'f> LiftState<'f> {
                     continue;
                 }
             }
+            // Row-slice arg: `f(..., arr2d[row], ...)` where the source
+            // is a Flat2D local and `row` const-folds. Materialize the
+            // row as a fresh Flat1D so the callee binds it as an array
+            // parameter, mirroring how a bare ident with `Flat1D` shape
+            // is forwarded above. circomlib's bigint composers pass row
+            // slices (e.g. `b[1]` from `var b[2][100]`) into 1D-array
+            // helpers like `long_sub_mod_p`.
+            if let Expr::Index { object, index, .. } = arg {
+                if let Expr::Ident { name: arg_name, .. } = object.as_ref() {
+                    if let Some(super::ArrayShape::Flat2D {
+                        handle: src_handle,
+                        rows,
+                        cols,
+                    }) = self.arrays.get(arg_name).copied()
+                    {
+                        if let Some(row_shape) =
+                            self.materialize_row_slice(src_handle, rows, cols, index)
+                        {
+                            nested_args.push(NestedArg::Array(row_shape));
+                            continue;
+                        }
+                    }
+                }
+            }
             let reg = self.lift_expr(arg)?;
             let const_val = super::helpers::eval_const_expr(arg, &self.const_locals);
             nested_args.push(NestedArg::Scalar { reg, const_val });
