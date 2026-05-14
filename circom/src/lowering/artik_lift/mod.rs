@@ -101,6 +101,14 @@ pub struct LiftedWitnessCall {
 pub enum LiftedShape {
     Scalar,
     Array(u32),
+    /// Row-major 2D output. The caller emits one `LetArray` per row
+    /// (binding `<base>_<r>` to the C elements `<base>_<r>_<c>`), so
+    /// `arr[r][c]` resolves via the existing single-suffix scheme
+    /// nested twice.
+    Array2D {
+        rows: u32,
+        cols: u32,
+    },
 }
 
 /// Shape of a function parameter at the call site. The lift needs

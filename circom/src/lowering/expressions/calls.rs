@@ -367,6 +367,37 @@ fn inline_function_call(
                     ctx.inline_depth -= 1;
                     return Ok(CircuitExpr::Var(array_name));
                 }
+                super::super::artik_lift::LiftedShape::Array2D { rows, cols } => {
+                    // 2D-return: outputs are laid out row-major as
+                    // `<base>_<r>_<c>` for r in 0..rows, c in 0..cols.
+                    // Emit the WitnessCall first, then one `LetArray`
+                    // per row binding `<base>_<r>` to the C elements,
+                    // so `arr[r][c]` resolves via single-suffix
+                    // resolution nested twice.
+                    let array_name = strip_index_suffix(&strip_index_suffix(&output_bindings[0]));
+                    ctx.pending_nodes
+                        .push(ir_forge::types::CircuitNode::WitnessCall {
+                            output_bindings: output_bindings.clone(),
+                            input_signals: lowered_args,
+                            program_bytes: lifted.program_bytes,
+                            span: span_range.clone(),
+                        });
+                    for r in 0..rows {
+                        let row_name = format!("{array_name}_{r}");
+                        let row_base = (r as usize) * (cols as usize);
+                        let elements: Vec<CircuitExpr> = (0..cols as usize)
+                            .map(|c| CircuitExpr::Var(output_bindings[row_base + c].clone()))
+                            .collect();
+                        ctx.pending_nodes
+                            .push(ir_forge::types::CircuitNode::LetArray {
+                                name: row_name,
+                                elements,
+                                span: span_range.clone(),
+                            });
+                    }
+                    ctx.inline_depth -= 1;
+                    return Ok(CircuitExpr::Var(array_name));
+                }
             }
         }
 
