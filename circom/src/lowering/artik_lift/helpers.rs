@@ -219,15 +219,14 @@ fn expr_is_mux_compatible(expr: &Expr) -> bool {
                 && expr_is_mux_compatible(if_true)
                 && expr_is_mux_compatible(if_false)
         }
-        // Nested function calls inline into the current Artik program
-        // at `nested_depth > 0`, which captures `return` via
-        // `nested_result` instead of emitting `WriteWitness`. Array
-        // allocations inside the callee are scope-local to the nested
-        // frame and cannot leak to the caller's arrays map. Both arms
-        // emit the call's instructions — wasted work, but not a
-        // witness corruption, because the mux picks the winning
-        // register after the fact.
-        Expr::Call { args, .. } => args.iter().all(expr_is_mux_compatible),
+        // Function calls are opaque: an inlined callee may emit a
+        // faulting opcode (e.g. `FIDiv` on a zero divisor inside a
+        // `\` op) whose validity hinges on the runtime guard the
+        // caller wrapped around the call. Mux execution runs both
+        // arms, so the not-taken arm's call still executes its body
+        // and can fault. Route calls through the branching lift,
+        // which honours the guard.
+        Expr::Call { .. } => false,
         _ => false,
     }
 }
@@ -259,6 +258,12 @@ pub(super) struct MutationSummary {
     /// `while` lift rejects this — re-declaring an array each
     /// iteration would leak heap memory.
     pub declares_array: bool,
+    /// Names introduced via a sized `var arr[N];` declaration. Lets
+    /// the if/else slot merge tell array-typed targets apart from
+    /// genuine scalars — `arr = call(...)` reads as a substitution
+    /// against an `Ident` target syntactically, but the underlying
+    /// shape is a heap rebind that doesn't need a slot.
+    pub fresh_array_decls: std::collections::HashSet<String>,
     /// Set when the body emits a `<--` style witness write (currently
     /// not exposed inside circom function bodies, but kept so the
     /// detection grows cleanly if the AST adds the form).
@@ -277,6 +282,9 @@ fn walk_stmt(stmt: &Stmt, out: &mut MutationSummary) {
         } => {
             if !dimensions.is_empty() {
                 out.declares_array = true;
+                for name in names {
+                    out.fresh_array_decls.insert(name.clone());
+                }
             } else {
                 for name in names {
                     out.fresh_decls.insert(name.clone());
