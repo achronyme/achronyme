@@ -326,15 +326,28 @@ impl<'f> LiftState<'f> {
         self.nested_return_slot = Some(scalar_return_slot);
         self.nested_end_label = Some(scalar_end_label);
         // Symmetric setup for array-shaped returns. A pre-scan of
-        // the body identifies whether every `return` is an
-        // `ArrayLit` of agreed length; if so, allocate a destination
-        // heap array at frame entry so the AllocArray bytecode
-        // unconditionally precedes any return-site store. Without
-        // the pre-allocation, a lazy alloc inside the first-return
-        // branch would leak an uninitialised handle to any other
-        // return whose branch runs at runtime in place of the first.
-        if let super::helpers::ArrayReturnScan::AllArrayLit(len) =
-            super::helpers::scan_array_returns(&func.body.stmts)
+        // the body identifies whether every `return` resolves to the
+        // same array length — `Expr::ArrayLit` lengths are syntactic,
+        // `Expr::Ident` lengths come from `var X[K]` declarations
+        // whose dim folds against the callee's incoming param
+        // consts. When the scan agrees on a length, allocate the
+        // destination heap array at frame entry so the AllocArray
+        // bytecode unconditionally precedes any return-site store.
+        // Without the pre-allocation, a lazy alloc inside the first-
+        // return branch would leak an uninitialised handle to any
+        // other return whose branch runs at runtime in its place.
+        let mut scan_consts: std::collections::HashMap<String, super::ConstInt> =
+            std::collections::HashMap::new();
+        for (param, na) in func.params.iter().zip(nested_args.iter()) {
+            if let NestedArg::Scalar {
+                const_val: Some(v), ..
+            } = na
+            {
+                scan_consts.insert(param.clone(), *v);
+            }
+        }
+        if let super::helpers::ArrayReturnScan::Fixed(len) =
+            super::helpers::scan_array_returns(&func.body.stmts, &scan_consts)
         {
             let handle = self.builder.alloc_array(len, ElemT::Field);
             self.nested_array_return_slot = Some((handle, len));

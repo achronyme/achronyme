@@ -427,78 +427,239 @@ fn collect_array_decls_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Stmt>) {
 /// destination slot can be allocated at frame entry rather than
 /// lazily inside a conditional arm.
 pub(super) enum ArrayReturnScan {
-    /// Every `return` in the body is an `Expr::ArrayLit` and they all
-    /// have the same length `n`.
-    AllArrayLit(u32),
-    /// The body contains at least one `return` whose value is not an
-    /// `Expr::ArrayLit`, or two array literals with disagreeing
-    /// lengths. The nested-call lift must skip the array-slot fast
-    /// path in this case.
+    /// Every `return` in the body is array-shaped (either an
+    /// `Expr::ArrayLit` or a bare `Expr::Ident` referencing a
+    /// `var X[K]` declaration whose dim folds against the callee's
+    /// param consts) and they all have the same length `n`.
+    Fixed(u32),
+    /// The body contains at least one `return` whose shape can't be
+    /// resolved at lift time, or two array-shaped returns with
+    /// disagreeing lengths. The nested-call lift must skip the
+    /// array-slot fast path in this case.
     Other,
 }
 
-/// Pre-scan a function body for array-literal returns. Walks
+/// Pre-scan a function body for array-shaped returns. Walks
 /// recursively into compound statements (`if/else`, `for`, `while`,
-/// `do/while`, bare blocks). The walk doesn't need to model control
-/// flow — every literal-shaped return is a candidate for the same
-/// destination slot, and inconsistent lengths force a bail.
-pub(super) fn scan_array_returns(stmts: &[Stmt]) -> ArrayReturnScan {
+/// `do/while`, bare blocks). Two passes:
+///
+/// 1. Collect 1D `var X[K]` declarations across the whole body into
+///    a `name → len` map. Circom hoists `var` to function scope, so
+///    decls inside conditional arms are visible to returns in any
+///    other arm. Multiple names with the same dim are fine; the
+///    same name appearing twice with disagreeing dims is treated as
+///    non-homogeneous and forces a bail.
+/// 2. Walk each `return` and resolve its shape:
+///    - `Expr::ArrayLit` → length is the literal cell count.
+///    - `Expr::Ident` → look up in the dim map.
+///    - anything else → bail.
+///
+/// All resolved lengths must agree on a single `n`; otherwise the
+/// caller has to fall back to the legacy emit-per-return path,
+/// which is still semantically buggy but unchanged from today.
+pub(super) fn scan_array_returns(
+    stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
+) -> ArrayReturnScan {
+    let mut dim_map: HashMap<String, u32> = HashMap::new();
+    let mut consistent = true;
+    collect_array_dims(stmts, param_consts, &mut dim_map, &mut consistent);
+    if !consistent {
+        return ArrayReturnScan::Other;
+    }
+
     let mut found: Option<u32> = None;
     let mut homogeneous = true;
-    walk_returns(stmts, &mut found, &mut homogeneous);
+    walk_returns(stmts, &dim_map, &mut found, &mut homogeneous);
     if !homogeneous {
         return ArrayReturnScan::Other;
     }
-    match found {
-        Some(n) => ArrayReturnScan::AllArrayLit(n),
-        None => ArrayReturnScan::Other,
+    let Some(n) = found else {
+        return ArrayReturnScan::Other;
+    };
+
+    // A single `return` at the top level of the body lifts to exactly
+    // one nested_result-setting site, and the handle it records is
+    // the one whichever runtime path produces. The legacy emit-per-
+    // return path is correct in that case, and the per-cell copy the
+    // slot path emits would add hundreds of registers per call —
+    // enough to push deep nested-call chains past the executor's
+    // frame budget. Reserve the slot only when there are multiple
+    // potential return sites (more than one `Stmt::Return`, or any
+    // return nested inside a conditional or loop body where the lift
+    // walks it more than once).
+    let mut top_level_returns: u32 = 0;
+    let mut nested_returns: u32 = 0;
+    count_returns(stmts, true, &mut top_level_returns, &mut nested_returns);
+    if nested_returns == 0 && top_level_returns <= 1 {
+        return ArrayReturnScan::Other;
+    }
+    ArrayReturnScan::Fixed(n)
+}
+
+fn count_returns(stmts: &[Stmt], at_top_level: bool, top_level: &mut u32, nested: &mut u32) {
+    for stmt in stmts {
+        count_returns_in_stmt(stmt, at_top_level, top_level, nested);
     }
 }
 
-fn walk_returns(stmts: &[Stmt], found: &mut Option<u32>, homogeneous: &mut bool) {
+fn count_returns_in_stmt(stmt: &Stmt, at_top_level: bool, top_level: &mut u32, nested: &mut u32) {
+    match stmt {
+        Stmt::Return { .. } => {
+            if at_top_level {
+                *top_level += 1;
+            } else {
+                *nested += 1;
+            }
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            count_returns(&then_body.stmts, false, top_level, nested);
+            match else_body {
+                Some(ElseBranch::Block(b)) => count_returns(&b.stmts, false, top_level, nested),
+                Some(ElseBranch::IfElse(boxed)) => {
+                    count_returns_in_stmt(boxed, false, top_level, nested)
+                }
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => count_returns(&body.stmts, false, top_level, nested),
+        Stmt::While { body, .. } => count_returns(&body.stmts, false, top_level, nested),
+        Stmt::DoWhile { body, .. } => count_returns(&body.stmts, false, top_level, nested),
+        Stmt::Block(b) => count_returns(&b.stmts, at_top_level, top_level, nested),
+        _ => {}
+    }
+}
+
+fn collect_array_dims(
+    stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
+    dim_map: &mut HashMap<String, u32>,
+    consistent: &mut bool,
+) {
     for stmt in stmts {
-        walk_returns_in_stmt(stmt, found, homogeneous);
+        collect_array_dims_in_stmt(stmt, param_consts, dim_map, consistent);
+        if !*consistent {
+            return;
+        }
+    }
+}
+
+fn collect_array_dims_in_stmt(
+    stmt: &Stmt,
+    param_consts: &HashMap<String, ConstInt>,
+    dim_map: &mut HashMap<String, u32>,
+    consistent: &mut bool,
+) {
+    match stmt {
+        Stmt::VarDecl {
+            names, dimensions, ..
+        } if dimensions.len() == 1 && names.len() == 1 => {
+            let name = &names[0];
+            let len = match eval_const_expr(&dimensions[0], param_consts)
+                .and_then(|v| u32::try_from(v).ok())
+            {
+                Some(v) => v,
+                None => return,
+            };
+            match dim_map.get(name) {
+                Some(prev) if *prev != len => *consistent = false,
+                _ => {
+                    dim_map.insert(name.clone(), len);
+                }
+            }
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_array_dims(&then_body.stmts, param_consts, dim_map, consistent);
+            match else_body {
+                Some(ElseBranch::Block(b)) => {
+                    collect_array_dims(&b.stmts, param_consts, dim_map, consistent)
+                }
+                Some(ElseBranch::IfElse(boxed)) => {
+                    collect_array_dims_in_stmt(boxed, param_consts, dim_map, consistent)
+                }
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => {
+            collect_array_dims(&body.stmts, param_consts, dim_map, consistent)
+        }
+        Stmt::While { body, .. } => {
+            collect_array_dims(&body.stmts, param_consts, dim_map, consistent)
+        }
+        Stmt::DoWhile { body, .. } => {
+            collect_array_dims(&body.stmts, param_consts, dim_map, consistent)
+        }
+        Stmt::Block(b) => collect_array_dims(&b.stmts, param_consts, dim_map, consistent),
+        _ => {}
+    }
+}
+
+fn walk_returns(
+    stmts: &[Stmt],
+    dim_map: &HashMap<String, u32>,
+    found: &mut Option<u32>,
+    homogeneous: &mut bool,
+) {
+    for stmt in stmts {
+        walk_returns_in_stmt(stmt, dim_map, found, homogeneous);
         if !*homogeneous {
             return;
         }
     }
 }
 
-fn walk_returns_in_stmt(stmt: &Stmt, found: &mut Option<u32>, homogeneous: &mut bool) {
+fn walk_returns_in_stmt(
+    stmt: &Stmt,
+    dim_map: &HashMap<String, u32>,
+    found: &mut Option<u32>,
+    homogeneous: &mut bool,
+) {
     match stmt {
-        Stmt::Return { value, .. } => match value {
-            Expr::ArrayLit { elements, .. } => {
-                let len = match u32::try_from(elements.len()) {
-                    Ok(v) => v,
-                    Err(_) => {
-                        *homogeneous = false;
-                        return;
-                    }
-                };
-                match *found {
-                    None => *found = Some(len),
-                    Some(prev) if prev == len => {}
-                    Some(_) => *homogeneous = false,
+        Stmt::Return { value, .. } => {
+            let len_opt = match value {
+                Expr::ArrayLit { elements, .. } => u32::try_from(elements.len()).ok(),
+                Expr::Ident { name, .. } => dim_map.get(name).copied(),
+                _ => None,
+            };
+            let len = match len_opt {
+                Some(v) => v,
+                None => {
+                    *homogeneous = false;
+                    return;
                 }
+            };
+            match *found {
+                None => *found = Some(len),
+                Some(prev) if prev == len => {}
+                Some(_) => *homogeneous = false,
             }
-            _ => *homogeneous = false,
-        },
+        }
         Stmt::IfElse {
             then_body,
             else_body,
             ..
         } => {
-            walk_returns(&then_body.stmts, found, homogeneous);
+            walk_returns(&then_body.stmts, dim_map, found, homogeneous);
             match else_body {
-                Some(ElseBranch::Block(b)) => walk_returns(&b.stmts, found, homogeneous),
-                Some(ElseBranch::IfElse(boxed)) => walk_returns_in_stmt(boxed, found, homogeneous),
+                Some(ElseBranch::Block(b)) => walk_returns(&b.stmts, dim_map, found, homogeneous),
+                Some(ElseBranch::IfElse(boxed)) => {
+                    walk_returns_in_stmt(boxed, dim_map, found, homogeneous)
+                }
                 None => {}
             }
         }
-        Stmt::For { body, .. } => walk_returns(&body.stmts, found, homogeneous),
-        Stmt::While { body, .. } => walk_returns(&body.stmts, found, homogeneous),
-        Stmt::DoWhile { body, .. } => walk_returns(&body.stmts, found, homogeneous),
-        Stmt::Block(b) => walk_returns(&b.stmts, found, homogeneous),
+        Stmt::For { body, .. } => walk_returns(&body.stmts, dim_map, found, homogeneous),
+        Stmt::While { body, .. } => walk_returns(&body.stmts, dim_map, found, homogeneous),
+        Stmt::DoWhile { body, .. } => walk_returns(&body.stmts, dim_map, found, homogeneous),
+        Stmt::Block(b) => walk_returns(&b.stmts, dim_map, found, homogeneous),
         _ => {}
     }
 }

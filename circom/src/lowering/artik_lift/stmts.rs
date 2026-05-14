@@ -553,10 +553,38 @@ impl<'f> LiftState<'f> {
                         let len = shape.total_len();
                         let arr_reg = shape.handle();
                         if self.nested_depth > 0 {
-                            // Nested-call return: hand the array handle
-                            // back so the caller can rebind it under a
-                            // local name (1D or 2D, preserving row /
-                            // column stride for 2D shapes).
+                            // Nested-call 1D return: copy each cell
+                            // of the source into the slot reserved
+                            // by `lift_nested_call`, then jump to
+                            // the shared end-label so the caller
+                            // observes the array that this return's
+                            // branch actually built up at runtime.
+                            // Fall back to the legacy emission when
+                            // the pre-scan was inconclusive or when
+                            // the shape isn't 1D — 2D nested returns
+                            // still record the last handle until a
+                            // separate probe pins them.
+                            if let ArrayShape::Flat1D {
+                                handle: src_handle,
+                                len: src_len,
+                            } = shape
+                            {
+                                if let Some((dst_handle, slot_len)) = self.nested_array_return_slot
+                                {
+                                    if slot_len != src_len {
+                                        return None;
+                                    }
+                                    let end_label = self.nested_end_label?;
+                                    for i in 0..src_len {
+                                        let idx_reg = self.push_int_const(i as u64)?;
+                                        let val_reg = self.builder.load_arr(src_handle, idx_reg);
+                                        self.builder.store_arr(dst_handle, idx_reg, val_reg);
+                                    }
+                                    self.builder.jump_to(end_label);
+                                    self.halted = true;
+                                    return Some(());
+                                }
+                            }
                             self.nested_result = Some(match shape {
                                 ArrayShape::Flat1D { handle, len } => {
                                     NestedResult::Array(handle, len)
@@ -658,17 +686,34 @@ impl<'f> LiftState<'f> {
                     let len_usize = elements.len();
                     let len = u32::try_from(len_usize).ok()?;
                     if self.nested_depth > 0 {
-                        let (dst_handle, slot_len) = self.nested_array_return_slot?;
-                        if slot_len != len {
-                            return None;
+                        // Multi-return functions reserve a destination
+                        // slot at frame entry; lift the elements
+                        // straight into it and jump out. Single-return
+                        // bodies skip the slot — the legacy path's
+                        // freshly-allocated handle is the only one the
+                        // runtime ever writes to, so recording it via
+                        // `nested_result` matches what executes.
+                        if let Some((dst_handle, slot_len)) = self.nested_array_return_slot {
+                            if slot_len != len {
+                                return None;
+                            }
+                            let end_label = self.nested_end_label?;
+                            for (i, elem) in elements.iter().enumerate() {
+                                let val_reg = self.lift_expr(elem)?;
+                                let idx_reg = self.push_int_const(i as u64)?;
+                                self.builder.store_arr(dst_handle, idx_reg, val_reg);
+                            }
+                            self.builder.jump_to(end_label);
+                            self.halted = true;
+                            return Some(());
                         }
-                        let end_label = self.nested_end_label?;
+                        let handle = self.builder.alloc_array(len, ElemT::Field);
                         for (i, elem) in elements.iter().enumerate() {
                             let val_reg = self.lift_expr(elem)?;
                             let idx_reg = self.push_int_const(i as u64)?;
-                            self.builder.store_arr(dst_handle, idx_reg, val_reg);
+                            self.builder.store_arr(handle, idx_reg, val_reg);
                         }
-                        self.builder.jump_to(end_label);
+                        self.nested_result = Some(NestedResult::Array(handle, len));
                         self.halted = true;
                         return Some(());
                     }

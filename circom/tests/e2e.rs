@@ -6992,3 +6992,42 @@ fn artik_inlined_array_return_in_loop_probe() {
         );
     }
 }
+
+/// Named-array analogue of `artik_inlined_array_return_in_loop_probe`.
+/// A nested function whose for-loop body has guarded `return <ident>`
+/// statements over locally-declared arrays must yield the array that
+/// the iteration which actually fires at runtime built up.
+#[test]
+fn artik_inlined_named_array_return_in_loop_probe() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circom/artik_inlined_named_array_return_in_loop_probe.circom");
+    let lib_dirs: Vec<PathBuf> = vec![];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("probe failed to compile: {e}"));
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::<Bn254Fr>::from_u64(5));
+    inputs.insert("b".to_string(), FieldElement::<Bn254Fr>::from_u64(3));
+
+    let all_signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness computation failed: {e}"));
+
+    let expected: [u64; 3] = [1, 2, 3];
+    for (i, want) in expected.iter().enumerate() {
+        let key = format!("out_{i}");
+        let actual = all_signals
+            .get(&key)
+            .unwrap_or_else(|| panic!("missing witness signal `{key}`"));
+        assert_eq!(
+            *actual,
+            FieldElement::<Bn254Fr>::from_u64(*want),
+            "out[{i}] must reflect the iteration whose guard fires at runtime"
+        );
+    }
+}
