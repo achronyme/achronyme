@@ -6918,3 +6918,38 @@ fn artik_mux_call_divbyzero_probe() {
         "with x=0 the else-arm must dominate, expected out=0"
     );
 }
+
+/// A function body whose for-loop contains a guarded early `return`
+/// must yield the value captured by the *first* iteration whose
+/// guard fires at runtime, not the trailing fall-through return.
+/// With `(a=5, b=3)` the first iteration's `a > b` is true so the
+/// witness must observe `out = 1`.
+#[test]
+fn artik_inlined_return_in_loop_probe() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circom/artik_inlined_return_in_loop_probe.circom");
+    let lib_dirs: Vec<PathBuf> = vec![];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("probe failed to compile: {e}"));
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::<Bn254Fr>::from_u64(5));
+    inputs.insert("b".to_string(), FieldElement::<Bn254Fr>::from_u64(3));
+
+    let all_signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness computation failed: {e}"));
+
+    let actual = all_signals
+        .get("out")
+        .unwrap_or_else(|| panic!("missing witness signal `out`"));
+    assert_eq!(
+        *actual,
+        FieldElement::<Bn254Fr>::from_u64(1),
+        "the earliest iteration whose guard fires at runtime must win"
+    );
+}
