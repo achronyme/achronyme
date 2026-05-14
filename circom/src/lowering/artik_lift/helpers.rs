@@ -422,6 +422,87 @@ fn collect_array_decls_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Stmt>) {
     }
 }
 
+/// Result of pre-scanning a function body to determine the shape
+/// of its array returns. Reported to the nested-call lift so the
+/// destination slot can be allocated at frame entry rather than
+/// lazily inside a conditional arm.
+pub(super) enum ArrayReturnScan {
+    /// Every `return` in the body is an `Expr::ArrayLit` and they all
+    /// have the same length `n`.
+    AllArrayLit(u32),
+    /// The body contains at least one `return` whose value is not an
+    /// `Expr::ArrayLit`, or two array literals with disagreeing
+    /// lengths. The nested-call lift must skip the array-slot fast
+    /// path in this case.
+    Other,
+}
+
+/// Pre-scan a function body for array-literal returns. Walks
+/// recursively into compound statements (`if/else`, `for`, `while`,
+/// `do/while`, bare blocks). The walk doesn't need to model control
+/// flow — every literal-shaped return is a candidate for the same
+/// destination slot, and inconsistent lengths force a bail.
+pub(super) fn scan_array_returns(stmts: &[Stmt]) -> ArrayReturnScan {
+    let mut found: Option<u32> = None;
+    let mut homogeneous = true;
+    walk_returns(stmts, &mut found, &mut homogeneous);
+    if !homogeneous {
+        return ArrayReturnScan::Other;
+    }
+    match found {
+        Some(n) => ArrayReturnScan::AllArrayLit(n),
+        None => ArrayReturnScan::Other,
+    }
+}
+
+fn walk_returns(stmts: &[Stmt], found: &mut Option<u32>, homogeneous: &mut bool) {
+    for stmt in stmts {
+        walk_returns_in_stmt(stmt, found, homogeneous);
+        if !*homogeneous {
+            return;
+        }
+    }
+}
+
+fn walk_returns_in_stmt(stmt: &Stmt, found: &mut Option<u32>, homogeneous: &mut bool) {
+    match stmt {
+        Stmt::Return { value, .. } => match value {
+            Expr::ArrayLit { elements, .. } => {
+                let len = match u32::try_from(elements.len()) {
+                    Ok(v) => v,
+                    Err(_) => {
+                        *homogeneous = false;
+                        return;
+                    }
+                };
+                match *found {
+                    None => *found = Some(len),
+                    Some(prev) if prev == len => {}
+                    Some(_) => *homogeneous = false,
+                }
+            }
+            _ => *homogeneous = false,
+        },
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            walk_returns(&then_body.stmts, found, homogeneous);
+            match else_body {
+                Some(ElseBranch::Block(b)) => walk_returns(&b.stmts, found, homogeneous),
+                Some(ElseBranch::IfElse(boxed)) => walk_returns_in_stmt(boxed, found, homogeneous),
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => walk_returns(&body.stmts, found, homogeneous),
+        Stmt::While { body, .. } => walk_returns(&body.stmts, found, homogeneous),
+        Stmt::DoWhile { body, .. } => walk_returns(&body.stmts, found, homogeneous),
+        Stmt::Block(b) => walk_returns(&b.stmts, found, homogeneous),
+        _ => {}
+    }
+}
+
 /// Map a circom compound-assignment operator to the plain binary op
 /// the lift knows how to emit. Returns `None` for unsupported shapes.
 pub(super) fn compound_to_binop(op: CompoundOp) -> Option<BinOp> {

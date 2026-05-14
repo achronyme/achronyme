@@ -322,6 +322,16 @@ struct LiftState<'f> {
     /// so control bypasses any later iterations of an enclosing
     /// unrolled loop or fall-through statements.
     nested_end_label: Option<Label>,
+    /// Heap array (handle + length) lazily allocated on the first
+    /// array-shaped `Stmt::Return` inside an inlined frame. Every
+    /// nested array return copies its source cells into this slot and
+    /// jumps to `nested_end_label`; the caller forwards
+    /// `(handle, len)` as `NestedResult::Array`. Subsequent returns
+    /// with a different length are rejected — that case would mean
+    /// the callee has two return statements with disagreeing shapes,
+    /// which the trivial-body lift would already have caught at the
+    /// top level.
+    nested_array_return_slot: Option<(Reg, u32)>,
     /// Witness slot id reserved for the function's scalar return value.
     /// Lazily populated on the first scalar `return` so multi-return
     /// shapes (e.g. early-exit `if (cond) return X;` followed by a
@@ -440,6 +450,7 @@ impl<'f> LiftState<'f> {
             nested_result: None,
             nested_return_slot: None,
             nested_end_label: None,
+            nested_array_return_slot: None,
             output_slot: None,
             output_array_slots: None,
             hoisted_arrays: std::collections::HashMap::new(),
