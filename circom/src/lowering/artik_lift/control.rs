@@ -253,14 +253,40 @@ impl<'f> LiftState<'f> {
         self.lift_if_else_branching(condition, then_body, else_body)
     }
 
+    /// Top-level dispatcher for the conditional-jump path. Routes to
+    /// the slot-promotion merge when both arms fall through (the
+    /// general "scalars updated in either arm" shape) and to the
+    /// narrow single-side merge when one arm halts via `return`
+    /// (slot-merge can't represent a halt without observing both
+    /// arms first).
+    pub(super) fn lift_if_else_branching(
+        &mut self,
+        condition: &Expr,
+        then_body: &ast::Block,
+        else_body: Option<&ast::ElseBranch>,
+    ) -> Option<()> {
+        let then_returns = stmts_have_return(&then_body.stmts);
+        let else_returns = match else_body {
+            Some(ast::ElseBranch::Block(b)) => stmts_have_return(&b.stmts),
+            Some(ast::ElseBranch::IfElse(boxed)) => {
+                stmts_have_return(std::slice::from_ref(boxed.as_ref()))
+            }
+            None => false,
+        };
+        if then_returns || else_returns {
+            return self.lift_if_else_branching_narrow(condition, then_body, else_body);
+        }
+        self.lift_if_else_branching_slot_merge(condition, then_body, else_body)
+    }
+
     /// Real conditional-jump if/else. Used when at least one arm
-    /// `return`s — the mux merge can't represent a halt. Locals
-    /// merging is intentionally narrow: at most one arm may modify
-    /// locals, and in the both-fall-through case neither arm may
-    /// touch locals. The shape covers circomlib's sqrt early-exit
+    /// `return`s — the slot-promotion merge can't represent a halt.
+    /// Locals merging is intentionally narrow: at most one arm may
+    /// modify locals, and in the both-fall-through case neither arm
+    /// may touch locals. The shape covers circomlib's sqrt early-exit
     /// pattern (`if (cond) return 0;`) without forcing a general
     /// SSA-merge implementation.
-    pub(super) fn lift_if_else_branching(
+    fn lift_if_else_branching_narrow(
         &mut self,
         condition: &Expr,
         then_body: &ast::Block,
@@ -353,6 +379,189 @@ impl<'f> LiftState<'f> {
             (true, true) => unreachable!("handled by halted check above"),
         };
         self.const_locals = pre_const_locals;
+        Some(())
+    }
+
+    /// General-shape conditional-jump if/else for the both-arms-fall-
+    /// through case. Promotes every scalar that either arm assigns to
+    /// a 1-element heap slot, pre-initialised from the pre-branch
+    /// register (or 0 for variables introduced inside the arms);
+    /// after each arm's body completes, the lift stores the arm's
+    /// current register for that scalar back into the slot. Post-
+    /// branch, every merged name is reloaded into `self.locals` from
+    /// its slot. The branching emission guarantees only one arm runs
+    /// at runtime, so guarded operations like `if (x != 0) y = a \ x`
+    /// stay safe — the not-taken arm's bytecode is still emitted but
+    /// never executed.
+    fn lift_if_else_branching_slot_merge(
+        &mut self,
+        condition: &Expr,
+        then_body: &ast::Block,
+        else_body: Option<&ast::ElseBranch>,
+    ) -> Option<()> {
+        let then_summary = collect_mutated_scalars(&then_body.stmts);
+        let else_summary = match else_body {
+            Some(ast::ElseBranch::Block(b)) => collect_mutated_scalars(&b.stmts),
+            Some(ast::ElseBranch::IfElse(boxed)) => {
+                collect_mutated_scalars(std::slice::from_ref(boxed.as_ref()))
+            }
+            None => super::helpers::MutationSummary::default(),
+        };
+
+        if then_summary.writes_witness || else_summary.writes_witness {
+            return None;
+        }
+        // Array writes against names that already live on the heap
+        // (declared and tracked in `self.arrays` pre-branch) persist
+        // through the slot merge naturally — `StoreArr` writes
+        // straight to the heap and is gated by the JumpIf. Writes
+        // against unknown names mean the arm is referencing an array
+        // we don't track; reject conservatively. Fresh array decls
+        // produced inside an arm don't need to be tracked here — the
+        // arm's own `VarDecl` emits the `AllocArray` and registers
+        // the name in `self.arrays` before the write is lifted.
+        let arm_array_decls: std::collections::HashSet<&String> = then_summary
+            .fresh_array_decls
+            .iter()
+            .chain(else_summary.fresh_array_decls.iter())
+            .collect();
+        for name in then_summary
+            .array_writes
+            .iter()
+            .chain(else_summary.array_writes.iter())
+        {
+            if !self.arrays.contains_key(name) && !arm_array_decls.contains(name) {
+                return None;
+            }
+        }
+
+        // Only true scalars need slot merging. `collect_mutated_scalars`
+        // reports every `Ident = ...` substitution under `scalars`,
+        // including the whole-array-rebind case `arr = call(...)` where
+        // `arr` was declared with dimensions. Those targets live in
+        // `self.arrays`, not `self.locals`, so a slot would be wrong.
+        // Filter against the pre-branch array map and the in-arm
+        // fresh-array decls to keep the merge scalar-only.
+        let is_array_name = |n: &str| -> bool {
+            self.arrays.contains_key(n) || arm_array_decls.contains(&n.to_string())
+        };
+        // Demoting a const_local to runtime inside an arm would leave
+        // the post-merge view ambiguous — the runtime-merged register
+        // we install for `name` doesn't carry the compile-time value
+        // forward. Bail in that case so the parent lift can choose a
+        // different shape.
+        if then_summary
+            .scalars
+            .iter()
+            .chain(else_summary.scalars.iter())
+            .filter(|n| !is_array_name(n))
+            .any(|n| self.const_locals.contains_key(n))
+        {
+            return None;
+        }
+
+        let mut merge_names: BTreeSet<String> = BTreeSet::new();
+        for n in &then_summary.scalars {
+            if !is_array_name(n) {
+                merge_names.insert(n.clone());
+            }
+        }
+        for n in &else_summary.scalars {
+            if !is_array_name(n) {
+                merge_names.insert(n.clone());
+            }
+        }
+
+        // Pre-allocate the slot for every merged scalar. The fall-back
+        // value is the pre-branch register if the local was already
+        // bound, or a freshly-pushed 0 otherwise (covers `var y;` +
+        // assignments inside arms, where the AST decl is a no-op for
+        // the lift's locals map).
+        let zero_reg = self.push_const_unsigned(0)?;
+        let mut slots: Vec<(String, Reg)> = Vec::with_capacity(merge_names.len());
+        for name in &merge_names {
+            let slot = self.alloc_field_slot();
+            let initial = self.locals.get(name).copied().unwrap_or(zero_reg);
+            self.store_field_slot(slot, initial)?;
+            slots.push((name.clone(), slot));
+        }
+
+        let cond_reg = self.lift_expr(condition)?;
+        let zero = self.push_const_unsigned(0)?;
+        let is_zero_int = self.builder.feq(cond_reg, zero);
+
+        let skip_label = self.builder.new_label();
+        let end_label = self.builder.new_label();
+
+        self.builder.jump_if_to(is_zero_int, skip_label);
+
+        let pre_locals = self.locals.clone();
+        let pre_const_locals = self.const_locals.clone();
+
+        // Then-arm.
+        let saved_halted = self.halted;
+        self.halted = false;
+        for stmt in &then_body.stmts {
+            self.lift_stmt(stmt)?;
+            if self.halted {
+                break;
+            }
+        }
+        if self.halted {
+            // Inlined nested calls restore `halted` to the outer
+            // value, so the only way to land here is an AST-level
+            // Return in the arm — which the dispatcher already
+            // routed away from slot-merge. Defensive bail.
+            return None;
+        }
+        for (name, slot) in &slots {
+            if let Some(reg) = self.locals.get(name).copied() {
+                self.store_field_slot(*slot, reg)?;
+            }
+        }
+        self.builder.jump_to(end_label);
+
+        // Reset state for the else-arm.
+        self.locals = pre_locals.clone();
+        self.const_locals = pre_const_locals.clone();
+        self.halted = false;
+
+        self.builder.place(skip_label);
+
+        match else_body {
+            Some(ast::ElseBranch::Block(b)) => {
+                for stmt in &b.stmts {
+                    self.lift_stmt(stmt)?;
+                    if self.halted {
+                        break;
+                    }
+                }
+            }
+            Some(ast::ElseBranch::IfElse(boxed)) => {
+                self.lift_stmt(boxed)?;
+            }
+            None => {}
+        }
+        if self.halted {
+            return None;
+        }
+        for (name, slot) in &slots {
+            if let Some(reg) = self.locals.get(name).copied() {
+                self.store_field_slot(*slot, reg)?;
+            }
+        }
+
+        self.builder.place(end_label);
+
+        // Restore state and re-install the merged scalars from slots.
+        self.locals = pre_locals;
+        self.const_locals = pre_const_locals;
+        self.halted = saved_halted;
+        for (name, slot) in slots {
+            let reg = self.load_field_slot(slot)?;
+            self.locals.insert(name, reg);
+        }
+
         Some(())
     }
 
