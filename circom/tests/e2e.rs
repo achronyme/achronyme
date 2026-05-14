@@ -6884,15 +6884,12 @@ fn fn_witness_decompose_secp256k1_addunequal() {
     }
 }
 
-/// Guards a potentially-faulting `100 \ x` behind `if (x != 0)`. With
-/// input `x = 0` the runtime semantics demands the else-arm to be
-/// taken and `out` to be 0 — no integer division on zero should run.
-///
-/// Before the mux-via-call fix the artik lift treated function-call
-/// substitutions as mux-compatible and emitted both arms unconditionally,
-/// then faulted on the not-taken arm's FIDiv when computing the witness
-/// value for `out`. Pins the branching-merge path so the regression
-/// can't reappear.
+/// Guards a potentially-faulting `100 \ x` behind `if (x != 0)`. The
+/// artik lift must route if/else arms whose substitutions invoke a
+/// function call through the branching path, so the not-taken arm's
+/// bytecode is jumped over instead of executed; with `x = 0` the
+/// witness must take the else-arm and write `out = 0` without ever
+/// running an integer division on zero.
 #[test]
 fn artik_mux_call_divbyzero_probe() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();

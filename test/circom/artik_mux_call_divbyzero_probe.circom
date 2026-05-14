@@ -1,16 +1,14 @@
 pragma circom 2.1.5;
 
-// Minimal reproduction of the mux/call divisor-zero bug.
+// Minimal probe for the artik lift's branching path. `safe_div(x)`
+// guards a potentially-faulting integer division behind `if (x != 0)`;
+// the guarded computation `100 \ x` lives inside the helper
+// `inner(x)`, so both arms of the if/else are function-call
+// substitutions. The lift must route this shape through the branching
+// path so the not-taken arm's FIDiv never executes.
 //
-// `safe_div(x)` guards a potentially-faulting integer division behind
-// `if (x != 0)`. The guarded computation `100 \ x` lives inside the
-// helper `inner(x)` so the if/else arms are function-call
-// substitutions — the exact shape that drove the secp256k1
-// `long_sub_mod_p` lift to emit both arms via mux-style merge, then
-// fault on the not-taken arm's FIDiv when the divisor is zero.
-//
-// Witness expectation: with input x == 0, the else-arm picks y = 0;
-// no runtime FIDiv on zero must execute.
+// Witness expectation: with input x == 0 the else-arm picks y = 0
+// and no runtime FIDiv on zero runs.
 
 function inner(x) {
     return 100 \ x;
