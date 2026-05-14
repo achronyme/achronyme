@@ -308,6 +308,21 @@ fn inline_function_call(
             let span_range = Some(diagnostics::SpanRange::from_span(span));
             let output_bindings = lifted.outputs.clone();
 
+            // Emit any promoted nested-call fragments first. Their
+            // output bindings must be in `self.env` before the parent's
+            // own WitnessCall references them via `CircuitExpr::Var(...)`
+            // in its input_signals. Order is preserved by `pending_nodes`
+            // FIFO drain — see lowering/statements/mod.rs splice.
+            for fragment in lifted.extra_fragments {
+                ctx.pending_nodes
+                    .push(ir_forge::types::CircuitNode::WitnessCall {
+                        output_bindings: fragment.output_bindings,
+                        input_signals: fragment.input_signals,
+                        program_bytes: fragment.program_bytes,
+                        span: span_range.clone(),
+                    });
+            }
+
             match lifted.shape {
                 super::super::artik_lift::LiftedShape::Scalar => {
                     let out_name = output_bindings[0].clone();

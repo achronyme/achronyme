@@ -60,8 +60,27 @@ mod exprs;
 mod helpers;
 mod stmts;
 
+/// A self-contained Artik program with its IR-level wiring: the
+/// `input_signals` map to the program's `ReadSignal` order, and
+/// `output_bindings` map to its `WriteWitness` slots. A fragment is
+/// the unit the caller emits as a single [`CircuitNode::WitnessCall`].
+///
+/// Fragments produced by promoted nested calls (see `extra_fragments`)
+/// are emitted strictly before the parent's own call so the parent's
+/// `input_signals` can reference them via `CircuitExpr::Var(...)`.
+pub struct LiftFragment {
+    pub program_bytes: Vec<u8>,
+    pub input_signals: Vec<ir_forge::types::CircuitExpr>,
+    pub output_bindings: Vec<String>,
+}
+
 /// Result of a successful lift: the serialized Artik program + the
 /// names of the witness slots the caller should bind to.
+///
+/// `extra_fragments` holds programs for nested calls that the lift
+/// chose to promote to standalone [`CircuitNode::WitnessCall`] nodes
+/// rather than inline-expand into the parent's bytecode. They emit in
+/// the order they appear, before the parent's own call.
 pub struct LiftedWitnessCall {
     pub program_bytes: Vec<u8>,
     pub outputs: Vec<String>,
@@ -71,6 +90,10 @@ pub struct LiftedWitnessCall {
     /// caller needs to re-bundle them into a `LetArray` before the
     /// usage site can read the function's result as an array.
     pub shape: LiftedShape,
+    /// Promoted nested-call fragments, emitted in order before the
+    /// parent's own [`CircuitNode::WitnessCall`]. Empty when no
+    /// nested call was promoted (the default).
+    pub extra_fragments: Vec<LiftFragment>,
 }
 
 /// Output shape the lift produced.
@@ -151,6 +174,7 @@ pub fn lift_function_to_artik(
         program_bytes,
         outputs,
         shape,
+        extra_fragments: Vec::new(),
     })
 }
 
