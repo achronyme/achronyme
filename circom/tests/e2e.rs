@@ -6747,3 +6747,33 @@ fn bits2point_strict_real_circomlib() {
         "Bits2Point_Strict must produce non-empty constraint set"
     );
 }
+
+/// Asserts inside a witness function are advisory (no R1CS
+/// constraints). The lift skips a const-foldable-true predicate and
+/// bails on a const-foldable-false or runtime predicate. circomlib's
+/// `get_secp256k1_prime` opens with
+/// `assert((n == 86 && k == 3) || (n == 64 && k == 4))` — without
+/// this handling the whole secp256k1 helper chain falls back to E212.
+#[test]
+fn fn_witness_lift_assert_const_drop() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_assert_const_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("const-assert lift failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+    artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("const-assert payload must decode and validate");
+}

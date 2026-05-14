@@ -654,6 +654,25 @@ impl<'f> LiftState<'f> {
                 self.return_shape = ReturnShape::Scalar;
                 Some(())
             }
+            Stmt::Assert { arg, .. } => {
+                // Asserts inside a witness function are advisory checks
+                // — they abort witness computation on failure but emit
+                // no constraints. The Artik VM has no assert opcode, so
+                // the lift evaluates the predicate at compile time:
+                // a const-true predicate is dropped, a const-false
+                // predicate bails so the caller surfaces an explicit
+                // gap, and a runtime-valued predicate also bails so a
+                // semantic the function relied on is not silently
+                // skipped. Circomlib's witness functions invariably
+                // gate on shape parameters (`n == 64 && k == 4`) which
+                // fold cleanly under `try_eval_arg_const` at the call
+                // site.
+                let v = eval_const_expr(arg, &self.const_locals)?;
+                if v == 0 {
+                    return None;
+                }
+                Some(())
+            }
             Stmt::Expr { expr, .. } => {
                 // Bare expression statement. Only supported when it's
                 // a postfix/prefix increment/decrement on a loop var —
