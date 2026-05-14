@@ -14,7 +14,7 @@
 
 use std::collections::HashMap;
 
-use artik::{IntW, Reg};
+use artik::{ElemT, IntW, Reg};
 
 use crate::ast::{BinOp, Expr, UnaryOp};
 
@@ -312,6 +312,7 @@ impl<'f> LiftState<'f> {
         let outer_result = self.nested_result.take();
         let outer_return_slot = self.nested_return_slot.take();
         let outer_end_label = self.nested_end_label.take();
+        let outer_array_return_slot = self.nested_array_return_slot.take();
         // Reserve a 1-element heap slot and a jump target so each
         // scalar `return` inside the callee body can write its value
         // and exit cleanly. Without this, a return nested inside a
@@ -324,6 +325,20 @@ impl<'f> LiftState<'f> {
         let scalar_end_label = self.builder.new_label();
         self.nested_return_slot = Some(scalar_return_slot);
         self.nested_end_label = Some(scalar_end_label);
+        // Symmetric setup for array-shaped returns. A pre-scan of
+        // the body identifies whether every `return` is an
+        // `ArrayLit` of agreed length; if so, allocate a destination
+        // heap array at frame entry so the AllocArray bytecode
+        // unconditionally precedes any return-site store. Without
+        // the pre-allocation, a lazy alloc inside the first-return
+        // branch would leak an uninitialised handle to any other
+        // return whose branch runs at runtime in place of the first.
+        if let super::helpers::ArrayReturnScan::AllArrayLit(len) =
+            super::helpers::scan_array_returns(&func.body.stmts)
+        {
+            let handle = self.builder.alloc_array(len, ElemT::Field);
+            self.nested_array_return_slot = Some((handle, len));
+        }
         self.halted = false;
         self.nested_depth += 1;
 
@@ -354,18 +369,23 @@ impl<'f> LiftState<'f> {
         }
 
         let mut result = self.nested_result.take();
+        let array_slot_after = self.nested_array_return_slot;
 
-        // If the body returned a scalar, it stored its value into the
-        // pre-reserved slot and jumped to `scalar_end_label`. Place
-        // the label here so post-call code resumes from a single
-        // join point regardless of which return arm fired, then load
-        // the slot value as the call's scalar result. An array-shaped
-        // return populated `nested_result` directly above and skipped
-        // the slot path; in that case the placed label is unreachable
-        // at runtime but harmless.
+        // Resolve the call's outward-facing result. Each return shape
+        // routes through exactly one channel:
+        //
+        // * `nested_result` carries a 2D-array return (the only
+        //   shape that bypasses the slot machinery today).
+        // * `nested_array_return_slot` carries a 1D array return: the
+        //   destination handle is the slot itself, and the length was
+        //   fixed by the pre-scan.
+        // * `nested_return_slot` carries a scalar return: place the
+        //   end-label and load the slot.
         if body_ok && result.is_none() && self.halted {
             self.builder.place(scalar_end_label);
-            if let Some(loaded) = self.load_field_slot(scalar_return_slot) {
+            if let Some((handle, len)) = array_slot_after {
+                result = Some(NestedResult::Array(handle, len));
+            } else if let Some(loaded) = self.load_field_slot(scalar_return_slot) {
                 result = Some(NestedResult::Scalar(loaded));
             } else {
                 body_ok = false;
@@ -377,6 +397,7 @@ impl<'f> LiftState<'f> {
         self.nested_result = outer_result;
         self.nested_return_slot = outer_return_slot;
         self.nested_end_label = outer_end_label;
+        self.nested_array_return_slot = outer_array_return_slot;
         self.nested_depth -= 1;
         self.halted = outer_halted;
         self.locals = outer_locals;

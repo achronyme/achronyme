@@ -646,22 +646,37 @@ impl<'f> LiftState<'f> {
                 // Array-literal return: `return [e0, e1, ..., eN];`.
                 // Allocate a fresh 1D field array, lift each element
                 // into a register, store at index `i`. From there the
-                // path is identical to a named-array return — nested
-                // calls get a NestedResult::Array handle, outer
-                // functions emit per-cell witness slots.
+                // path is identical to a named-array return — outer
+                // functions emit per-cell witness slots. Nested calls
+                // take a shorter route: the destination is the
+                // pre-allocated `nested_array_return_slot` so every
+                // return in the body writes into the same heap array
+                // and jumps to the shared end-label, leaving the
+                // caller observing whichever return actually fired
+                // at runtime.
                 if let Expr::ArrayLit { elements, .. } = value {
                     let len_usize = elements.len();
                     let len = u32::try_from(len_usize).ok()?;
+                    if self.nested_depth > 0 {
+                        let (dst_handle, slot_len) = self.nested_array_return_slot?;
+                        if slot_len != len {
+                            return None;
+                        }
+                        let end_label = self.nested_end_label?;
+                        for (i, elem) in elements.iter().enumerate() {
+                            let val_reg = self.lift_expr(elem)?;
+                            let idx_reg = self.push_int_const(i as u64)?;
+                            self.builder.store_arr(dst_handle, idx_reg, val_reg);
+                        }
+                        self.builder.jump_to(end_label);
+                        self.halted = true;
+                        return Some(());
+                    }
                     let handle = self.builder.alloc_array(len, ElemT::Field);
                     for (i, elem) in elements.iter().enumerate() {
                         let val_reg = self.lift_expr(elem)?;
                         let idx_reg = self.push_int_const(i as u64)?;
                         self.builder.store_arr(handle, idx_reg, val_reg);
-                    }
-                    if self.nested_depth > 0 {
-                        self.nested_result = Some(NestedResult::Array(handle, len));
-                        self.halted = true;
-                        return Some(());
                     }
                     let slots = match self.output_array_slots.as_ref() {
                         Some(s) if s.len() == len as usize => s.clone(),
