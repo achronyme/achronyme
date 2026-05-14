@@ -6883,3 +6883,41 @@ fn fn_witness_decompose_secp256k1_addunequal() {
             .unwrap_or_else(|e| panic!("fragment {i} payload failed to decode: {e}"));
     }
 }
+
+/// Guards a potentially-faulting `100 \ x` behind `if (x != 0)`. With
+/// input `x = 0` the runtime semantics demands the else-arm to be
+/// taken and `out` to be 0 — no integer division on zero should run.
+///
+/// Before the mux-via-call fix the artik lift treated function-call
+/// substitutions as mux-compatible and emitted both arms unconditionally,
+/// then faulted on the not-taken arm's FIDiv when computing the witness
+/// value for `out`. Pins the branching-merge path so the regression
+/// can't reappear.
+#[test]
+fn artik_mux_call_divbyzero_probe() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circom/artik_mux_call_divbyzero_probe.circom");
+    let lib_dirs: Vec<PathBuf> = vec![];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("probe failed to compile: {e}"));
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("x".to_string(), FieldElement::<Bn254Fr>::zero());
+
+    let all_signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness computation failed: {e}"));
+
+    let actual = all_signals
+        .get("out")
+        .unwrap_or_else(|| panic!("missing witness signal `out`"));
+    assert_eq!(
+        *actual,
+        FieldElement::<Bn254Fr>::zero(),
+        "with x=0 the else-arm must dominate, expected out=0"
+    );
+}
