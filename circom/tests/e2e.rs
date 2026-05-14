@@ -4729,7 +4729,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Blocked at secp256k1.circom:231 with E212: `function 'secp256k1_addunequal_func' cannot be circuit-inlined with runtime arguments: its body declares internal state (vars, loops, or multiple statements) that would require a witness calculator`. The bigint helpers (long_div, mod_inv, …) already lift through artik_lift, but this curve-specific helper still falls through to the E212 path. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Blocked at secp256k1_utils.circom:102 with E212 on `getProperRepresentation`: its body mixes integer division/modulo with conditional branches and nested loops over runtime bounds, which neither the single-frame Artik lift nor the per-statement decomposition path currently handle. The `secp256k1_addunequal_func` chain (the previous blocker) lifts via decomposition into 11+ WitnessCall fragments — pinned by `fn_witness_decompose_secp256k1_addunequal`. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 
@@ -6841,4 +6841,45 @@ fn fn_witness_lift_row_slice_arg() {
         .expect("expected a CircuitNode::WitnessCall in ProveIR");
     artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("row-slice arg payload must decode and validate");
+}
+
+/// Per-statement decomposition: `secp256k1_addunequal_func(64, 4, ...)`
+/// has a body too heavy for a single Artik frame (11 nested helper
+/// calls + 2D return) and the standard `lift_function_to_artik`
+/// returns None. The decomposition path lifts each helper call as
+/// its own `CircuitNode::WitnessCall` fragment and emits a flat
+/// `LetArray` carrying the 2D result. Pins the multi-fragment emission
+/// and verifies each fragment's Artik payload decodes.
+#[test]
+fn fn_witness_decompose_secp256k1_addunequal() {
+    use ir_forge::types::CircuitNode;
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circomlib/fn_witness_decompose_secp256k1_addunequal_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("secp256k1_addunequal decomposition failed to compile: {e}"));
+
+    let witness_calls: Vec<&Vec<u8>> = result
+        .prove_ir
+        .body
+        .iter()
+        .filter_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes),
+            _ => None,
+        })
+        .collect();
+
+    assert!(
+        witness_calls.len() >= 11,
+        "expected ≥11 WitnessCall fragments from the helper-call chain, got {}",
+        witness_calls.len()
+    );
+
+    for (i, bytes) in witness_calls.iter().enumerate() {
+        artik::bytecode::decode(bytes, Some(memory::FieldFamily::BnLike256))
+            .unwrap_or_else(|e| panic!("fragment {i} payload failed to decode: {e}"));
+    }
 }

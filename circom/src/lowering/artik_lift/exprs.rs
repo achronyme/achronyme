@@ -248,6 +248,13 @@ impl<'f> LiftState<'f> {
             return None;
         }
 
+        // Snapshot the builder so a partial nested lift — orphan arg
+        // emission + any bytecode emitted into the body before bail —
+        // rolls back cleanly. Without this, a fallback (promote the
+        // call as a standalone WitnessCall instead of inlining) cannot
+        // start from a clean parent state.
+        let pre_call_snapshot = self.builder.snapshot();
+
         // Classify each argument as scalar (lift to register) or array
         // (alias caller's handle). Capture compile-time-folded scalars
         // so the callee's frame can bind them into `const_locals` —
@@ -344,6 +351,11 @@ impl<'f> LiftState<'f> {
         self.arrays = outer_arrays;
 
         if !body_ok {
+            // Rewind builder body, const pool, register / signal /
+            // slot counters, and label state to the pre-call point so
+            // a fallback path sees a builder bit-identical to before
+            // the attempt.
+            self.builder.restore(pre_call_snapshot);
             return None;
         }
         result
