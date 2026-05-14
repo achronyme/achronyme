@@ -191,6 +191,20 @@ fn inline_function_call(
             param_consts.push(const_val);
         }
 
+        // Build lowered args once — both the standard lift and the
+        // decomposition fallback consume them. `lower_expr` may have
+        // side effects (pending_nodes pushes) so building twice would
+        // double-emit.
+        let lowered_args = match build_lowered_args_for_artik(args, &param_shapes, env, ctx) {
+            Ok(v) => v,
+            Err(e) => {
+                ctx.inline_depth -= 1;
+                return Err(e);
+            }
+        };
+
+        let span_range = Some(diagnostics::SpanRange::from_span(span));
+
         if let Some(lifted) = super::super::artik_lift::lift_function_to_artik(
             name,
             &param_shapes,
@@ -199,113 +213,6 @@ fn inline_function_call(
             ctx,
             span,
         ) {
-            // Now lower each argument. Array args expand into one
-            // `CircuitExpr` per element (lookup via
-            // `env.resolve_array_element`); scalars lower directly.
-            let mut lowered_args: Vec<CircuitExpr> = Vec::new();
-            for (arg, (_, shape)) in args.iter().zip(param_shapes.iter()) {
-                match shape {
-                    ParamShape::Scalar => {
-                        let lowered = lower_expr(arg, env, ctx)?;
-                        lowered_args.push(lowered);
-                    }
-                    ParamShape::Array(len) => {
-                        let (arg_name, arg_span) = match arg {
-                            crate::ast::Expr::Ident { name, span } => (name, span),
-                            _ => unreachable!(
-                                "shape Array(_) was derived from an Ident arg just above"
-                            ),
-                        };
-
-                        // Compile-time-known array (e.g. `var order[100]
-                        // = get_secp256k1_order(n, k)` in ECDSAVerify):
-                        // expand each element to a `CircuitExpr::Const`
-                        // straight from `known_array_values`. The
-                        // signal-array path below requires `env.resolve`
-                        // to find the name in inputs/locals/captures;
-                        // compile-time arrays don't appear there
-                        // because their elements aren't signals.
-                        if let Some(eval_value) = env.known_array_values.get(arg_name) {
-                            let elems = match eval_value {
-                                super::super::utils::EvalValue::Array(es) => es,
-                                _ => {
-                                    ctx.inline_depth -= 1;
-                                    return Err(LoweringError::new(
-                                        format!(
-                                            "array argument `{arg_name}` has a known compile-time \
-                                             value but is not an array shape"
-                                        ),
-                                        arg_span,
-                                    ));
-                                }
-                            };
-                            if elems.len() < *len as usize {
-                                ctx.inline_depth -= 1;
-                                return Err(LoweringError::new(
-                                    format!(
-                                        "array argument `{arg_name}` has {} compile-time elements \
-                                         but the lift expected {}",
-                                        elems.len(),
-                                        *len
-                                    ),
-                                    arg_span,
-                                ));
-                            }
-                            for (i, elem) in elems.iter().enumerate().take(*len as usize) {
-                                let scalar = elem.as_scalar().ok_or_else(|| {
-                                    LoweringError::new(
-                                        format!(
-                                            "compile-time array `{arg_name}` element {i} is not a \
-                                             scalar value — Artik can only bind scalar field \
-                                             constants"
-                                        ),
-                                        arg_span,
-                                    )
-                                })?;
-                                lowered_args.push(CircuitExpr::Const(scalar.to_field_const()));
-                            }
-                            continue;
-                        }
-
-                        // Element names (`arr_0`, `arr_1`, ...) are
-                        // materialized at instantiate time, not at
-                        // lower time — `lower_expr(Ident("inp_0"))`
-                        // would fail "undefined variable". Emit the
-                        // right `CircuitExpr` variant directly based
-                        // on the kind the array's base name resolves
-                        // to; the instantiate scaffold guarantees
-                        // each element is registered under its flat
-                        // name by then.
-                        use super::super::env::VarKind;
-                        let kind = env.resolve(arg_name).ok_or_else(|| {
-                            LoweringError::new(
-                                format!("array argument `{arg_name}` is not resolvable in scope"),
-                                arg_span,
-                            )
-                        })?;
-                        for i in 0..(*len as usize) {
-                            let elem_name =
-                                env.resolve_array_element(arg_name, i).ok_or_else(|| {
-                                    LoweringError::new(
-                                        format!(
-                                            "array argument `{arg_name}` has no element at \
-                                             index {i} — shape mismatch during Artik lift"
-                                        ),
-                                        arg_span,
-                                    )
-                                })?;
-                            let expr = match kind {
-                                VarKind::Input => CircuitExpr::Input(elem_name),
-                                VarKind::Local => CircuitExpr::Var(elem_name),
-                                VarKind::Capture => CircuitExpr::Capture(elem_name),
-                            };
-                            lowered_args.push(expr);
-                        }
-                    }
-                }
-            }
-
-            let span_range = Some(diagnostics::SpanRange::from_span(span));
             let output_bindings = lifted.outputs.clone();
 
             // Emit any promoted nested-call fragments first. Their
@@ -367,14 +274,15 @@ fn inline_function_call(
                     ctx.inline_depth -= 1;
                     return Ok(CircuitExpr::Var(array_name));
                 }
-                super::super::artik_lift::LiftedShape::Array2D { rows, cols } => {
-                    // 2D-return: outputs are laid out row-major as
-                    // `<base>_<r>_<c>` for r in 0..rows, c in 0..cols.
-                    // Emit the WitnessCall first, then one `LetArray`
-                    // per row binding `<base>_<r>` to the C elements,
-                    // so `arr[r][c]` resolves via single-suffix
-                    // resolution nested twice.
-                    let array_name = strip_index_suffix(&strip_index_suffix(&output_bindings[0]));
+                super::super::artik_lift::LiftedShape::Array2D { rows: _, cols: _ } => {
+                    // 2D-return: emit the WitnessCall + one flat
+                    // `LetArray` carrying all `rows*cols` elements
+                    // in row-major order. The var-decl handler at the
+                    // caller site reads those elements and seeds
+                    // `env.strides` from the syntactic `[R][C]`
+                    // dimensions so subsequent `arr[r][c]` accesses
+                    // linearise correctly.
+                    let array_name = strip_index_suffix(&output_bindings[0]);
                     ctx.pending_nodes
                         .push(ir_forge::types::CircuitNode::WitnessCall {
                             output_bindings: output_bindings.clone(),
@@ -382,23 +290,37 @@ fn inline_function_call(
                             program_bytes: lifted.program_bytes,
                             span: span_range.clone(),
                         });
-                    for r in 0..rows {
-                        let row_name = format!("{array_name}_{r}");
-                        let row_base = (r as usize) * (cols as usize);
-                        let elements: Vec<CircuitExpr> = (0..cols as usize)
-                            .map(|c| CircuitExpr::Var(output_bindings[row_base + c].clone()))
-                            .collect();
-                        ctx.pending_nodes
-                            .push(ir_forge::types::CircuitNode::LetArray {
-                                name: row_name,
-                                elements,
-                                span: span_range.clone(),
-                            });
-                    }
+                    ctx.pending_nodes
+                        .push(ir_forge::types::CircuitNode::LetArray {
+                            name: array_name.clone(),
+                            elements: output_bindings
+                                .iter()
+                                .map(|n| CircuitExpr::Var(n.clone()))
+                                .collect(),
+                            span: span_range,
+                        });
                     ctx.inline_depth -= 1;
                     return Ok(CircuitExpr::Var(array_name));
                 }
             }
+        }
+
+        // Standard lift returned None — the body either exceeds the
+        // single-frame budget or contains shapes the lift can't
+        // inline. Try per-statement decomposition: lift each function
+        // call inside the body as its own WitnessCall fragment, with
+        // aliasing copies and literal-bound loops reflected only in
+        // the per-element CircuitExpr binding map.
+        if let Some(decomposed) = super::super::artik_lift::try_lift_via_decomposition(
+            name,
+            func,
+            &param_shapes,
+            &param_consts,
+            &lowered_args,
+            ctx,
+            span,
+        ) {
+            return emit_decomposed_lift(decomposed, ctx, span_range);
         }
 
         ctx.inline_depth -= 1;
@@ -586,5 +508,160 @@ pub(super) fn lower_expr_with_substitution(
         }
         // For anything else, fall through to normal lowering
         _ => lower_expr(expr, env, ctx),
+    }
+}
+
+/// Build the per-element `CircuitExpr` stream the Artik lift consumes
+/// as its input signals. Scalars contribute one expression; array
+/// parameters contribute `len` expressions (compile-time arrays expand
+/// to `Const` cells, runtime signal arrays expand to per-index
+/// `Input` / `Var` / `Capture` based on the base name's resolution).
+fn build_lowered_args_for_artik(
+    args: &[Expr],
+    param_shapes: &[(String, super::super::artik_lift::ParamShape)],
+    env: &LoweringEnv,
+    ctx: &mut LoweringContext,
+) -> Result<Vec<CircuitExpr>, LoweringError> {
+    use super::super::artik_lift::ParamShape;
+    use super::super::env::VarKind;
+
+    let mut lowered_args: Vec<CircuitExpr> = Vec::new();
+    for (arg, (_, shape)) in args.iter().zip(param_shapes.iter()) {
+        match shape {
+            ParamShape::Scalar => {
+                let lowered = lower_expr(arg, env, ctx)?;
+                lowered_args.push(lowered);
+            }
+            ParamShape::Array(len) => {
+                let (arg_name, arg_span) = match arg {
+                    crate::ast::Expr::Ident { name, span } => (name, span),
+                    _ => unreachable!("shape Array(_) was derived from an Ident arg by the caller"),
+                };
+
+                if let Some(eval_value) = env.known_array_values.get(arg_name) {
+                    let elems = match eval_value {
+                        super::super::utils::EvalValue::Array(es) => es,
+                        _ => {
+                            return Err(LoweringError::new(
+                                format!(
+                                    "array argument `{arg_name}` has a known compile-time \
+                                     value but is not an array shape"
+                                ),
+                                arg_span,
+                            ));
+                        }
+                    };
+                    if elems.len() < *len as usize {
+                        return Err(LoweringError::new(
+                            format!(
+                                "array argument `{arg_name}` has {} compile-time elements \
+                                 but the lift expected {}",
+                                elems.len(),
+                                *len
+                            ),
+                            arg_span,
+                        ));
+                    }
+                    for (i, elem) in elems.iter().enumerate().take(*len as usize) {
+                        let scalar = elem.as_scalar().ok_or_else(|| {
+                            LoweringError::new(
+                                format!(
+                                    "compile-time array `{arg_name}` element {i} is not a \
+                                     scalar value — Artik can only bind scalar field constants"
+                                ),
+                                arg_span,
+                            )
+                        })?;
+                        lowered_args.push(CircuitExpr::Const(scalar.to_field_const()));
+                    }
+                    continue;
+                }
+
+                let kind = env.resolve(arg_name).ok_or_else(|| {
+                    LoweringError::new(
+                        format!("array argument `{arg_name}` is not resolvable in scope"),
+                        arg_span,
+                    )
+                })?;
+                for i in 0..(*len as usize) {
+                    let elem_name = env.resolve_array_element(arg_name, i).ok_or_else(|| {
+                        LoweringError::new(
+                            format!(
+                                "array argument `{arg_name}` has no element at index {i} \
+                                 — shape mismatch during Artik lift"
+                            ),
+                            arg_span,
+                        )
+                    })?;
+                    let expr = match kind {
+                        VarKind::Input => CircuitExpr::Input(elem_name),
+                        VarKind::Local => CircuitExpr::Var(elem_name),
+                        VarKind::Capture => CircuitExpr::Capture(elem_name),
+                    };
+                    lowered_args.push(expr);
+                }
+            }
+        }
+    }
+    Ok(lowered_args)
+}
+
+/// Emit the result of a successful per-statement decomposition: the
+/// fragment WitnessCalls go to `pending_nodes` in order, then the
+/// final result is exposed as a `CircuitExpr` (scalar inline, 1D
+/// array as one `LetArray`, 2D array as one `LetArray` per row).
+fn emit_decomposed_lift(
+    decomposed: super::super::artik_lift::DecomposedLift,
+    ctx: &mut LoweringContext,
+    span_range: Option<diagnostics::SpanRange>,
+) -> Result<CircuitExpr, LoweringError> {
+    use super::super::artik_lift::DecomposedResult;
+
+    for fragment in decomposed.fragments {
+        ctx.pending_nodes
+            .push(ir_forge::types::CircuitNode::WitnessCall {
+                output_bindings: fragment.output_bindings,
+                input_signals: fragment.input_signals,
+                program_bytes: fragment.program_bytes,
+                span: span_range.clone(),
+            });
+    }
+
+    let anon_id = ctx.next_anon_id();
+    match decomposed.result {
+        DecomposedResult::Scalar(expr) => {
+            ctx.inline_depth -= 1;
+            Ok(expr)
+        }
+        DecomposedResult::Array(elements) => {
+            let array_name = format!("__decomposed_{anon_id}");
+            ctx.pending_nodes
+                .push(ir_forge::types::CircuitNode::LetArray {
+                    name: array_name.clone(),
+                    elements,
+                    span: span_range,
+                });
+            ctx.inline_depth -= 1;
+            Ok(CircuitExpr::Var(array_name))
+        }
+        DecomposedResult::Array2D {
+            rows: _,
+            cols: _,
+            elements,
+        } => {
+            // 2D return: emit one flat LetArray in row-major order.
+            // The caller's var-decl handler reads the declared
+            // dimensions and seeds `env.strides` so multi-dim
+            // indexing on the destination linearises correctly.
+            let array_name = format!("__decomposed_{anon_id}");
+            ctx.pending_nodes
+                .push(ir_forge::types::CircuitNode::LetArray {
+                    name: array_name.clone(),
+                    elements,
+                    span: span_range,
+                });
+            ctx.inline_depth -= 1;
+            Ok(CircuitExpr::Var(array_name))
+        }
     }
 }

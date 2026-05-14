@@ -56,9 +56,12 @@ use crate::lowering::context::LoweringContext;
 mod big_eval;
 mod bytecode;
 mod control;
+mod decompose;
 mod exprs;
 mod helpers;
 mod stmts;
+
+pub use decompose::try_lift_via_decomposition;
 
 /// A self-contained Artik program with its IR-level wiring: the
 /// `input_signals` map to the program's `ReadSignal` order, and
@@ -72,6 +75,32 @@ pub struct LiftFragment {
     pub program_bytes: Vec<u8>,
     pub input_signals: Vec<ir_forge::types::CircuitExpr>,
     pub output_bindings: Vec<String>,
+}
+
+/// Result of a per-statement decomposition. The function body was not
+/// lifted as one Artik program; instead each function call inside it
+/// became its own [`CircuitNode::WitnessCall`] fragment. Aliasing
+/// statements (loop-driven copies, direct array element rebinds) do
+/// not emit fragments — they are reflected only in the per-element
+/// `CircuitExpr` references the caller must build from `result`.
+pub struct DecomposedLift {
+    /// Fragments to emit in order before exposing the result.
+    pub fragments: Vec<LiftFragment>,
+    pub result: DecomposedResult,
+}
+
+/// Per-element binding values the caller uses to build a CircuitExpr
+/// for the function's return at the call site. Each variant carries
+/// the actual `CircuitExpr`s that resolve to the function's outputs;
+/// the caller groups them into `LetArray` nodes as needed.
+pub enum DecomposedResult {
+    Scalar(ir_forge::types::CircuitExpr),
+    Array(Vec<ir_forge::types::CircuitExpr>),
+    Array2D {
+        rows: u32,
+        cols: u32,
+        elements: Vec<ir_forge::types::CircuitExpr>,
+    },
 }
 
 /// Result of a successful lift: the serialized Artik program + the
@@ -101,10 +130,10 @@ pub struct LiftedWitnessCall {
 pub enum LiftedShape {
     Scalar,
     Array(u32),
-    /// Row-major 2D output. The caller emits one `LetArray` per row
-    /// (binding `<base>_<r>` to the C elements `<base>_<r>_<c>`), so
-    /// `arr[r][c]` resolves via the existing single-suffix scheme
-    /// nested twice.
+    /// Row-major 2D output. The caller emits one flat `LetArray` of
+    /// `rows*cols` elements; the destination's var-decl handler seeds
+    /// `env.strides` from the syntactic `[R][C]` dimensions so
+    /// subsequent `arr[r][c]` accesses linearise as `r * cols + c`.
     Array2D {
         rows: u32,
         cols: u32,
