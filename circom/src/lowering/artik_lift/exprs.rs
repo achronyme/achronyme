@@ -310,6 +310,20 @@ impl<'f> LiftState<'f> {
         let outer_arrays = std::mem::take(&mut self.arrays);
         let outer_halted = self.halted;
         let outer_result = self.nested_result.take();
+        let outer_return_slot = self.nested_return_slot.take();
+        let outer_end_label = self.nested_end_label.take();
+        // Reserve a 1-element heap slot and a jump target so each
+        // scalar `return` inside the callee body can write its value
+        // and exit cleanly. Without this, a return nested inside a
+        // conditional or unrolled loop would emit only a `PushConst`
+        // and the lift would record the register of whichever return
+        // it walked past last — the runtime would then run every
+        // emission and the caller would observe the trailing
+        // fall-through value, not the one the guard selected.
+        let scalar_return_slot = self.alloc_field_slot();
+        let scalar_end_label = self.builder.new_label();
+        self.nested_return_slot = Some(scalar_return_slot);
+        self.nested_end_label = Some(scalar_end_label);
         self.halted = false;
         self.nested_depth += 1;
 
@@ -339,11 +353,30 @@ impl<'f> LiftState<'f> {
             }
         }
 
-        let result = self.nested_result.take();
+        let mut result = self.nested_result.take();
+
+        // If the body returned a scalar, it stored its value into the
+        // pre-reserved slot and jumped to `scalar_end_label`. Place
+        // the label here so post-call code resumes from a single
+        // join point regardless of which return arm fired, then load
+        // the slot value as the call's scalar result. An array-shaped
+        // return populated `nested_result` directly above and skipped
+        // the slot path; in that case the placed label is unreachable
+        // at runtime but harmless.
+        if body_ok && result.is_none() && self.halted {
+            self.builder.place(scalar_end_label);
+            if let Some(loaded) = self.load_field_slot(scalar_return_slot) {
+                result = Some(NestedResult::Scalar(loaded));
+            } else {
+                body_ok = false;
+            }
+        }
 
         // Restore outer scope regardless of outcome so the program
         // state stays sane even when a nested lift bails out.
         self.nested_result = outer_result;
+        self.nested_return_slot = outer_return_slot;
+        self.nested_end_label = outer_end_label;
         self.nested_depth -= 1;
         self.halted = outer_halted;
         self.locals = outer_locals;

@@ -688,7 +688,14 @@ impl<'f> LiftState<'f> {
                 // Scalar return.
                 let r = self.lift_expr(value)?;
                 if self.nested_depth > 0 {
-                    self.nested_result = Some(NestedResult::Scalar(r));
+                    // The frame opened by `lift_nested_call` is what
+                    // installs the slot and end-label, so missing
+                    // either is a lift invariant break — bail rather
+                    // than silently picking a wrong-value cascade.
+                    let slot = self.nested_return_slot?;
+                    let end_label = self.nested_end_label?;
+                    self.store_field_slot(slot, r)?;
+                    self.builder.jump_to(end_label);
                     self.halted = true;
                     return Some(());
                 }
