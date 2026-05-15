@@ -57,6 +57,7 @@ mod big_eval;
 mod bytecode;
 mod control;
 mod decompose;
+mod driver;
 mod exprs;
 mod helpers;
 mod stmts;
@@ -264,7 +265,28 @@ fn try_lift_via_subprograms(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
-    let _ = (function_name, params, param_consts, body, ctx, span);
+    // The subprogram path can only reserve a fixed-shape entry when
+    // every array dimension in the body folds to a constant and the
+    // function's return shape is resolvable. A runtime dimension or an
+    // unmodelled return means no subprogram can be reserved, so the
+    // caller falls back exactly as if the lift had declined.
+    let param_consts_map: HashMap<String, ConstInt> = params
+        .iter()
+        .zip(param_consts.iter())
+        .filter_map(|((name, shape), c)| match (shape, c) {
+            (ParamShape::Scalar, Some(v)) => Some((name.clone(), *v)),
+            _ => None,
+        })
+        .collect();
+
+    let _entry_dim_sig = helpers::compute_dim_signature(body, &param_consts_map)?;
+    let _entry_returns =
+        helpers::infer_callee_return_shape(body, &param_consts_map).to_reg_types()?;
+
+    // Lifting the entry body and draining the reserved callee
+    // subprograms lands in a later change; until then decline so the
+    // existing fallback chain handles the call unchanged.
+    let _ = (function_name, ctx, span);
     None
 }
 

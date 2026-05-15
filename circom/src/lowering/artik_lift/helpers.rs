@@ -960,6 +960,89 @@ fn classify_return_expr(
     }
 }
 
+/// The array-dimension signature of a function body: every `var X[..]`
+/// declaration's folded dimensions, concatenated in pre-order
+/// source-traversal order. `None` if any dimension does not fold
+/// against the param consts — a runtime array dimension means no
+/// fixed-shape subprogram can be reserved for the body.
+///
+/// This is the subprogram specialization key. Two instantiations of
+/// the same circom function whose array dimensions fold to the same
+/// values share one subprogram; instantiations that differ in any
+/// dimension get distinct ones. The traversal order is fixed
+/// (statements in source order, `then` before `else`, recursing into
+/// compound bodies), so a given body always produces the same `Vec`
+/// and equality on it is a sound dedup key regardless of which call
+/// site triggered the lift.
+pub(super) fn compute_dim_signature(
+    stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
+) -> Option<Vec<u32>> {
+    let mut sig = Vec::new();
+    let mut ok = true;
+    collect_dim_signature(stmts, param_consts, &mut sig, &mut ok);
+    ok.then_some(sig)
+}
+
+fn collect_dim_signature(
+    stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
+    sig: &mut Vec<u32>,
+    ok: &mut bool,
+) {
+    for stmt in stmts {
+        collect_dim_signature_in_stmt(stmt, param_consts, sig, ok);
+        if !*ok {
+            return;
+        }
+    }
+}
+
+fn collect_dim_signature_in_stmt(
+    stmt: &Stmt,
+    param_consts: &HashMap<String, ConstInt>,
+    sig: &mut Vec<u32>,
+    ok: &mut bool,
+) {
+    match stmt {
+        Stmt::VarDecl { dimensions, .. } if !dimensions.is_empty() => {
+            for d in dimensions {
+                match eval_const_expr(d, param_consts).and_then(|v| u32::try_from(v).ok()) {
+                    Some(n) => sig.push(n),
+                    None => {
+                        *ok = false;
+                        return;
+                    }
+                }
+            }
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_dim_signature(&then_body.stmts, param_consts, sig, ok);
+            if !*ok {
+                return;
+            }
+            match else_body {
+                Some(ElseBranch::Block(b)) => {
+                    collect_dim_signature(&b.stmts, param_consts, sig, ok)
+                }
+                Some(ElseBranch::IfElse(boxed)) => {
+                    collect_dim_signature_in_stmt(boxed, param_consts, sig, ok)
+                }
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => collect_dim_signature(&body.stmts, param_consts, sig, ok),
+        Stmt::While { body, .. } => collect_dim_signature(&body.stmts, param_consts, sig, ok),
+        Stmt::DoWhile { body, .. } => collect_dim_signature(&body.stmts, param_consts, sig, ok),
+        Stmt::Block(b) => collect_dim_signature(&b.stmts, param_consts, sig, ok),
+        _ => {}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -1062,6 +1145,61 @@ mod tests {
             shape("return cond == 0 ? 1 : x;"),
             CalleeReturnShape::Scalar
         );
+    }
+
+    fn dim_sig(body_src: &str) -> Option<Vec<u32>> {
+        compute_dim_signature(&parse_body(body_src), &HashMap::new())
+    }
+
+    fn dim_sig_with(body_src: &str, consts: &[(&str, ConstInt)]) -> Option<Vec<u32>> {
+        let map: HashMap<String, ConstInt> =
+            consts.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        compute_dim_signature(&parse_body(body_src), &map)
+    }
+
+    #[test]
+    fn dim_signature_concatenates_in_source_order() {
+        assert_eq!(
+            dim_sig("var a[2]; var b[3]; var c[4]; return a;"),
+            Some(vec![2, 3, 4])
+        );
+        // 2D decl contributes both dims in order.
+        assert_eq!(
+            dim_sig("var m[2][3]; var v[5]; return v;"),
+            Some(vec![2, 3, 5])
+        );
+        // No array decls → empty (but resolvable) signature.
+        assert_eq!(dim_sig("return x + 1;"), Some(vec![]));
+    }
+
+    #[test]
+    fn dim_signature_traversal_is_then_before_else_and_recurses() {
+        assert_eq!(
+            dim_sig("if (c) { var t[1]; } else { var e[2]; } var tail[3]; return x;"),
+            Some(vec![1, 2, 3])
+        );
+        assert_eq!(
+            dim_sig("for (var i = 0; i < n; i++) { var loop_arr[7]; } return x;"),
+            Some(vec![7])
+        );
+    }
+
+    #[test]
+    fn dim_signature_folds_against_param_consts() {
+        assert_eq!(
+            dim_sig_with("var a[n]; var b[m]; return a;", &[("n", 8), ("m", 16)]),
+            Some(vec![8, 16])
+        );
+    }
+
+    #[test]
+    fn dim_signature_is_none_on_any_runtime_dim() {
+        // `m` does not fold → whole signature is unresolvable.
+        assert_eq!(
+            dim_sig_with("var a[n]; var b[m]; return a;", &[("n", 8)]),
+            None
+        );
+        assert_eq!(dim_sig("var a[2]; var b[k]; return a;"), None);
     }
 
     #[test]
