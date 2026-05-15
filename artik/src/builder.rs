@@ -1,10 +1,10 @@
 //! Programmatic construction of Artik [`Program`]s.
 //!
-//! The Fase 2 Circom lifting pass needs to emit Artik bytecode while
-//! walking a function AST. Writing the raw `Instr` list by hand is
-//! viable (tests in [`executor::tests`] do it) but gets tedious for
-//! real programs, especially with forward jumps. This module provides
-//! a small builder with:
+//! The circom witness-lift pass emits Artik bytecode while walking a
+//! function AST. Writing the raw `Instr` list by hand is viable (the
+//! executor tests do it) but gets tedious for real programs, especially
+//! with forward jumps and multiple subprograms. This module provides a
+//! builder with:
 //!
 //! - Automatic register / signal / witness-slot id allocation.
 //! - A label mechanism for forward jumps (`place` fills in an offset
@@ -12,6 +12,14 @@
 //! - Ergonomic `emit_*` helpers for common shapes (field ops, int
 //!   ops, conversions) that both allocate a fresh destination
 //!   register and emit the instruction in one call.
+//! - Multi-subprogram support: [`ProgramBuilder::reserve_subprogram`]
+//!   hands out a callable id (so a caller can emit a `Call` to a
+//!   subprogram whose body is not built yet), and
+//!   [`ProgramBuilder::begin_subprogram`] /
+//!   [`ProgramBuilder::end_subprogram`] switch which subprogram the
+//!   emission helpers target. A builder that never reserves a
+//!   subprogram produces exactly one entry subprogram — identical to
+//!   the single-body programs every current producer emits.
 //!
 //! Example usage — lift `function sq(x) { return x * x; }`:
 //!
@@ -35,49 +43,62 @@
 
 use memory::FieldFamily;
 
-use crate::ir::{ElemT, Instr, IntBinOp, IntW, Reg};
-use crate::program::{FieldConstEntry, Program};
+use crate::ir::{ElemT, Instr, IntBinOp, IntW, Reg, RegType};
+use crate::program::{FieldConstEntry, Program, Subprogram};
 
 /// An opaque handle to a yet-to-be-placed location in the instruction
 /// stream. Obtained via [`ProgramBuilder::new_label`]; materialized
-/// into a byte offset by [`ProgramBuilder::place`].
+/// into a byte offset by [`ProgramBuilder::place`]. Labels are
+/// subprogram-local.
 #[derive(Debug, Clone, Copy)]
 pub struct Label(u32);
 
-/// Fluent builder for [`Program`].
-///
-/// All methods take `&mut self`. The builder owns a growing `Vec<Instr>`
-/// and a `Vec<FieldConstEntry>`; `finish()` consumes the builder and
-/// returns the assembled `Program` with jump targets patched.
-pub struct ProgramBuilder {
-    family: FieldFamily,
-    body: Vec<Instr>,
-    const_pool: Vec<FieldConstEntry>,
-    next_reg: u32,
-    next_signal: u32,
-    next_slot: u32,
-    /// For each [`Label`], the instruction index where it was placed
-    /// (index into `body`, not a byte offset — byte offsets are only
-    /// computed in `finish`).
-    label_positions: Vec<Option<u32>>,
-    /// Pending patches: `(instruction_index, label_id)` — jump targets
-    /// that still need to be resolved from instruction index to byte
-    /// offset at `finish()` time.
-    pending_jumps: Vec<PendingJump>,
-}
-
 struct PendingJump {
-    /// Index into `body` of the Jump / JumpIf whose `target` we must patch.
+    /// Index into the subprogram body of the Jump / JumpIf whose
+    /// `target` we must patch.
     instr_index: u32,
     /// Which label this jump targets.
     label: u32,
 }
 
-/// Captured state of a [`ProgramBuilder`], usable as a rollback point
-/// for speculative emission. Produced by [`ProgramBuilder::snapshot`]
-/// and consumed by [`ProgramBuilder::restore`].
+/// Mutable per-subprogram emission state. Registers, the instruction
+/// body, the label table, and pending jumps are all subprogram-local;
+/// the constant pool and signal / witness-slot namespaces are
+/// program-global and live on [`ProgramBuilder`].
+struct SubInProgress {
+    params: Vec<RegType>,
+    returns: Vec<RegType>,
+    body: Vec<Instr>,
+    next_reg: u32,
+    label_positions: Vec<Option<u32>>,
+    pending_jumps: Vec<PendingJump>,
+}
+
+impl SubInProgress {
+    fn new(params: Vec<RegType>, returns: Vec<RegType>) -> Self {
+        // Parameter values are delivered into registers
+        // `0..params.len()` by the executor on entry to the call, so
+        // freshly allocated registers must start past them.
+        let next_reg = params.len() as u32;
+        Self {
+            params,
+            returns,
+            body: Vec::new(),
+            next_reg,
+            label_positions: Vec::new(),
+            pending_jumps: Vec::new(),
+        }
+    }
+}
+
+/// Captured state of the active subprogram, usable as a rollback point
+/// for speculative emission (e.g. a loop-unroll attempt that may bail).
+/// Produced by [`ProgramBuilder::snapshot`] and consumed by
+/// [`ProgramBuilder::restore`]. A snapshot is only valid while the same
+/// subprogram is active.
 #[derive(Debug, Clone, Copy)]
 pub struct BuilderSnapshot {
+    active: usize,
     body_len: usize,
     const_pool_len: usize,
     next_reg: u32,
@@ -87,94 +108,161 @@ pub struct BuilderSnapshot {
     pending_jumps_len: usize,
 }
 
+/// Fluent builder for [`Program`].
+///
+/// All emission methods target the *active* subprogram (the entry
+/// subprogram until [`Self::begin_subprogram`] switches it). `finish()`
+/// consumes the builder, resolves every subprogram's jump targets, and
+/// returns the assembled `Program`.
+pub struct ProgramBuilder {
+    family: FieldFamily,
+    const_pool: Vec<FieldConstEntry>,
+    next_signal: u32,
+    next_slot: u32,
+    subs: Vec<SubInProgress>,
+    active: usize,
+}
+
 impl ProgramBuilder {
-    /// Start a new builder for the given field family. The builder
-    /// has zero registers, signals, slots, constants, or instructions
-    /// on entry — allocate them as you go.
+    /// Start a new builder for the given field family. The builder has
+    /// one subprogram — the entry (id 0), with no parameters or
+    /// returns — and zero registers, signals, slots, constants, or
+    /// instructions. Allocate them as you go.
     pub fn new(family: FieldFamily) -> Self {
         Self {
             family,
-            body: Vec::new(),
             const_pool: Vec::new(),
-            next_reg: 0,
             next_signal: 0,
             next_slot: 0,
-            label_positions: Vec::new(),
-            pending_jumps: Vec::new(),
+            subs: vec![SubInProgress::new(Vec::new(), Vec::new())],
+            active: 0,
         }
+    }
+
+    #[inline]
+    fn cur(&self) -> &SubInProgress {
+        // `active` is 0 on construction and only ever set to an index
+        // returned by `reserve_subprogram` (always in range), so this
+        // index is an internal invariant, not caller-controlled.
+        &self.subs[self.active]
+    }
+
+    #[inline]
+    fn cur_mut(&mut self) -> &mut SubInProgress {
+        &mut self.subs[self.active]
+    }
+
+    // ── Subprogram management ─────────────────────────────────────────
+
+    /// Reserve a callable subprogram id with the given signature
+    /// without building its body yet. The id can be used as the
+    /// `func_id` of a [`Self::call`] emitted from any subprogram —
+    /// including one built *before* this subprogram's body — so the
+    /// lift can emit a call at the point it discovers the callee and
+    /// fill in the callee body afterwards. Does not change the active
+    /// subprogram.
+    pub fn reserve_subprogram(&mut self, params: Vec<RegType>, returns: Vec<RegType>) -> u32 {
+        let id = self.subs.len() as u32;
+        self.subs.push(SubInProgress::new(params, returns));
+        id
+    }
+
+    /// Make `id` the active subprogram, returning the previously active
+    /// id so the caller can restore it with [`Self::end_subprogram`].
+    /// `id` must come from [`Self::reserve_subprogram`] (or be 0, the
+    /// entry).
+    pub fn begin_subprogram(&mut self, id: u32) -> u32 {
+        let prev = self.active as u32;
+        debug_assert!((id as usize) < self.subs.len());
+        self.active = id as usize;
+        prev
+    }
+
+    /// Restore the active subprogram to `prev` (the value returned by
+    /// the matching [`Self::begin_subprogram`]).
+    pub fn end_subprogram(&mut self, prev: u32) {
+        debug_assert!((prev as usize) < self.subs.len());
+        self.active = prev as usize;
     }
 
     // ── Namespace allocation ──────────────────────────────────────────
 
-    /// Allocate a fresh register. Returns a monotonically increasing
-    /// index; the builder bumps `frame_size` automatically.
+    /// Allocate a fresh register in the active subprogram. Returns a
+    /// monotonically increasing index; the subprogram's frame size
+    /// grows automatically.
     pub fn alloc_reg(&mut self) -> Reg {
-        let r = self.next_reg;
-        self.next_reg += 1;
+        let r = self.cur().next_reg;
+        self.cur_mut().next_reg += 1;
         r
     }
 
-    /// Current register count — same as `next_reg`. The lift uses
-    /// this as a frame-size proxy when deciding whether to bail out
-    /// of a partial unroll attempt before exceeding the executor cap.
+    /// Current register count of the active subprogram — same as its
+    /// `next_reg`. The lift uses this as a frame-size proxy when
+    /// deciding whether to bail out of a partial unroll attempt.
     pub fn next_reg(&self) -> u32 {
-        self.next_reg
+        self.cur().next_reg
     }
 
-    /// Snapshot the builder state so a speculative emission attempt
-    /// (e.g. trying to unroll a loop) can be rolled back on failure
+    /// Snapshot the active subprogram's emission state so a speculative
+    /// attempt (e.g. unrolling a loop) can be rolled back on failure
     /// without leaving partial instructions or register allocations
-    /// behind. The snapshot captures the current lengths of the
-    /// instruction body, const pool, label table, and pending-jump
-    /// queue, plus the current id counters. Restore via
-    /// [`Self::restore`].
+    /// behind. Restore via [`Self::restore`].
     pub fn snapshot(&self) -> BuilderSnapshot {
+        let s = self.cur();
         BuilderSnapshot {
-            body_len: self.body.len(),
+            active: self.active,
+            body_len: s.body.len(),
             const_pool_len: self.const_pool.len(),
-            next_reg: self.next_reg,
+            next_reg: s.next_reg,
             next_signal: self.next_signal,
             next_slot: self.next_slot,
-            label_positions_len: self.label_positions.len(),
-            pending_jumps_len: self.pending_jumps.len(),
+            label_positions_len: s.label_positions.len(),
+            pending_jumps_len: s.pending_jumps.len(),
         }
     }
 
     /// Roll back to a previously-captured [`BuilderSnapshot`]. All
     /// instructions, constants, labels, and pending jumps emitted
-    /// since the snapshot are discarded; id counters revert to the
-    /// snapshotted values.
+    /// since the snapshot are discarded; id counters revert. The
+    /// snapshot must have been taken with the same subprogram active.
     pub fn restore(&mut self, snapshot: BuilderSnapshot) {
-        self.body.truncate(snapshot.body_len);
+        debug_assert_eq!(
+            snapshot.active, self.active,
+            "snapshot taken under a different active subprogram"
+        );
         self.const_pool.truncate(snapshot.const_pool_len);
-        self.next_reg = snapshot.next_reg;
         self.next_signal = snapshot.next_signal;
         self.next_slot = snapshot.next_slot;
-        self.label_positions.truncate(snapshot.label_positions_len);
-        self.pending_jumps.truncate(snapshot.pending_jumps_len);
+        let s = self.cur_mut();
+        s.body.truncate(snapshot.body_len);
+        s.next_reg = snapshot.next_reg;
+        s.label_positions.truncate(snapshot.label_positions_len);
+        s.pending_jumps.truncate(snapshot.pending_jumps_len);
     }
 
-    /// Allocate a fresh input signal id. The caller is expected to
-    /// supply these values as the `signals: &[FieldElement<F>]` slice
-    /// when invoking the executor.
+    /// Allocate a fresh input signal id. Signals are only meaningful in
+    /// the entry subprogram (the validator rejects signal access
+    /// elsewhere). The caller supplies these as the
+    /// `signals: &[FieldElement<F>]` slice when invoking the executor.
     pub fn alloc_signal(&mut self) -> u32 {
         let s = self.next_signal;
         self.next_signal += 1;
         s
     }
 
-    /// Allocate a fresh witness slot id. The caller is expected to
-    /// provide a `witness_slots: &mut [FieldElement<F>]` slice of at
-    /// least `slot + 1` elements when invoking the executor.
+    /// Allocate a fresh witness slot id. Witness slots are only
+    /// meaningful in the entry subprogram. The caller provides a
+    /// `witness_slots: &mut [FieldElement<F>]` slice of at least
+    /// `slot + 1` elements when invoking the executor.
     pub fn alloc_witness_slot(&mut self) -> u32 {
         let s = self.next_slot;
         self.next_slot += 1;
         s
     }
 
-    /// Intern a constant into the pool and return its id. `bytes` is
-    /// little-endian canonical encoding (up to the field family's
-    /// max). Smaller values are zero-padded on decode.
+    /// Intern a constant into the program-global pool and return its
+    /// id. `bytes` is little-endian canonical encoding (up to the
+    /// field family's max). Smaller values are zero-padded on decode.
     pub fn intern_const(&mut self, bytes: Vec<u8>) -> u32 {
         let id = self.const_pool.len() as u32;
         self.const_pool.push(FieldConstEntry { bytes });
@@ -183,39 +271,38 @@ impl ProgramBuilder {
 
     // ── Raw emission ──────────────────────────────────────────────────
 
-    /// Append a raw instruction. Prefer the typed helpers below for
-    /// common patterns — they both allocate and emit in one call.
+    /// Append a raw instruction to the active subprogram. Prefer the
+    /// typed helpers below for common patterns.
     pub fn emit(&mut self, instr: Instr) {
-        self.body.push(instr);
+        self.cur_mut().body.push(instr);
     }
 
     // ── Label mechanism ───────────────────────────────────────────────
 
-    /// Create a new unplaced label. The returned handle can be passed
-    /// to `jump_to` / `jump_if_to` before the target site is emitted;
-    /// calling `place(label)` afterwards fills in the offset at
-    /// `finish()` time.
+    /// Create a new unplaced label in the active subprogram. Labels do
+    /// not cross subprogram boundaries.
     pub fn new_label(&mut self) -> Label {
-        let id = self.label_positions.len() as u32;
-        self.label_positions.push(None);
+        let s = self.cur_mut();
+        let id = s.label_positions.len() as u32;
+        s.label_positions.push(None);
         Label(id)
     }
 
-    /// Mark the current position in the instruction stream as the
-    /// target of `label`. Must be called exactly once per label; the
-    /// position is the instruction index of the *next* instruction
-    /// that will be emitted.
+    /// Mark the current position in the active subprogram's stream as
+    /// the target of `label`. Call exactly once per label.
     pub fn place(&mut self, label: Label) {
-        let pos = self.body.len() as u32;
-        self.label_positions[label.0 as usize] = Some(pos);
+        let s = self.cur_mut();
+        let pos = s.body.len() as u32;
+        s.label_positions[label.0 as usize] = Some(pos);
     }
 
     /// Emit an unconditional jump to `label`. The target is left as a
     /// sentinel (0) and patched at `finish()` time.
     pub fn jump_to(&mut self, label: Label) {
-        let instr_index = self.body.len() as u32;
-        self.body.push(Instr::Jump { target: 0 });
-        self.pending_jumps.push(PendingJump {
+        let s = self.cur_mut();
+        let instr_index = s.body.len() as u32;
+        s.body.push(Instr::Jump { target: 0 });
+        s.pending_jumps.push(PendingJump {
             instr_index,
             label: label.0,
         });
@@ -224,9 +311,10 @@ impl ProgramBuilder {
     /// Emit a conditional jump to `label`. `cond` must be an Int-typed
     /// register (typically U8 — any non-zero branches).
     pub fn jump_if_to(&mut self, cond: Reg, label: Label) {
-        let instr_index = self.body.len() as u32;
-        self.body.push(Instr::JumpIf { cond, target: 0 });
-        self.pending_jumps.push(PendingJump {
+        let s = self.cur_mut();
+        let instr_index = s.body.len() as u32;
+        s.body.push(Instr::JumpIf { cond, target: 0 });
+        s.pending_jumps.push(PendingJump {
             instr_index,
             label: label.0,
         });
@@ -234,7 +322,8 @@ impl ProgramBuilder {
 
     // ── High-level emission helpers ───────────────────────────────────
 
-    /// Emit `ReadSignal` and return the destination register.
+    /// Emit `ReadSignal` and return the destination register. Only
+    /// valid in the entry subprogram.
     pub fn read_signal(&mut self, signal_id: u32) -> Reg {
         let dst = self.alloc_reg();
         self.emit(Instr::ReadSignal { dst, signal_id });
@@ -249,13 +338,39 @@ impl ProgramBuilder {
     }
 
     /// Emit `WriteWitness`. No register is returned (it is a sink).
+    /// Only valid in the entry subprogram.
     pub fn write_witness(&mut self, slot_id: u32, src: Reg) {
         self.emit(Instr::WriteWitness { slot_id, src });
     }
 
-    /// Emit `Return`. No register is returned.
+    /// Emit a `Return` with no return values (the entry subprogram, or
+    /// a callee that communicates only through arrays).
     pub fn ret(&mut self) {
         self.emit(Instr::Return { srcs: Vec::new() });
+    }
+
+    /// Emit a `Return` carrying the given source registers. The count
+    /// and categories must match the active subprogram's declared
+    /// return list.
+    pub fn ret_vals(&mut self, srcs: &[Reg]) {
+        self.emit(Instr::Return {
+            srcs: srcs.to_vec(),
+        });
+    }
+
+    /// Emit a `Call` to subprogram `func_id` with `args` (registers in
+    /// the active subprogram). One destination register is allocated
+    /// per entry in `ret_types`; the destinations are returned in
+    /// order. `func_id` is typically a [`Self::reserve_subprogram`]
+    /// result.
+    pub fn call(&mut self, func_id: u32, args: &[Reg], ret_types: &[RegType]) -> Vec<Reg> {
+        let rets: Vec<Reg> = (0..ret_types.len()).map(|_| self.alloc_reg()).collect();
+        self.emit(Instr::Call {
+            func_id,
+            args: args.to_vec(),
+            rets: rets.clone(),
+        });
+        rets
     }
 
     /// Emit `Trap { code }`. No register is returned.
@@ -318,8 +433,7 @@ impl ProgramBuilder {
     }
 
     /// Right-shift the canonical representative by a compile-time
-    /// constant amount (≤ 253). Useful for extracting a high bit
-    /// range (e.g. `prod_val[i] \ (1 << 64)`).
+    /// constant amount (≤ 253).
     pub fn fshr(&mut self, src: Reg, amount: u32) -> Reg {
         let dst = self.alloc_reg();
         self.emit(Instr::FShr { dst, src, amount });
@@ -327,7 +441,6 @@ impl ProgramBuilder {
     }
 
     /// AND the canonical representative with a const-pool mask.
-    /// Useful for extracting a low bit range (e.g. `temp % (1 << 64)`).
     pub fn fand(&mut self, src: Reg, mask_const_id: u32) -> Reg {
         let dst = self.alloc_reg();
         self.emit(Instr::FAnd {
@@ -422,28 +535,44 @@ impl ProgramBuilder {
 
     // ── Finalize ────────────────────────────────────────────────────
 
-    /// Consume the builder and produce a [`Program`], patching all
-    /// pending jump targets into the byte offsets they ultimately
-    /// land at. Returns an error if any label was referenced but
+    /// Consume the builder and produce a [`Program`], patching every
+    /// subprogram's pending jump targets into the byte offsets they
+    /// land at. A builder that never reserved a subprogram yields a
+    /// single entry subprogram — the same shape `Program::new`
+    /// produces. Returns an error if any label was referenced but
     /// never placed.
     pub fn finish(mut self) -> Result<Program, BuilderError> {
-        // Pass 1: compute the byte offset of each instruction index.
-        // Since encoded_size depends only on the instruction variant
-        // (not its operands), we can walk the final body once.
-        let mut index_to_offset: Vec<u32> = Vec::with_capacity(self.body.len() + 1);
+        let mut subprograms = Vec::with_capacity(self.subs.len());
+        for sub in std::mem::take(&mut self.subs) {
+            subprograms.push(Self::resolve_sub(sub)?);
+        }
+        Ok(Program::from_subprograms(
+            self.family,
+            std::mem::take(&mut self.const_pool),
+            subprograms,
+        ))
+    }
+
+    /// Resolve one subprogram's pending jumps (instruction index →
+    /// byte offset within that subprogram's standalone stream) and
+    /// finalize it into a [`Subprogram`].
+    fn resolve_sub(mut sub: SubInProgress) -> Result<Subprogram, BuilderError> {
+        // Pass 1: byte offset of each instruction index. `encoded_size`
+        // depends on the instruction (including its operand list, for
+        // the variable-length Call / Return), so walk the final body.
+        let mut index_to_offset: Vec<u32> = Vec::with_capacity(sub.body.len() + 1);
         let mut acc: u32 = 0;
-        for ins in &self.body {
+        for ins in &sub.body {
             index_to_offset.push(acc);
             acc = acc.saturating_add(ins.encoded_size());
         }
-        // Sentinel — offset *past* the last instruction. Useful if a
-        // caller places a label at the end of the program to mean
-        // "fall through to the end", though we don't emit one here.
+        // Sentinel — offset past the last instruction, in case a label
+        // is placed at the very end ("fall through to the end").
         index_to_offset.push(acc);
 
         // Pass 2: patch pending jumps with the resolved byte offsets.
-        for pending in &self.pending_jumps {
-            let target_index = self
+        for pending in &sub.pending_jumps {
+            let target_index = sub
                 .label_positions
                 .get(pending.label as usize)
                 .and_then(|p| *p)
@@ -451,37 +580,36 @@ impl ProgramBuilder {
             let target_offset = *index_to_offset
                 .get(target_index as usize)
                 .ok_or(BuilderError::UnplacedLabel(pending.label))?;
-            match self.body.get_mut(pending.instr_index as usize) {
+            match sub.body.get_mut(pending.instr_index as usize) {
                 Some(Instr::Jump { target }) | Some(Instr::JumpIf { target, .. }) => {
                     *target = target_offset;
                 }
                 _ => {
                     // The builder only records pending patches for Jump
-                    // / JumpIf sites, so hitting another opcode here
-                    // means the body was mutated behind the builder's
-                    // back. Treat as a programmer error.
+                    // / JumpIf sites, so any other opcode here means the
+                    // body was mutated behind the builder's back.
                     return Err(BuilderError::NonJumpAtPatchSite(pending.instr_index));
                 }
             }
         }
 
-        Ok(Program::new(
-            self.family,
-            self.next_reg,
-            std::mem::take(&mut self.const_pool),
-            std::mem::take(&mut self.body),
-        ))
+        Ok(Subprogram {
+            frame_size: sub.next_reg,
+            params: std::mem::take(&mut sub.params),
+            returns: std::mem::take(&mut sub.returns),
+            body: std::mem::take(&mut sub.body),
+        })
     }
 }
 
 /// Errors that can arise from misuse of the builder API. All of them
-/// indicate a bug in the lifting pass; none of them are expected to
-/// fire on correct input.
+/// indicate a bug in the lifting pass; none are expected on correct
+/// input.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum BuilderError {
     /// A label was referenced by [`ProgramBuilder::jump_to`] or
-    /// [`ProgramBuilder::jump_if_to`] but never had [`ProgramBuilder::place`]
-    /// called on it.
+    /// [`ProgramBuilder::jump_if_to`] but never had
+    /// [`ProgramBuilder::place`] called on it.
     UnplacedLabel(u32),
     /// A pending-jump slot resolved to an instruction that was not a
     /// Jump or JumpIf — indicates the builder's internal state was
@@ -601,5 +729,33 @@ mod tests {
         let mut slots = [FE::zero()];
         run(&prog, &[], &mut slots);
         assert_eq!(slots[0], FE::from_u64(42));
+    }
+
+    #[test]
+    fn builder_reserve_and_call_subprogram() {
+        // Entry calls a reserved `square(x)` subprogram. The callee id
+        // is handed out before its body exists, so the Call in the
+        // entry can reference it; the callee body is filled in after.
+        let mut b = ProgramBuilder::new(FieldFamily::BnLike256);
+        let sq = b.reserve_subprogram(vec![RegType::Field], vec![RegType::Field]);
+
+        // Entry body (active = 0).
+        let x_sig = b.alloc_signal();
+        let slot = b.alloc_witness_slot();
+        let x = b.read_signal(x_sig);
+        let rets = b.call(sq, &[x], &[RegType::Field]);
+        b.write_witness(slot, rets[0]);
+        b.ret();
+
+        // Callee body: param is register 0.
+        let prev = b.begin_subprogram(sq);
+        let p = b.fmul(0, 0);
+        b.ret_vals(&[p]);
+        b.end_subprogram(prev);
+
+        let prog = roundtrip(b.finish().unwrap());
+        let mut slots = [FE::zero()];
+        run(&prog, &[FE::from_u64(6)], &mut slots);
+        assert_eq!(slots[0], FE::from_u64(36));
     }
 }
