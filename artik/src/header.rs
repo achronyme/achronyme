@@ -7,8 +7,12 @@ use crate::error::ArtikError;
 /// The 4-byte magic identifier for Artik bytecode: ASCII `ARTK`.
 pub const MAGIC: [u8; 4] = *b"ARTK";
 
-/// Current Artik bytecode version.
-pub const VERSION: u16 = 1;
+/// Current Artik bytecode version. Version 2 introduced the
+/// multi-subprogram body layout (subprogram count prelude, per-
+/// subprogram parameter / return lists and standalone instruction
+/// streams) and the `Call` opcode. Version 1 bytecode is rejected:
+/// its single flat body is not a prefix of the v2 layout.
+pub const VERSION: u16 = 2;
 
 /// Total header size in bytes.
 pub const HEADER_SIZE: usize = 16;

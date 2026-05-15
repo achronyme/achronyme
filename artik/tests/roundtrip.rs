@@ -31,7 +31,7 @@ fn square_program_roundtrip() {
     let bytes = encode(&prog);
     let decoded = decode(&bytes, Some(sample_family())).expect("decode");
     assert_eq!(decoded.frame_size, prog.frame_size);
-    assert_eq!(decoded.body, prog.body);
+    assert_eq!(decoded.subprograms[0].body, prog.subprograms[0].body);
     assert_eq!(decoded.const_pool.len(), 0);
     assert_eq!(decoded.header.family, sample_family());
 }
@@ -81,7 +81,7 @@ fn all_opcodes_roundtrip() {
     let prog = Program::new(sample_family(), 0, Vec::new(), body);
     let bytes = encode(&prog);
     let decoded = decode(&bytes, Some(sample_family())).unwrap();
-    assert_eq!(decoded.body.len(), 2);
+    assert_eq!(decoded.subprograms[0].body.len(), 2);
 }
 
 #[test]
@@ -121,10 +121,12 @@ fn truncated_bytes_rejected() {
 #[test]
 fn unknown_opcode_rejected() {
     let mut bytes = encode(&square_program());
-    // Patch the first body byte after the 4-byte frame size prelude:
-    // body starts at HEADER_SIZE + const_pool_len = 16 + 0 = 16,
-    // frame prelude is 4 more, so first opcode byte is at offset 20.
-    bytes[20] = 0xFE; // not a valid OpTag
+    // The body region opens with: subprogram_count (4) + the single
+    // subprogram's frame_size (4) + n_params (1) + n_returns (1) +
+    // sub_body_len (4). square_program has no params / returns / const
+    // pool, so the first opcode byte sits at
+    // HEADER_SIZE(16) + 0 + 4 + 4 + 1 + 1 + 4 = 30.
+    bytes[30] = 0xFE; // not a valid OpTag
     let err = decode(&bytes, None).unwrap_err();
     assert!(matches!(err, ArtikError::UnknownOpcode(0xFE)));
 }
@@ -245,7 +247,7 @@ fn alloc_array_and_load_roundtrip() {
     let prog = Program::new(sample_family(), 4, Vec::new(), body);
     let bytes = encode(&prog);
     let decoded = decode(&bytes, Some(sample_family())).unwrap();
-    assert_eq!(decoded.body.len(), 5);
+    assert_eq!(decoded.subprograms[0].body.len(), 5);
 }
 
 #[test]
@@ -293,5 +295,5 @@ fn bit_ops_and_rotations_roundtrip() {
     let prog = Program::new(sample_family(), 7, Vec::new(), body);
     let bytes = encode(&prog);
     let decoded = decode(&bytes, Some(sample_family())).unwrap();
-    assert_eq!(decoded.body, prog.body);
+    assert_eq!(decoded.subprograms[0].body, prog.subprograms[0].body);
 }

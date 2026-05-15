@@ -1,21 +1,28 @@
 //! Structural validation of a decoded [`Program`].
 //!
-//! Runs 8 invariants before the bytecode is considered executable:
+//! The validator runs before any bytecode is considered executable. It
+//! checks, per subprogram:
 //!
 //! 1. Opcode discriminants ≤ MAX (already enforced by decode, re-checked).
-//! 2. Jump targets land on an instruction boundary inside the body.
-//! 3. Const pool references are in range.
-//! 4. Register indices are < frame_size.
+//! 2. Jump targets land on an instruction boundary inside the same
+//!    subprogram (offsets are subprogram-local).
+//! 3. Const pool references are in range (the pool is program-global).
+//! 4. Register indices are < the subprogram's frame_size.
 //! 5. Per-register type category is consistent across writes.
-//! 6. Field constants have len ≤ field family's canonical size.
-//! 7. Signal / witness slot ids carry u32 encoding (no higher check —
-//!    runtime bounds are enforced by the executor once it sees the
-//!    caller's signal / slot slices).
+//! 6. Field constants have len ≤ the field family's canonical size.
+//! 7. Signal / witness slot ids carry u32 encoding; the runtime bounds
+//!    are enforced by the executor against the caller's slices.
 //! 8. Bodies terminate with `Return` on every reachable path (approx:
-//!    we check that the last instruction is either `Return`, `Trap`,
-//!    or an unconditional `Jump`; full reachability analysis is out of
-//!    scope for v1 and the trap-on-fall-off safety net is added by the
-//!    executor).
+//!    the trap-on-fall-off net is added by the executor).
+//!
+//! And, across subprograms:
+//!
+//! - The entry subprogram (index 0) takes no parameters and returns no
+//!   values; `ReadSignal` / `WriteWitness` appear only there.
+//! - Every `Call` targets a defined subprogram and matches its
+//!   parameter / return arity and type categories.
+//! - Every `Return`'s source list matches its subprogram's declared
+//!   return list.
 
 use std::collections::HashMap;
 
@@ -23,28 +30,29 @@ use crate::error::ArtikError;
 use crate::ir::{ElemT, Instr, IntW, RegType, MAX_ARRAY_LEN, MAX_FRAME_SIZE};
 use crate::program::Program;
 
-/// Validate a decoded program against the 8 invariants. `instr_offsets`
-/// is the byte offset of each instruction inside the body stream (not
-/// including the 4-byte frame size prelude), as produced by the
-/// decoder. Jump targets are compared against this offset set.
-pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError> {
-    let frame = prog.frame_size;
-    let const_count = prog.const_pool.len() as u32;
+/// Validate a decoded program. `offsets_per_sub[si]` is the byte offset
+/// of each instruction inside subprogram `si`'s standalone stream (as
+/// produced by the decoder); jump targets in that subprogram are
+/// compared against its offset set.
+pub fn validate(prog: &Program, offsets_per_sub: &[Vec<u32>]) -> Result<(), ArtikError> {
+    if prog.subprograms.is_empty() || prog.entry >= prog.subprograms.len() {
+        return Err(ArtikError::NoSubprograms);
+    }
+    if offsets_per_sub.len() != prog.subprograms.len() {
+        return Err(ArtikError::NoSubprograms);
+    }
+
+    // The entry subprogram is the only one with access to the caller's
+    // signal / witness slices, so it must have no call-site contract.
+    let entry = &prog.subprograms[prog.entry];
+    if !entry.params.is_empty() || !entry.returns.is_empty() {
+        return Err(ArtikError::EntryHasParamsOrReturns);
+    }
+
     let family = prog.header.family;
     let max_const = family.max_const_bytes();
 
-    // Static resource bound: register frame must fit our allocation
-    // ceiling. Without this check, an adversarial bytecode declaring
-    // `frame_size = u32::MAX` would force the executor to allocate
-    // a multi-gigabyte `Vec<Cell<F>>` before any instruction runs.
-    if frame > MAX_FRAME_SIZE {
-        return Err(ArtikError::FrameTooLarge {
-            frame_size: frame,
-            max: MAX_FRAME_SIZE,
-        });
-    }
-
-    // Invariant 6: const pool sizes.
+    // Invariant 6: const pool sizes (program-global pool).
     for entry in &prog.const_pool {
         if entry.bytes.len() > max_const {
             return Err(ArtikError::ConstTooLarge {
@@ -53,11 +61,38 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
             });
         }
     }
+    let const_count = prog.const_pool.len() as u32;
 
-    // Invariant 2 prep: set of valid jump targets.
+    for (si, offsets) in offsets_per_sub.iter().enumerate() {
+        validate_subprogram(prog, si, const_count, offsets)?;
+    }
+
+    Ok(())
+}
+
+fn validate_subprogram(
+    prog: &Program,
+    si: usize,
+    const_count: u32,
+    instr_offsets: &[u32],
+) -> Result<(), ArtikError> {
+    let sub = &prog.subprograms[si];
+    let frame = sub.frame_size;
+    let is_entry = si == prog.entry;
+
+    // Static resource bound: register frame must fit our allocation
+    // ceiling. Without this an adversarial subprogram declaring
+    // `frame_size = u32::MAX` would force a multi-gigabyte allocation
+    // on entry to the call.
+    if frame > MAX_FRAME_SIZE {
+        return Err(ArtikError::FrameTooLarge {
+            frame_size: frame,
+            max: MAX_FRAME_SIZE,
+        });
+    }
+
     let valid_targets: std::collections::HashSet<u32> = instr_offsets.iter().copied().collect();
 
-    // Invariants 3–5: walk instructions.
     let mut reg_types: HashMap<u32, RegType> = HashMap::new();
 
     let check_reg = |reg: u32| -> Result<(), ArtikError> {
@@ -93,14 +128,19 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
             Some(_) => Err(ArtikError::RegisterTypeConflict { reg }),
             // Reading before any write is only allowed if the producing
             // path assigned it earlier in a branch we did not see on a
-            // linear walk. We permit this in v1: the executor will trap
-            // on undefined reads at runtime. Validation only flags
-            // cross-category conflicts.
+            // linear walk. The executor traps on undefined reads at
+            // runtime; validation only flags cross-category conflicts.
             None => Ok(()),
         }
     };
 
-    for instr in &prog.body {
+    // Parameter registers are bound to types up-front (the executor
+    // populates registers 0..params.len() from the caller's args).
+    for (i, pty) in sub.params.iter().enumerate() {
+        bind(&mut reg_types, i as u32, *pty)?;
+    }
+
+    for instr in &sub.body {
         match instr {
             Instr::Jump { target } => {
                 if !valid_targets.contains(target) {
@@ -111,10 +151,61 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 if !valid_targets.contains(target) {
                     return Err(ArtikError::InvalidJumpTarget { target: *target });
                 }
-                // `cond` is treated as Int(U8) — it carries a 0/1 value.
                 read(&reg_types, *cond, RegType::Int(IntW::U8))?;
             }
-            Instr::Return { .. } | Instr::Trap { .. } => {}
+            Instr::Return { srcs } => {
+                if srcs.len() != sub.returns.len() {
+                    return Err(ArtikError::CallArityMismatch {
+                        func_id: si as u32,
+                        expected: sub.returns.len(),
+                        got: srcs.len(),
+                    });
+                }
+                for (src, rty) in srcs.iter().zip(&sub.returns) {
+                    if read(&reg_types, *src, *rty).is_err() {
+                        return Err(ArtikError::CallTypeMismatch {
+                            func_id: si as u32,
+                            reg: *src,
+                        });
+                    }
+                }
+            }
+            Instr::Call {
+                func_id,
+                args,
+                rets,
+            } => {
+                let callee = prog
+                    .subprograms
+                    .get(*func_id as usize)
+                    .ok_or(ArtikError::UnknownSubprogram { func_id: *func_id })?;
+                if args.len() != callee.params.len() {
+                    return Err(ArtikError::CallArityMismatch {
+                        func_id: *func_id,
+                        expected: callee.params.len(),
+                        got: args.len(),
+                    });
+                }
+                if rets.len() != callee.returns.len() {
+                    return Err(ArtikError::CallArityMismatch {
+                        func_id: *func_id,
+                        expected: callee.returns.len(),
+                        got: rets.len(),
+                    });
+                }
+                for (arg, pty) in args.iter().zip(&callee.params) {
+                    if read(&reg_types, *arg, *pty).is_err() {
+                        return Err(ArtikError::CallTypeMismatch {
+                            func_id: *func_id,
+                            reg: *arg,
+                        });
+                    }
+                }
+                for (ret, rty) in rets.iter().zip(&callee.returns) {
+                    bind(&mut reg_types, *ret, *rty)?;
+                }
+            }
+            Instr::Trap { .. } => {}
             Instr::PushConst { dst, const_id } => {
                 if *const_id >= const_count {
                     return Err(ArtikError::InvalidConstId {
@@ -124,9 +215,15 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 bind(&mut reg_types, *dst, RegType::Field)?;
             }
             Instr::ReadSignal { dst, signal_id: _ } => {
+                if !is_entry {
+                    return Err(ArtikError::SignalsOutsideEntry);
+                }
                 bind(&mut reg_types, *dst, RegType::Field)?;
             }
             Instr::WriteWitness { slot_id: _, src } => {
+                if !is_entry {
+                    return Err(ArtikError::SignalsOutsideEntry);
+                }
                 read(&reg_types, *src, RegType::Field)?;
             }
             Instr::FAdd { dst, a, b }
@@ -144,7 +241,6 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
             Instr::FEq { dst, a, b } => {
                 read(&reg_types, *a, RegType::Field)?;
                 read(&reg_types, *b, RegType::Field)?;
-                // Result is boolean-as-U8.
                 bind(&mut reg_types, *dst, RegType::Int(IntW::U8))?;
             }
             Instr::FIDiv { dst, a, b } | Instr::FIRem { dst, a, b } => {
@@ -153,11 +249,6 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 bind(&mut reg_types, *dst, RegType::Field)?;
             }
             Instr::FShr { dst, src, amount } => {
-                // 256 bits in a canonical rep; shifting by 256+ is
-                // always zero, but we cap at 253 because BN254 / similar
-                // BN-like fields have p < 2^254 — values above 2^254
-                // are unreachable and an out-of-range amount usually
-                // signals a lift bug.
                 if *amount > 253 {
                     return Err(ArtikError::InvalidShiftAmount { amount: *amount });
                 }

@@ -103,6 +103,30 @@ pub enum RegType {
     Array(ElemT),
 }
 
+impl RegType {
+    /// Two-byte wire encoding: a kind byte plus a sub-discriminant
+    /// (the int width or the array element category; unused for
+    /// `Field`). Used in the subprogram parameter / return lists.
+    pub fn to_bytes(self) -> [u8; 2] {
+        match self {
+            Self::Field => [0, 0],
+            Self::Int(w) => [1, w as u8],
+            Self::Array(e) => [2, e as u8],
+        }
+    }
+
+    /// Inverse of [`Self::to_bytes`]. Returns `None` if either byte is
+    /// out of range for its position.
+    pub fn from_bytes(kind: u8, sub: u8) -> Option<Self> {
+        match kind {
+            0 => Some(Self::Field),
+            1 => Some(Self::Int(IntW::from_u8(sub)?)),
+            2 => Some(Self::Array(ElemT::from_u8(sub)?)),
+            _ => None,
+        }
+    }
+}
+
 /// Integer binary operation subcategory. Used with `Instr::IBin`.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
@@ -150,6 +174,7 @@ pub enum OpTag {
     JumpIf = 0x02,
     Return = 0x03,
     Trap = 0x04,
+    Call = 0x05,
 
     // Constants & signals
     PushConst = 0x10,
@@ -203,7 +228,7 @@ pub enum OpTag {
 }
 
 impl OpTag {
-    pub const MAX: u8 = 0x54;
+    pub const MAX: u8 = 0x55;
 
     pub fn from_u8(v: u8) -> Option<Self> {
         use OpTag::*;
@@ -212,6 +237,7 @@ impl OpTag {
             0x02 => Some(JumpIf),
             0x03 => Some(Return),
             0x04 => Some(Trap),
+            0x05 => Some(Call),
             0x10 => Some(PushConst),
             0x11 => Some(ReadSignal),
             0x12 => Some(WriteWitness),
@@ -263,6 +289,18 @@ pub enum Instr {
     /// so it returns with an empty `srcs` and execution halts.
     Return {
         srcs: Vec<Reg>,
+    },
+    /// Call subprogram `func_id`. `args` are registers in the calling
+    /// frame copied cell-for-cell into the callee's parameter
+    /// registers `0..args.len()`; `rets` are registers in the calling
+    /// frame that receive the callee's return values on `Return`.
+    /// Array cells carry a handle into the program-global array store,
+    /// so array arguments and returns cross frames with no backing
+    /// copy.
+    Call {
+        func_id: u32,
+        args: Vec<Reg>,
+        rets: Vec<Reg>,
     },
     Trap {
         code: u16,
@@ -409,6 +447,11 @@ impl Instr {
         match self {
             // tag + u8 count + 4 bytes per return-source register.
             Instr::Return { srcs } => 1 + 1 + 4 * srcs.len() as u32,
+            // tag + func_id(4) + u8 arg count + 4·args + u8 ret count
+            // + 4·rets.
+            Instr::Call { args, rets, .. } => {
+                1 + 4 + 1 + 4 * args.len() as u32 + 1 + 4 * rets.len() as u32
+            }
             Instr::Trap { .. } => 1 + 2,
             Instr::Jump { .. } => 1 + 4,
             Instr::JumpIf { .. } => 1 + 4 + 4,
