@@ -128,6 +128,17 @@ fn encode_instr(instr: &Instr, out: &mut Vec<u8>) {
         }
         Instr::LoadArr { dst, arr, idx } => emit_rrr(out, OpTag::LoadArr, *dst, *arr, *idx),
         Instr::StoreArr { arr, idx, val } => emit_rrr(out, OpTag::StoreArr, *arr, *idx, *val),
+        Instr::ArrayId { dst, arr } => {
+            out.push(OpTag::ArrayId as u8);
+            out.extend_from_slice(&dst.to_le_bytes());
+            out.extend_from_slice(&arr.to_le_bytes());
+        }
+        Instr::ArrayFromId { dst, id, elem } => {
+            out.push(OpTag::ArrayFromId as u8);
+            out.push(*elem as u8);
+            out.extend_from_slice(&dst.to_le_bytes());
+            out.extend_from_slice(&id.to_le_bytes());
+        }
     }
     let _ = (IntW::U8, IntBinOp::Add, ElemT::Field); // silence unused warnings on re-exports
 }

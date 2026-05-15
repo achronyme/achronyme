@@ -16,7 +16,7 @@
 
 use std::collections::{BTreeSet, HashMap};
 
-use artik::{IntW, Reg};
+use artik::{ElemT, IntW, Reg};
 
 use crate::ast::{self, BinOp, CompoundOp, Expr, Stmt};
 
@@ -24,9 +24,50 @@ use super::helpers::{
     collect_array_decls, collect_mutated_scalars, eval_const_expr, is_decrement_on,
     is_increment_on, stmt_is_mux_compatible, stmts_are_mux_compatible, stmts_have_return,
 };
-use super::{ConstInt, LiftState};
+use super::{ArrayShape, ConstInt, LiftState};
+
+/// One pre-branch-tracked 1D array that an if/else arm rebinds via a
+/// whole-array assignment (`name = call(...)`). The arm-selected
+/// handle is stashed in `hslot` (a 1-cell IntU32 heap slot) as its
+/// handle id, then reconstructed post-branch — the array analogue of
+/// the scalar slot merge, but O(1) in the array length: only the
+/// handle id crosses the branch, never the cells. `then_rebinds` /
+/// `else_rebinds` record which arms rebind it so only those arms
+/// stash, and pre-init is skipped when every runtime path overwrites
+/// it anyway.
+struct ArrayMergeSlot {
+    name: String,
+    src_handle: Reg,
+    len: u32,
+    hslot: Reg,
+    then_rebinds: bool,
+    else_rebinds: bool,
+}
 
 impl<'f> LiftState<'f> {
+    /// Stash the arm's current array handle id into its heap slot,
+    /// for the arms that rebind it. Emitted inside the arm's gated
+    /// region so only the taken arm's stash runs at runtime; an arm
+    /// that does not rebind the array leaves the slot holding the
+    /// pre-init / other-arm id.
+    fn stash_arm_array_handles(&mut self, slots: &[ArrayMergeSlot], then_side: bool) -> Option<()> {
+        for slot in slots {
+            let rebinds = if then_side {
+                slot.then_rebinds
+            } else {
+                slot.else_rebinds
+            };
+            if !rebinds {
+                continue;
+            }
+            if let Some(ArrayShape::Flat1D { handle, .. }) = self.arrays.get(&slot.name).copied() {
+                let id = self.builder.array_id(handle);
+                let idx0 = self.push_int_const(0)?;
+                self.builder.store_arr(slot.hslot, idx0, id);
+            }
+        }
+        Some(())
+    }
     /// Top-level `for` dispatcher. Tries the unroll path first; if
     /// the unroll would emit more registers than the executor's
     /// frame-size cap can hold, rolls back the builder and falls
@@ -472,6 +513,43 @@ impl<'f> LiftState<'f> {
             }
         }
 
+        // Whole-array rebind reconciliation. `name = call(...)` where
+        // `name` is a tracked array lands in `*_summary.scalars` (the
+        // mutation summarizer has no type info) and is excluded from
+        // `merge_names` by `is_array_name`. Such a rebind repoints
+        // `self.arrays[name]` at a fresh handle inside the arm; since
+        // `self.arrays` is not part of the scalar slot merge, the
+        // post-branch view would statically resolve to whichever arm
+        // was lifted last regardless of which arm runs. Reconcile each
+        // pre-branch-tracked 1D array an arm rebinds via a 1-cell heap
+        // slot holding the runtime-selected handle id. 2D rebinds and
+        // names that are only a fresh in-arm decl (no pre-branch
+        // shape) stay on the legacy pass-through path unchanged.
+        let else_present = else_body.is_some();
+        let mut array_merge: Vec<ArrayMergeSlot> = Vec::new();
+        {
+            let mut seen: BTreeSet<String> = BTreeSet::new();
+            for n in then_summary
+                .scalars
+                .iter()
+                .chain(else_summary.scalars.iter())
+            {
+                if !is_array_name(n) || !seen.insert(n.clone()) {
+                    continue;
+                }
+                if let Some(ArrayShape::Flat1D { handle, len }) = self.arrays.get(n).copied() {
+                    array_merge.push(ArrayMergeSlot {
+                        name: n.clone(),
+                        src_handle: handle,
+                        len,
+                        hslot: handle, // placeholder; real slot allocated below
+                        then_rebinds: then_summary.scalars.contains(n),
+                        else_rebinds: else_present && else_summary.scalars.contains(n),
+                    });
+                }
+            }
+        }
+
         // Pre-allocate the slot for every merged scalar. The fall-back
         // value is the pre-branch register if the local was already
         // bound, or a freshly-pushed 0 otherwise (covers `var y;` +
@@ -484,6 +562,26 @@ impl<'f> LiftState<'f> {
             let initial = self.locals.get(name).copied().unwrap_or(zero_reg);
             self.store_field_slot(slot, initial)?;
             slots.push((name.clone(), slot));
+        }
+
+        // One IntU32 heap slot per rebound array, holding the chosen
+        // handle id. Pre-init from the pre-branch handle is emitted
+        // only when some runtime path does NOT rebind the array (a
+        // single-`if`, or a 2-arm if where one arm leaves it
+        // untouched) — that path must observe the pre-branch handle.
+        // When every path rebinds it, pre-init is dead and skipped.
+        // The stash/reconstruct is O(1) in the array length, so this
+        // stays off the frame budget even inside unrolled bigint
+        // loops where these rebind-ifs recur.
+        for slot in &mut array_merge {
+            let hslot = self.builder.alloc_array(1, ElemT::IntU32);
+            let every_path_rebinds = slot.then_rebinds && else_present && slot.else_rebinds;
+            if !every_path_rebinds {
+                let id = self.builder.array_id(slot.src_handle);
+                let idx0 = self.push_int_const(0)?;
+                self.builder.store_arr(hslot, idx0, id);
+            }
+            slot.hslot = hslot;
         }
 
         let cond_reg = self.lift_expr(condition)?;
@@ -519,6 +617,7 @@ impl<'f> LiftState<'f> {
                 self.store_field_slot(*slot, reg)?;
             }
         }
+        self.stash_arm_array_handles(&array_merge, true)?;
         self.builder.jump_to(end_label);
 
         // Reset state for the else-arm.
@@ -550,6 +649,11 @@ impl<'f> LiftState<'f> {
                 self.store_field_slot(*slot, reg)?;
             }
         }
+        // `else_rebinds` is false for every slot when there is no
+        // else, so the helper stashes nothing on a no-else
+        // fall-through — the slot keeps its pre-init id, which the
+        // not-taken path must preserve.
+        self.stash_arm_array_handles(&array_merge, false)?;
 
         self.builder.place(end_label);
 
@@ -560,6 +664,21 @@ impl<'f> LiftState<'f> {
         for (name, slot) in slots {
             let reg = self.load_field_slot(slot)?;
             self.locals.insert(name, reg);
+        }
+        // Reconstruct each rebound array from the runtime-selected
+        // handle id so post-branch reads resolve to the arm that
+        // actually ran.
+        for slot in array_merge {
+            let idx0 = self.push_int_const(0)?;
+            let id = self.builder.load_arr(slot.hslot, idx0);
+            let handle = self.builder.array_from_id(id, ElemT::Field);
+            self.arrays.insert(
+                slot.name,
+                ArrayShape::Flat1D {
+                    handle,
+                    len: slot.len,
+                },
+            );
         }
 
         Some(())
