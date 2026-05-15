@@ -103,8 +103,14 @@ fn array_handle_crosses_frames_through_the_global_store() {
                 len: 2,
                 elem: ElemT::Field,
             },
-            Instr::PushConst { dst: 1, const_id: 0 }, // 5
-            Instr::PushConst { dst: 2, const_id: 2 }, // 0
+            Instr::PushConst {
+                dst: 1,
+                const_id: 0,
+            }, // 5
+            Instr::PushConst {
+                dst: 2,
+                const_id: 2,
+            }, // 0
             Instr::IntFromField {
                 w: IntW::U32,
                 dst: 3,
@@ -126,7 +132,10 @@ fn array_handle_crosses_frames_through_the_global_store() {
                 idx: 3,
             }, // A[0] (still 5)
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::PushConst { dst: 6, const_id: 3 }, // 1
+            Instr::PushConst {
+                dst: 6,
+                const_id: 3,
+            }, // 1
             Instr::IntFromField {
                 w: IntW::U32,
                 dst: 7,
@@ -146,8 +155,14 @@ fn array_handle_crosses_frames_through_the_global_store() {
         params: vec![RegType::Array(ElemT::Field)],
         returns: vec![RegType::Array(ElemT::Field)],
         body: vec![
-            Instr::PushConst { dst: 1, const_id: 1 }, // 9
-            Instr::PushConst { dst: 2, const_id: 3 }, // 1
+            Instr::PushConst {
+                dst: 1,
+                const_id: 1,
+            }, // 9
+            Instr::PushConst {
+                dst: 2,
+                const_id: 3,
+            }, // 1
             Instr::IntFromField {
                 w: IntW::U32,
                 dst: 3,
@@ -161,13 +176,21 @@ fn array_handle_crosses_frames_through_the_global_store() {
             Instr::Return { srcs: vec![0] },
         ],
     };
-    let prog = roundtrip(Program::from_subprograms(fam(), pool, vec![entry, fill]))
-        .expect("decode");
+    let prog =
+        roundtrip(Program::from_subprograms(fam(), pool, vec![entry, fill])).expect("decode");
 
     let mut slots = [FE::zero(), FE::zero()];
     run(&prog, &[], &mut slots).expect("execute");
-    assert_eq!(slots[0], FE::from_u64(5), "caller's pre-call write survives");
-    assert_eq!(slots[1], FE::from_u64(9), "callee's write is visible to caller");
+    assert_eq!(
+        slots[0],
+        FE::from_u64(5),
+        "caller's pre-call write survives"
+    );
+    assert_eq!(
+        slots[1],
+        FE::from_u64(9),
+        "callee's write is visible to caller"
+    );
 }
 
 #[test]
@@ -178,8 +201,7 @@ fn entry_with_params_is_rejected() {
         returns: Vec::new(),
         body: vec![Instr::Return { srcs: Vec::new() }],
     };
-    let err = roundtrip(Program::from_subprograms(fam(), Vec::new(), vec![entry]))
-        .unwrap_err();
+    let err = roundtrip(Program::from_subprograms(fam(), Vec::new(), vec![entry])).unwrap_err();
     assert!(matches!(err, ArtikError::EntryHasParamsOrReturns));
 }
 
@@ -234,12 +256,8 @@ fn call_to_undefined_subprogram_is_rejected() {
             Instr::Return { srcs: Vec::new() },
         ],
     };
-    let err = roundtrip(Program::from_subprograms(fam(), Vec::new(), vec![entry]))
-        .unwrap_err();
-    assert!(matches!(
-        err,
-        ArtikError::UnknownSubprogram { func_id: 7 }
-    ));
+    let err = roundtrip(Program::from_subprograms(fam(), Vec::new(), vec![entry])).unwrap_err();
+    assert!(matches!(err, ArtikError::UnknownSubprogram { func_id: 7 }));
 }
 
 #[test]

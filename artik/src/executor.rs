@@ -2023,7 +2023,10 @@ mod tests {
 
     #[test]
     fn trap_instruction_fires_exec_trap() {
-        let body = vec![Instr::Trap { code: 0x01 }, Instr::Return { srcs: Vec::new() }];
+        let body = vec![
+            Instr::Trap { code: 0x01 },
+            Instr::Return { srcs: Vec::new() },
+        ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 0, Vec::new(), body));
         let err = run_bn(&prog, &[], &mut []).unwrap_err();
         assert_eq!(err, ArtikError::ExecTrap { code: 0x01 });
@@ -2221,7 +2224,10 @@ mod tests {
     #[test]
     fn undefined_register_read_traps() {
         // r0 never written; WriteWitness reads it.
-        let body = vec![Instr::WriteWitness { slot_id: 0, src: 0 }, Instr::Return { srcs: Vec::new() }];
+        let body = vec![
+            Instr::WriteWitness { slot_id: 0, src: 0 },
+            Instr::Return { srcs: Vec::new() },
+        ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let mut slots = [FE::zero()];
         let err = run_bn(&prog, &[], &mut slots).unwrap_err();

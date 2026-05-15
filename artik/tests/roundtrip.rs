@@ -196,7 +196,12 @@ fn const_too_large_rejected() {
     let pool = vec![FieldConstEntry {
         bytes: vec![0u8; 40],
     }];
-    let prog = Program::new(sample_family(), 1, pool, vec![Instr::Return { srcs: Vec::new() }]);
+    let prog = Program::new(
+        sample_family(),
+        1,
+        pool,
+        vec![Instr::Return { srcs: Vec::new() }],
+    );
     let bytes = encode(&prog);
     let err = decode(&bytes, Some(sample_family())).unwrap_err();
     assert!(matches!(err, ArtikError::ConstTooLarge { len: 40, .. }));

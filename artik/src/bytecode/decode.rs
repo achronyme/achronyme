@@ -73,9 +73,10 @@ pub fn decode(bytes: &[u8], expected_family: Option<FieldFamily>) -> Result<Prog
         for _ in 0..n_returns {
             let kind = cur.u8()?;
             let sub = cur.u8()?;
-            returns.push(RegType::from_bytes(kind, sub).ok_or(ArtikError::BadHeader(
-                "subprogram return type out of range",
-            ))?);
+            returns.push(
+                RegType::from_bytes(kind, sub)
+                    .ok_or(ArtikError::BadHeader("subprogram return type out of range"))?,
+            );
         }
 
         let sub_body_len = cur.u32()? as usize;
