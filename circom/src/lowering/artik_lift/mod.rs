@@ -160,6 +160,21 @@ pub enum ParamShape {
 ///
 /// Returns `None` for unsupported forms. The caller should fall back
 /// to E212 in that case.
+/// Opt-in: lift nested circom function calls as real Artik
+/// subprogram `Call`s (one subprogram per callee, registered once)
+/// instead of inlining each callee body into the caller's flat
+/// program. Off unless `ARTIK_SUBPROGRAM_LIFT` is `1` / `true` in the
+/// environment. The inlining path is the default; this knob exists so
+/// the subprogram path can be brought up and validated against the
+/// hard witness cases before it becomes the default. Polarity is the
+/// inverse of `R1PP_ENABLED` (opt-in, not opt-out): the new path is
+/// not yet the default.
+fn subprogram_lift_enabled() -> bool {
+    std::env::var("ARTIK_SUBPROGRAM_LIFT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 pub fn lift_function_to_artik(
     function_name: &str,
     params: &[(String, ParamShape)],
@@ -168,6 +183,19 @@ pub fn lift_function_to_artik(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
+    if subprogram_lift_enabled() {
+        // The subprogram path lands incrementally. Until a body's
+        // shape is supported by it, decline so the caller's existing
+        // fallback chain (decomposition, then E212) handles the call
+        // exactly as it does today — no regression while the path is
+        // built up behind this flag.
+        if let Some(lifted) =
+            try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
+        {
+            return Some(lifted);
+        }
+        return None;
+    }
     // Copy function refs out of `ctx` so the lift's nested-call
     // machinery can borrow them without holding `ctx` immutably for
     // the entire walk. The function definitions themselves live in
@@ -213,6 +241,31 @@ pub fn lift_function_to_artik(
         shape,
         extra_fragments: Vec::new(),
     })
+}
+
+/// Lift `body` into a multi-subprogram Artik program: the function
+/// itself becomes the entry subprogram (signal-in / witness-out ABI,
+/// the locked `LiftedWitnessCall` contract — identical to the
+/// inlining path), and every transitively-called circom function
+/// becomes a callee subprogram, reserved once and invoked with a real
+/// Artik `Call`. Returns `None` for any shape the path does not yet
+/// cover; the caller then falls back exactly as if the lift had
+/// declined, so bringing this up never regresses the inlining path
+/// (which stays the default until this is the validated default).
+///
+/// The body of this path lands incrementally across commits on the
+/// subprogram-lift branch; it returns `None` until the supported
+/// surface is wired.
+fn try_lift_via_subprograms(
+    function_name: &str,
+    params: &[(String, ParamShape)],
+    param_consts: &[Option<ConstInt>],
+    body: &[Stmt],
+    ctx: &mut LoweringContext<'_>,
+    span: &Span,
+) -> Option<LiftedWitnessCall> {
+    let _ = (function_name, params, param_consts, body, ctx, span);
+    None
 }
 
 /// Internal bookkeeping — what the function returned. Populated by
