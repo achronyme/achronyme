@@ -4,8 +4,8 @@ use memory::FieldFamily;
 
 use crate::error::ArtikError;
 use crate::header::{ArtikHeader, HEADER_SIZE};
-use crate::ir::{ElemT, Instr, IntBinOp, IntW, OpTag};
-use crate::program::{FieldConstEntry, Program};
+use crate::ir::{ElemT, Instr, IntBinOp, IntW, OpTag, RegType};
+use crate::program::{FieldConstEntry, Program, Subprogram};
 use crate::validate::validate;
 
 /// Read the full byte buffer and produce a `Program`. Runs the
@@ -46,16 +46,52 @@ pub fn decode(bytes: &[u8], expected_family: Option<FieldFamily>) -> Result<Prog
 
     let const_pool = decode_const_pool(&bytes[cp_start..cp_end], header.family)?;
     let body_bytes = &bytes[cp_end..body_end];
-    if body_bytes.len() < 4 {
-        return Err(ArtikError::UnexpectedEof {
-            needed: 4,
-            remaining: body_bytes.len(),
+
+    let mut cur = Cursor::new(body_bytes);
+    let sub_count = cur.u32()? as usize;
+    if sub_count == 0 {
+        return Err(ArtikError::NoSubprograms);
+    }
+
+    let mut subprograms = Vec::with_capacity(sub_count);
+    let mut offsets_per_sub: Vec<Vec<u32>> = Vec::with_capacity(sub_count);
+    for _ in 0..sub_count {
+        let frame_size = cur.u32()?;
+
+        let n_params = cur.u8()? as usize;
+        let mut params = Vec::with_capacity(n_params);
+        for _ in 0..n_params {
+            let kind = cur.u8()?;
+            let sub = cur.u8()?;
+            params.push(RegType::from_bytes(kind, sub).ok_or(ArtikError::BadHeader(
+                "subprogram parameter type out of range",
+            ))?);
+        }
+
+        let n_returns = cur.u8()? as usize;
+        let mut returns = Vec::with_capacity(n_returns);
+        for _ in 0..n_returns {
+            let kind = cur.u8()?;
+            let sub = cur.u8()?;
+            returns.push(
+                RegType::from_bytes(kind, sub)
+                    .ok_or(ArtikError::BadHeader("subprogram return type out of range"))?,
+            );
+        }
+
+        let sub_body_len = cur.u32()? as usize;
+        let sub_body = cur.take(sub_body_len)?;
+        let (instrs, offsets) = decode_instrs(sub_body)?;
+        offsets_per_sub.push(offsets);
+        subprograms.push(Subprogram {
+            frame_size,
+            params,
+            returns,
+            body: instrs,
         });
     }
-    let frame_size =
-        u32::from_le_bytes([body_bytes[0], body_bytes[1], body_bytes[2], body_bytes[3]]);
-    let (instrs, offsets) = decode_instrs(&body_bytes[4..])?;
 
+    let frame_size = subprograms[0].frame_size;
     let mut header = header;
     header.frame_size = frame_size;
 
@@ -63,10 +99,11 @@ pub fn decode(bytes: &[u8], expected_family: Option<FieldFamily>) -> Result<Prog
         header,
         const_pool,
         frame_size,
-        body: instrs,
+        subprograms,
+        entry: 0,
     };
 
-    validate(&program, &offsets)?;
+    validate(&program, &offsets_per_sub)?;
     Ok(program)
 }
 
@@ -117,7 +154,32 @@ fn decode_instrs(bytes: &[u8]) -> Result<(Vec<Instr>, Vec<u32>), ArtikError> {
                 cond: cur.u32()?,
                 target: cur.u32()?,
             },
-            OpTag::Return => Instr::Return,
+            OpTag::Return => {
+                let n = cur.u8()? as usize;
+                let mut srcs = Vec::with_capacity(n);
+                for _ in 0..n {
+                    srcs.push(cur.u32()?);
+                }
+                Instr::Return { srcs }
+            }
+            OpTag::Call => {
+                let func_id = cur.u32()?;
+                let n_args = cur.u8()? as usize;
+                let mut args = Vec::with_capacity(n_args);
+                for _ in 0..n_args {
+                    args.push(cur.u32()?);
+                }
+                let n_rets = cur.u8()? as usize;
+                let mut rets = Vec::with_capacity(n_rets);
+                for _ in 0..n_rets {
+                    rets.push(cur.u32()?);
+                }
+                Instr::Call {
+                    func_id,
+                    args,
+                    rets,
+                }
+            }
             OpTag::Trap => Instr::Trap { code: cur.u16()? },
             OpTag::PushConst => Instr::PushConst {
                 dst: cur.u32()?,

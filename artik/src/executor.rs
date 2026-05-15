@@ -122,128 +122,299 @@ pub fn execute_with_budget<F: FieldBackend>(
         }
         ran += 1;
 
-        // A PC that falls off the end of the program (including an
+        let (func_id, pc) = {
+            let f = state.top()?;
+            (f.func_id, f.pc)
+        };
+        let body = &prog.subprograms[func_id as usize].body;
+
+        // A PC that falls off the end of a subprogram (including an
         // empty body) is a validator gap, not a panic — adversarial
-        // bytecode could hit this by omitting the final `Halt`. Surface
-        // as `InvalidJumpTarget` so the caller sees a clean error.
-        if (state.pc as usize) >= prog.body.len() {
-            return Err(ArtikError::InvalidJumpTarget { target: state.pc });
+        // bytecode could hit this by omitting the final `Return`.
+        // Surface as `InvalidJumpTarget` so the caller sees a clean
+        // error.
+        if (pc as usize) >= body.len() {
+            return Err(ArtikError::InvalidJumpTarget { target: pc });
         }
-        let instr = &prog.body[state.pc as usize];
+        let instr = &body[pc as usize];
         match step(instr, &mut state, ctx, prog)? {
-            Flow::Next => state.pc += 1,
-            Flow::JumpTo(idx) => state.pc = idx,
-            Flow::Halt => return Ok(()),
+            Flow::Next => state.top_mut()?.pc = pc + 1,
+            Flow::JumpTo(idx) => state.top_mut()?.pc = idx,
+            Flow::Call {
+                func_id: callee,
+                args,
+                rets,
+            } => {
+                state.enter_call(prog, callee, &args, rets, pc)?;
+            }
+            Flow::Return { srcs } => {
+                if state.do_return(&srcs)? {
+                    return Ok(());
+                }
+            }
         }
     }
 }
 
 /// Per-step control-flow signal. The interpreter loop in
-/// [`execute_with_budget`] consumes this to advance its PC.
+/// [`execute_with_budget`] consumes this to drive the frame stack.
+/// `step` only classifies the instruction; all frame manipulation
+/// (push on `Call`, pop on `Return`, argument / return wiring) happens
+/// in the loop so the borrow of `state` stays simple.
 enum Flow {
     /// Move to the next instruction (PC += 1).
     Next,
-    /// Jump to a resolved instruction index.
+    /// Jump to a resolved instruction index in the current subprogram.
     JumpTo(u32),
-    /// `Return` fired — exit the loop cleanly.
-    Halt,
+    /// `Call` fired — push a frame for `func_id`, copy `args` into its
+    /// parameter registers, and record `rets` so the matching `Return`
+    /// knows where to write back into this frame.
+    Call {
+        func_id: u32,
+        args: Vec<u32>,
+        rets: Vec<u32>,
+    },
+    /// `Return` fired — pop the current frame, copying the registers
+    /// named in `srcs` into the caller's recorded return destinations.
+    /// If the popped frame was the entry, execution halts.
+    Return { srcs: Vec<u32> },
 }
 
-/// Executor state kept across instructions. Registers + arrays + PC +
-/// a byte-offset-to-index map that lets us resolve `Jump`/`JumpIf`
-/// targets (which are byte offsets in the encoded stream).
-struct State<F: FieldBackend> {
+/// Maximum nesting of `Call` activations. circom forbids recursion, so
+/// a correct lift produces an acyclic call graph whose depth is the
+/// nesting of the source functions — a handful for circomlib. A larger
+/// depth means malformed bytecode or a cyclic lift; fail loudly rather
+/// than grow the stack unbounded.
+const MAX_CALL_DEPTH: u32 = 256;
+
+/// One call activation: which subprogram it runs, its private register
+/// frame, its program counter, and where its return values go in the
+/// caller's frame once it executes `Return`. The entry frame has an
+/// empty `ret_dsts` (its `Return` halts execution).
+struct Frame<F: FieldBackend> {
+    func_id: u32,
     cells: Vec<Cell<F>>,
+    pc: u32,
+    ret_dsts: Vec<u32>,
+}
+
+/// Executor state kept across instructions. A stack of call frames, a
+/// program-global array store (so array handles cross frames with no
+/// backing copy), a cumulative array-cell counter, and one
+/// byte-offset-to-instruction-index map per subprogram (jump targets
+/// are subprogram-local byte offsets).
+struct State<F: FieldBackend> {
+    frames: Vec<Frame<F>>,
     arrays: Vec<ArrayBuf<F>>,
-    offset_to_index: HashMap<u32, u32>,
+    offset_maps: Vec<HashMap<u32, u32>>,
     /// Total cells allocated across all arrays so far. Incremented on
     /// every [`Instr::AllocArray`] and checked against
     /// [`MAX_ARRAY_MEMORY_CELLS`] before the allocation is accepted.
     array_cells_used: u64,
-    pc: u32,
 }
 
 impl<F: FieldBackend> State<F> {
     fn new(prog: &Program) -> Result<Self, ArtikError> {
-        // Validator already enforces this, but re-check here so the
-        // executor never trusts a caller-built `Program` that bypassed
-        // decode. Defense in depth against direct Program construction.
-        if prog.frame_size > crate::ir::MAX_FRAME_SIZE {
-            return Err(ArtikError::FrameTooLarge {
-                frame_size: prog.frame_size,
-                max: crate::ir::MAX_FRAME_SIZE,
-            });
+        if prog.subprograms.is_empty() || prog.entry >= prog.subprograms.len() {
+            return Err(ArtikError::NoSubprograms);
         }
-        let frame = prog.frame_size as usize;
-        let mut offset_to_index = HashMap::with_capacity(prog.body.len());
-        let mut offset: u32 = 0;
-        for (idx, instr) in prog.body.iter().enumerate() {
-            offset_to_index.insert(offset, idx as u32);
-            offset = offset.saturating_add(instr.encoded_size());
+        // Validator already enforces the per-subprogram frame cap, but
+        // re-check here so the executor never trusts a caller-built
+        // `Program` that bypassed decode. Defense in depth against
+        // direct Program construction.
+        let mut offset_maps = Vec::with_capacity(prog.subprograms.len());
+        for sub in &prog.subprograms {
+            if sub.frame_size > crate::ir::MAX_FRAME_SIZE {
+                return Err(ArtikError::FrameTooLarge {
+                    frame_size: sub.frame_size,
+                    max: crate::ir::MAX_FRAME_SIZE,
+                });
+            }
+            let mut map = HashMap::with_capacity(sub.body.len());
+            let mut offset: u32 = 0;
+            for (idx, instr) in sub.body.iter().enumerate() {
+                map.insert(offset, idx as u32);
+                offset = offset.saturating_add(instr.encoded_size());
+            }
+            offset_maps.push(map);
         }
-        Ok(Self {
-            cells: vec![Cell::Undef; frame],
-            arrays: Vec::new(),
-            offset_to_index,
-            array_cells_used: 0,
+
+        let entry = &prog.subprograms[prog.entry];
+        let entry_frame = Frame {
+            func_id: prog.entry as u32,
+            cells: vec![Cell::Undef; entry.frame_size as usize],
             pc: 0,
+            ret_dsts: Vec::new(),
+        };
+        Ok(Self {
+            frames: vec![entry_frame],
+            arrays: Vec::new(),
+            offset_maps,
+            array_cells_used: 0,
         })
     }
 
+    fn top(&self) -> Result<&Frame<F>, ArtikError> {
+        self.frames.last().ok_or(ArtikError::NoSubprograms)
+    }
+
+    fn top_mut(&mut self) -> Result<&mut Frame<F>, ArtikError> {
+        self.frames.last_mut().ok_or(ArtikError::NoSubprograms)
+    }
+
     fn read_field(&self, reg: u32) -> Result<&FieldElement<F>, ArtikError> {
-        match self.cells.get(reg as usize) {
+        let cells = &self.top()?.cells;
+        match cells.get(reg as usize) {
             Some(Cell::Field(v)) => Ok(v),
             Some(Cell::Undef) => Err(ArtikError::UndefinedRegister { reg }),
             Some(_) => Err(ArtikError::WrongCellKind { reg }),
             None => Err(ArtikError::RegisterOutOfRange {
                 reg,
-                frame_size: self.cells.len() as u32,
+                frame_size: cells.len() as u32,
             }),
         }
     }
 
     fn read_int(&self, reg: u32) -> Result<u64, ArtikError> {
-        match self.cells.get(reg as usize) {
+        let cells = &self.top()?.cells;
+        match cells.get(reg as usize) {
             Some(Cell::Int(v)) => Ok(*v),
             Some(Cell::Undef) => Err(ArtikError::UndefinedRegister { reg }),
             Some(_) => Err(ArtikError::WrongCellKind { reg }),
             None => Err(ArtikError::RegisterOutOfRange {
                 reg,
-                frame_size: self.cells.len() as u32,
+                frame_size: cells.len() as u32,
             }),
         }
     }
 
     fn read_array(&self, reg: u32) -> Result<u32, ArtikError> {
-        match self.cells.get(reg as usize) {
+        let cells = &self.top()?.cells;
+        match cells.get(reg as usize) {
             Some(Cell::Array(h)) => Ok(*h),
             Some(Cell::Undef) => Err(ArtikError::UndefinedRegister { reg }),
             Some(_) => Err(ArtikError::WrongCellKind { reg }),
             None => Err(ArtikError::RegisterOutOfRange {
                 reg,
-                frame_size: self.cells.len() as u32,
+                frame_size: cells.len() as u32,
             }),
         }
     }
 
+    /// Clone a cell from the top frame by register, for the array
+    /// store path which needs the source value without holding a
+    /// borrow of `cells` across the `arrays` mutation.
+    fn read_cell_clone(&self, reg: u32) -> Result<Cell<F>, ArtikError> {
+        let cells = &self.top()?.cells;
+        cells
+            .get(reg as usize)
+            .cloned()
+            .ok_or(ArtikError::RegisterOutOfRange {
+                reg,
+                frame_size: cells.len() as u32,
+            })
+    }
+
     fn write(&mut self, reg: u32, cell: Cell<F>) -> Result<(), ArtikError> {
-        match self.cells.get_mut(reg as usize) {
+        let cells = &mut self.top_mut()?.cells;
+        match cells.get_mut(reg as usize) {
             Some(slot) => {
                 *slot = cell;
                 Ok(())
             }
-            None => Err(ArtikError::RegisterOutOfRange {
-                reg,
-                frame_size: self.cells.len() as u32,
-            }),
+            None => {
+                let frame_size = cells.len() as u32;
+                Err(ArtikError::RegisterOutOfRange { reg, frame_size })
+            }
         }
     }
 
     fn resolve_jump(&self, target: u32) -> Result<u32, ArtikError> {
-        self.offset_to_index
-            .get(&target)
+        let func_id = self.top()?.func_id as usize;
+        self.offset_maps
+            .get(func_id)
+            .and_then(|m| m.get(&target))
             .copied()
             .ok_or(ArtikError::InvalidJumpTarget { target })
+    }
+
+    /// Push a frame for `callee`, binding `args` (registers in the
+    /// current frame) into the callee's parameter registers
+    /// `0..args.len()`. The current frame's pc is advanced past the
+    /// `Call` (at `call_pc`) so that the matching `Return` resumes
+    /// after it. `rets` records where the callee's return values land
+    /// in this (caller) frame.
+    fn enter_call(
+        &mut self,
+        prog: &Program,
+        callee: u32,
+        args: &[u32],
+        rets: Vec<u32>,
+        call_pc: u32,
+    ) -> Result<(), ArtikError> {
+        if self.frames.len() as u32 >= MAX_CALL_DEPTH {
+            return Err(ArtikError::CallDepthExceeded {
+                max: MAX_CALL_DEPTH,
+            });
+        }
+        let sub = prog
+            .subprograms
+            .get(callee as usize)
+            .ok_or(ArtikError::UnknownSubprogram { func_id: callee })?;
+
+        // Copy argument cells out of the caller frame first (immutable
+        // borrow), then build the callee frame.
+        let mut arg_cells = Vec::with_capacity(args.len());
+        for a in args {
+            arg_cells.push(self.read_cell_clone(*a)?);
+        }
+        let mut cells = vec![Cell::Undef; sub.frame_size as usize];
+        for (i, c) in arg_cells.into_iter().enumerate() {
+            if let Some(slot) = cells.get_mut(i) {
+                *slot = c;
+            } else {
+                return Err(ArtikError::RegisterOutOfRange {
+                    reg: i as u32,
+                    frame_size: sub.frame_size,
+                });
+            }
+        }
+
+        self.top_mut()?.pc = call_pc + 1;
+        self.frames.push(Frame {
+            func_id: callee,
+            cells,
+            pc: 0,
+            ret_dsts: rets,
+        });
+        Ok(())
+    }
+
+    /// Pop the current frame, copying the registers named in `srcs`
+    /// into the caller frame at the popped frame's `ret_dsts`. Returns
+    /// `true` if the popped frame was the entry (execution halts).
+    fn do_return(&mut self, srcs: &[u32]) -> Result<bool, ArtikError> {
+        let mut ret_cells = Vec::with_capacity(srcs.len());
+        for s in srcs {
+            ret_cells.push(self.read_cell_clone(*s)?);
+        }
+        let popped = self.frames.pop().ok_or(ArtikError::NoSubprograms)?;
+        if self.frames.is_empty() {
+            return Ok(true);
+        }
+        let caller = self.top_mut()?;
+        for (dst, cell) in popped.ret_dsts.iter().zip(ret_cells) {
+            match caller.cells.get_mut(*dst as usize) {
+                Some(slot) => *slot = cell,
+                None => {
+                    return Err(ArtikError::RegisterOutOfRange {
+                        reg: *dst,
+                        frame_size: caller.cells.len() as u32,
+                    })
+                }
+            }
+        }
+        Ok(false)
     }
 }
 
@@ -255,7 +426,16 @@ fn step<F: FieldBackend>(
 ) -> Result<Flow, ArtikError> {
     match instr {
         // ── Control flow ────────────────────────────────────────────
-        Instr::Return => Ok(Flow::Halt),
+        Instr::Return { srcs } => Ok(Flow::Return { srcs: srcs.clone() }),
+        Instr::Call {
+            func_id,
+            args,
+            rets,
+        } => Ok(Flow::Call {
+            func_id: *func_id,
+            args: args.clone(),
+            rets: rets.clone(),
+        }),
         Instr::Trap { code } => Err(ArtikError::ExecTrap { code: *code }),
         Instr::Jump { target } => Ok(Flow::JumpTo(state.resolve_jump(*target)?)),
         Instr::JumpIf { cond, target } => {
@@ -503,18 +683,11 @@ fn step<F: FieldBackend>(
         Instr::StoreArr { arr, idx, val } => {
             let handle = state.read_array(*arr)?;
             let idx_v = state.read_int(*idx)?;
-            // Defensive lookup: clone the source cell via `.get()`
-            // rather than direct indexing so the executor stays
-            // non-panicking even if a caller hands it a Program that
-            // skipped `decode` / `validate`.
-            let src = state
-                .cells
-                .get(*val as usize)
-                .ok_or(ArtikError::RegisterOutOfRange {
-                    reg: *val,
-                    frame_size: state.cells.len() as u32,
-                })?
-                .clone();
+            // Defensive lookup: clone the source cell rather than hold
+            // a borrow across the `arrays` mutation so the executor
+            // stays non-panicking even if a caller hands it a Program
+            // that skipped `decode` / `validate`.
+            let src = state.read_cell_clone(*val)?;
             let buf = state
                 .arrays
                 .get_mut(handle as usize)
@@ -819,7 +992,7 @@ mod tests {
             },
             Instr::FMul { dst: 1, a: 0, b: 0 },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
         let sig = [FE::from_u64(7)];
@@ -849,7 +1022,7 @@ mod tests {
             Instr::FDiv { dst: 4, a: 0, b: 1 }, // 3
             Instr::FSub { dst: 5, a: 3, b: 4 }, // 13
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, pool, body));
         let mut slots = [FE::zero()];
@@ -870,7 +1043,7 @@ mod tests {
                 const_id: 0,
             },
             Instr::FDiv { dst: 2, a: 0, b: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, pool, body));
         let sig = [FE::from_u64(42)];
@@ -897,7 +1070,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 4, Vec::new(), body));
 
@@ -929,7 +1102,7 @@ mod tests {
             },
             Instr::FIDiv { dst: 2, a: 0, b: 1 },
             Instr::WriteWitness { slot_id: 0, src: 2 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, Vec::new(), body));
         let sig = [a, b];
@@ -950,7 +1123,7 @@ mod tests {
             },
             Instr::FIRem { dst: 2, a: 0, b: 1 },
             Instr::WriteWitness { slot_id: 0, src: 2 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, Vec::new(), body));
         let sig = [a, b];
@@ -971,7 +1144,7 @@ mod tests {
                 amount,
             },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
         let sig = [a];
@@ -992,7 +1165,7 @@ mod tests {
                 mask_const_id: 0,
             },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let pool = vec![FieldConstEntry { bytes: mask_bytes }];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, pool, body));
@@ -1173,7 +1346,7 @@ mod tests {
                 src: 0,
                 amount: 254,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = Program::new(FieldFamily::BnLike256, 2, Vec::new(), body);
         let bytes = encode(&prog);
@@ -1265,11 +1438,11 @@ mod tests {
                 src: 0,
                 mask_const_id: 0,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = Program::new(FieldFamily::BnLike256, 6, pool, body.clone());
         let prog = roundtrip(prog);
-        assert_eq!(prog.body, body);
+        assert_eq!(prog.subprograms[0].body, body);
     }
 
     // ── Integer arithmetic ─────────────────────────────────────────
@@ -1315,7 +1488,7 @@ mod tests {
                 w: IntW::U32,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = int_prog(body, 4);
         // 0x8000_0000 + 0x8000_0000 == 0 (mod 2^32)
@@ -1348,7 +1521,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = int_prog(body, 4);
         let out = run_int(&prog, 0xAB);
@@ -1378,7 +1551,7 @@ mod tests {
                 w: IntW::U32,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = int_prog(body, 4);
         let out = run_int(&prog, 0);
@@ -1419,7 +1592,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
         let sig = [FE::from_u64(3), FE::from_u64(7)];
@@ -1469,7 +1642,7 @@ mod tests {
                 w: IntW::U32,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
         let test_values: [(u32, u32); 5] = [
@@ -1578,7 +1751,7 @@ mod tests {
                 slot_id: 0,
                 src: 13,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 14, Vec::new(), body));
 
@@ -1639,7 +1812,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
         // rotl8(0xA5, 11) == rotl8(0xA5, 3) since rot wraps mod 8.
@@ -1712,7 +1885,7 @@ mod tests {
             },
             Instr::FAdd { dst: 9, a: 7, b: 8 },
             Instr::WriteWitness { slot_id: 0, src: 9 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 10, Vec::new(), body));
         let sig = [
@@ -1749,7 +1922,7 @@ mod tests {
                 arr: 0,
                 idx: 2,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 4, Vec::new(), body));
         let sig = [FE::from_u64(5)];
@@ -1803,7 +1976,7 @@ mod tests {
                 target: 0, // placeholder
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let mut offset = 0u32;
         let mut offs = Vec::new();
@@ -1840,7 +2013,7 @@ mod tests {
         // instructions-ran count.
         let body = vec![
             Instr::Jump { target: 0 },
-            Instr::Return, // unreachable
+            Instr::Return { srcs: Vec::new() }, // unreachable
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 0, Vec::new(), body));
         let mut ctx = ArtikContext::<F>::new(&[], &mut []);
@@ -1850,7 +2023,10 @@ mod tests {
 
     #[test]
     fn trap_instruction_fires_exec_trap() {
-        let body = vec![Instr::Trap { code: 0x01 }, Instr::Return];
+        let body = vec![
+            Instr::Trap { code: 0x01 },
+            Instr::Return { srcs: Vec::new() },
+        ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 0, Vec::new(), body));
         let err = run_bn(&prog, &[], &mut []).unwrap_err();
         assert_eq!(err, ArtikError::ExecTrap { code: 0x01 });
@@ -1863,7 +2039,7 @@ mod tests {
                 dst: 0,
                 signal_id: 10,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let sig = [FE::from_u64(1)];
@@ -1886,7 +2062,7 @@ mod tests {
                 signal_id: 0,
             },
             Instr::WriteWitness { slot_id: 5, src: 0 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let sig = [FE::from_u64(1)];
@@ -1913,7 +2089,7 @@ mod tests {
             },
             Instr::FInv { dst: 1, src: 0 },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
         let sig = [FE::from_u64(7)];
@@ -1993,7 +2169,7 @@ mod tests {
                 slot_id: 0,
                 src: 10,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 11, Vec::new(), body));
 
@@ -2048,7 +2224,10 @@ mod tests {
     #[test]
     fn undefined_register_read_traps() {
         // r0 never written; WriteWitness reads it.
-        let body = vec![Instr::WriteWitness { slot_id: 0, src: 0 }, Instr::Return];
+        let body = vec![
+            Instr::WriteWitness { slot_id: 0, src: 0 },
+            Instr::Return { srcs: Vec::new() },
+        ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let mut slots = [FE::zero()];
         let err = run_bn(&prog, &[], &mut slots).unwrap_err();
@@ -2062,7 +2241,7 @@ mod tests {
         // `decode` calls `validate`. A hand-built program declaring a
         // frame of `MAX_FRAME_SIZE + 1` must fail validation.
         use crate::ir::MAX_FRAME_SIZE;
-        let body = vec![Instr::Return];
+        let body = vec![Instr::Return { srcs: Vec::new() }];
         let prog = Program::new(FieldFamily::BnLike256, MAX_FRAME_SIZE + 1, Vec::new(), body);
         let bytes = encode(&prog);
         let err = decode(&bytes, Some(FieldFamily::BnLike256)).unwrap_err();
@@ -2084,7 +2263,7 @@ mod tests {
                 len: MAX_ARRAY_LEN + 1,
                 elem: ElemT::IntU32,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = Program::new(FieldFamily::BnLike256, 1, Vec::new(), body);
         let bytes = encode(&prog);
@@ -2171,7 +2350,7 @@ mod tests {
                 w: IntW::I64,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
 
@@ -2271,7 +2450,7 @@ mod tests {
                 slot_id: 0,
                 src: 12,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 13, Vec::new(), body));
         let sig = [
@@ -2343,7 +2522,7 @@ mod tests {
                 idx: 3,
             }, // A[0] via reconstructed handle
             Instr::WriteWitness { slot_id: 0, src: 8 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 9, Vec::new(), body));
         let sig = [FE::from_u64(99), FE::zero()];
@@ -2449,7 +2628,7 @@ mod tests {
                 slot_id: 0,
                 src: 14,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         // Patch the JumpIf to the byte offset of the `skip:` LoadArr
         // (instruction index 17).

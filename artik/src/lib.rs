@@ -54,7 +54,7 @@ pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::ArtikHeader;
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
-pub use program::{FieldConstEntry, Program};
+pub use program::{FieldConstEntry, Program, Subprogram};
 
 /// Disambiguating aliases. `Program` and `ProgramBuilder` collide
 /// with `lysis::Program` / `lysis::ProgramBuilder` when both crates

@@ -49,6 +49,35 @@ pub enum ArtikError {
     /// result is always zero for any value below `p`), so a lift that
     /// emits one signals a bug — flag it instead of silently zeroing.
     InvalidShiftAmount { amount: u32 },
+    /// A program declared zero subprograms, or its entry index is out
+    /// of range. Every program must have at least one (the entry).
+    NoSubprograms,
+    /// A `Call` referenced a subprogram index with no definition.
+    UnknownSubprogram { func_id: u32 },
+    /// A `Call`'s argument or return arity does not match the callee's
+    /// declared parameter / return list, or a `Return`'s source count
+    /// does not match its subprogram's declared return list.
+    CallArityMismatch {
+        func_id: u32,
+        expected: usize,
+        got: usize,
+    },
+    /// A `Call` argument / return register, or a `Return` source, has a
+    /// type category incompatible with the callee's signature.
+    CallTypeMismatch { func_id: u32, reg: u32 },
+    /// The entry subprogram declared parameters or returns. The entry
+    /// has no caller and communicates only through witness slots, so
+    /// both lists must be empty.
+    EntryHasParamsOrReturns,
+    /// `ReadSignal` / `WriteWitness` appeared outside the entry
+    /// subprogram. Only the entry may see the caller's signal / slot
+    /// slices; callee subprograms communicate purely through their
+    /// parameter and return registers.
+    SignalsOutsideEntry,
+    /// Call nesting exceeded the static depth guard. circom forbids
+    /// recursion; hitting this means either malformed bytecode or a
+    /// lift that emitted a cyclic call graph.
+    CallDepthExceeded { max: u32 },
 
     // ── Runtime (executor) ──────────────────────────────────────────
     /// A `PushConst` referenced bytes that could not be decoded as a
@@ -172,6 +201,35 @@ impl fmt::Display for ArtikError {
                     f,
                     "Artik FShr amount {amount} exceeds canonical-rep cap 253"
                 )
+            }
+            Self::NoSubprograms => {
+                write!(f, "Artik program has no subprograms")
+            }
+            Self::UnknownSubprogram { func_id } => {
+                write!(f, "Artik call to undefined subprogram {func_id}")
+            }
+            Self::CallArityMismatch {
+                func_id,
+                expected,
+                got,
+            } => write!(
+                f,
+                "Artik subprogram {func_id} arity mismatch: expected {expected}, got {got}"
+            ),
+            Self::CallTypeMismatch { func_id, reg } => write!(
+                f,
+                "Artik subprogram {func_id} signature type mismatch at r{reg}"
+            ),
+            Self::EntryHasParamsOrReturns => write!(
+                f,
+                "Artik entry subprogram must take no parameters and return no values"
+            ),
+            Self::SignalsOutsideEntry => write!(
+                f,
+                "Artik signal / witness access is only allowed in the entry subprogram"
+            ),
+            Self::CallDepthExceeded { max } => {
+                write!(f, "Artik call depth exceeded limit {max}")
             }
         }
     }

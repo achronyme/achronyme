@@ -7,13 +7,22 @@ use crate::program::Program;
 /// Serialize a program to bytes. The output has layout:
 ///
 /// ```text
-/// [ 16 bytes header ][ frame_size (4 LE) ][ const pool ][ body ]
+/// [ 16 bytes header ][ const pool ][ body region ]
+///
+/// body region:
+///   [ subprogram_count : u32 LE ]
+///   per subprogram:
+///     [ frame_size : u32 LE ]
+///     [ n_params : u8 ][ params : 2 B each ]
+///     [ n_returns : u8 ][ returns : 2 B each ]
+///     [ sub_body_len : u32 LE ]
+///     [ instruction bytes ]   (jump offsets relative to this stream)
 /// ```
 ///
 /// The `header.const_pool_len` and `header.body_len` fields are
-/// overwritten with the actual encoded sizes. `frame_size` is written
-/// as the first 4 bytes of the body region so the validator can read
-/// it before any register is checked.
+/// overwritten with the actual encoded sizes. Each subprogram's
+/// instruction stream is standalone, so its `Jump` / `JumpIf` offsets
+/// start at 0 regardless of where the subprogram sits in the program.
 pub fn encode(prog: &Program) -> Vec<u8> {
     let mut const_pool_bytes = Vec::with_capacity(prog.const_pool.len() * 33);
     for entry in &prog.const_pool {
@@ -22,10 +31,29 @@ pub fn encode(prog: &Program) -> Vec<u8> {
         const_pool_bytes.extend_from_slice(&entry.bytes);
     }
 
-    let mut body_bytes = Vec::with_capacity(prog.body.len() * 8 + 4);
-    body_bytes.extend_from_slice(&prog.frame_size.to_le_bytes());
-    for instr in &prog.body {
-        encode_instr(instr, &mut body_bytes);
+    let mut body_bytes: Vec<u8> = Vec::new();
+    body_bytes.extend_from_slice(&(prog.subprograms.len() as u32).to_le_bytes());
+    for sub in &prog.subprograms {
+        body_bytes.extend_from_slice(&sub.frame_size.to_le_bytes());
+
+        debug_assert!(sub.params.len() <= u8::MAX as usize);
+        body_bytes.push(sub.params.len() as u8);
+        for p in &sub.params {
+            body_bytes.extend_from_slice(&p.to_bytes());
+        }
+
+        debug_assert!(sub.returns.len() <= u8::MAX as usize);
+        body_bytes.push(sub.returns.len() as u8);
+        for r in &sub.returns {
+            body_bytes.extend_from_slice(&r.to_bytes());
+        }
+
+        let mut sub_bytes = Vec::with_capacity(sub.body.len() * 8);
+        for instr in &sub.body {
+            encode_instr(instr, &mut sub_bytes);
+        }
+        body_bytes.extend_from_slice(&(sub_bytes.len() as u32).to_le_bytes());
+        body_bytes.extend_from_slice(&sub_bytes);
     }
 
     let mut header = prog.header;
@@ -51,8 +79,31 @@ fn encode_instr(instr: &Instr, out: &mut Vec<u8>) {
             out.extend_from_slice(&cond.to_le_bytes());
             out.extend_from_slice(&target.to_le_bytes());
         }
-        Instr::Return => {
+        Instr::Return { srcs } => {
             out.push(OpTag::Return as u8);
+            debug_assert!(srcs.len() <= u8::MAX as usize);
+            out.push(srcs.len() as u8);
+            for s in srcs {
+                out.extend_from_slice(&s.to_le_bytes());
+            }
+        }
+        Instr::Call {
+            func_id,
+            args,
+            rets,
+        } => {
+            out.push(OpTag::Call as u8);
+            out.extend_from_slice(&func_id.to_le_bytes());
+            debug_assert!(args.len() <= u8::MAX as usize);
+            out.push(args.len() as u8);
+            for a in args {
+                out.extend_from_slice(&a.to_le_bytes());
+            }
+            debug_assert!(rets.len() <= u8::MAX as usize);
+            out.push(rets.len() as u8);
+            for r in rets {
+                out.extend_from_slice(&r.to_le_bytes());
+            }
         }
         Instr::Trap { code } => {
             out.push(OpTag::Trap as u8);

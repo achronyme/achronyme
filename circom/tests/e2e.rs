@@ -1427,11 +1427,11 @@ fn fn_witness_lift_while_terminates() {
     // false). A regression that silently bails through the
     // unrolled-for path or fails to wire the back-edge would leave
     // the body straight-line.
-    let saw_jump = prog
+    let saw_jump = prog.subprograms[0]
         .body
         .iter()
         .any(|i| matches!(i, artik::Instr::Jump { .. }));
-    let saw_jump_if = prog
+    let saw_jump_if = prog.subprograms[0]
         .body
         .iter()
         .any(|i| matches!(i, artik::Instr::JumpIf { .. }));
@@ -1474,7 +1474,7 @@ fn fn_witness_lift_folds_if_else_in_loop() {
 
     // Spot-check: no JumpIf / Jump should have been emitted — the
     // condition folded at lift time, so the program is straight-line.
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         assert!(
             !matches!(
                 instr,
@@ -1518,7 +1518,7 @@ fn fn_witness_lift_handles_internal_array() {
     let mut seen_alloc = false;
     let mut seen_store = false;
     let mut seen_load = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::AllocArray { .. } => seen_alloc = true,
             artik::Instr::StoreArr { .. } => seen_store = true,
@@ -1562,7 +1562,7 @@ fn fn_witness_lift_handles_2d_array() {
 
     // The lift should allocate exactly one 12-cell array (3 rows × 4 cols).
     let mut alloc_lens: Vec<u32> = Vec::new();
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         if let artik::Instr::AllocArray { len, .. } = instr {
             alloc_lens.push(*len);
         }
@@ -1644,7 +1644,7 @@ fn fn_witness_lift_compares_at_u64_width() {
     // the load-bearing change. A U32 demote would silently truncate
     // for n=64 limbs.
     let mut saw_u64_demote = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         if let artik::Instr::IntFromField { w, .. } = instr {
             if matches!(w, artik::IntW::U64) {
                 saw_u64_demote = true;
@@ -1691,7 +1691,7 @@ fn fn_witness_lift_emits_array_lit_return_with_field_pow2_ops() {
     let mut alloc_lens: Vec<u32> = Vec::new();
     let mut saw_fshr = false;
     let mut saw_fand = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::AllocArray { len, .. } => alloc_lens.push(*len),
             artik::Instr::FShr { .. } => saw_fshr = true,
@@ -1746,7 +1746,7 @@ fn fn_witness_lift_emits_branching_for_array_write_arms() {
 
     let mut saw_jump_if = false;
     let mut saw_store_arr = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::JumpIf { .. } => saw_jump_if = true,
             artik::Instr::StoreArr { .. } => saw_store_arr = true,
@@ -1792,7 +1792,7 @@ fn fn_witness_lift_emits_field_level_fidiv_firem() {
 
     let mut saw_fidiv = false;
     let mut saw_firem = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::FIDiv { .. } => saw_fidiv = true,
             artik::Instr::FIRem { .. } => saw_firem = true,
@@ -1853,7 +1853,7 @@ fn fn_witness_lift_circomlib_prod_integration() {
     // allocations are from each `SplitThreeFn` (3-cell return),
     // `SplitFn` (2-cell return), and the `a[2]` / `b[2]` input
     // signal-array params bound by `LiftState::new`.
-    let alloc_lens: Vec<u32> = prog
+    let alloc_lens: Vec<u32> = prog.subprograms[0]
         .body
         .iter()
         .filter_map(|i| match i {
@@ -1887,11 +1887,11 @@ fn fn_witness_lift_circomlib_prod_integration() {
     // A regression in nested-call const-arg propagation would silently
     // route those through FIDiv / FIRem — passing the AllocArray
     // assertions but failing this one.
-    let saw_fshr = prog
+    let saw_fshr = prog.subprograms[0]
         .body
         .iter()
         .any(|i| matches!(i, artik::Instr::FShr { .. }));
-    let saw_fand = prog
+    let saw_fand = prog.subprograms[0]
         .body
         .iter()
         .any(|i| matches!(i, artik::Instr::FAnd { .. }));
@@ -1944,7 +1944,7 @@ fn fn_witness_lift_circomlib_prod_k4_n64_width_stress() {
     // require pinning every FShr in the program, but by checking at
     // least one FShr exists with amount ≥ 64; combined with FAnd this
     // proves the bit-extraction dispatch fired for all three shapes).
-    let max_fshr_amount = prog
+    let max_fshr_amount = prog.subprograms[0]
         .body
         .iter()
         .filter_map(|i| match i {
@@ -1958,7 +1958,7 @@ fn fn_witness_lift_circomlib_prod_k4_n64_width_stress() {
         "expected at least one FShr with amount ≥ 64 (SplitThreeFn's bit-128 \
          extraction at n=64); max amount seen = {max_fshr_amount}"
     );
-    let saw_fand = prog
+    let saw_fand = prog.subprograms[0]
         .body
         .iter()
         .any(|i| matches!(i, artik::Instr::FAnd { .. }));
@@ -2004,7 +2004,7 @@ fn fn_witness_lift_circomlib_split_fn_integration() {
 
     let mut saw_fshr = false;
     let mut saw_fand = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::FShr { .. } => saw_fshr = true,
             artik::Instr::FAnd { .. } => saw_fand = true,
@@ -2059,7 +2059,7 @@ fn fn_witness_lift_circomlib_short_div_norm_integration() {
     // a const power of two — the lift must dispatch through FIDiv. A
     // regression to FShr / FAnd would silently drop the high bits of
     // the dividend.
-    let saw_fidiv = prog
+    let saw_fidiv = prog.subprograms[0]
         .body
         .iter()
         .any(|i| matches!(i, artik::Instr::FIDiv { .. }));
@@ -2098,7 +2098,7 @@ fn fn_witness_lift_circomlib_short_div_integration() {
     // (1 << n) \ (1 + b[k-1])` shape and one inside the nested
     // short_div_norm for qhat. Both have non-power-of-2 divisors so
     // they fall into the runtime FIDiv path, not FShr / FAnd.
-    let fidiv_count = prog
+    let fidiv_count = prog.subprograms[0]
         .body
         .iter()
         .filter(|i| matches!(i, artik::Instr::FIDiv { .. }))
@@ -2139,7 +2139,7 @@ fn fn_witness_lift_circomlib_long_div_integration() {
 
     // 200-slot witness output (2 * 100 flattened) is the load-bearing
     // signature of the 2D return path.
-    let witness_writes = prog
+    let witness_writes = prog.subprograms[0]
         .body
         .iter()
         .filter(|i| matches!(i, artik::Instr::WriteWitness { .. }))
@@ -2151,7 +2151,7 @@ fn fn_witness_lift_circomlib_long_div_integration() {
 
     // The 2D `out[2][100]` declaration becomes a single 200-cell
     // AllocArray after the row-major flattening.
-    let alloc_lens: Vec<u32> = prog
+    let alloc_lens: Vec<u32> = prog.subprograms[0]
         .body
         .iter()
         .filter_map(|i| match i {
@@ -2197,7 +2197,7 @@ fn fn_witness_lift_circomlib_mod_exp_unrolled_integration() {
     // 200-cell `var temp[200]` AllocArray. With 64 outer iters and
     // two inner ifs, the lifted body must surface at least one such
     // allocation.
-    let alloc_lens: Vec<u32> = prog
+    let alloc_lens: Vec<u32> = prog.subprograms[0]
         .body
         .iter()
         .filter_map(|i| match i {
@@ -2243,7 +2243,7 @@ fn fn_witness_lift_circomlib_mod_inv_integration() {
     // tail `return out;`); each path emits its own write-witness loop
     // at lift time, but both must target the *same* slot ids so the
     // function's effective witness signature stays at 100 outputs.
-    let unique_slots: std::collections::HashSet<u32> = prog
+    let unique_slots: std::collections::HashSet<u32> = prog.subprograms[0]
         .body
         .iter()
         .filter_map(|i| match i {
@@ -2291,10 +2291,10 @@ fn fn_witness_lift_inlines_nested_call() {
     let prog = artik::bytecode::decode(&payload.unwrap(), Some(memory::FieldFamily::BnLike256))
         .expect("nested-lift payload must decode and validate");
 
-    let return_count = prog
+    let return_count = prog.subprograms[0]
         .body
         .iter()
-        .filter(|i| matches!(i, artik::Instr::Return))
+        .filter(|i| matches!(i, artik::Instr::Return { .. }))
         .count();
     assert_eq!(
         return_count, 1,
@@ -2334,7 +2334,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
         .expect("mux payload must decode and validate");
 
     // No control flow emitted — the mux is pure arithmetic.
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         assert!(
             !matches!(
                 instr,
@@ -2348,7 +2348,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
     // `cond == 0`), at least one FieldFromInt (lifting the FEq result
     // back to Field), and at least three FMul (two arm-multiplies +
     // at least one from the body's own arithmetic).
-    let feq_count = prog
+    let feq_count = prog.subprograms[0]
         .body
         .iter()
         .filter(|i| matches!(i, artik::Instr::FEq { .. }))
@@ -2357,7 +2357,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
         feq_count, 1,
         "expected exactly one FEq from the cond-normalization prelude"
     );
-    let field_from_int_count = prog
+    let field_from_int_count = prog.subprograms[0]
         .body
         .iter()
         .filter(|i| matches!(i, artik::Instr::FieldFromInt { .. }))
@@ -2366,7 +2366,7 @@ fn fn_witness_lift_muxes_runtime_if_else() {
         field_from_int_count >= 1,
         "expected FieldFromInt to lift FEq result back to Field"
     );
-    let fmul_count = prog
+    let fmul_count = prog.subprograms[0]
         .body
         .iter()
         .filter(|i| matches!(i, artik::Instr::FMul { .. }))
@@ -4291,7 +4291,7 @@ fn fn_witness_lift_handles_bit_ops() {
     let mut ibin = 0usize;
     let mut ito_int = 0usize;
     let mut ito_field = 0usize;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::IBin { .. } => ibin += 1,
             artik::Instr::IntFromField { .. } => ito_int += 1,
@@ -4368,7 +4368,7 @@ fn fn_witness_lift_sha256k_constant_table() {
 
     let mut seen_alloc = false;
     let mut seen_load = false;
-    for instr in &prog.body {
+    for instr in &prog.subprograms[0].body {
         match instr {
             artik::Instr::AllocArray { .. } => seen_alloc = true,
             artik::Instr::LoadArr { .. } => seen_load = true,
