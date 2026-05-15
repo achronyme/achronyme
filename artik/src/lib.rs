@@ -8,8 +8,9 @@
 //!
 //! ## Scope (v1)
 //!
-//! - ~25 opcodes, Brillig-aligned plus first-class `Rotl32/Rotr32/Rotl8`
-//!   for SHA-family hashing.
+//! - ~26 opcodes, Brillig-aligned plus first-class `Rotl32/Rotr32/Rotl8`
+//!   for SHA-family hashing and `Call` / `Return` over a subprogram
+//!   frame stack.
 //! - u8 / u32 / u64 / i64 bit-exact integer arithmetic with wrapping
 //!   semantics. u128 / i256 are out of scope.
 //! - Multi-prime bytecode within a field family
