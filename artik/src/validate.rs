@@ -240,6 +240,18 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 let val_ty = elem_to_reg(elem_ty);
                 read(&reg_types, *val, val_ty)?;
             }
+            Instr::ArrayId { dst, arr } => {
+                check_reg(*arr)?;
+                match reg_types.get(arr) {
+                    Some(RegType::Array(_)) => {}
+                    _ => return Err(ArtikError::RegisterTypeConflict { reg: *arr }),
+                }
+                bind(&mut reg_types, *dst, RegType::Int(IntW::U32))?;
+            }
+            Instr::ArrayFromId { dst, id, elem } => {
+                read(&reg_types, *id, RegType::Int(IntW::U32))?;
+                bind(&mut reg_types, *dst, RegType::Array(*elem))?;
+            }
         }
     }
 

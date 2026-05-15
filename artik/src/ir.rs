@@ -193,10 +193,17 @@ pub enum OpTag {
     AllocArray = 0x50,
     LoadArr = 0x51,
     StoreArr = 0x52,
+    /// `dst (Int U32) = handle index of the array in `arr``. Lets a
+    /// branch-merge stash a runtime-selected array handle in a heap
+    /// int slot (the array analogue of the scalar slot merge).
+    ArrayId = 0x53,
+    /// `dst (Array) = the array whose handle index is `id``. Traps if
+    /// `id` is not a live handle. Inverse of `ArrayId`.
+    ArrayFromId = 0x54,
 }
 
 impl OpTag {
-    pub const MAX: u8 = 0x52;
+    pub const MAX: u8 = 0x54;
 
     pub fn from_u8(v: u8) -> Option<Self> {
         use OpTag::*;
@@ -228,6 +235,8 @@ impl OpTag {
             0x50 => Some(AllocArray),
             0x51 => Some(LoadArr),
             0x52 => Some(StoreArr),
+            0x53 => Some(ArrayId),
+            0x54 => Some(ArrayFromId),
             _ => None,
         }
     }
@@ -374,6 +383,15 @@ pub enum Instr {
         idx: Reg,
         val: Reg,
     },
+    ArrayId {
+        dst: Reg,
+        arr: Reg,
+    },
+    ArrayFromId {
+        dst: Reg,
+        id: Reg,
+        elem: ElemT,
+    },
 }
 
 impl Instr {
@@ -389,7 +407,7 @@ impl Instr {
             Instr::PushConst { .. } | Instr::ReadSignal { .. } | Instr::WriteWitness { .. } => {
                 1 + 4 + 4
             }
-            Instr::FInv { .. } => 1 + 4 + 4,
+            Instr::FInv { .. } | Instr::ArrayId { .. } => 1 + 4 + 4,
             Instr::FAdd { .. }
             | Instr::FSub { .. }
             | Instr::FMul { .. }
@@ -408,7 +426,7 @@ impl Instr {
             Instr::INot { .. } | Instr::IntFromField { .. } | Instr::FieldFromInt { .. } => {
                 1 + 1 + 4 + 4
             }
-            Instr::AllocArray { .. } => 1 + 1 + 4 + 4,
+            Instr::AllocArray { .. } | Instr::ArrayFromId { .. } => 1 + 1 + 4 + 4,
         }
     }
 }

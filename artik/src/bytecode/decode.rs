@@ -255,6 +255,20 @@ fn decode_instrs(bytes: &[u8]) -> Result<(Vec<Instr>, Vec<u32>), ArtikError> {
                 idx: cur.u32()?,
                 val: cur.u32()?,
             },
+            OpTag::ArrayId => Instr::ArrayId {
+                dst: cur.u32()?,
+                arr: cur.u32()?,
+            },
+            OpTag::ArrayFromId => {
+                let elem_byte = cur.u8()?;
+                let elem =
+                    ElemT::from_u8(elem_byte).ok_or(ArtikError::UnknownElemTag(elem_byte))?;
+                Instr::ArrayFromId {
+                    elem,
+                    dst: cur.u32()?,
+                    id: cur.u32()?,
+                }
+            }
         };
         out.push(instr);
     }

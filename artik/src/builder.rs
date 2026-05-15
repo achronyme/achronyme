@@ -402,6 +402,24 @@ impl ProgramBuilder {
         self.emit(Instr::StoreArr { arr, idx, val });
     }
 
+    /// Read the array handle in `arr` as a U32 int so it can be
+    /// stashed in a heap slot across a branch and reconstructed with
+    /// [`Self::array_from_id`].
+    pub fn array_id(&mut self, arr: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::ArrayId { dst, arr });
+        dst
+    }
+
+    /// Reconstruct an array handle from a U32 int produced by
+    /// [`Self::array_id`]. `elem` must match the original array's
+    /// element category.
+    pub fn array_from_id(&mut self, id: Reg, elem: ElemT) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::ArrayFromId { dst, id, elem });
+        dst
+    }
+
     // ── Finalize ────────────────────────────────────────────────────
 
     /// Consume the builder and produce a [`Program`], patching all
