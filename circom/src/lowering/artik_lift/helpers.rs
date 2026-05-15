@@ -15,6 +15,8 @@
 
 use std::collections::HashMap;
 
+use artik::{ElemT, RegType};
+
 use crate::ast::{BinOp, CompoundOp, ElseBranch, Expr, PostfixOp, Stmt, UnaryOp};
 
 use super::ConstInt;
@@ -678,5 +680,404 @@ pub(super) fn compound_to_binop(op: CompoundOp) -> Option<BinOp> {
         CompoundOp::BitOr => Some(BinOp::BitOr),
         CompoundOp::BitXor => Some(BinOp::BitXor),
         _ => None,
+    }
+}
+
+/// Return shape of a circom function, classified so the caller can
+/// derive the register types a subprogram with this body exposes.
+///
+/// Arrays cross the subprogram `Call` / `Return` boundary as a single
+/// handle into the program-global array store, so every array variant
+/// collapses to one `Array(Field)` register at the ABI. The
+/// dimensional detail kept here drives the call-site re-bundling (one
+/// flat `LetArray` plus row-major strides for 2D), not the register
+/// count.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub(super) enum CalleeReturnShape {
+    /// Every `return` yields a single field value.
+    Scalar,
+    /// Every `return` yields a 1D array of `len` field cells.
+    Array(u32),
+    /// Every `return` yields a `rows × cols` field array.
+    Array2D(u32, u32),
+    /// The shape is not statically resolvable: a runtime-dimensioned
+    /// array, returns of disagreeing shape, a forwarded call result,
+    /// or a return expression whose shape the classifier does not
+    /// model. A subprogram cannot be reserved for such a body.
+    Other,
+}
+
+impl CalleeReturnShape {
+    /// Register types a subprogram with this return shape exposes.
+    /// Scalars are one `Field`; every array variant is one
+    /// `Array(Field)` handle. `Other` has no representable signature.
+    pub(super) fn to_reg_types(self) -> Option<Vec<RegType>> {
+        match self {
+            Self::Scalar => Some(vec![RegType::Field]),
+            Self::Array(_) | Self::Array2D(..) => Some(vec![RegType::Array(ElemT::Field)]),
+            Self::Other => None,
+        }
+    }
+}
+
+/// Dimensions of a body-scoped `var X[..]` declaration that fold
+/// against the callee's param consts.
+#[derive(Clone, Copy)]
+enum DeclDim {
+    D1(u32),
+    D2(u32, u32),
+}
+
+/// Classify what every `return` in `stmts` yields. Circom hoists
+/// `var` declarations to function scope, so a `var X[K]` in any arm
+/// is visible to a `return X;` in another; the first pass collects
+/// those dimensions, the second resolves each `return` against them.
+///
+/// Unlike [`scan_array_returns`] there is no single-return special
+/// case: a subprogram return is a real `Return` instruction regardless
+/// of how many `return` sites the body has, so the return-count gate
+/// that path needs does not apply here. Every `return` must resolve to
+/// the same shape; any unresolved or disagreeing return yields
+/// [`CalleeReturnShape::Other`].
+pub(super) fn infer_callee_return_shape(
+    stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
+) -> CalleeReturnShape {
+    // `None` value = a name declared as an array whose dimension does
+    // not fold against the param consts. Returning such a name is
+    // unresolvable (the subprogram cannot reserve a fixed handle
+    // shape), so it must classify as `Other` rather than fall through
+    // to the scalar default.
+    let mut dim_map: HashMap<String, Option<DeclDim>> = HashMap::new();
+    let mut consistent = true;
+    collect_return_dims(stmts, param_consts, &mut dim_map, &mut consistent);
+    if !consistent {
+        return CalleeReturnShape::Other;
+    }
+
+    let mut found: Option<CalleeReturnShape> = None;
+    let mut ok = true;
+    classify_returns(stmts, &dim_map, &mut found, &mut ok);
+    if !ok {
+        return CalleeReturnShape::Other;
+    }
+    found.unwrap_or(CalleeReturnShape::Other)
+}
+
+fn collect_return_dims(
+    stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
+    dim_map: &mut HashMap<String, Option<DeclDim>>,
+    consistent: &mut bool,
+) {
+    for stmt in stmts {
+        collect_return_dims_in_stmt(stmt, param_consts, dim_map, consistent);
+        if !*consistent {
+            return;
+        }
+    }
+}
+
+fn collect_return_dims_in_stmt(
+    stmt: &Stmt,
+    param_consts: &HashMap<String, ConstInt>,
+    dim_map: &mut HashMap<String, Option<DeclDim>>,
+    consistent: &mut bool,
+) {
+    let fold = |e: &Expr| eval_const_expr(e, param_consts).and_then(|v| u32::try_from(v).ok());
+    match stmt {
+        Stmt::VarDecl {
+            names, dimensions, ..
+        } if names.len() == 1 && (dimensions.len() == 1 || dimensions.len() == 2) => {
+            let name = &names[0];
+            let dim: Option<DeclDim> = if dimensions.len() == 1 {
+                fold(&dimensions[0]).map(DeclDim::D1)
+            } else {
+                match (fold(&dimensions[0]), fold(&dimensions[1])) {
+                    (Some(r), Some(c)) => Some(DeclDim::D2(r, c)),
+                    _ => None,
+                }
+            };
+            match (dim_map.get(name), dim) {
+                (Some(Some(DeclDim::D1(p))), Some(DeclDim::D1(n))) if *p != n => {
+                    *consistent = false
+                }
+                (Some(Some(DeclDim::D2(pr, pc))), Some(DeclDim::D2(r, c)))
+                    if (*pr, *pc) != (r, c) =>
+                {
+                    *consistent = false
+                }
+                (Some(Some(DeclDim::D1(_))), Some(DeclDim::D2(..)))
+                | (Some(Some(DeclDim::D2(..))), Some(DeclDim::D1(_))) => *consistent = false,
+                // A later unresolved decl of an already-array name keeps
+                // it unresolvable; otherwise record this decl's dim
+                // (resolved or not — `None` marks a runtime dimension).
+                (Some(None), _) => {
+                    dim_map.insert(name.clone(), None);
+                }
+                _ => {
+                    dim_map.insert(name.clone(), dim);
+                }
+            }
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            collect_return_dims(&then_body.stmts, param_consts, dim_map, consistent);
+            match else_body {
+                Some(ElseBranch::Block(b)) => {
+                    collect_return_dims(&b.stmts, param_consts, dim_map, consistent)
+                }
+                Some(ElseBranch::IfElse(boxed)) => {
+                    collect_return_dims_in_stmt(boxed, param_consts, dim_map, consistent)
+                }
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => {
+            collect_return_dims(&body.stmts, param_consts, dim_map, consistent)
+        }
+        Stmt::While { body, .. } => {
+            collect_return_dims(&body.stmts, param_consts, dim_map, consistent)
+        }
+        Stmt::DoWhile { body, .. } => {
+            collect_return_dims(&body.stmts, param_consts, dim_map, consistent)
+        }
+        Stmt::Block(b) => collect_return_dims(&b.stmts, param_consts, dim_map, consistent),
+        _ => {}
+    }
+}
+
+fn classify_returns(
+    stmts: &[Stmt],
+    dim_map: &HashMap<String, Option<DeclDim>>,
+    found: &mut Option<CalleeReturnShape>,
+    ok: &mut bool,
+) {
+    for stmt in stmts {
+        classify_returns_in_stmt(stmt, dim_map, found, ok);
+        if !*ok {
+            return;
+        }
+    }
+}
+
+fn classify_returns_in_stmt(
+    stmt: &Stmt,
+    dim_map: &HashMap<String, Option<DeclDim>>,
+    found: &mut Option<CalleeReturnShape>,
+    ok: &mut bool,
+) {
+    match stmt {
+        Stmt::Return { value, .. } => {
+            let shape = match classify_return_expr(value, dim_map) {
+                Some(s) => s,
+                None => {
+                    *ok = false;
+                    return;
+                }
+            };
+            match *found {
+                None => *found = Some(shape),
+                Some(prev) if prev == shape => {}
+                Some(_) => *ok = false,
+            }
+        }
+        Stmt::IfElse {
+            then_body,
+            else_body,
+            ..
+        } => {
+            classify_returns(&then_body.stmts, dim_map, found, ok);
+            match else_body {
+                Some(ElseBranch::Block(b)) => classify_returns(&b.stmts, dim_map, found, ok),
+                Some(ElseBranch::IfElse(boxed)) => {
+                    classify_returns_in_stmt(boxed, dim_map, found, ok)
+                }
+                None => {}
+            }
+        }
+        Stmt::For { body, .. } => classify_returns(&body.stmts, dim_map, found, ok),
+        Stmt::While { body, .. } => classify_returns(&body.stmts, dim_map, found, ok),
+        Stmt::DoWhile { body, .. } => classify_returns(&body.stmts, dim_map, found, ok),
+        Stmt::Block(b) => classify_returns(&b.stmts, dim_map, found, ok),
+        _ => {}
+    }
+}
+
+/// Resolve the shape of a single `return <expr>;`. `None` means the
+/// shape is not modelled (the whole classification then yields
+/// `Other`). A forwarded call result is deliberately unresolved here —
+/// resolving it requires the callee registry, which the classifier
+/// does not have.
+fn classify_return_expr(
+    value: &Expr,
+    dim_map: &HashMap<String, Option<DeclDim>>,
+) -> Option<CalleeReturnShape> {
+    match value {
+        Expr::ArrayLit { elements, .. } => {
+            if elements.iter().any(|e| matches!(e, Expr::ArrayLit { .. })) {
+                // Nested array literals would need per-row length
+                // agreement to be a clean 2D shape; treat as unmodelled
+                // rather than guess.
+                return None;
+            }
+            u32::try_from(elements.len())
+                .ok()
+                .map(CalleeReturnShape::Array)
+        }
+        Expr::Ident { name, .. } => match dim_map.get(name) {
+            Some(Some(DeclDim::D1(n))) => Some(CalleeReturnShape::Array(*n)),
+            Some(Some(DeclDim::D2(r, c))) => Some(CalleeReturnShape::Array2D(*r, *c)),
+            // Declared as an array but with a runtime dimension: the
+            // subprogram cannot reserve a fixed handle shape.
+            Some(None) => None,
+            // No array declaration in scope: a scalar local / parameter.
+            None => Some(CalleeReturnShape::Scalar),
+        },
+        Expr::Ternary {
+            if_true, if_false, ..
+        } => {
+            let a = classify_return_expr(if_true, dim_map)?;
+            let b = classify_return_expr(if_false, dim_map)?;
+            (a == b).then_some(a)
+        }
+        // A forwarded call result resolves to the callee's shape, which
+        // the classifier cannot see.
+        Expr::Call { .. } => None,
+        // Numbers, arithmetic, an indexed element read, and unary /
+        // postfix forms all produce a single field value.
+        Expr::Number { .. }
+        | Expr::HexNumber { .. }
+        | Expr::BinOp { .. }
+        | Expr::UnaryOp { .. }
+        | Expr::PostfixOp { .. }
+        | Expr::PrefixOp { .. }
+        | Expr::Index { .. } => Some(CalleeReturnShape::Scalar),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ast::Definition;
+    use crate::parser::parse_circom;
+
+    fn parse_body(body_src: &str) -> Vec<Stmt> {
+        let src = format!("function probe(c, x, n, a, cond) {{ {body_src} }}");
+        let (prog, errors) = parse_circom(&src).expect("parse failed");
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        match &prog.definitions[0] {
+            Definition::Function(f) => f.body.stmts.clone(),
+            _ => panic!("expected function"),
+        }
+    }
+
+    fn shape(body_src: &str) -> CalleeReturnShape {
+        infer_callee_return_shape(&parse_body(body_src), &HashMap::new())
+    }
+
+    fn shape_with(body_src: &str, consts: &[(&str, ConstInt)]) -> CalleeReturnShape {
+        let map: HashMap<String, ConstInt> =
+            consts.iter().map(|(k, v)| (k.to_string(), *v)).collect();
+        infer_callee_return_shape(&parse_body(body_src), &map)
+    }
+
+    #[test]
+    fn scalar_returns_classify_as_scalar() {
+        assert_eq!(shape("return 1 + 2;"), CalleeReturnShape::Scalar);
+        assert_eq!(shape("var x = 3; return x;"), CalleeReturnShape::Scalar);
+        assert_eq!(shape("return a[0];"), CalleeReturnShape::Scalar);
+    }
+
+    #[test]
+    fn array_literal_and_decl_returns_classify_as_array() {
+        assert_eq!(shape("return [1, 2, 3];"), CalleeReturnShape::Array(3));
+        assert_eq!(
+            shape("var out[4]; return out;"),
+            CalleeReturnShape::Array(4)
+        );
+    }
+
+    #[test]
+    fn array_decl_dim_folds_against_param_consts() {
+        assert_eq!(
+            shape_with("var out[n]; return out;", &[("n", 5)]),
+            CalleeReturnShape::Array(5)
+        );
+    }
+
+    #[test]
+    fn two_dimensional_decl_returns_classify_as_array2d() {
+        assert_eq!(
+            shape("var m[2][3]; return m;"),
+            CalleeReturnShape::Array2D(2, 3)
+        );
+    }
+
+    #[test]
+    fn return_count_does_not_force_other() {
+        // A single top-level array return is `Other` for the inlining
+        // path's slot heuristic; for a subprogram it is a real
+        // `Return`, so it must classify cleanly.
+        assert_eq!(
+            shape("var out[2]; return out;"),
+            CalleeReturnShape::Array(2)
+        );
+        assert_eq!(
+            shape("if (c) { var out[2]; return out; } var r[2]; return r;"),
+            CalleeReturnShape::Array(2)
+        );
+    }
+
+    #[test]
+    fn disagreeing_return_shapes_are_other() {
+        assert_eq!(
+            shape("if (c) { return 1; } var out[2]; return out;"),
+            CalleeReturnShape::Other
+        );
+        assert_eq!(
+            shape("if (c) { var a[2]; return a; } var b[3]; return b;"),
+            CalleeReturnShape::Other
+        );
+    }
+
+    #[test]
+    fn forwarded_call_return_is_other() {
+        assert_eq!(shape("return foo(x);"), CalleeReturnShape::Other);
+    }
+
+    #[test]
+    fn runtime_dim_array_is_other() {
+        // `n` is not in param_consts, so the dim does not fold.
+        assert_eq!(shape("var out[n]; return out;"), CalleeReturnShape::Other);
+    }
+
+    #[test]
+    fn scalar_ternary_returns_classify_as_scalar() {
+        assert_eq!(
+            shape("return cond == 0 ? 1 : x;"),
+            CalleeReturnShape::Scalar
+        );
+    }
+
+    #[test]
+    fn reg_type_collapse_is_one_handle_per_array() {
+        assert_eq!(
+            CalleeReturnShape::Scalar.to_reg_types(),
+            Some(vec![RegType::Field])
+        );
+        assert_eq!(
+            CalleeReturnShape::Array(7).to_reg_types(),
+            Some(vec![RegType::Array(ElemT::Field)])
+        );
+        assert_eq!(
+            CalleeReturnShape::Array2D(3, 4).to_reg_types(),
+            Some(vec![RegType::Array(ElemT::Field)])
+        );
+        assert_eq!(CalleeReturnShape::Other.to_reg_types(), None);
     }
 }
