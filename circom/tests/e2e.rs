@@ -2294,7 +2294,7 @@ fn fn_witness_lift_inlines_nested_call() {
     let return_count = prog
         .body
         .iter()
-        .filter(|i| matches!(i, artik::Instr::Return))
+        .filter(|i| matches!(i, artik::Instr::Return { .. }))
         .count();
     assert_eq!(
         return_count, 1,

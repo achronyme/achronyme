@@ -51,8 +51,13 @@ fn encode_instr(instr: &Instr, out: &mut Vec<u8>) {
             out.extend_from_slice(&cond.to_le_bytes());
             out.extend_from_slice(&target.to_le_bytes());
         }
-        Instr::Return => {
+        Instr::Return { srcs } => {
             out.push(OpTag::Return as u8);
+            debug_assert!(srcs.len() <= u8::MAX as usize);
+            out.push(srcs.len() as u8);
+            for s in srcs {
+                out.extend_from_slice(&s.to_le_bytes());
+            }
         }
         Instr::Trap { code } => {
             out.push(OpTag::Trap as u8);

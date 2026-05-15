@@ -114,7 +114,7 @@ pub fn validate(prog: &Program, instr_offsets: &[u32]) -> Result<(), ArtikError>
                 // `cond` is treated as Int(U8) — it carries a 0/1 value.
                 read(&reg_types, *cond, RegType::Int(IntW::U8))?;
             }
-            Instr::Return | Instr::Trap { .. } => {}
+            Instr::Return { .. } | Instr::Trap { .. } => {}
             Instr::PushConst { dst, const_id } => {
                 if *const_id >= const_count {
                     return Err(ArtikError::InvalidConstId {

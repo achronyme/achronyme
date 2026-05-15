@@ -255,7 +255,7 @@ impl ProgramBuilder {
 
     /// Emit `Return`. No register is returned.
     pub fn ret(&mut self) {
-        self.emit(Instr::Return);
+        self.emit(Instr::Return { srcs: Vec::new() });
     }
 
     /// Emit `Trap { code }`. No register is returned.

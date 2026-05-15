@@ -117,7 +117,14 @@ fn decode_instrs(bytes: &[u8]) -> Result<(Vec<Instr>, Vec<u32>), ArtikError> {
                 cond: cur.u32()?,
                 target: cur.u32()?,
             },
-            OpTag::Return => Instr::Return,
+            OpTag::Return => {
+                let n = cur.u8()? as usize;
+                let mut srcs = Vec::with_capacity(n);
+                for _ in 0..n {
+                    srcs.push(cur.u32()?);
+                }
+                Instr::Return { srcs }
+            }
             OpTag::Trap => Instr::Trap { code: cur.u16()? },
             OpTag::PushConst => Instr::PushConst {
                 dst: cur.u32()?,

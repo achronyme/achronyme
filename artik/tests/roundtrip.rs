@@ -20,7 +20,7 @@ fn square_program() -> Program {
         },
         Instr::FMul { dst: 1, a: 0, b: 0 },
         Instr::WriteWitness { slot_id: 0, src: 1 },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     Program::new(sample_family(), 2, Vec::new(), body)
 }
@@ -55,7 +55,7 @@ fn const_pool_roundtrip() {
             const_id: 1,
         },
         Instr::FAdd { dst: 2, a: 0, b: 1 },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 3, pool, body);
     let bytes = encode(&prog);
@@ -76,7 +76,7 @@ fn all_opcodes_roundtrip() {
 
     let body = vec![
         Instr::Jump { target: 0 }, // target 0 = first instruction offset
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 0, Vec::new(), body);
     let bytes = encode(&prog);
@@ -136,7 +136,7 @@ fn register_out_of_range_rejected() {
             dst: 5, // frame_size is 2, so r5 is out of range
             signal_id: 0,
         },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 2, Vec::new(), body);
     let bytes = encode(&prog);
@@ -165,7 +165,7 @@ fn register_type_conflict_rejected() {
             a: 1,
             b: 1,
         },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 2, Vec::new(), body);
     let bytes = encode(&prog);
@@ -180,7 +180,7 @@ fn invalid_const_id_rejected() {
             dst: 0,
             const_id: 99, // pool is empty
         },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 1, Vec::new(), body);
     let bytes = encode(&prog);
@@ -194,7 +194,7 @@ fn const_too_large_rejected() {
     let pool = vec![FieldConstEntry {
         bytes: vec![0u8; 40],
     }];
-    let prog = Program::new(sample_family(), 1, pool, vec![Instr::Return]);
+    let prog = Program::new(sample_family(), 1, pool, vec![Instr::Return { srcs: Vec::new() }]);
     let bytes = encode(&prog);
     let err = decode(&bytes, Some(sample_family())).unwrap_err();
     assert!(matches!(err, ArtikError::ConstTooLarge { len: 40, .. }));
@@ -204,7 +204,7 @@ fn const_too_large_rejected() {
 fn invalid_jump_target_rejected() {
     let body = vec![
         Instr::Jump { target: 0xDEAD }, // garbage target
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 0, Vec::new(), body);
     let bytes = encode(&prog);
@@ -240,7 +240,7 @@ fn alloc_array_and_load_roundtrip() {
             arr: 0,
             idx: 1,
         },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 4, Vec::new(), body);
     let bytes = encode(&prog);
@@ -288,7 +288,7 @@ fn bit_ops_and_rotations_roundtrip() {
             w: IntW::U32,
         },
         Instr::WriteWitness { slot_id: 0, src: 6 },
-        Instr::Return,
+        Instr::Return { srcs: Vec::new() },
     ];
     let prog = Program::new(sample_family(), 7, Vec::new(), body);
     let bytes = encode(&prog);

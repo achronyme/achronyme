@@ -255,7 +255,7 @@ fn step<F: FieldBackend>(
 ) -> Result<Flow, ArtikError> {
     match instr {
         // ── Control flow ────────────────────────────────────────────
-        Instr::Return => Ok(Flow::Halt),
+        Instr::Return { .. } => Ok(Flow::Halt),
         Instr::Trap { code } => Err(ArtikError::ExecTrap { code: *code }),
         Instr::Jump { target } => Ok(Flow::JumpTo(state.resolve_jump(*target)?)),
         Instr::JumpIf { cond, target } => {
@@ -819,7 +819,7 @@ mod tests {
             },
             Instr::FMul { dst: 1, a: 0, b: 0 },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
         let sig = [FE::from_u64(7)];
@@ -849,7 +849,7 @@ mod tests {
             Instr::FDiv { dst: 4, a: 0, b: 1 }, // 3
             Instr::FSub { dst: 5, a: 3, b: 4 }, // 13
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, pool, body));
         let mut slots = [FE::zero()];
@@ -870,7 +870,7 @@ mod tests {
                 const_id: 0,
             },
             Instr::FDiv { dst: 2, a: 0, b: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, pool, body));
         let sig = [FE::from_u64(42)];
@@ -897,7 +897,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 4, Vec::new(), body));
 
@@ -929,7 +929,7 @@ mod tests {
             },
             Instr::FIDiv { dst: 2, a: 0, b: 1 },
             Instr::WriteWitness { slot_id: 0, src: 2 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, Vec::new(), body));
         let sig = [a, b];
@@ -950,7 +950,7 @@ mod tests {
             },
             Instr::FIRem { dst: 2, a: 0, b: 1 },
             Instr::WriteWitness { slot_id: 0, src: 2 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, Vec::new(), body));
         let sig = [a, b];
@@ -971,7 +971,7 @@ mod tests {
                 amount,
             },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
         let sig = [a];
@@ -992,7 +992,7 @@ mod tests {
                 mask_const_id: 0,
             },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let pool = vec![FieldConstEntry { bytes: mask_bytes }];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, pool, body));
@@ -1173,7 +1173,7 @@ mod tests {
                 src: 0,
                 amount: 254,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = Program::new(FieldFamily::BnLike256, 2, Vec::new(), body);
         let bytes = encode(&prog);
@@ -1265,7 +1265,7 @@ mod tests {
                 src: 0,
                 mask_const_id: 0,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = Program::new(FieldFamily::BnLike256, 6, pool, body.clone());
         let prog = roundtrip(prog);
@@ -1315,7 +1315,7 @@ mod tests {
                 w: IntW::U32,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = int_prog(body, 4);
         // 0x8000_0000 + 0x8000_0000 == 0 (mod 2^32)
@@ -1348,7 +1348,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = int_prog(body, 4);
         let out = run_int(&prog, 0xAB);
@@ -1378,7 +1378,7 @@ mod tests {
                 w: IntW::U32,
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = int_prog(body, 4);
         let out = run_int(&prog, 0);
@@ -1419,7 +1419,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
         let sig = [FE::from_u64(3), FE::from_u64(7)];
@@ -1469,7 +1469,7 @@ mod tests {
                 w: IntW::U32,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
         let test_values: [(u32, u32); 5] = [
@@ -1578,7 +1578,7 @@ mod tests {
                 slot_id: 0,
                 src: 13,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 14, Vec::new(), body));
 
@@ -1639,7 +1639,7 @@ mod tests {
                 w: IntW::U8,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
         // rotl8(0xA5, 11) == rotl8(0xA5, 3) since rot wraps mod 8.
@@ -1712,7 +1712,7 @@ mod tests {
             },
             Instr::FAdd { dst: 9, a: 7, b: 8 },
             Instr::WriteWitness { slot_id: 0, src: 9 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 10, Vec::new(), body));
         let sig = [
@@ -1749,7 +1749,7 @@ mod tests {
                 arr: 0,
                 idx: 2,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 4, Vec::new(), body));
         let sig = [FE::from_u64(5)];
@@ -1803,7 +1803,7 @@ mod tests {
                 target: 0, // placeholder
             },
             Instr::WriteWitness { slot_id: 0, src: 3 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let mut offset = 0u32;
         let mut offs = Vec::new();
@@ -1840,7 +1840,7 @@ mod tests {
         // instructions-ran count.
         let body = vec![
             Instr::Jump { target: 0 },
-            Instr::Return, // unreachable
+            Instr::Return { srcs: Vec::new() }, // unreachable
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 0, Vec::new(), body));
         let mut ctx = ArtikContext::<F>::new(&[], &mut []);
@@ -1850,7 +1850,7 @@ mod tests {
 
     #[test]
     fn trap_instruction_fires_exec_trap() {
-        let body = vec![Instr::Trap { code: 0x01 }, Instr::Return];
+        let body = vec![Instr::Trap { code: 0x01 }, Instr::Return { srcs: Vec::new() }];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 0, Vec::new(), body));
         let err = run_bn(&prog, &[], &mut []).unwrap_err();
         assert_eq!(err, ArtikError::ExecTrap { code: 0x01 });
@@ -1863,7 +1863,7 @@ mod tests {
                 dst: 0,
                 signal_id: 10,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let sig = [FE::from_u64(1)];
@@ -1886,7 +1886,7 @@ mod tests {
                 signal_id: 0,
             },
             Instr::WriteWitness { slot_id: 5, src: 0 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let sig = [FE::from_u64(1)];
@@ -1913,7 +1913,7 @@ mod tests {
             },
             Instr::FInv { dst: 1, src: 0 },
             Instr::WriteWitness { slot_id: 0, src: 1 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
         let sig = [FE::from_u64(7)];
@@ -1993,7 +1993,7 @@ mod tests {
                 slot_id: 0,
                 src: 10,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 11, Vec::new(), body));
 
@@ -2048,7 +2048,7 @@ mod tests {
     #[test]
     fn undefined_register_read_traps() {
         // r0 never written; WriteWitness reads it.
-        let body = vec![Instr::WriteWitness { slot_id: 0, src: 0 }, Instr::Return];
+        let body = vec![Instr::WriteWitness { slot_id: 0, src: 0 }, Instr::Return { srcs: Vec::new() }];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 1, Vec::new(), body));
         let mut slots = [FE::zero()];
         let err = run_bn(&prog, &[], &mut slots).unwrap_err();
@@ -2062,7 +2062,7 @@ mod tests {
         // `decode` calls `validate`. A hand-built program declaring a
         // frame of `MAX_FRAME_SIZE + 1` must fail validation.
         use crate::ir::MAX_FRAME_SIZE;
-        let body = vec![Instr::Return];
+        let body = vec![Instr::Return { srcs: Vec::new() }];
         let prog = Program::new(FieldFamily::BnLike256, MAX_FRAME_SIZE + 1, Vec::new(), body);
         let bytes = encode(&prog);
         let err = decode(&bytes, Some(FieldFamily::BnLike256)).unwrap_err();
@@ -2084,7 +2084,7 @@ mod tests {
                 len: MAX_ARRAY_LEN + 1,
                 elem: ElemT::IntU32,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = Program::new(FieldFamily::BnLike256, 1, Vec::new(), body);
         let bytes = encode(&prog);
@@ -2171,7 +2171,7 @@ mod tests {
                 w: IntW::I64,
             },
             Instr::WriteWitness { slot_id: 0, src: 5 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 6, Vec::new(), body));
 
@@ -2271,7 +2271,7 @@ mod tests {
                 slot_id: 0,
                 src: 12,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 13, Vec::new(), body));
         let sig = [
@@ -2343,7 +2343,7 @@ mod tests {
                 idx: 3,
             }, // A[0] via reconstructed handle
             Instr::WriteWitness { slot_id: 0, src: 8 },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         let prog = roundtrip(Program::new(FieldFamily::BnLike256, 9, Vec::new(), body));
         let sig = [FE::from_u64(99), FE::zero()];
@@ -2449,7 +2449,7 @@ mod tests {
                 slot_id: 0,
                 src: 14,
             },
-            Instr::Return,
+            Instr::Return { srcs: Vec::new() },
         ];
         // Patch the JumpIf to the byte offset of the `skip:` LoadArr
         // (instruction index 17).

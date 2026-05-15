@@ -256,7 +256,14 @@ pub enum Instr {
         cond: Reg,
         target: u32,
     },
-    Return,
+    /// Pop the current call frame. `srcs` names the registers in the
+    /// returning frame that hold this subprogram's return values; the
+    /// executor copies them into the caller's destination registers
+    /// recorded at the `Call` site. The entry subprogram has no caller,
+    /// so it returns with an empty `srcs` and execution halts.
+    Return {
+        srcs: Vec<Reg>,
+    },
     Trap {
         code: u16,
     },
@@ -400,7 +407,8 @@ impl Instr {
     /// targets (byte offsets) into indices into the decoded `body`.
     pub fn encoded_size(&self) -> u32 {
         match self {
-            Instr::Return => 1,
+            // tag + u8 count + 4 bytes per return-source register.
+            Instr::Return { srcs } => 1 + 1 + 4 * srcs.len() as u32,
             Instr::Trap { .. } => 1 + 2,
             Instr::Jump { .. } => 1 + 4,
             Instr::JumpIf { .. } => 1 + 4 + 4,
