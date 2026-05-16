@@ -10,7 +10,7 @@
 //! / `++i` / `i--` / `--i` over a tracked variable, and rejects any
 //! other shape.
 
-use artik::ElemT;
+use artik::{ElemT, IntW};
 
 use crate::ast::{BinOp, Expr, PostfixOp, Stmt};
 
@@ -312,11 +312,26 @@ impl<'f> LiftState<'f> {
 
                     // 1D indexed assignment: `arr[i] = expr`.
                     let (arr_reg, len) = target_shape.as_1d()?;
-                    let idx = eval_const_expr(outer_idx, &self.const_locals)?;
-                    if !(0..i64::from(len)).contains(&idx) {
-                        return None;
+                    if let Some(idx) = eval_const_expr(outer_idx, &self.const_locals) {
+                        // Compile-time index: an out-of-range write is
+                        // unconditionally a bug — the lift bails.
+                        if !(0..i64::from(len)).contains(&idx) {
+                            return None;
+                        }
+                        let idx_reg = self.push_int_const(idx as u64)?;
+                        let val_reg = self.lift_expr(value)?;
+                        self.builder.store_arr(arr_reg, idx_reg, val_reg);
+                        return Some(());
                     }
-                    let idx_reg = self.push_int_const(idx as u64)?;
+                    // Runtime index (e.g. a while-promoted loop counter):
+                    // lift the index expression into a field register,
+                    // then IntFromField U32 into the int register
+                    // StoreArr expects — the mirror of the runtime-index
+                    // read path. The executor traps on out-of-bounds
+                    // access, so the bounds check is deferred rather than
+                    // duplicated here.
+                    let idx_field = self.lift_expr(outer_idx)?;
+                    let idx_reg = self.builder.int_from_field(IntW::U32, idx_field);
                     let val_reg = self.lift_expr(value)?;
                     self.builder.store_arr(arr_reg, idx_reg, val_reg);
                     return Some(());
