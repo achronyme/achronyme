@@ -1028,9 +1028,39 @@ fn classify_return_expr(
             let b = classify_return_expr(if_false, param_consts, dim_map, functions, visited)?;
             (a == b).then_some(a)
         }
-        // A forwarded call result resolves to the callee's shape, which
-        // the classifier cannot see.
-        Expr::Call { .. } => None,
+        // A forwarded call: `return f(args);`. The return shape is
+        // whatever `f` returns, resolved by recursing into `f`'s body.
+        // The `visited` set bounds the recursion — circom forbids
+        // recursive functions, so a cycle here is malformed input and
+        // declines cleanly instead of looping.
+        Expr::Call { callee, args, .. } => {
+            let name = extract_call_name(callee)?;
+            let func = functions.get(name.as_str())?;
+            if args.len() != func.params.len() {
+                return None;
+            }
+            if !visited.insert(name.clone()) {
+                return None;
+            }
+            // The forwarded callee's own return shape does not see the
+            // caller's argument constants — a forwarded callee whose
+            // shape depends on a caller-passed constant declines
+            // (conservative; no shape is invented).
+            let inner =
+                infer_callee_return_shape(&func.body.stmts, &HashMap::new(), functions, visited);
+            visited.remove(&name);
+            match inner {
+                CalleeReturnShape::Scalar => Some(CalleeReturnShape::Scalar),
+                // The emission side packs a single result register for
+                // `return <call>`; an array handle would be dropped.
+                // Decline a forwarded array return so the gate never
+                // reserves a subprogram whose return cannot be
+                // delivered.
+                CalleeReturnShape::Array(_)
+                | CalleeReturnShape::Array2D(..)
+                | CalleeReturnShape::Other => None,
+            }
+        }
         // A single-index read. `arr2d[row]` where `arr2d` is a 2D local
         // is a 1D row slice of `cols` cells — the emission side
         // (`emit_callee_return` / the non-subprogram row-slice path)
@@ -1282,6 +1312,48 @@ mod tests {
                 "fwd",
             ),
             CalleeReturnShape::Scalar
+        );
+    }
+
+    #[test]
+    fn forwarded_call_in_ternary_reuses_callee_across_branches() {
+        // Both ternary arms forward to the same callee. The visited
+        // set must be cleared between arms so the second resolves
+        // (a true cycle is the only thing that should trip the guard).
+        assert_eq!(
+            shape_multi(
+                "function leaf(a) { return a + 1; } \
+                 function fwd(c, x, y) { return c == 0 ? leaf(x) : leaf(y); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Scalar
+        );
+    }
+
+    #[test]
+    fn forwarded_array_call_return_declines() {
+        // `leaf` returns an array; a forwarded array return is not
+        // deliverable by the scalar-result emission, so it declines
+        // (Other) rather than reserving an undeliverable shape.
+        assert_eq!(
+            shape_multi(
+                "function leaf(a) { var o[3]; return o; } \
+                 function fwd(x) { return leaf(x); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Other
+        );
+    }
+
+    #[test]
+    fn forwarded_call_arity_mismatch_declines() {
+        assert_eq!(
+            shape_multi(
+                "function leaf(a, b) { return a + b; } \
+                 function fwd(x) { return leaf(x); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Other
         );
     }
 
