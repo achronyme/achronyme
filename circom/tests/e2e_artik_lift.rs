@@ -410,6 +410,72 @@ fn fn_witness_lift_runtime_index_store() {
     );
 }
 
+/// A `return cond ? a : b;` with a runtime condition. The expression
+/// lift must lower it as a branchless select (`cond_bool * a + (1 -
+/// cond_bool) * b`) — no conditional jump — or the callee return
+/// declines and compilation fails with E212. circomlib's `isNegative`
+/// is exactly this shape. Both arms are exercised.
+#[test]
+fn fn_witness_lift_ternary_select() {
+    use ir_forge::types::CircuitNode;
+    use memory::field::{Bn254Fr, FieldElement};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_ternary_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("ternary lift failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("ternary payload must decode and validate");
+
+    // Branchless: a runtime-condition ternary lowers to a select, not
+    // a conditional jump.
+    let saw_jump_if = prog
+        .subprograms
+        .iter()
+        .flat_map(|s| s.body.iter())
+        .any(|i| matches!(i, artik::Instr::JumpIf { .. }));
+    assert!(
+        !saw_jump_if,
+        "a runtime-condition ternary must be a branchless select, not a JumpIf"
+    );
+
+    // compute(50) = is_big(50) = (50 > 100 ? 7 : 13) = 13;
+    // compute(200) = 7. Both arms.
+    type FE = FieldElement<Bn254Fr>;
+    let sigs_lo = [FE::from_u64(50)];
+    let mut slots_lo = [FE::zero()];
+    let mut ctx_lo = artik::ArtikContext::<Bn254Fr>::new(&sigs_lo, &mut slots_lo);
+    artik::execute(&prog, &mut ctx_lo).expect("ternary program must execute");
+    assert_eq!(
+        slots_lo[0],
+        FE::from_u64(13),
+        "compute(50) must be 13 — the false arm"
+    );
+
+    let sigs_hi = [FE::from_u64(200)];
+    let mut slots_hi = [FE::zero()];
+    let mut ctx_hi = artik::ArtikContext::<Bn254Fr>::new(&sigs_hi, &mut slots_hi);
+    artik::execute(&prog, &mut ctx_hi).expect("ternary program must execute");
+    assert_eq!(
+        slots_hi[0],
+        FE::from_u64(7),
+        "compute(200) must be 7 — the true arm"
+    );
+}
+
 /// Fase 2.1 lift extension: compile-time-folded `if / else` inside
 /// an unrolled loop selects the right branch per iteration without
 /// emitting any JumpIf. Runtime conditions still fall back to E212.
