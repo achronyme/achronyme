@@ -1683,13 +1683,15 @@ fn fn_witness_lift_handles_descending_for() {
     );
 }
 
-/// Phase 1 lift extension: ordered comparisons (`<`, `<=`, `>`, `>=`)
-/// over field values demote to U64 (was U32 prior to this work) and
-/// dispatch through `IntBinOp::CmpLt`. U64 covers the bigint witness
-/// call graph at `n=64, k=4`. This test verifies the U64 IntFromField
-/// is emitted (not U32) so values up to `2^64 - 1` compare correctly.
+/// Ordered comparisons over field values lift at field precision via
+/// `FCmpLt` (canonical-rep unsigned compare in `[0, p)`), with no
+/// demote to a machine width. Structurally: the body emits `FCmpLt`
+/// and no `IntFromField` round-trip feeds the compare. Behaviorally:
+/// `2^64 > 2^64 - 1` evaluates to `1` — a U64 demote would map `2^64`
+/// to `0` and answer `0`, the exact mis-branch behind circomlib
+/// bigint `long_sub` at `n = 64`.
 #[test]
-fn fn_witness_lift_compares_at_u64_width() {
+fn fn_witness_lift_ordered_compare_is_field_precision() {
     use ir_forge::types::CircuitNode;
 
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
@@ -1712,21 +1714,45 @@ fn fn_witness_lift_compares_at_u64_width() {
     let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("limb compare payload must decode and validate");
 
-    // Walk the body looking for IntFromField at U64 width — that's
-    // the load-bearing change. A U32 demote would silently truncate
-    // for n=64 limbs.
-    let mut saw_u64_demote = false;
-    for instr in &prog.subprograms[0].body {
-        if let artik::Instr::IntFromField { w, .. } = instr {
-            if matches!(w, artik::IntW::U64) {
-                saw_u64_demote = true;
-                break;
-            }
-        }
-    }
+    let saw_fcmplt = prog.subprograms[0]
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::FCmpLt { .. }));
     assert!(
-        saw_u64_demote,
-        "expected at least one IntFromField U64 from the ordered-compare lift path"
+        saw_fcmplt,
+        "ordered-compare lift must emit FCmpLt (field-precision compare)"
+    );
+    let saw_u64_demote = prog.subprograms[0].body.iter().any(|i| {
+        matches!(
+            i,
+            artik::Instr::IntFromField {
+                w: artik::IntW::U64,
+                ..
+            }
+        )
+    });
+    assert!(
+        !saw_u64_demote,
+        "ordered compare must not demote operands to U64 (truncates at 2^64)"
+    );
+
+    // Behavioral pin at the 2^64 boundary: 2^64 > 2^64 - 1 must be 1.
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert(
+        "a".to_string(),
+        FieldElement::<Bn254Fr>::from_canonical([0, 1, 0, 0]),
+    ); // 2^64
+    inputs.insert("b".to_string(), FieldElement::<Bn254Fr>::from_u64(u64::MAX)); // 2^64 - 1
+    let signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("limb compare witness computation failed: {e}"));
+    assert_eq!(
+        *signals.get("out").expect("missing witness signal `out`"),
+        FieldElement::<Bn254Fr>::from_u64(1),
+        "2^64 > 2^64 - 1 must be 1 (field-precision compare)"
     );
 }
 
@@ -2235,6 +2261,83 @@ fn fn_witness_lift_circomlib_long_div_integration() {
         alloc_lens.contains(&200),
         "expected a 200-cell AllocArray (out[2][100] flattened); got {alloc_lens:?}"
     );
+}
+
+/// `long_sub(64, 8, x, y)` at the `b[i] + borrow == 2^64` boundary.
+/// When a divisor limb is `2^64 - 1` and a borrow propagates, the
+/// circomlib borrow test compares against exactly `2^64`. An ordered
+/// compare that truncates operands to a machine width maps `2^64` to
+/// `0`, takes the wrong branch, and yields a difference that wraps in
+/// the field. The field-precision compare keeps this exact. Inputs
+/// are a real `long_div` partial-remainder / subtrahend pair over
+/// 256-bit operands; expected output is the integer reference.
+#[test]
+fn fn_witness_lift_long_sub_borrow_boundary() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circomlib/fn_witness_lift_long_sub_borrow_boundary_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("long_sub boundary fixture failed to compile: {e}"));
+
+    let x: [u64; 8] = [
+        3034450356386720504,
+        145874006219229635,
+        15567548394240428106,
+        13395347571023486071,
+        12490773560222501483,
+        7380319988929937060,
+        3725325838365157872,
+        6785630426380839144,
+    ];
+    let y: [u64; 8] = [
+        0,
+        0,
+        0,
+        15481419810749866648,
+        18446744072129648556,
+        18446744073709551615,
+        18446744073709551615,
+        6785630426380839143,
+    ];
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    for (i, &v) in x.iter().enumerate() {
+        inputs.insert(format!("x_{i}"), FieldElement::<Bn254Fr>::from_u64(v));
+    }
+    for (i, &v) in y.iter().enumerate() {
+        inputs.insert(format!("y_{i}"), FieldElement::<Bn254Fr>::from_u64(v));
+    }
+
+    let signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("long_sub boundary witness computation failed: {e}"));
+
+    // Borrow subtraction over the field: d = x - y with limb borrows,
+    // y[5] = y[6] = 2^64 - 1 force the `y[i] + borrow == 2^64` path.
+    let expected: [u64; 8] = [
+        3034450356386720504,
+        145874006219229635,
+        15567548394240428106,
+        16360671833983171039,
+        12490773561802404542,
+        7380319988929937060,
+        3725325838365157872,
+        0,
+    ];
+    for (i, &want) in expected.iter().enumerate() {
+        let key = format!("d_{i}");
+        let actual = signals
+            .get(&key)
+            .unwrap_or_else(|| panic!("missing witness signal `{key}`"));
+        assert_eq!(
+            *actual,
+            FieldElement::<Bn254Fr>::from_u64(want),
+            "long_sub d[{i}] mismatch (2^64-boundary borrow)"
+        );
+    }
 }
 
 /// Lift `mod_exp` from circomlib's bigint witness call graph at
@@ -7117,19 +7220,18 @@ fn artik_inlined_named_array_return_in_loop_probe() {
 /// name no longer matches a fragment's `output_bindings`.
 #[test]
 #[ignore = "secp256k1 add-unequal witness-value cross-validation: \
-            the subprogram lift now covers the whole \
-            `secp256k1_addunequal_func(64, 4, ...)` call graph (the \
-            row-slice 2D return is modelled, every helper lifts, the \
-            descending mod-exp loop terminates) and executes to \
-            completion, but the resulting witness is incorrect at the \
-            n=64, k=4 / 256-bit config: the circom→artik bigint lift \
-            of the `mod_inv` / `mod_exp` chain diverges from the \
-            reference there while staying correct at small widths. \
-            The defect is independent of the subprogram path — the \
-            per-statement decomposition path produces the identical \
-            wrong value (and additionally exhausts the instruction \
-            budget before finishing). Kept in-tree as the acceptance \
-            target for the bigint-arithmetic fix."]
+            the lift covers the whole `secp256k1_addunequal_func(64, \
+            4, ...)` call graph and the bigint `long_div` / \
+            `prod_mod_p` layer now computes correctly at n=64, k=4 \
+            (ordered comparisons lift at field precision, so \
+            `long_sub`'s `b[i] + borrow == 2^64` borrow path is \
+            exact). This still exhausts the 8M-instruction budget in \
+            the mod-exp-heavy iterations before finishing — a budget \
+            gate orthogonal to arithmetic correctness. The known next \
+            correctness blocker beyond budget is the fixed-width (U32) \
+            bitwise demote of `(e[i] >> j) & 1` in `mod_exp`, which \
+            truncates a 64-bit limb. Kept in-tree as the acceptance \
+            target for the remaining bigint witness-execution work."]
 fn fn_witness_decompose_secp256k1_addunequal_values() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path =
