@@ -1066,7 +1066,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). The witness lift covers the full secp256k1 bigint chain — `getProperRepresentation`, `isNegative`'s runtime `cond ? a : b`, `long_div` and the rest all lift to Artik subprograms — so compilation proceeds past the witness lift. The blocker is downstream: circom->IR lowering of the full ECDSAVerify(64, 4) template (per-iteration component inlining inside the unrolled scalar-multiplication loop) does super-linear work whose memory grows monotonically without converging, so the full compile does not finish in practical time/memory. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). The witness lift covers the full secp256k1 bigint chain — `getProperRepresentation`, `isNegative`'s runtime `cond ? a : b`, `long_div` and the rest all lift to Artik subprograms — so compilation proceeds past the witness lift. The blocker is downstream: circom->IR lowering of the full ECDSAVerify(64, 4) template (per-iteration component inlining inside the unrolled scalar-multiplication loop) does super-linear work whose memory grows monotonically without converging, so the full compile does not finish in practical time/memory. Constant-index resolution for component-array targets no longer materializes a merged constant map per target, but a residual allocator-bound super-linear cost in component-call extraction during the same unrolled ladder remains. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 

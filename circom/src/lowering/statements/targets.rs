@@ -182,9 +182,59 @@ fn resolve_const_index_ctx(expr: &Expr, ctx: &LoweringContext, env: &LoweringEnv
             }
         }
     }
+    // Recursive constant fold over O(1) per-identifier lookups,
+    // covering affine / nested integer-arithmetic index shapes such
+    // as `n * i + j` (component-array targets in the secp256k1
+    // scalar-multiplication ladder) that the single-level fast paths
+    // above miss because their `lhs` is itself a `BinOp` and their
+    // `rhs` is an identifier rather than a literal. Returns `None` for
+    // any operator or shape it does not fully model, so the merged-map
+    // BigVal path below stays authoritative and the set of resolvable
+    // indices is unchanged — this only avoids materializing
+    // `all_constants` plus its BigVal clone on every such target.
+    if let Some(v) = try_const_index_fold_ctx(expr, ctx, env) {
+        return Some(v);
+    }
     // Fallback
     let all = ctx.all_constants(env);
     resolve_const_index(expr, &all)
+}
+
+/// Resolve a constant index expression using only O(1) per-identifier
+/// lookups via [`LoweringContext::resolve_constant`], with no merged
+/// constant map or BigVal allocation. Handles literals, resolvable
+/// identifiers, and `Add` / `Sub` / `Mul` / `IntDiv` over recursively
+/// foldable operands — the exact `u64` arithmetic the single-level
+/// fast paths use, extended to arbitrary nesting. Any other operator
+/// or shape (or an identifier only present in `bound_const_vars`,
+/// which `resolve_constant` does not consult) yields `None`, so the
+/// caller falls back to the merged-map BigVal evaluation and the
+/// resolvable-index set is unchanged.
+fn try_const_index_fold_ctx(expr: &Expr, ctx: &LoweringContext, env: &LoweringEnv) -> Option<u64> {
+    if let Some(v) = const_eval_u64(expr) {
+        return Some(v);
+    }
+    match expr {
+        Expr::Ident { name, .. } => ctx.resolve_constant(name, env)?.to_u64(),
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            let l = try_const_index_fold_ctx(lhs, ctx, env)?;
+            let r = try_const_index_fold_ctx(rhs, ctx, env)?;
+            match op {
+                crate::ast::BinOp::Add => l.checked_add(r),
+                crate::ast::BinOp::Sub => l.checked_sub(r),
+                crate::ast::BinOp::Mul => l.checked_mul(r),
+                crate::ast::BinOp::IntDiv => {
+                    if r != 0 {
+                        Some(l / r)
+                    } else {
+                        None
+                    }
+                }
+                _ => None,
+            }
+        }
+        _ => None,
+    }
 }
 
 /// Extract an assignment target, resolving known constants for component array indices.
