@@ -1445,6 +1445,78 @@ fn fn_witness_lift_while_terminates() {
     assert_eq!(slots[0], FE::zero(), "countdown_to_zero(5) should be 0");
 }
 
+/// A descending `for (i = start - 1; i >= 0; i--)` whose bound is a
+/// runtime argument routes through the runtime loop path. `i >= 0` is
+/// a tautology for a field counter, so a naive desugaring underflows
+/// past zero and runs on with a wrapped counter (garbage indices /
+/// non-termination). The lift must rewrite it to a terminating form
+/// that counts down to and including zero exactly once. Executes the
+/// lifted witness and pins the closed-form sum.
+#[test]
+fn fn_witness_lift_runtime_descending_to_zero() {
+    use ir_forge::types::CircuitNode;
+    use memory::field::{Bn254Fr, FieldElement};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circomlib/fn_witness_lift_runtime_descending_to_zero_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("runtime-descending lift test failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("runtime-descending payload must decode and validate");
+
+    // It must be a real runtime loop (back-edge + exit jumps), not a
+    // silent fall-through to the unrolled-for path.
+    let saw_jump = prog.subprograms[0]
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::Jump { .. }));
+    let saw_jump_if = prog.subprograms[0]
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::JumpIf { .. }));
+    assert!(saw_jump && saw_jump_if, "expected back-edge + exit jumps");
+
+    // sum_down(5) = 4+3+2+1+0 = 10. A counter underflow would instead
+    // exhaust the budget or read a wrapped index.
+    type FE = FieldElement<Bn254Fr>;
+    let sigs = [FE::from_u64(5)];
+    let mut slots = [FE::zero()];
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("runtime-descending program must execute");
+    assert_eq!(
+        slots[0],
+        FE::from_u64(10),
+        "sum_down(5) must be 10 — the descending loop counts down to zero inclusive"
+    );
+
+    // Edge: sum_down(0) — circom runs zero iterations (`i = -1`,
+    // `-1 >= 0` is false). The rewrite must also produce 0 here, not
+    // run once or underflow.
+    let sigs0 = [FE::zero()];
+    let mut slots0 = [FE::zero()];
+    let mut ctx0 = artik::ArtikContext::<Bn254Fr>::new(&sigs0, &mut slots0);
+    artik::execute(&prog, &mut ctx0).expect("runtime-descending program must execute at start=0");
+    assert_eq!(
+        slots0[0],
+        FE::zero(),
+        "sum_down(0) must be 0 — no iterations when start-1 < 0"
+    );
+}
+
 /// Fase 2.1 lift extension: compile-time-folded `if / else` inside
 /// an unrolled loop selects the right branch per iteration without
 /// emitting any JumpIf. Runtime conditions still fall back to E212.
@@ -7045,14 +7117,17 @@ fn artik_inlined_named_array_return_in_loop_probe() {
 /// name no longer matches a fragment's `output_bindings`.
 #[test]
 #[ignore = "secp256k1 add-unequal witness-value cross-validation: \
-            the field-precision `1 << n` lowering is fixed (FPow2; this \
-            chain no longer divides by zero), but per-statement \
+            the field-precision `1 << n` lowering is fixed (FPow2, no \
+            division by zero) and the runtime descending loop in the \
+            mod-exp helper now terminates correctly (no counter \
+            underflow / out-of-range index). Per-statement \
             decomposition of `secp256k1_addunequal_func(64, 4, ...)` \
-            still has independent blockers — it exceeds the witness \
-            execution instruction budget, and past that a downstream \
-            index computation goes out of range. End-to-end witness \
-            execution of this helper chain awaits the subprogram lift \
-            covering it; kept in-tree as the acceptance target."]
+            now executes correctly but exhausts the witness execution \
+            instruction budget — the mod-exp chain runs hundreds of \
+            heavy bigint iterations per fragment. End-to-end witness \
+            execution awaits the subprogram lift covering this chain \
+            (where the folded bounds let the loops unroll under the \
+            frame cap); kept in-tree as the acceptance target."]
 fn fn_witness_decompose_secp256k1_addunequal_values() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path =
