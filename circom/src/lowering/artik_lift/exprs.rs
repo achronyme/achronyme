@@ -19,7 +19,7 @@ use artik::{ElemT, IntW, Reg};
 use crate::ast::{BinOp, Expr, UnaryOp};
 
 use super::big_eval::try_eval_big;
-use super::helpers::{eval_const_expr, extract_call_name};
+use super::helpers::{eval_const_expr, expr_is_one, extract_call_name};
 use super::{LiftState, NestedResult};
 
 impl<'f> LiftState<'f> {
@@ -81,6 +81,17 @@ impl<'f> LiftState<'f> {
                 // `1 << <const k>` shapes (FShr / FAnd) and falls back
                 // to runtime FIDiv / FIRem otherwise.
                 BinOp::IntDiv | BinOp::Mod => self.lift_int_div_mod(*op, lhs, rhs),
+                // `1 << n` is circom's field-precision power-of-two
+                // (used as a base-2^n limb radix / modulus / scale),
+                // not a fixed-width bit-packing shift — those always
+                // shift a signal or limb base, never the literal `1`.
+                // Lower it to `FPow2` so the result is `2^n` in the
+                // field; a width-masked integer shift would return `1`
+                // for any `n` that is a multiple of the int width.
+                BinOp::ShiftL if expr_is_one(lhs) => {
+                    let amount = self.lift_expr(rhs)?;
+                    Some(self.builder.fpow2(amount))
+                }
                 _ => {
                     let a = self.lift_expr(lhs)?;
                     let c = self.lift_expr(rhs)?;
