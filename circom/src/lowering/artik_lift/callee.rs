@@ -168,15 +168,8 @@ impl LiftState<'_> {
         name: &str,
         args: &[Expr],
     ) -> Option<NestedResult> {
-        let func = match self.functions.get(name).copied() {
-            Some(f) => f,
-            None => {
-                super::sp_trace(&format!("nested-decline reason=unknown_fn callee={name}"));
-                return None;
-            }
-        };
+        let func = self.functions.get(name).copied()?;
         if args.len() != func.params.len() {
-            super::sp_trace(&format!("nested-decline reason=arity callee={name}"));
             return None;
         }
 
@@ -212,15 +205,7 @@ impl LiftState<'_> {
                     }) = self.arrays.get(arg_name).copied()
                     {
                         let row_shape =
-                            match self.materialize_row_slice(src_handle, rows, cols, index) {
-                                Some(s) => s,
-                                None => {
-                                    super::sp_trace(&format!(
-                                        "nested-decline reason=row_slice callee={name}"
-                                    ));
-                                    return None;
-                                }
-                            };
+                            self.materialize_row_slice(src_handle, rows, cols, index)?;
                         arg_regs.push(row_shape.handle());
                         param_sig.push(array_param_sig(row_shape));
                         param_types.push(RegType::Array(ElemT::Field));
@@ -230,15 +215,7 @@ impl LiftState<'_> {
             }
             // Scalar argument.
             let const_val = eval_const_expr(arg, &self.const_locals);
-            let reg = match self.lift_expr(arg) {
-                Some(r) => r,
-                None => {
-                    super::sp_trace(&format!(
-                        "nested-decline reason=arg_lift_expr callee={name}"
-                    ));
-                    return None;
-                }
-            };
+            let reg = self.lift_expr(arg)?;
             arg_regs.push(reg);
             param_types.push(RegType::Field);
             match const_val {
@@ -252,12 +229,7 @@ impl LiftState<'_> {
 
         // A runtime array dimension in the callee body means no
         // fixed-shape subprogram can be reserved.
-        if compute_dim_signature(&func.body.stmts, &scan_consts).is_none() {
-            super::sp_trace(&format!(
-                "nested-decline reason=callee_runtime_dim callee={name}"
-            ));
-            return None;
-        }
+        compute_dim_signature(&func.body.stmts, &scan_consts)?;
 
         let ret_shape = infer_callee_return_shape(
             &func.body.stmts,
@@ -265,15 +237,7 @@ impl LiftState<'_> {
             self.functions,
             &mut std::collections::HashSet::new(),
         );
-        let ret_types = match ret_shape.to_reg_types() {
-            Some(t) => t,
-            None => {
-                super::sp_trace(&format!(
-                    "nested-decline reason=callee_return_shape callee={name}"
-                ));
-                return None;
-            }
-        };
+        let ret_types = ret_shape.to_reg_types()?;
 
         // Reserve (or reuse) the callee subprogram and emit the Call.
         // Disjoint field borrows: the registry borrows `self.driver`,
@@ -286,13 +250,7 @@ impl LiftState<'_> {
             ret_types.clone(),
         );
         let rets = self.builder.call(func_id, &arg_regs, &ret_types);
-        let result = match rets.first() {
-            Some(r) => *r,
-            None => {
-                super::sp_trace(&format!("nested-decline reason=no_ret_regs callee={name}"));
-                return None;
-            }
-        };
+        let result = *rets.first()?;
 
         Some(match ret_shape {
             CalleeReturnShape::Scalar => NestedResult::Scalar(result),
