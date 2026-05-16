@@ -246,7 +246,7 @@ fn validate_subprogram(
                 read(&reg_types, *amount, RegType::Field)?;
                 bind(&mut reg_types, *dst, RegType::Field)?;
             }
-            Instr::FEq { dst, a, b } => {
+            Instr::FEq { dst, a, b } | Instr::FCmpLt { dst, a, b } => {
                 read(&reg_types, *a, RegType::Field)?;
                 read(&reg_types, *b, RegType::Field)?;
                 bind(&mut reg_types, *dst, RegType::Int(IntW::U8))?;
