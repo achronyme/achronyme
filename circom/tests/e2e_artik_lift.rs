@@ -337,6 +337,79 @@ fn fn_witness_lift_runtime_descending_to_zero() {
     );
 }
 
+/// A `while`-promoted runtime counter used as the index of an array
+/// *write* (`arr[i] = i * 2`). The 1D indexed-assignment lift must
+/// accept a runtime index — the symmetric mirror of the runtime-index
+/// array read — or the function declines and the call falls back to
+/// the E212 diagnostic, failing compilation. Executes the lifted
+/// witness and pins the closed form `n*(n-1)`, plus the full-range
+/// edge where every cell is written through the runtime index.
+#[test]
+fn fn_witness_lift_runtime_index_store() {
+    use ir_forge::types::CircuitNode;
+    use memory::field::{Bn254Fr, FieldElement};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_runtime_index_store_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("runtime-index store lift failed to compile: {e}"));
+
+    let bytes = result
+        .prove_ir
+        .body
+        .iter()
+        .find_map(|n| match n {
+            CircuitNode::WitnessCall { program_bytes, .. } => Some(program_bytes.clone()),
+            _ => None,
+        })
+        .expect("expected a CircuitNode::WitnessCall in ProveIR");
+
+    let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
+        .expect("runtime-index store payload must decode and validate");
+
+    // It must be a real runtime loop (back-edge + exit jumps): a
+    // const-folded index would have unrolled and emitted no JumpIf,
+    // which would not exercise the runtime-index StoreArr path.
+    let saw_jump = prog.subprograms[0]
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::Jump { .. }));
+    let saw_jump_if = prog.subprograms[0]
+        .body
+        .iter()
+        .any(|i| matches!(i, artik::Instr::JumpIf { .. }));
+    assert!(
+        saw_jump && saw_jump_if,
+        "expected a real runtime loop (back-edge + exit jumps)"
+    );
+
+    // fill_and_sum(5): arr = [0,2,4,6,8,0,0,0], total = 20 = 5*4.
+    type FE = FieldElement<Bn254Fr>;
+    let sigs = [FE::from_u64(5)];
+    let mut slots = [FE::zero()];
+    let mut ctx = artik::ArtikContext::<Bn254Fr>::new(&sigs, &mut slots);
+    artik::execute(&prog, &mut ctx).expect("runtime-index store program must execute");
+    assert_eq!(
+        slots[0],
+        FE::from_u64(20),
+        "fill_and_sum(5) must be 20 — runtime-index writes land in the right cells"
+    );
+
+    // Edge: every cell written through the runtime index (n == len).
+    // fill_and_sum(8): arr = [0,2,4,6,8,10,12,14], total = 56 = 8*7.
+    let sigs8 = [FE::from_u64(8)];
+    let mut slots8 = [FE::zero()];
+    let mut ctx8 = artik::ArtikContext::<Bn254Fr>::new(&sigs8, &mut slots8);
+    artik::execute(&prog, &mut ctx8).expect("runtime-index store program must execute at n=8");
+    assert_eq!(
+        slots8[0],
+        FE::from_u64(56),
+        "fill_and_sum(8) must be 56 — full-range runtime-index writes"
+    );
+}
+
 /// Fase 2.1 lift extension: compile-time-folded `if / else` inside
 /// an unrolled loop selects the right branch per iteration without
 /// emitting any JumpIf. Runtime conditions still fall back to E212.
