@@ -13,11 +13,11 @@
 //! - [`compound_to_binop`] — map a compound-assignment operator to the
 //!   plain binary op the lift knows how to emit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use artik::{ElemT, RegType};
 
-use crate::ast::{BinOp, CompoundOp, ElseBranch, Expr, PostfixOp, Stmt, UnaryOp};
+use crate::ast::{BinOp, CompoundOp, ElseBranch, Expr, FunctionDef, PostfixOp, Stmt, UnaryOp};
 
 use super::ConstInt;
 
@@ -432,248 +432,6 @@ fn collect_array_decls_in_stmt<'a>(stmt: &'a Stmt, out: &mut Vec<&'a Stmt>) {
     }
 }
 
-/// Result of pre-scanning a function body to determine the shape
-/// of its array returns. Reported to the nested-call lift so the
-/// destination slot can be allocated at frame entry rather than
-/// lazily inside a conditional arm.
-pub(super) enum ArrayReturnScan {
-    /// Every `return` in the body is array-shaped (either an
-    /// `Expr::ArrayLit` or a bare `Expr::Ident` referencing a
-    /// `var X[K]` declaration whose dim folds against the callee's
-    /// param consts) and they all have the same length `n`.
-    Fixed(u32),
-    /// The body contains at least one `return` whose shape can't be
-    /// resolved at lift time, or two array-shaped returns with
-    /// disagreeing lengths. The nested-call lift must skip the
-    /// array-slot fast path in this case.
-    Other,
-}
-
-/// Pre-scan a function body for array-shaped returns. Walks
-/// recursively into compound statements (`if/else`, `for`, `while`,
-/// `do/while`, bare blocks). Two passes:
-///
-/// 1. Collect 1D `var X[K]` declarations across the whole body into
-///    a `name → len` map. Circom hoists `var` to function scope, so
-///    decls inside conditional arms are visible to returns in any
-///    other arm. Multiple names with the same dim are fine; the
-///    same name appearing twice with disagreeing dims is treated as
-///    non-homogeneous and forces a bail.
-/// 2. Walk each `return` and resolve its shape:
-///    - `Expr::ArrayLit` → length is the literal cell count.
-///    - `Expr::Ident` → look up in the dim map.
-///    - anything else → bail.
-///
-/// All resolved lengths must agree on a single `n`; otherwise the
-/// caller has to fall back to the legacy emit-per-return path,
-/// which is still semantically buggy but unchanged from today.
-pub(super) fn scan_array_returns(
-    stmts: &[Stmt],
-    param_consts: &HashMap<String, ConstInt>,
-) -> ArrayReturnScan {
-    let mut dim_map: HashMap<String, u32> = HashMap::new();
-    let mut consistent = true;
-    collect_array_dims(stmts, param_consts, &mut dim_map, &mut consistent);
-    if !consistent {
-        return ArrayReturnScan::Other;
-    }
-
-    let mut found: Option<u32> = None;
-    let mut homogeneous = true;
-    walk_returns(stmts, &dim_map, &mut found, &mut homogeneous);
-    if !homogeneous {
-        return ArrayReturnScan::Other;
-    }
-    let Some(n) = found else {
-        return ArrayReturnScan::Other;
-    };
-
-    // A single `return` at the top level of the body lifts to exactly
-    // one nested_result-setting site, and the handle it records is
-    // the one whichever runtime path produces. The legacy emit-per-
-    // return path is correct in that case, and the per-cell copy the
-    // slot path emits would add hundreds of registers per call —
-    // enough to push deep nested-call chains past the executor's
-    // frame budget. Reserve the slot only when there are multiple
-    // potential return sites (more than one `Stmt::Return`, or any
-    // return nested inside a conditional or loop body where the lift
-    // walks it more than once).
-    let mut top_level_returns: u32 = 0;
-    let mut nested_returns: u32 = 0;
-    count_returns(stmts, true, &mut top_level_returns, &mut nested_returns);
-    if nested_returns == 0 && top_level_returns <= 1 {
-        return ArrayReturnScan::Other;
-    }
-    ArrayReturnScan::Fixed(n)
-}
-
-fn count_returns(stmts: &[Stmt], at_top_level: bool, top_level: &mut u32, nested: &mut u32) {
-    for stmt in stmts {
-        count_returns_in_stmt(stmt, at_top_level, top_level, nested);
-    }
-}
-
-fn count_returns_in_stmt(stmt: &Stmt, at_top_level: bool, top_level: &mut u32, nested: &mut u32) {
-    match stmt {
-        Stmt::Return { .. } => {
-            if at_top_level {
-                *top_level += 1;
-            } else {
-                *nested += 1;
-            }
-        }
-        Stmt::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            count_returns(&then_body.stmts, false, top_level, nested);
-            match else_body {
-                Some(ElseBranch::Block(b)) => count_returns(&b.stmts, false, top_level, nested),
-                Some(ElseBranch::IfElse(boxed)) => {
-                    count_returns_in_stmt(boxed, false, top_level, nested)
-                }
-                None => {}
-            }
-        }
-        Stmt::For { body, .. } => count_returns(&body.stmts, false, top_level, nested),
-        Stmt::While { body, .. } => count_returns(&body.stmts, false, top_level, nested),
-        Stmt::DoWhile { body, .. } => count_returns(&body.stmts, false, top_level, nested),
-        Stmt::Block(b) => count_returns(&b.stmts, at_top_level, top_level, nested),
-        _ => {}
-    }
-}
-
-fn collect_array_dims(
-    stmts: &[Stmt],
-    param_consts: &HashMap<String, ConstInt>,
-    dim_map: &mut HashMap<String, u32>,
-    consistent: &mut bool,
-) {
-    for stmt in stmts {
-        collect_array_dims_in_stmt(stmt, param_consts, dim_map, consistent);
-        if !*consistent {
-            return;
-        }
-    }
-}
-
-fn collect_array_dims_in_stmt(
-    stmt: &Stmt,
-    param_consts: &HashMap<String, ConstInt>,
-    dim_map: &mut HashMap<String, u32>,
-    consistent: &mut bool,
-) {
-    match stmt {
-        Stmt::VarDecl {
-            names, dimensions, ..
-        } if dimensions.len() == 1 && names.len() == 1 => {
-            let name = &names[0];
-            let len = match eval_const_expr(&dimensions[0], param_consts)
-                .and_then(|v| u32::try_from(v).ok())
-            {
-                Some(v) => v,
-                None => return,
-            };
-            match dim_map.get(name) {
-                Some(prev) if *prev != len => *consistent = false,
-                _ => {
-                    dim_map.insert(name.clone(), len);
-                }
-            }
-        }
-        Stmt::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            collect_array_dims(&then_body.stmts, param_consts, dim_map, consistent);
-            match else_body {
-                Some(ElseBranch::Block(b)) => {
-                    collect_array_dims(&b.stmts, param_consts, dim_map, consistent)
-                }
-                Some(ElseBranch::IfElse(boxed)) => {
-                    collect_array_dims_in_stmt(boxed, param_consts, dim_map, consistent)
-                }
-                None => {}
-            }
-        }
-        Stmt::For { body, .. } => {
-            collect_array_dims(&body.stmts, param_consts, dim_map, consistent)
-        }
-        Stmt::While { body, .. } => {
-            collect_array_dims(&body.stmts, param_consts, dim_map, consistent)
-        }
-        Stmt::DoWhile { body, .. } => {
-            collect_array_dims(&body.stmts, param_consts, dim_map, consistent)
-        }
-        Stmt::Block(b) => collect_array_dims(&b.stmts, param_consts, dim_map, consistent),
-        _ => {}
-    }
-}
-
-fn walk_returns(
-    stmts: &[Stmt],
-    dim_map: &HashMap<String, u32>,
-    found: &mut Option<u32>,
-    homogeneous: &mut bool,
-) {
-    for stmt in stmts {
-        walk_returns_in_stmt(stmt, dim_map, found, homogeneous);
-        if !*homogeneous {
-            return;
-        }
-    }
-}
-
-fn walk_returns_in_stmt(
-    stmt: &Stmt,
-    dim_map: &HashMap<String, u32>,
-    found: &mut Option<u32>,
-    homogeneous: &mut bool,
-) {
-    match stmt {
-        Stmt::Return { value, .. } => {
-            let len_opt = match value {
-                Expr::ArrayLit { elements, .. } => u32::try_from(elements.len()).ok(),
-                Expr::Ident { name, .. } => dim_map.get(name).copied(),
-                _ => None,
-            };
-            let len = match len_opt {
-                Some(v) => v,
-                None => {
-                    *homogeneous = false;
-                    return;
-                }
-            };
-            match *found {
-                None => *found = Some(len),
-                Some(prev) if prev == len => {}
-                Some(_) => *homogeneous = false,
-            }
-        }
-        Stmt::IfElse {
-            then_body,
-            else_body,
-            ..
-        } => {
-            walk_returns(&then_body.stmts, dim_map, found, homogeneous);
-            match else_body {
-                Some(ElseBranch::Block(b)) => walk_returns(&b.stmts, dim_map, found, homogeneous),
-                Some(ElseBranch::IfElse(boxed)) => {
-                    walk_returns_in_stmt(boxed, dim_map, found, homogeneous)
-                }
-                None => {}
-            }
-        }
-        Stmt::For { body, .. } => walk_returns(&body.stmts, dim_map, found, homogeneous),
-        Stmt::While { body, .. } => walk_returns(&body.stmts, dim_map, found, homogeneous),
-        Stmt::DoWhile { body, .. } => walk_returns(&body.stmts, dim_map, found, homogeneous),
-        Stmt::Block(b) => walk_returns(&b.stmts, dim_map, found, homogeneous),
-        _ => {}
-    }
-}
-
 /// Map a circom compound-assignment operator to the plain binary op
 /// the lift knows how to emit. Returns `None` for unsupported shapes.
 pub(super) fn compound_to_binop(op: CompoundOp) -> Option<BinOp> {
@@ -750,6 +508,8 @@ enum DeclDim {
 pub(super) fn infer_callee_return_shape(
     stmts: &[Stmt],
     param_consts: &HashMap<String, ConstInt>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
 ) -> CalleeReturnShape {
     // `None` value = a name declared as an array whose dimension does
     // not fold against the param consts. Returning such a name is
@@ -765,7 +525,15 @@ pub(super) fn infer_callee_return_shape(
 
     let mut found: Option<CalleeReturnShape> = None;
     let mut ok = true;
-    classify_returns(stmts, param_consts, &dim_map, &mut found, &mut ok);
+    classify_returns(
+        stmts,
+        param_consts,
+        &dim_map,
+        functions,
+        visited,
+        &mut found,
+        &mut ok,
+    );
     if !ok {
         return CalleeReturnShape::Other;
     }
@@ -858,31 +626,38 @@ fn collect_return_dims_in_stmt(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_returns(
     stmts: &[Stmt],
     param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
     found: &mut Option<CalleeReturnShape>,
     ok: &mut bool,
 ) {
     for stmt in stmts {
-        classify_returns_in_stmt(stmt, param_consts, dim_map, found, ok);
+        classify_returns_in_stmt(stmt, param_consts, dim_map, functions, visited, found, ok);
         if !*ok {
             return;
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_returns_in_stmt(
     stmt: &Stmt,
     param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
     found: &mut Option<CalleeReturnShape>,
     ok: &mut bool,
 ) {
     match stmt {
         Stmt::Return { value, .. } => {
-            let shape = match classify_return_expr(value, param_consts, dim_map) {
+            let shape = match classify_return_expr(value, param_consts, dim_map, functions, visited)
+            {
                 Some(s) => s,
                 None => {
                     *ok = false;
@@ -900,23 +675,73 @@ fn classify_returns_in_stmt(
             else_body,
             ..
         } => {
-            classify_returns(&then_body.stmts, param_consts, dim_map, found, ok);
+            classify_returns(
+                &then_body.stmts,
+                param_consts,
+                dim_map,
+                functions,
+                visited,
+                found,
+                ok,
+            );
             match else_body {
-                Some(ElseBranch::Block(b)) => {
-                    classify_returns(&b.stmts, param_consts, dim_map, found, ok)
-                }
-                Some(ElseBranch::IfElse(boxed)) => {
-                    classify_returns_in_stmt(boxed, param_consts, dim_map, found, ok)
-                }
+                Some(ElseBranch::Block(b)) => classify_returns(
+                    &b.stmts,
+                    param_consts,
+                    dim_map,
+                    functions,
+                    visited,
+                    found,
+                    ok,
+                ),
+                Some(ElseBranch::IfElse(boxed)) => classify_returns_in_stmt(
+                    boxed,
+                    param_consts,
+                    dim_map,
+                    functions,
+                    visited,
+                    found,
+                    ok,
+                ),
                 None => {}
             }
         }
-        Stmt::For { body, .. } => classify_returns(&body.stmts, param_consts, dim_map, found, ok),
-        Stmt::While { body, .. } => classify_returns(&body.stmts, param_consts, dim_map, found, ok),
-        Stmt::DoWhile { body, .. } => {
-            classify_returns(&body.stmts, param_consts, dim_map, found, ok)
-        }
-        Stmt::Block(b) => classify_returns(&b.stmts, param_consts, dim_map, found, ok),
+        Stmt::For { body, .. } => classify_returns(
+            &body.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
+        Stmt::While { body, .. } => classify_returns(
+            &body.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
+        Stmt::DoWhile { body, .. } => classify_returns(
+            &body.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
+        Stmt::Block(b) => classify_returns(
+            &b.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
         _ => {}
     }
 }
@@ -930,6 +755,8 @@ fn classify_return_expr(
     value: &Expr,
     param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
 ) -> Option<CalleeReturnShape> {
     match value {
         Expr::ArrayLit { elements, .. } => {
@@ -955,13 +782,43 @@ fn classify_return_expr(
         Expr::Ternary {
             if_true, if_false, ..
         } => {
-            let a = classify_return_expr(if_true, param_consts, dim_map)?;
-            let b = classify_return_expr(if_false, param_consts, dim_map)?;
+            let a = classify_return_expr(if_true, param_consts, dim_map, functions, visited)?;
+            let b = classify_return_expr(if_false, param_consts, dim_map, functions, visited)?;
             (a == b).then_some(a)
         }
-        // A forwarded call result resolves to the callee's shape, which
-        // the classifier cannot see.
-        Expr::Call { .. } => None,
+        // A forwarded call: `return f(args);`. The return shape is
+        // whatever `f` returns, resolved by recursing into `f`'s body.
+        // The `visited` set bounds the recursion — circom forbids
+        // recursive functions, so a cycle here is malformed input and
+        // declines cleanly instead of looping.
+        Expr::Call { callee, args, .. } => {
+            let name = extract_call_name(callee)?;
+            let func = functions.get(name.as_str())?;
+            if args.len() != func.params.len() {
+                return None;
+            }
+            if !visited.insert(name.clone()) {
+                return None;
+            }
+            // The forwarded callee's own return shape does not see the
+            // caller's argument constants — a forwarded callee whose
+            // shape depends on a caller-passed constant declines
+            // (conservative; no shape is invented).
+            let inner =
+                infer_callee_return_shape(&func.body.stmts, &HashMap::new(), functions, visited);
+            visited.remove(&name);
+            match inner {
+                CalleeReturnShape::Scalar => Some(CalleeReturnShape::Scalar),
+                // The emission side packs a single result register for
+                // `return <call>`; an array handle would be dropped.
+                // Decline a forwarded array return so the gate never
+                // reserves a subprogram whose return cannot be
+                // delivered.
+                CalleeReturnShape::Array(_)
+                | CalleeReturnShape::Array2D(..)
+                | CalleeReturnShape::Other => None,
+            }
+        }
         // A single-index read. `arr2d[row]` where `arr2d` is a 2D local
         // is a 1D row slice of `cols` cells — the emission side
         // (`emit_callee_return` / the non-subprogram row-slice path)
@@ -1097,13 +954,44 @@ mod tests {
     }
 
     fn shape(body_src: &str) -> CalleeReturnShape {
-        infer_callee_return_shape(&parse_body(body_src), &HashMap::new())
+        infer_callee_return_shape(
+            &parse_body(body_src),
+            &HashMap::new(),
+            &HashMap::new(),
+            &mut HashSet::new(),
+        )
     }
 
     fn shape_with(body_src: &str, consts: &[(&str, ConstInt)]) -> CalleeReturnShape {
         let map: HashMap<String, ConstInt> =
             consts.iter().map(|(k, v)| (k.to_string(), *v)).collect();
-        infer_callee_return_shape(&parse_body(body_src), &map)
+        infer_callee_return_shape(
+            &parse_body(body_src),
+            &map,
+            &HashMap::new(),
+            &mut HashSet::new(),
+        )
+    }
+
+    /// Parse a source holding several `function` definitions and
+    /// classify the return shape of `entry`'s body against a registry
+    /// of all the others — exercises forwarded-call return resolution.
+    fn shape_multi(src: &str, entry: &str) -> CalleeReturnShape {
+        let (prog, errors) = parse_circom(src).expect("parse failed");
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let mut funcs: HashMap<String, &FunctionDef> = HashMap::new();
+        for def in &prog.definitions {
+            if let Definition::Function(f) = def {
+                funcs.insert(f.name.clone(), f);
+            }
+        }
+        let body = funcs
+            .get(entry)
+            .unwrap_or_else(|| panic!("no function {entry}"))
+            .body
+            .stmts
+            .clone();
+        infer_callee_return_shape(&body, &HashMap::new(), &funcs, &mut HashSet::new())
     }
 
     #[test]
@@ -1166,8 +1054,65 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_call_return_is_other() {
+    fn forwarded_call_return_to_unknown_callee_is_other() {
+        // No registry entry for `foo`: shape is unresolvable.
         assert_eq!(shape("return foo(x);"), CalleeReturnShape::Other);
+    }
+
+    #[test]
+    fn forwarded_scalar_call_return_resolves_to_scalar() {
+        // `fwd` ends `return leaf(x);`; `leaf` returns a scalar, so
+        // `fwd`'s return shape is that scalar.
+        assert_eq!(
+            shape_multi(
+                "function leaf(a) { return a + 1; } \
+                 function fwd(x) { return leaf(x); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Scalar
+        );
+    }
+
+    #[test]
+    fn forwarded_call_in_ternary_reuses_callee_across_branches() {
+        // Both ternary arms forward to the same callee. The visited
+        // set must be cleared between arms so the second resolves
+        // (a true cycle is the only thing that should trip the guard).
+        assert_eq!(
+            shape_multi(
+                "function leaf(a) { return a + 1; } \
+                 function fwd(c, x, y) { return c == 0 ? leaf(x) : leaf(y); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Scalar
+        );
+    }
+
+    #[test]
+    fn forwarded_array_call_return_declines() {
+        // `leaf` returns an array; a forwarded array return is not
+        // deliverable by the scalar-result emission, so it declines
+        // (Other) rather than reserving an undeliverable shape.
+        assert_eq!(
+            shape_multi(
+                "function leaf(a) { var o[3]; return o; } \
+                 function fwd(x) { return leaf(x); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Other
+        );
+    }
+
+    #[test]
+    fn forwarded_call_arity_mismatch_declines() {
+        assert_eq!(
+            shape_multi(
+                "function leaf(a, b) { return a + b; } \
+                 function fwd(x) { return leaf(x); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Other
+        );
     }
 
     #[test]

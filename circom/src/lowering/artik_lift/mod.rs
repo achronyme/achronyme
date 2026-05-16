@@ -46,7 +46,7 @@
 
 use std::collections::HashMap;
 
-use artik::{ElemT, IntW, Label, ProgramBuilder, Reg};
+use artik::{ElemT, IntW, ProgramBuilder, Reg};
 use diagnostics::Span;
 use memory::FieldFamily;
 
@@ -57,61 +57,13 @@ mod big_eval;
 mod bytecode;
 mod callee;
 mod control;
-mod decompose;
 mod driver;
 mod exprs;
 mod helpers;
 mod stmts;
 
-pub use decompose::try_lift_via_decomposition;
-
-/// A self-contained Artik program with its IR-level wiring: the
-/// `input_signals` map to the program's `ReadSignal` order, and
-/// `output_bindings` map to its `WriteWitness` slots. A fragment is
-/// the unit the caller emits as a single [`CircuitNode::WitnessCall`].
-///
-/// Fragments produced by promoted nested calls (see `extra_fragments`)
-/// are emitted strictly before the parent's own call so the parent's
-/// `input_signals` can reference them via `CircuitExpr::Var(...)`.
-pub struct LiftFragment {
-    pub program_bytes: Vec<u8>,
-    pub input_signals: Vec<ir_forge::types::CircuitExpr>,
-    pub output_bindings: Vec<String>,
-}
-
-/// Result of a per-statement decomposition. The function body was not
-/// lifted as one Artik program; instead each function call inside it
-/// became its own [`CircuitNode::WitnessCall`] fragment. Aliasing
-/// statements (loop-driven copies, direct array element rebinds) do
-/// not emit fragments — they are reflected only in the per-element
-/// `CircuitExpr` references the caller must build from `result`.
-pub struct DecomposedLift {
-    /// Fragments to emit in order before exposing the result.
-    pub fragments: Vec<LiftFragment>,
-    pub result: DecomposedResult,
-}
-
-/// Per-element binding values the caller uses to build a CircuitExpr
-/// for the function's return at the call site. Each variant carries
-/// the actual `CircuitExpr`s that resolve to the function's outputs;
-/// the caller groups them into `LetArray` nodes as needed.
-pub enum DecomposedResult {
-    Scalar(ir_forge::types::CircuitExpr),
-    Array(Vec<ir_forge::types::CircuitExpr>),
-    Array2D {
-        rows: u32,
-        cols: u32,
-        elements: Vec<ir_forge::types::CircuitExpr>,
-    },
-}
-
 /// Result of a successful lift: the serialized Artik program + the
 /// names of the witness slots the caller should bind to.
-///
-/// `extra_fragments` holds programs for nested calls that the lift
-/// chose to promote to standalone [`CircuitNode::WitnessCall`] nodes
-/// rather than inline-expand into the parent's bytecode. They emit in
-/// the order they appear, before the parent's own call.
 pub struct LiftedWitnessCall {
     pub program_bytes: Vec<u8>,
     pub outputs: Vec<String>,
@@ -121,10 +73,6 @@ pub struct LiftedWitnessCall {
     /// caller needs to re-bundle them into a `LetArray` before the
     /// usage site can read the function's result as an array.
     pub shape: LiftedShape,
-    /// Promoted nested-call fragments, emitted in order before the
-    /// parent's own [`CircuitNode::WitnessCall`]. Empty when no
-    /// nested call was promoted (the default).
-    pub extra_fragments: Vec<LiftFragment>,
 }
 
 /// Output shape the lift produced.
@@ -160,23 +108,12 @@ pub enum ParamShape {
 /// will bind each `arg` expression to the corresponding signal slot
 /// at prove time.
 ///
+/// Nested circom function calls are lifted as real Artik subprogram
+/// `Call`s — one subprogram per callee, registered once per parameter
+/// signature — not inlined into the caller's flat program.
+///
 /// Returns `None` for unsupported forms. The caller should fall back
 /// to E212 in that case.
-/// Opt-in: lift nested circom function calls as real Artik
-/// subprogram `Call`s (one subprogram per callee, registered once)
-/// instead of inlining each callee body into the caller's flat
-/// program. Off unless `ARTIK_SUBPROGRAM_LIFT` is `1` / `true` in the
-/// environment. The inlining path is the default; this knob exists so
-/// the subprogram path can be brought up and validated against the
-/// hard witness cases before it becomes the default. Polarity is the
-/// inverse of `R1PP_ENABLED` (opt-in, not opt-out): the new path is
-/// not yet the default.
-fn subprogram_lift_enabled() -> bool {
-    std::env::var("ARTIK_SUBPROGRAM_LIFT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
-
 pub fn lift_function_to_artik(
     function_name: &str,
     params: &[(String, ParamShape)],
@@ -185,64 +122,7 @@ pub fn lift_function_to_artik(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
-    if subprogram_lift_enabled() {
-        // The subprogram path lands incrementally. Until a body's
-        // shape is supported by it, decline so the caller's existing
-        // fallback chain (decomposition, then E212) handles the call
-        // exactly as it does today — no regression while the path is
-        // built up behind this flag.
-        if let Some(lifted) =
-            try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
-        {
-            return Some(lifted);
-        }
-        return None;
-    }
-    // Copy function refs out of `ctx` so the lift's nested-call
-    // machinery can borrow them without holding `ctx` immutably for
-    // the entire walk. The function definitions themselves live in
-    // the AST and are stable for the duration of compilation.
-    let functions: HashMap<String, &FunctionDef> = ctx
-        .functions
-        .iter()
-        .map(|(&k, &v)| (k.to_string(), v))
-        .collect();
-    let mut state = LiftState::new(params, param_consts, &functions);
-
-    for stmt in body {
-        state.lift_stmt(stmt)?;
-        if state.halted {
-            break;
-        }
-    }
-
-    if !state.halted {
-        // A well-formed function body must end with a `return`. If
-        // none fired, treat as unsupported — we would otherwise emit
-        // a program that never writes to the witness slot.
-        return None;
-    }
-
-    let program = state.builder.finish().ok()?;
-    let program_bytes = artik::bytecode::encode(&program);
-
-    let anon_id = ctx.next_anon_id();
-    let _ = span;
-    let base = format!("__artik_{function_name}_{anon_id}_out");
-    let (outputs, shape) = match state.return_shape {
-        ReturnShape::Scalar => (vec![base], LiftedShape::Scalar),
-        ReturnShape::Array(len) => {
-            let names: Vec<String> = (0..len).map(|i| format!("{base}_{i}")).collect();
-            (names, LiftedShape::Array(len))
-        }
-    };
-
-    Some(LiftedWitnessCall {
-        program_bytes,
-        outputs,
-        shape,
-        extra_fragments: Vec::new(),
-    })
+    try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
 }
 
 /// Loud-failure backstop for the callee drain. circom forbids
@@ -282,13 +162,22 @@ fn try_lift_via_subprograms(
         })
         .collect();
     helpers::compute_dim_signature(body, &param_consts_map)?;
-    helpers::infer_callee_return_shape(body, &param_consts_map).to_reg_types()?;
-
+    // Built before the return-shape gate: a `return f(..)` forwarded
+    // return resolves to f's shape, which the classifier reads from
+    // this registry.
     let functions: HashMap<String, &FunctionDef> = ctx
         .functions
         .iter()
         .map(|(&k, &v)| (k.to_string(), v))
         .collect();
+    helpers::infer_callee_return_shape(
+        body,
+        &param_consts_map,
+        &functions,
+        &mut std::collections::HashSet::new(),
+    )
+    .to_reg_types()?;
+
     let mut state = LiftState::new(params, param_consts, &functions);
     state.driver = Some(driver::LiftDriver::new());
 
@@ -387,13 +276,6 @@ fn try_lift_via_subprograms(
         program_bytes,
         outputs,
         shape,
-        // Always empty here: a nested call is a real `Call` inside this
-        // one multi-subprogram payload, never a separately-emitted
-        // fragment. An unsupported call shape returns `None` from
-        // `lift_nested_call_subprogram`, declining the whole entry lift
-        // rather than promoting a standalone fragment, so no orphan
-        // fragment can be left needing pre-emission.
-        extra_fragments: Vec::new(),
     })
 }
 
@@ -473,47 +355,10 @@ struct LiftState<'f> {
     /// `lift_function_to_artik` to decide how many witness slots the
     /// program exposes.
     return_shape: ReturnShape,
-    /// Function table for inlining nested calls. The lift walks
-    /// nested function bodies into the same builder, so a call like
-    /// `return bar(x + 1);` becomes straight-line bytecode with
-    /// bar's instructions interleaved into foo's.
+    /// Function table for resolving nested calls. A nested call is
+    /// reserved as a callee subprogram and invoked with a real Artik
+    /// `Call`; its body is looked up here.
     functions: &'f HashMap<String, &'f FunctionDef>,
-    /// Non-zero while lifting a nested function body. Controls the
-    /// `return` dispatch so nested returns store their value into the
-    /// active `nested_return_slot` and jump to `nested_end_label`
-    /// instead of emitting WriteWitness + Ret on the outer program.
-    nested_depth: u32,
-    /// Captures an array-shaped return of a nested call (handle and
-    /// length, or 2D shape). Scalar returns route through
-    /// `nested_return_slot` so the caller observes the value of
-    /// whichever `return` statement actually fires at runtime — not
-    /// the last one the lift happened to walk past.
-    nested_result: Option<NestedResult>,
-    /// Heap slot (1-element field array) reserved by `lift_nested_call`
-    /// to carry a scalar callee return out of an inlined frame. Each
-    /// scalar `Stmt::Return` inside the nested body stores the value
-    /// here and jumps to `nested_end_label`; the caller loads the slot
-    /// after placing the label and forwards the value as the call's
-    /// `Scalar` result. Without the slot+label round-trip, returns
-    /// inside conditional branches or unrolled loops would silently
-    /// fall through to subsequent emissions at runtime and the caller
-    /// would observe whichever literal the lift emitted last.
-    nested_return_slot: Option<Reg>,
-    /// Jump target placed by `lift_nested_call` after the inlined
-    /// body. A scalar `Stmt::Return` at `nested_depth > 0` jumps here
-    /// so control bypasses any later iterations of an enclosing
-    /// unrolled loop or fall-through statements.
-    nested_end_label: Option<Label>,
-    /// Heap array (handle + length) lazily allocated on the first
-    /// array-shaped `Stmt::Return` inside an inlined frame. Every
-    /// nested array return copies its source cells into this slot and
-    /// jumps to `nested_end_label`; the caller forwards
-    /// `(handle, len)` as `NestedResult::Array`. Subsequent returns
-    /// with a different length are rejected — that case would mean
-    /// the callee has two return statements with disagreeing shapes,
-    /// which the trivial-body lift would already have caught at the
-    /// top level.
-    nested_array_return_slot: Option<(Reg, u32)>,
     /// Witness slot id reserved for the function's scalar return value.
     /// Lazily populated on the first scalar `return` so multi-return
     /// shapes (e.g. early-exit `if (cond) return X;` followed by a
@@ -635,11 +480,6 @@ impl<'f> LiftState<'f> {
             halted: false,
             return_shape: ReturnShape::Scalar,
             functions,
-            nested_depth: 0,
-            nested_result: None,
-            nested_return_slot: None,
-            nested_end_label: None,
-            nested_array_return_slot: None,
             output_slot: None,
             output_array_slots: None,
             hoisted_arrays: std::collections::HashMap::new(),

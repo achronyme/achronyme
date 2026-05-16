@@ -7,6 +7,14 @@ use std::path::{Path, PathBuf};
 use memory::{Bn254Fr, FieldElement};
 use zkc::r1cs_backend::R1CSCompiler;
 
+/// Every instruction across all subprograms of a decoded payload.
+/// A callee's body lives in its own subprogram, so a structural
+/// assertion about emitted ops scans the whole program rather than
+/// just the entry subprogram.
+fn all_instrs(prog: &artik::Program) -> impl Iterator<Item = &artik::Instr> {
+    prog.subprograms.iter().flat_map(|s| s.body.iter())
+}
+
 /// `var X; ... X = <const-expr>;` compile-time tracking.
 ///
 /// Regression for the pattern circomlib SHA256 uses:
@@ -716,22 +724,20 @@ fn fn_witness_lift_emits_field_level_fidiv_firem() {
     assert!(saw_firem, "expected FIRem from the runtime Mod lift path");
 }
 
-/// Phase 3 integration: lift `prod(n, k, a, b)` from circomlib's
-/// bigint_func.circom — the convolution-style polynomial product that
-/// stitches `SplitThreeFn` + `SplitFn` calls into a 2D `split[i][j]`
-/// matrix. Two new lift surfaces unblock this:
+/// Lift `prod(n, k, a, b)` from circomlib's bigint_func.circom — the
+/// convolution-style polynomial product that stitches `SplitThreeFn`
+/// and `SplitFn` calls into a 2D `split[i][j]` matrix. Exercises
+/// whole-row 2D assignment `split[i] = SplitThreeFn(...)` (compile-time
+/// row index, callee returns a 1D array matching `cols`) and
+/// `var sumAndCarry[2] = SplitFn(...)` (callee handle aliased into the
+/// caller's array scope).
 ///
-/// - Whole-row 2D assignment `split[i] = SplitThreeFn(...)` where the
-///   target row index folds compile-time and the call returns a 1D
-///   array of length matching `cols`.
-/// - VarDecl with array dim + Call init `var sumAndCarry[2] =
-///   SplitFn(...)` — the callee's returned handle is aliased into the
-///   caller's `arrays` map without re-allocation.
-///
-/// Verifies the WitnessCall exists, bytecode decodes, and the program
-/// allocates the expected `split[2*k-1][3]` 2D array (3 rows × 3 cols
-/// at k=2 ⇒ 9 cells; also a `100`-cell `prod_val[100]` from the
-/// outer's `var prod_val[100]`).
+/// Verifies the WitnessCall exists, the payload decodes, and the
+/// expected arrays / bit-extraction ops are emitted. `prod`'s own
+/// `split[100][3]` (300 cells) and `prod_val`/`out`/`carry` (100
+/// cells) live in its subprogram; each `SplitThreeFn`/`SplitFn`'s
+/// 3-/2-cell array return and its FShr/FAnd live in that callee's
+/// subprogram — so the assertions scan every subprogram.
 #[test]
 fn fn_witness_lift_circomlib_prod_integration() {
     use ir_forge::types::CircuitNode;
@@ -760,12 +766,9 @@ fn fn_witness_lift_circomlib_prod_integration() {
     // `prod` declares `var split[100][3]` — flattened to a 300-cell
     // AllocArray. The 100-cell allocations come from `var
     // prod_val[100]`, `var out[100]`, `var carry[100]`. The smaller
-    // allocations are from each `SplitThreeFn` (3-cell return),
-    // `SplitFn` (2-cell return), and the `a[2]` / `b[2]` input
-    // signal-array params bound by `LiftState::new`.
-    let alloc_lens: Vec<u32> = prog.subprograms[0]
-        .body
-        .iter()
+    // allocations are from each `SplitThreeFn` (3-cell return) and
+    // `SplitFn` (2-cell return) callee subprogram.
+    let alloc_lens: Vec<u32> = all_instrs(&prog)
         .filter_map(|i| match i {
             artik::Instr::AllocArray { len, .. } => Some(*len),
             _ => None,
@@ -797,14 +800,8 @@ fn fn_witness_lift_circomlib_prod_integration() {
     // A regression in nested-call const-arg propagation would silently
     // route those through FIDiv / FIRem — passing the AllocArray
     // assertions but failing this one.
-    let saw_fshr = prog.subprograms[0]
-        .body
-        .iter()
-        .any(|i| matches!(i, artik::Instr::FShr { .. }));
-    let saw_fand = prog.subprograms[0]
-        .body
-        .iter()
-        .any(|i| matches!(i, artik::Instr::FAnd { .. }));
+    let saw_fshr = all_instrs(&prog).any(|i| matches!(i, artik::Instr::FShr { .. }));
+    let saw_fand = all_instrs(&prog).any(|i| matches!(i, artik::Instr::FAnd { .. }));
     assert!(
         saw_fshr,
         "prod payload must contain FShr from inner SplitFn / SplitThreeFn calls"
@@ -815,8 +812,8 @@ fn fn_witness_lift_circomlib_prod_integration() {
     );
 }
 
-/// Phase 3 width-stress integration: lift `prod(64, 4, a, b)` from
-/// circomlib's bigint_func.circom at the call-graph's nominal config.
+/// Width-stress: lift `prod(64, 4, a, b)` from circomlib's
+/// bigint_func.circom at the call-graph's nominal config.
 /// At k=4, n=64 the `prod_val[i]` accumulator sums up to 4 products
 /// of 64-bit operands ⇒ peak value ~2^130, exceeding U128. The lift's
 /// field-level FShr / FAnd dispatch (vs IntW demote) is what makes
@@ -854,9 +851,7 @@ fn fn_witness_lift_circomlib_prod_k4_n64_width_stress() {
     // require pinning every FShr in the program, but by checking at
     // least one FShr exists with amount ≥ 64; combined with FAnd this
     // proves the bit-extraction dispatch fired for all three shapes).
-    let max_fshr_amount = prog.subprograms[0]
-        .body
-        .iter()
+    let max_fshr_amount = all_instrs(&prog)
         .filter_map(|i| match i {
             artik::Instr::FShr { amount, .. } => Some(*amount),
             _ => None,
@@ -868,10 +863,7 @@ fn fn_witness_lift_circomlib_prod_k4_n64_width_stress() {
         "expected at least one FShr with amount ≥ 64 (SplitThreeFn's bit-128 \
          extraction at n=64); max amount seen = {max_fshr_amount}"
     );
-    let saw_fand = prog.subprograms[0]
-        .body
-        .iter()
-        .any(|i| matches!(i, artik::Instr::FAnd { .. }));
+    let saw_fand = all_instrs(&prog).any(|i| matches!(i, artik::Instr::FAnd { .. }));
     assert!(
         saw_fand,
         "expected FAnd at k=4 n=64 from SplitThreeFn / SplitFn bit-mask dispatch"
@@ -1006,11 +998,10 @@ fn fn_witness_lift_circomlib_short_div_integration() {
 
     // short_div emits at least two FIDiv calls: one for the `scale =
     // (1 << n) \ (1 + b[k-1])` shape and one inside the nested
-    // short_div_norm for qhat. Both have non-power-of-2 divisors so
-    // they fall into the runtime FIDiv path, not FShr / FAnd.
-    let fidiv_count = prog.subprograms[0]
-        .body
-        .iter()
+    // short_div_norm for qhat (its own callee subprogram). Both have
+    // non-power-of-2 divisors so they fall into the runtime FIDiv
+    // path, not FShr / FAnd.
+    let fidiv_count = all_instrs(&prog)
         .filter(|i| matches!(i, artik::Instr::FIDiv { .. }))
         .count();
     assert!(
@@ -2019,13 +2010,17 @@ fn fn_witness_lift_row_slice_arg() {
         .expect("row-slice arg payload must decode and validate");
 }
 
-/// Per-statement decomposition: `secp256k1_addunequal_func(64, 4, ...)`
-/// has a body too heavy for a single Artik frame (11 nested helper
-/// calls + 2D return) and the standard `lift_function_to_artik`
-/// returns None. The decomposition path lifts each helper call as
-/// its own `CircuitNode::WitnessCall` fragment and emits a flat
-/// `LetArray` carrying the 2D result. Pins the multi-fragment emission
-/// and verifies each fragment's Artik payload decodes.
+/// `secp256k1_addunequal_func(64, 4, ...)` is the heaviest witness
+/// body in the corpus: a chain of nested helper calls (long_sub_mod_p,
+/// long_div, short_div, short_div_norm, prod, mod_inv,
+/// get_secp256k1_prime, long_scalar_mult, long_sub, SplitFn,
+/// SplitThreeFn, ...) returning a 2D point. It lifts to a single
+/// WitnessCall whose payload is one multi-subprogram program — the
+/// entry plus a deduplicated subprogram per helper specialization,
+/// invoked by real `Call`s. This pins the structural contract (one
+/// payload, decodes + validates, genuinely multi-subprogram); the
+/// witness values are cross-validated against the snarkjs reference
+/// by `fn_witness_decompose_secp256k1_addunequal_values`.
 #[test]
 fn fn_witness_decompose_secp256k1_addunequal() {
     use ir_forge::types::CircuitNode;
@@ -2036,7 +2031,7 @@ fn fn_witness_decompose_secp256k1_addunequal() {
     let lib_dirs = vec![manifest_dir.join("test/circomlib")];
 
     let result = circom::compile_file(&path, &lib_dirs)
-        .unwrap_or_else(|e| panic!("secp256k1_addunequal decomposition failed to compile: {e}"));
+        .unwrap_or_else(|e| panic!("secp256k1_addunequal failed to compile: {e}"));
 
     let witness_calls: Vec<&Vec<u8>> = result
         .prove_ir
@@ -2048,16 +2043,22 @@ fn fn_witness_decompose_secp256k1_addunequal() {
         })
         .collect();
 
-    assert!(
-        witness_calls.len() >= 11,
-        "expected ≥11 WitnessCall fragments from the helper-call chain, got {}",
+    assert_eq!(
+        witness_calls.len(),
+        1,
+        "the helper chain lifts to one multi-subprogram WitnessCall, got {}",
         witness_calls.len()
     );
 
-    for (i, bytes) in witness_calls.iter().enumerate() {
-        artik::bytecode::decode(bytes, Some(memory::FieldFamily::BnLike256))
-            .unwrap_or_else(|e| panic!("fragment {i} payload failed to decode: {e}"));
-    }
+    let prog = artik::bytecode::decode(witness_calls[0], Some(memory::FieldFamily::BnLike256))
+        .expect("secp256k1_addunequal payload must decode and validate");
+
+    assert!(
+        prog.subprograms.len() >= 11,
+        "expected the helper chain as ≥11 callee subprograms (entry + \
+         deduplicated helpers), got {}",
+        prog.subprograms.len()
+    );
 }
 
 /// Guards a potentially-faulting `100 \ x` behind `if (x != 0)`. The

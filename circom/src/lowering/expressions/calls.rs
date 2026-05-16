@@ -215,21 +215,6 @@ fn inline_function_call(
         ) {
             let output_bindings = lifted.outputs.clone();
 
-            // Emit any promoted nested-call fragments first. Their
-            // output bindings must be in `self.env` before the parent's
-            // own WitnessCall references them via `CircuitExpr::Var(...)`
-            // in its input_signals. Order is preserved by `pending_nodes`
-            // FIFO drain — see lowering/statements/mod.rs splice.
-            for fragment in lifted.extra_fragments {
-                ctx.pending_nodes
-                    .push(ir_forge::types::CircuitNode::WitnessCall {
-                        output_bindings: fragment.output_bindings,
-                        input_signals: fragment.input_signals,
-                        program_bytes: fragment.program_bytes,
-                        span: span_range.clone(),
-                    });
-            }
-
             match lifted.shape {
                 super::super::artik_lift::LiftedShape::Scalar => {
                     let out_name = output_bindings[0].clone();
@@ -305,24 +290,8 @@ fn inline_function_call(
             }
         }
 
-        // Standard lift returned None — the body either exceeds the
-        // single-frame budget or contains shapes the lift can't
-        // inline. Try per-statement decomposition: lift each function
-        // call inside the body as its own WitnessCall fragment, with
-        // aliasing copies and literal-bound loops reflected only in
-        // the per-element CircuitExpr binding map.
-        if let Some(decomposed) = super::super::artik_lift::try_lift_via_decomposition(
-            name,
-            func,
-            &param_shapes,
-            &param_consts,
-            &lowered_args,
-            ctx,
-            span,
-        ) {
-            return emit_decomposed_lift(decomposed, ctx, span_range);
-        }
-
+        // The witness lift declined this body — its shape is not one
+        // the subprogram path covers. Surface the E212 diagnostic.
         ctx.inline_depth -= 1;
         return Err(LoweringError::with_code(
             format!(
@@ -604,64 +573,4 @@ fn build_lowered_args_for_artik(
         }
     }
     Ok(lowered_args)
-}
-
-/// Emit the result of a successful per-statement decomposition: the
-/// fragment WitnessCalls go to `pending_nodes` in order, then the
-/// final result is exposed as a `CircuitExpr` (scalar inline, 1D
-/// array as one `LetArray`, 2D array as one `LetArray` per row).
-fn emit_decomposed_lift(
-    decomposed: super::super::artik_lift::DecomposedLift,
-    ctx: &mut LoweringContext,
-    span_range: Option<diagnostics::SpanRange>,
-) -> Result<CircuitExpr, LoweringError> {
-    use super::super::artik_lift::DecomposedResult;
-
-    for fragment in decomposed.fragments {
-        ctx.pending_nodes
-            .push(ir_forge::types::CircuitNode::WitnessCall {
-                output_bindings: fragment.output_bindings,
-                input_signals: fragment.input_signals,
-                program_bytes: fragment.program_bytes,
-                span: span_range.clone(),
-            });
-    }
-
-    let anon_id = ctx.next_anon_id();
-    match decomposed.result {
-        DecomposedResult::Scalar(expr) => {
-            ctx.inline_depth -= 1;
-            Ok(expr)
-        }
-        DecomposedResult::Array(elements) => {
-            let array_name = format!("__decomposed_{anon_id}");
-            ctx.pending_nodes
-                .push(ir_forge::types::CircuitNode::LetArray {
-                    name: array_name.clone(),
-                    elements,
-                    span: span_range,
-                });
-            ctx.inline_depth -= 1;
-            Ok(CircuitExpr::Var(array_name))
-        }
-        DecomposedResult::Array2D {
-            rows: _,
-            cols: _,
-            elements,
-        } => {
-            // 2D return: emit one flat LetArray in row-major order.
-            // The caller's var-decl handler reads the declared
-            // dimensions and seeds `env.strides` so multi-dim
-            // indexing on the destination linearises correctly.
-            let array_name = format!("__decomposed_{anon_id}");
-            ctx.pending_nodes
-                .push(ir_forge::types::CircuitNode::LetArray {
-                    name: array_name.clone(),
-                    elements,
-                    span: span_range,
-                });
-            ctx.inline_depth -= 1;
-            Ok(CircuitExpr::Var(array_name))
-        }
-    }
 }

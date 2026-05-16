@@ -231,7 +231,12 @@ impl LiftState<'_> {
         // fixed-shape subprogram can be reserved.
         compute_dim_signature(&func.body.stmts, &scan_consts)?;
 
-        let ret_shape = infer_callee_return_shape(&func.body.stmts, &scan_consts);
+        let ret_shape = infer_callee_return_shape(
+            &func.body.stmts,
+            &scan_consts,
+            self.functions,
+            &mut std::collections::HashSet::new(),
+        );
         let ret_types = ret_shape.to_reg_types()?;
 
         // Reserve (or reuse) the callee subprogram and emit the Call.
