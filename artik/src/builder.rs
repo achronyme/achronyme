@@ -185,6 +185,12 @@ impl ProgramBuilder {
         self.active = prev as usize;
     }
 
+    /// The currently active subprogram id. Subprogram 0 is the entry;
+    /// any other id is a reserved callee whose body is being built.
+    pub fn active_subprogram(&self) -> u32 {
+        self.active as u32
+    }
+
     // ── Namespace allocation ──────────────────────────────────────────
 
     /// Allocate a fresh register in the active subprogram. Returns a

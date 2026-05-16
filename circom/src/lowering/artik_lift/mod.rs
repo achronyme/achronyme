@@ -55,8 +55,10 @@ use crate::lowering::context::LoweringContext;
 
 mod big_eval;
 mod bytecode;
+mod callee;
 mod control;
 mod decompose;
+mod driver;
 mod exprs;
 mod helpers;
 mod stmts;
@@ -160,6 +162,21 @@ pub enum ParamShape {
 ///
 /// Returns `None` for unsupported forms. The caller should fall back
 /// to E212 in that case.
+/// Opt-in: lift nested circom function calls as real Artik
+/// subprogram `Call`s (one subprogram per callee, registered once)
+/// instead of inlining each callee body into the caller's flat
+/// program. Off unless `ARTIK_SUBPROGRAM_LIFT` is `1` / `true` in the
+/// environment. The inlining path is the default; this knob exists so
+/// the subprogram path can be brought up and validated against the
+/// hard witness cases before it becomes the default. Polarity is the
+/// inverse of `R1PP_ENABLED` (opt-in, not opt-out): the new path is
+/// not yet the default.
+fn subprogram_lift_enabled() -> bool {
+    std::env::var("ARTIK_SUBPROGRAM_LIFT")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false)
+}
+
 pub fn lift_function_to_artik(
     function_name: &str,
     params: &[(String, ParamShape)],
@@ -168,6 +185,19 @@ pub fn lift_function_to_artik(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
+    if subprogram_lift_enabled() {
+        // The subprogram path lands incrementally. Until a body's
+        // shape is supported by it, decline so the caller's existing
+        // fallback chain (decomposition, then E212) handles the call
+        // exactly as it does today — no regression while the path is
+        // built up behind this flag.
+        if let Some(lifted) =
+            try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
+        {
+            return Some(lifted);
+        }
+        return None;
+    }
     // Copy function refs out of `ctx` so the lift's nested-call
     // machinery can borrow them without holding `ctx` immutably for
     // the entire walk. The function definitions themselves live in
@@ -211,6 +241,158 @@ pub fn lift_function_to_artik(
         program_bytes,
         outputs,
         shape,
+        extra_fragments: Vec::new(),
+    })
+}
+
+/// Loud-failure backstop for the callee drain. circom forbids
+/// recursion and the registry deduplicates specializations, so the
+/// pending queue is finite for well-formed input; this cap turns a
+/// pathological non-terminating drain into a clean decline rather than
+/// an unbounded loop.
+const MAX_CALLEE_SUBPROGRAMS: usize = 4096;
+
+/// Lift `body` into a multi-subprogram Artik program: the function
+/// itself is the entry subprogram (signal-in / witness-out ABI, the
+/// locked `LiftedWitnessCall` contract — `outputs` and `shape`
+/// identical to the inlining path, only `program_bytes` differs), and
+/// every transitively-called circom function becomes a callee
+/// subprogram, reserved once per parameter signature and invoked with
+/// a real Artik `Call`. Returns `None` for any shape this path does
+/// not cover; the caller then falls back exactly as if the lift had
+/// declined, so the inlining path is never regressed.
+fn try_lift_via_subprograms(
+    function_name: &str,
+    params: &[(String, ParamShape)],
+    param_consts: &[Option<ConstInt>],
+    body: &[Stmt],
+    ctx: &mut LoweringContext<'_>,
+    span: &Span,
+) -> Option<LiftedWitnessCall> {
+    // A fixed-shape entry subprogram can only be reserved when every
+    // array dimension in the body folds to a constant and the return
+    // shape is resolvable. A runtime dimension or an unmodelled return
+    // means the caller falls back exactly as if the lift had declined.
+    let param_consts_map: HashMap<String, ConstInt> = params
+        .iter()
+        .zip(param_consts.iter())
+        .filter_map(|((name, shape), c)| match (shape, c) {
+            (ParamShape::Scalar, Some(v)) => Some((name.clone(), *v)),
+            _ => None,
+        })
+        .collect();
+    helpers::compute_dim_signature(body, &param_consts_map)?;
+    helpers::infer_callee_return_shape(body, &param_consts_map).to_reg_types()?;
+
+    let functions: HashMap<String, &FunctionDef> = ctx
+        .functions
+        .iter()
+        .map(|(&k, &v)| (k.to_string(), v))
+        .collect();
+    let mut state = LiftState::new(params, param_consts, &functions);
+    state.driver = Some(driver::LiftDriver::new());
+
+    // Entry subprogram (id 0): same signal-in / witness-out walk as
+    // the inlining path. Nested calls become `Call`s that reserve and
+    // queue their callee subprograms.
+    for stmt in body {
+        state.lift_stmt(stmt)?;
+        if state.halted {
+            break;
+        }
+    }
+    if !state.halted {
+        return None;
+    }
+    let return_shape = state.return_shape;
+
+    // Drain the reserved callees, lifting each body once into its own
+    // subprogram. A callee discovered while lifting another callee is
+    // queued and drained in turn.
+    let mut drained = 0usize;
+    while let Some(pending) = state.driver.as_mut()?.next_pending() {
+        drained += 1;
+        if drained > MAX_CALLEE_SUBPROGRAMS {
+            return None;
+        }
+        let callee = state.functions.get(&pending.name).copied()?;
+        if callee.params.len() != pending.param_sig.len() {
+            return None;
+        }
+        let bindings: Vec<callee::CalleeParamBinding> = pending
+            .param_sig
+            .iter()
+            .enumerate()
+            .map(|(i, sig)| {
+                let reg = i as artik::Reg;
+                match sig {
+                    driver::ParamSig::ScalarConst(v) => callee::CalleeParamBinding::Scalar {
+                        reg,
+                        const_val: Some(*v),
+                    },
+                    driver::ParamSig::ScalarRuntime => callee::CalleeParamBinding::Scalar {
+                        reg,
+                        const_val: None,
+                    },
+                    driver::ParamSig::Array1D(len) => {
+                        callee::CalleeParamBinding::Array(ArrayShape::Flat1D {
+                            handle: reg,
+                            len: *len,
+                        })
+                    }
+                    driver::ParamSig::Array2D(rows, cols) => {
+                        callee::CalleeParamBinding::Array(ArrayShape::Flat2D {
+                            handle: reg,
+                            rows: *rows,
+                            cols: *cols,
+                        })
+                    }
+                }
+            })
+            .collect();
+
+        let prev = state.builder.begin_subprogram(pending.func_id);
+        let saved = state.begin_callee_body(callee, &bindings)?;
+        for stmt in &callee.body.stmts {
+            state.lift_stmt(stmt)?;
+            if state.halted {
+                break;
+            }
+        }
+        // A callee subprogram must end in a `return` — otherwise it
+        // would fall off the end without emitting `Return`.
+        let returned = state.halted;
+        state.end_callee_body(saved);
+        state.builder.end_subprogram(prev);
+        if !returned {
+            return None;
+        }
+    }
+
+    let program = state.builder.finish().ok()?;
+    let program_bytes = artik::bytecode::encode(&program);
+
+    let anon_id = ctx.next_anon_id();
+    let _ = span;
+    let base = format!("__artik_{function_name}_{anon_id}_out");
+    let (outputs, shape) = match return_shape {
+        ReturnShape::Scalar => (vec![base], LiftedShape::Scalar),
+        ReturnShape::Array(len) => {
+            let names: Vec<String> = (0..len).map(|i| format!("{base}_{i}")).collect();
+            (names, LiftedShape::Array(len))
+        }
+    };
+
+    Some(LiftedWitnessCall {
+        program_bytes,
+        outputs,
+        shape,
+        // Always empty here: a nested call is a real `Call` inside this
+        // one multi-subprogram payload, never a separately-emitted
+        // fragment. An unsupported call shape returns `None` from
+        // `lift_nested_call_subprogram`, declining the whole entry lift
+        // rather than promoting a standalone fragment, so no orphan
+        // fragment can be left needing pre-emission.
         extra_fragments: Vec::new(),
     })
 }
@@ -357,6 +539,13 @@ struct LiftState<'f> {
     /// still match the originally-hoisted 200). Cleared when the
     /// enclosing `lift_while` returns.
     hoisted_arrays: std::collections::HashMap<String, ArrayShape>,
+    /// Callee registry, present only on the subprogram-lift path.
+    /// `None` on the inlining path — every method that consults it
+    /// then takes the existing branch, so the inlining path is
+    /// byte-identical. `Some` enables real `Call`/subprogram emission:
+    /// nested calls reserve callee subprograms and the callee bodies
+    /// are drained from it after the entry body is lifted.
+    driver: Option<driver::LiftDriver>,
 }
 
 /// Value produced by a nested (inlined) function call. Arrays are
@@ -454,6 +643,7 @@ impl<'f> LiftState<'f> {
             output_slot: None,
             output_array_slots: None,
             hoisted_arrays: std::collections::HashMap::new(),
+            driver: None,
         }
     }
 }

@@ -234,6 +234,12 @@ impl<'f> LiftState<'f> {
     /// `const_locals` so pow-of-2 patterns like `1 << n` recognize
     /// the divisor at lift time.
     pub(super) fn lift_nested_call(&mut self, name: &str, args: &[Expr]) -> Option<NestedResult> {
+        // On the subprogram path a nested call becomes a real Artik
+        // `Call`; the inlining body below runs only when no driver is
+        // present, so it stays byte-identical.
+        if self.driver.is_some() {
+            return self.lift_nested_call_subprogram(name, args);
+        }
         let func = self.functions.get(name).copied()?;
         if args.len() != func.params.len() {
             return None;
