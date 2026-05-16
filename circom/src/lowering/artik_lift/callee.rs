@@ -211,17 +211,16 @@ impl LiftState<'_> {
                         cols,
                     }) = self.arrays.get(arg_name).copied()
                     {
-                        let row_shape = match self
-                            .materialize_row_slice(src_handle, rows, cols, index)
-                        {
-                            Some(s) => s,
-                            None => {
-                                super::sp_trace(&format!(
-                                    "nested-decline reason=row_slice callee={name}"
-                                ));
-                                return None;
-                            }
-                        };
+                        let row_shape =
+                            match self.materialize_row_slice(src_handle, rows, cols, index) {
+                                Some(s) => s,
+                                None => {
+                                    super::sp_trace(&format!(
+                                        "nested-decline reason=row_slice callee={name}"
+                                    ));
+                                    return None;
+                                }
+                            };
                         arg_regs.push(row_shape.handle());
                         param_sig.push(array_param_sig(row_shape));
                         param_types.push(RegType::Array(ElemT::Field));
@@ -290,9 +289,7 @@ impl LiftState<'_> {
         let result = match rets.first() {
             Some(r) => *r,
             None => {
-                super::sp_trace(&format!(
-                    "nested-decline reason=no_ret_regs callee={name}"
-                ));
+                super::sp_trace(&format!("nested-decline reason=no_ret_regs callee={name}"));
                 return None;
             }
         };

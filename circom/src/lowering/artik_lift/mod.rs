@@ -57,61 +57,13 @@ mod big_eval;
 mod bytecode;
 mod callee;
 mod control;
-mod decompose;
 mod driver;
 mod exprs;
 mod helpers;
 mod stmts;
 
-pub use decompose::try_lift_via_decomposition;
-
-/// A self-contained Artik program with its IR-level wiring: the
-/// `input_signals` map to the program's `ReadSignal` order, and
-/// `output_bindings` map to its `WriteWitness` slots. A fragment is
-/// the unit the caller emits as a single [`CircuitNode::WitnessCall`].
-///
-/// Fragments produced by promoted nested calls (see `extra_fragments`)
-/// are emitted strictly before the parent's own call so the parent's
-/// `input_signals` can reference them via `CircuitExpr::Var(...)`.
-pub struct LiftFragment {
-    pub program_bytes: Vec<u8>,
-    pub input_signals: Vec<ir_forge::types::CircuitExpr>,
-    pub output_bindings: Vec<String>,
-}
-
-/// Result of a per-statement decomposition. The function body was not
-/// lifted as one Artik program; instead each function call inside it
-/// became its own [`CircuitNode::WitnessCall`] fragment. Aliasing
-/// statements (loop-driven copies, direct array element rebinds) do
-/// not emit fragments — they are reflected only in the per-element
-/// `CircuitExpr` references the caller must build from `result`.
-pub struct DecomposedLift {
-    /// Fragments to emit in order before exposing the result.
-    pub fragments: Vec<LiftFragment>,
-    pub result: DecomposedResult,
-}
-
-/// Per-element binding values the caller uses to build a CircuitExpr
-/// for the function's return at the call site. Each variant carries
-/// the actual `CircuitExpr`s that resolve to the function's outputs;
-/// the caller groups them into `LetArray` nodes as needed.
-pub enum DecomposedResult {
-    Scalar(ir_forge::types::CircuitExpr),
-    Array(Vec<ir_forge::types::CircuitExpr>),
-    Array2D {
-        rows: u32,
-        cols: u32,
-        elements: Vec<ir_forge::types::CircuitExpr>,
-    },
-}
-
 /// Result of a successful lift: the serialized Artik program + the
 /// names of the witness slots the caller should bind to.
-///
-/// `extra_fragments` holds programs for nested calls that the lift
-/// chose to promote to standalone [`CircuitNode::WitnessCall`] nodes
-/// rather than inline-expand into the parent's bytecode. They emit in
-/// the order they appear, before the parent's own call.
 pub struct LiftedWitnessCall {
     pub program_bytes: Vec<u8>,
     pub outputs: Vec<String>,
@@ -121,10 +73,6 @@ pub struct LiftedWitnessCall {
     /// caller needs to re-bundle them into a `LetArray` before the
     /// usage site can read the function's result as an array.
     pub shape: LiftedShape,
-    /// Promoted nested-call fragments, emitted in order before the
-    /// parent's own [`CircuitNode::WitnessCall`]. Empty when no
-    /// nested call was promoted (the default).
-    pub extra_fragments: Vec<LiftFragment>,
 }
 
 /// Output shape the lift produced.
@@ -389,13 +337,6 @@ fn try_lift_via_subprograms(
         program_bytes,
         outputs,
         shape,
-        // Always empty here: a nested call is a real `Call` inside this
-        // one multi-subprogram payload, never a separately-emitted
-        // fragment. An unsupported call shape returns `None` from
-        // `lift_nested_call_subprogram`, declining the whole entry lift
-        // rather than promoting a standalone fragment, so no orphan
-        // fragment can be left needing pre-emission.
-        extra_fragments: Vec::new(),
     })
 }
 
