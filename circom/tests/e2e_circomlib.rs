@@ -1066,7 +1066,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). Blocked at secp256k1_utils.circom:102 with E212 on `getProperRepresentation`: its body mixes integer division/modulo with conditional branches and nested loops over runtime bounds, which neither the single-frame Artik lift nor the per-statement decomposition path currently handle. The `secp256k1_addunequal_func` chain (the previous blocker) lifts via decomposition into 11+ WitnessCall fragments — pinned by `fn_witness_decompose_secp256k1_addunequal`. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). The witness lift now covers `getProperRepresentation`'s body, including its runtime-index array stores; compilation still falls back to E212 on `getProperRepresentation` because a callee it reaches, `isNegative`, returns `cond ? 1 : 0` with a runtime condition and the expression lift has no `Expr::Ternary` arm for that shape. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 
