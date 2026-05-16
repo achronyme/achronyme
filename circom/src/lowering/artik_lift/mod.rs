@@ -433,6 +433,13 @@ struct LiftState<'f> {
     /// still match the originally-hoisted 200). Cleared when the
     /// enclosing `lift_while` returns.
     hoisted_arrays: std::collections::HashMap<String, ArrayShape>,
+    /// Callee registry, present only on the subprogram-lift path.
+    /// `None` on the inlining path — every method that consults it
+    /// then takes the existing branch, so the inlining path is
+    /// byte-identical. `Some` enables real `Call`/subprogram emission:
+    /// nested calls reserve callee subprograms and the callee bodies
+    /// are drained from it after the entry body is lifted.
+    driver: Option<driver::LiftDriver>,
 }
 
 /// Value produced by a nested (inlined) function call. Arrays are
@@ -530,6 +537,7 @@ impl<'f> LiftState<'f> {
             output_slot: None,
             output_array_slots: None,
             hoisted_arrays: std::collections::HashMap::new(),
+            driver: None,
         }
     }
 }

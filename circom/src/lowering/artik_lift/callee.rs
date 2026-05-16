@@ -12,9 +12,9 @@
 
 use std::collections::HashMap;
 
-use artik::Reg;
+use artik::{ElemT, Reg};
 
-use crate::ast::FunctionDef;
+use crate::ast::{Expr, FunctionDef};
 
 use super::{ArrayShape, ConstInt, LiftState};
 
@@ -86,6 +86,67 @@ impl LiftState<'_> {
         self.arrays = saved.arrays;
         self.halted = saved.halted;
     }
+
+    /// Emit a callee subprogram's `return <value>;` as a single
+    /// `Return` instruction. Every return shape collapses to exactly
+    /// one register: a scalar is the value register; any array — a
+    /// named local, a 2D row slice, or an array literal — is the one
+    /// handle into the global array store (arrays cross the
+    /// `Call`/`Return` boundary by handle, so there is no per-cell
+    /// witness-slot marshalling here). This is the simplification the
+    /// subprogram path buys over the inlining path's slot/label dance.
+    pub(super) fn emit_callee_return(&mut self, value: &Expr) -> Option<()> {
+        // `return out;` where `out` is a live array local.
+        if let Expr::Ident { name, .. } = value {
+            if let Some(&shape) = self.arrays.get(name) {
+                let handle = shape.handle();
+                self.builder.ret_vals(&[handle]);
+                self.halted = true;
+                return Some(());
+            }
+        }
+
+        // `return arr2d[row];` — materialize the row, return its handle.
+        if let Expr::Index { object, index, .. } = value {
+            if let Expr::Ident { name, .. } = object.as_ref() {
+                if let Some(ArrayShape::Flat2D {
+                    handle: src_handle,
+                    rows,
+                    cols,
+                }) = self.arrays.get(name).copied()
+                {
+                    let row_shape = self.materialize_row_slice(src_handle, rows, cols, index)?;
+                    let handle = match row_shape {
+                        ArrayShape::Flat1D { handle, .. } => handle,
+                        ArrayShape::Flat2D { .. } => return None,
+                    };
+                    self.builder.ret_vals(&[handle]);
+                    self.halted = true;
+                    return Some(());
+                }
+            }
+        }
+
+        // `return [e0, e1, ...];` — build the array, return its handle.
+        if let Expr::ArrayLit { elements, .. } = value {
+            let len = u32::try_from(elements.len()).ok()?;
+            let handle = self.builder.alloc_array(len, ElemT::Field);
+            for (i, elem) in elements.iter().enumerate() {
+                let val_reg = self.lift_expr(elem)?;
+                let idx_reg = self.push_int_const(i as u64)?;
+                self.builder.store_arr(handle, idx_reg, val_reg);
+            }
+            self.builder.ret_vals(&[handle]);
+            self.halted = true;
+            return Some(());
+        }
+
+        // Scalar return.
+        let r = self.lift_expr(value)?;
+        self.builder.ret_vals(&[r]);
+        self.halted = true;
+        Some(())
+    }
 }
 
 #[cfg(test)]
@@ -139,6 +200,88 @@ mod tests {
         assert!(!state.locals.contains_key("s"));
         assert!(!state.arrays.contains_key("arr"));
         assert!(state.halted);
+    }
+
+    fn callee_subprogram_body(
+        src: &str,
+        sub_params: Vec<artik::RegType>,
+        sub_returns: Vec<artik::RegType>,
+        binding: CalleeParamBinding,
+    ) -> Vec<artik::Instr> {
+        use crate::lowering::artik_lift::driver::LiftDriver;
+
+        let (prog, errors) = parse_circom(src).expect("parse failed");
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let Definition::Function(callee) = &prog.definitions[0] else {
+            panic!("expected function");
+        };
+
+        let functions: HashMap<String, &FunctionDef> = HashMap::new();
+        let mut state = LiftState::new(&[], &[], &functions);
+        state.driver = Some(LiftDriver::new());
+
+        let id = state.builder.reserve_subprogram(sub_params, sub_returns);
+        let prev = state.builder.begin_subprogram(id);
+        let saved = state
+            .begin_callee_body(callee, &[binding])
+            .expect("arity matches");
+        for stmt in &callee.body.stmts {
+            state.lift_stmt(stmt).expect("callee body lifts");
+        }
+        state.end_callee_body(saved);
+        state.builder.end_subprogram(prev);
+
+        let program = state.builder.finish().expect("builder finishes");
+        program.subprograms[id as usize].body.clone()
+    }
+
+    #[test]
+    fn scalar_callee_return_emits_ret_vals_not_witness() {
+        let body = callee_subprogram_body(
+            "function probe(s) { return s; }",
+            vec![artik::RegType::Field],
+            vec![artik::RegType::Field],
+            CalleeParamBinding::Scalar {
+                reg: 0,
+                const_val: None,
+            },
+        );
+        // Parameter `s` is the pre-allocated param register 0; the
+        // return forwards it as a single Return source.
+        assert!(
+            matches!(body.last(), Some(artik::Instr::Return { srcs }) if srcs == &vec![0]),
+            "expected `Return {{ srcs: [0] }}`, got {:?}",
+            body.last()
+        );
+        assert!(
+            !body
+                .iter()
+                .any(|i| matches!(i, artik::Instr::WriteWitness { .. })),
+            "a callee subprogram must not write witness slots"
+        );
+    }
+
+    #[test]
+    fn array_callee_return_returns_the_handle() {
+        let body = callee_subprogram_body(
+            "function probe(arr) { return arr; }",
+            vec![artik::RegType::Array(ElemT::Field)],
+            vec![artik::RegType::Array(ElemT::Field)],
+            CalleeParamBinding::Array(ArrayShape::Flat1D { handle: 0, len: 3 }),
+        );
+        // The array crosses the boundary as its handle register (0),
+        // not as per-cell witness writes.
+        assert!(
+            matches!(body.last(), Some(artik::Instr::Return { srcs }) if srcs == &vec![0]),
+            "expected `Return {{ srcs: [0] }}`, got {:?}",
+            body.last()
+        );
+        assert!(
+            !body
+                .iter()
+                .any(|i| matches!(i, artik::Instr::WriteWitness { .. })),
+            "an array callee return must not write witness slots"
+        );
     }
 
     #[test]

@@ -535,6 +535,14 @@ impl<'f> LiftState<'f> {
                 ..
             } => self.lift_if_else(condition, then_body, else_body.as_ref()),
             Stmt::Return { value, .. } => {
+                // A callee subprogram returns by value: one `Return`
+                // instruction carrying a single register. The entry
+                // subprogram (active id 0) keeps the witness-slot ABI
+                // below; the inlining path has no driver, so it always
+                // takes the path below and stays byte-identical.
+                if self.driver.is_some() && self.builder.active_subprogram() != 0 {
+                    return self.emit_callee_return(value);
+                }
                 // Array-return: `return <local_array>;` — for the
                 // outer function, expose each element as its own
                 // witness slot so the caller can re-bundle them into
