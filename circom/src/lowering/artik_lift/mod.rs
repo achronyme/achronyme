@@ -160,22 +160,12 @@ pub enum ParamShape {
 /// will bind each `arg` expression to the corresponding signal slot
 /// at prove time.
 ///
+/// Nested circom function calls are lifted as real Artik subprogram
+/// `Call`s — one subprogram per callee, registered once per parameter
+/// signature — not inlined into the caller's flat program.
+///
 /// Returns `None` for unsupported forms. The caller should fall back
 /// to E212 in that case.
-/// Opt-in: lift nested circom function calls as real Artik
-/// subprogram `Call`s (one subprogram per callee, registered once)
-/// instead of inlining each callee body into the caller's flat
-/// program. Off unless `ARTIK_SUBPROGRAM_LIFT` is `1` / `true` in the
-/// environment. The inlining path is the default; this knob exists so
-/// the subprogram path can be brought up and validated against the
-/// hard witness cases before it becomes the default. Polarity is the
-/// inverse of `R1PP_ENABLED` (opt-in, not opt-out): the new path is
-/// not yet the default.
-fn subprogram_lift_enabled() -> bool {
-    std::env::var("ARTIK_SUBPROGRAM_LIFT")
-        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false)
-}
 
 // THROWAWAY measurement instrumentation — remove before merge.
 // Appends to the file named by ARTIK_SUBPROG_TRACE_FILE so traces
@@ -203,66 +193,14 @@ pub fn lift_function_to_artik(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
-    if subprogram_lift_enabled() {
-        // The subprogram path lands incrementally. Until a body's
-        // shape is supported by it, decline so the caller's existing
-        // fallback chain (decomposition, then E212) handles the call
-        // exactly as it does today — no regression while the path is
-        // built up behind this flag.
-        if let Some(lifted) =
-            try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
-        {
-            sp_trace(&format!("SUCCESS fn={function_name}"));
-            return Some(lifted);
-        }
-        sp_trace(&format!("DECLINE-TOPLEVEL fn={function_name}"));
-        return None;
+    if let Some(lifted) =
+        try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
+    {
+        sp_trace(&format!("SUCCESS fn={function_name}"));
+        return Some(lifted);
     }
-    // Copy function refs out of `ctx` so the lift's nested-call
-    // machinery can borrow them without holding `ctx` immutably for
-    // the entire walk. The function definitions themselves live in
-    // the AST and are stable for the duration of compilation.
-    let functions: HashMap<String, &FunctionDef> = ctx
-        .functions
-        .iter()
-        .map(|(&k, &v)| (k.to_string(), v))
-        .collect();
-    let mut state = LiftState::new(params, param_consts, &functions);
-
-    for stmt in body {
-        state.lift_stmt(stmt)?;
-        if state.halted {
-            break;
-        }
-    }
-
-    if !state.halted {
-        // A well-formed function body must end with a `return`. If
-        // none fired, treat as unsupported — we would otherwise emit
-        // a program that never writes to the witness slot.
-        return None;
-    }
-
-    let program = state.builder.finish().ok()?;
-    let program_bytes = artik::bytecode::encode(&program);
-
-    let anon_id = ctx.next_anon_id();
-    let _ = span;
-    let base = format!("__artik_{function_name}_{anon_id}_out");
-    let (outputs, shape) = match state.return_shape {
-        ReturnShape::Scalar => (vec![base], LiftedShape::Scalar),
-        ReturnShape::Array(len) => {
-            let names: Vec<String> = (0..len).map(|i| format!("{base}_{i}")).collect();
-            (names, LiftedShape::Array(len))
-        }
-    };
-
-    Some(LiftedWitnessCall {
-        program_bytes,
-        outputs,
-        shape,
-        extra_fragments: Vec::new(),
-    })
+    sp_trace(&format!("DECLINE-TOPLEVEL fn={function_name}"));
+    None
 }
 
 /// Loud-failure backstop for the callee drain. circom forbids
@@ -302,7 +240,9 @@ fn try_lift_via_subprograms(
         })
         .collect();
     if helpers::compute_dim_signature(body, &param_consts_map).is_none() {
-        sp_trace(&format!("decline reason=entry_runtime_dim fn={function_name}"));
+        sp_trace(&format!(
+            "decline reason=entry_runtime_dim fn={function_name}"
+        ));
         return None;
     }
     // Built before the return-shape gate: a `return f(..)` forwarded
@@ -346,7 +286,9 @@ fn try_lift_via_subprograms(
         }
     }
     if !state.halted {
-        sp_trace(&format!("decline reason=entry_no_return fn={function_name}"));
+        sp_trace(&format!(
+            "decline reason=entry_no_return fn={function_name}"
+        ));
         return None;
     }
     let return_shape = state.return_shape;
@@ -358,9 +300,7 @@ fn try_lift_via_subprograms(
     while let Some(pending) = state.driver.as_mut()?.next_pending() {
         drained += 1;
         if drained > MAX_CALLEE_SUBPROGRAMS {
-            sp_trace(&format!(
-                "decline reason=max_callees fn={function_name}"
-            ));
+            sp_trace(&format!("decline reason=max_callees fn={function_name}"));
             return None;
         }
         let callee = state.functions.get(&pending.name).copied()?;
