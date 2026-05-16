@@ -7045,9 +7045,14 @@ fn artik_inlined_named_array_return_in_loop_probe() {
 /// name no longer matches a fragment's `output_bindings`.
 #[test]
 #[ignore = "secp256k1 add-unequal witness-value cross-validation: \
-            end-to-end witness execution of this helper chain is not \
-            yet complete (the single-frame array-rebind merge is fixed \
-            and pinned separately; a distinct deeper blocker remains)"]
+            the field-precision `1 << n` lowering is fixed (FPow2; this \
+            chain no longer divides by zero), but per-statement \
+            decomposition of `secp256k1_addunequal_func(64, 4, ...)` \
+            still has independent blockers — it exceeds the witness \
+            execution instruction budget, and past that a downstream \
+            index computation goes out of range. End-to-end witness \
+            execution of this helper chain awaits the subprogram lift \
+            covering it; kept in-tree as the acceptance target."]
 fn fn_witness_decompose_secp256k1_addunequal_values() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path =
