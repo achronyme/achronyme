@@ -765,7 +765,7 @@ pub(super) fn infer_callee_return_shape(
 
     let mut found: Option<CalleeReturnShape> = None;
     let mut ok = true;
-    classify_returns(stmts, &dim_map, &mut found, &mut ok);
+    classify_returns(stmts, param_consts, &dim_map, &mut found, &mut ok);
     if !ok {
         return CalleeReturnShape::Other;
     }
@@ -860,12 +860,13 @@ fn collect_return_dims_in_stmt(
 
 fn classify_returns(
     stmts: &[Stmt],
+    param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
     found: &mut Option<CalleeReturnShape>,
     ok: &mut bool,
 ) {
     for stmt in stmts {
-        classify_returns_in_stmt(stmt, dim_map, found, ok);
+        classify_returns_in_stmt(stmt, param_consts, dim_map, found, ok);
         if !*ok {
             return;
         }
@@ -874,13 +875,14 @@ fn classify_returns(
 
 fn classify_returns_in_stmt(
     stmt: &Stmt,
+    param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
     found: &mut Option<CalleeReturnShape>,
     ok: &mut bool,
 ) {
     match stmt {
         Stmt::Return { value, .. } => {
-            let shape = match classify_return_expr(value, dim_map) {
+            let shape = match classify_return_expr(value, param_consts, dim_map) {
                 Some(s) => s,
                 None => {
                     *ok = false;
@@ -898,19 +900,23 @@ fn classify_returns_in_stmt(
             else_body,
             ..
         } => {
-            classify_returns(&then_body.stmts, dim_map, found, ok);
+            classify_returns(&then_body.stmts, param_consts, dim_map, found, ok);
             match else_body {
-                Some(ElseBranch::Block(b)) => classify_returns(&b.stmts, dim_map, found, ok),
+                Some(ElseBranch::Block(b)) => {
+                    classify_returns(&b.stmts, param_consts, dim_map, found, ok)
+                }
                 Some(ElseBranch::IfElse(boxed)) => {
-                    classify_returns_in_stmt(boxed, dim_map, found, ok)
+                    classify_returns_in_stmt(boxed, param_consts, dim_map, found, ok)
                 }
                 None => {}
             }
         }
-        Stmt::For { body, .. } => classify_returns(&body.stmts, dim_map, found, ok),
-        Stmt::While { body, .. } => classify_returns(&body.stmts, dim_map, found, ok),
-        Stmt::DoWhile { body, .. } => classify_returns(&body.stmts, dim_map, found, ok),
-        Stmt::Block(b) => classify_returns(&b.stmts, dim_map, found, ok),
+        Stmt::For { body, .. } => classify_returns(&body.stmts, param_consts, dim_map, found, ok),
+        Stmt::While { body, .. } => classify_returns(&body.stmts, param_consts, dim_map, found, ok),
+        Stmt::DoWhile { body, .. } => {
+            classify_returns(&body.stmts, param_consts, dim_map, found, ok)
+        }
+        Stmt::Block(b) => classify_returns(&b.stmts, param_consts, dim_map, found, ok),
         _ => {}
     }
 }
@@ -922,6 +928,7 @@ fn classify_returns_in_stmt(
 /// does not have.
 fn classify_return_expr(
     value: &Expr,
+    param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
 ) -> Option<CalleeReturnShape> {
     match value {
@@ -948,22 +955,44 @@ fn classify_return_expr(
         Expr::Ternary {
             if_true, if_false, ..
         } => {
-            let a = classify_return_expr(if_true, dim_map)?;
-            let b = classify_return_expr(if_false, dim_map)?;
+            let a = classify_return_expr(if_true, param_consts, dim_map)?;
+            let b = classify_return_expr(if_false, param_consts, dim_map)?;
             (a == b).then_some(a)
         }
         // A forwarded call result resolves to the callee's shape, which
         // the classifier cannot see.
         Expr::Call { .. } => None,
-        // Numbers, arithmetic, an indexed element read, and unary /
-        // postfix forms all produce a single field value.
+        // A single-index read. `arr2d[row]` where `arr2d` is a 2D local
+        // is a 1D row slice of `cols` cells — the emission side
+        // (`emit_callee_return` / the non-subprogram row-slice path)
+        // materializes exactly that. Only when the row index const-folds
+        // into `0..rows` (the same guard `materialize_row_slice`
+        // applies); a 2D local indexed by a non-folding row is *not* a
+        // scalar, so the honest answer is unmodelled (`None` → `Other`,
+        // the lift then declines to decomposition rather than reserving
+        // a shape emission cannot deliver). A 1D-local element read, or
+        // an index into a non-array / runtime-dim name, is a single
+        // field value.
+        Expr::Index { object, index, .. } => {
+            if let Expr::Ident { name, .. } = object.as_ref() {
+                if let Some(Some(DeclDim::D2(rows, cols))) = dim_map.get(name) {
+                    let r = eval_const_expr(index, param_consts)?;
+                    if (0..i64::from(*rows)).contains(&r) {
+                        return Some(CalleeReturnShape::Array(*cols));
+                    }
+                    return None;
+                }
+            }
+            Some(CalleeReturnShape::Scalar)
+        }
+        // Numbers, arithmetic, and unary / postfix forms all produce a
+        // single field value.
         Expr::Number { .. }
         | Expr::HexNumber { .. }
         | Expr::BinOp { .. }
         | Expr::UnaryOp { .. }
         | Expr::PostfixOp { .. }
-        | Expr::PrefixOp { .. }
-        | Expr::Index { .. } => Some(CalleeReturnShape::Scalar),
+        | Expr::PrefixOp { .. } => Some(CalleeReturnShape::Scalar),
         _ => None,
     }
 }
