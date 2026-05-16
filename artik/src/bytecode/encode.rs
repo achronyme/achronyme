@@ -133,6 +133,11 @@ fn encode_instr(instr: &Instr, out: &mut Vec<u8>) {
             out.extend_from_slice(&dst.to_le_bytes());
             out.extend_from_slice(&src.to_le_bytes());
         }
+        Instr::FPow2 { dst, amount } => {
+            out.push(OpTag::FPow2 as u8);
+            out.extend_from_slice(&dst.to_le_bytes());
+            out.extend_from_slice(&amount.to_le_bytes());
+        }
         Instr::FEq { dst, a, b } => emit_rrr(out, OpTag::FEq, *dst, *a, *b),
         Instr::FIDiv { dst, a, b } => emit_rrr(out, OpTag::FIDiv, *dst, *a, *b),
         Instr::FIRem { dst, a, b } => emit_rrr(out, OpTag::FIRem, *dst, *a, *b),
