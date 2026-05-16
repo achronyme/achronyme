@@ -1,22 +1,4 @@
-//! E2E test harness for Circom → ProveIR → R1CS pipeline.
-//!
-//! Scans `test/circom/*.circom` files and runs each through three tiers:
-//!   1. **Parse**: `parser::parse_circom()` succeeds
-//!   2. **Lower**: `compile_to_prove_ir()` succeeds (parse + analysis + lowering)
-//!   3. **R1CS**:  instantiate → optimize → R1CS compile → verify
-//!
-//! Each `.circom` file may have a companion `.inputs.toml` with signal values.
-//! Without inputs, tier 3 is skipped.
-//!
-//! TOML format:
-//! ```toml
-//! [inputs]
-//! in = 42          # scalar signal
-//! in = [3, 10]     # array → in_0=3, in_1=10
-//!
-//! [expected]
-//! constraints = 17 # optional: assert constraint count
-//! ```
+mod common;
 
 use std::collections::HashMap;
 use std::path::Path;
