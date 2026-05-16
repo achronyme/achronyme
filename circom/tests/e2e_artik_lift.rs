@@ -726,11 +726,11 @@ fn fn_witness_lift_emits_field_level_fidiv_firem() {
 
 /// Lift `prod(n, k, a, b)` from circomlib's bigint_func.circom — the
 /// convolution-style polynomial product that stitches `SplitThreeFn`
-/// + `SplitFn` calls into a 2D `split[i][j]` matrix. Exercises
-/// whole-row 2D assignment `split[i] = SplitThreeFn(...)` (compile-
-/// time row index, callee returns a 1D array matching `cols`) and
-/// `var sumAndCarry[2] = SplitFn(...)` (callee handle aliased into
-/// the caller's array scope).
+/// and `SplitFn` calls into a 2D `split[i][j]` matrix. Exercises
+/// whole-row 2D assignment `split[i] = SplitThreeFn(...)` (compile-time
+/// row index, callee returns a 1D array matching `cols`) and
+/// `var sumAndCarry[2] = SplitFn(...)` (callee handle aliased into the
+/// caller's array scope).
 ///
 /// Verifies the WitnessCall exists, the payload decodes, and the
 /// expected arrays / bit-extraction ops are emitted. `prod`'s own
