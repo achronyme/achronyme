@@ -46,7 +46,7 @@
 
 use std::collections::HashMap;
 
-use artik::{ElemT, IntW, Label, ProgramBuilder, Reg};
+use artik::{ElemT, IntW, ProgramBuilder, Reg};
 use diagnostics::Span;
 use memory::FieldFamily;
 
@@ -416,47 +416,10 @@ struct LiftState<'f> {
     /// `lift_function_to_artik` to decide how many witness slots the
     /// program exposes.
     return_shape: ReturnShape,
-    /// Function table for inlining nested calls. The lift walks
-    /// nested function bodies into the same builder, so a call like
-    /// `return bar(x + 1);` becomes straight-line bytecode with
-    /// bar's instructions interleaved into foo's.
+    /// Function table for resolving nested calls. A nested call is
+    /// reserved as a callee subprogram and invoked with a real Artik
+    /// `Call`; its body is looked up here.
     functions: &'f HashMap<String, &'f FunctionDef>,
-    /// Non-zero while lifting a nested function body. Controls the
-    /// `return` dispatch so nested returns store their value into the
-    /// active `nested_return_slot` and jump to `nested_end_label`
-    /// instead of emitting WriteWitness + Ret on the outer program.
-    nested_depth: u32,
-    /// Captures an array-shaped return of a nested call (handle and
-    /// length, or 2D shape). Scalar returns route through
-    /// `nested_return_slot` so the caller observes the value of
-    /// whichever `return` statement actually fires at runtime — not
-    /// the last one the lift happened to walk past.
-    nested_result: Option<NestedResult>,
-    /// Heap slot (1-element field array) reserved by `lift_nested_call`
-    /// to carry a scalar callee return out of an inlined frame. Each
-    /// scalar `Stmt::Return` inside the nested body stores the value
-    /// here and jumps to `nested_end_label`; the caller loads the slot
-    /// after placing the label and forwards the value as the call's
-    /// `Scalar` result. Without the slot+label round-trip, returns
-    /// inside conditional branches or unrolled loops would silently
-    /// fall through to subsequent emissions at runtime and the caller
-    /// would observe whichever literal the lift emitted last.
-    nested_return_slot: Option<Reg>,
-    /// Jump target placed by `lift_nested_call` after the inlined
-    /// body. A scalar `Stmt::Return` at `nested_depth > 0` jumps here
-    /// so control bypasses any later iterations of an enclosing
-    /// unrolled loop or fall-through statements.
-    nested_end_label: Option<Label>,
-    /// Heap array (handle + length) lazily allocated on the first
-    /// array-shaped `Stmt::Return` inside an inlined frame. Every
-    /// nested array return copies its source cells into this slot and
-    /// jumps to `nested_end_label`; the caller forwards
-    /// `(handle, len)` as `NestedResult::Array`. Subsequent returns
-    /// with a different length are rejected — that case would mean
-    /// the callee has two return statements with disagreeing shapes,
-    /// which the trivial-body lift would already have caught at the
-    /// top level.
-    nested_array_return_slot: Option<(Reg, u32)>,
     /// Witness slot id reserved for the function's scalar return value.
     /// Lazily populated on the first scalar `return` so multi-return
     /// shapes (e.g. early-exit `if (cond) return X;` followed by a
@@ -578,11 +541,6 @@ impl<'f> LiftState<'f> {
             halted: false,
             return_shape: ReturnShape::Scalar,
             functions,
-            nested_depth: 0,
-            nested_result: None,
-            nested_return_slot: None,
-            nested_end_label: None,
-            nested_array_return_slot: None,
             output_slot: None,
             output_array_slots: None,
             hoisted_arrays: std::collections::HashMap::new(),
