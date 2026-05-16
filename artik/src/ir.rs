@@ -211,6 +211,13 @@ pub enum OpTag {
     /// circom's `1 << n`, distinct from the fixed-width integer shift
     /// used for 32-bit bit-packing gadgets.
     FPow2 = 0x2A,
+    /// `dst (Int U8) = 1 if a < b else 0`, comparing the operands'
+    /// canonical representatives as unsigned integers in `[0, p)`.
+    /// Field-precision ordered compare — distinct from the fixed-width
+    /// `IBin { CmpLt }` used for 32/64-bit gadgets, which truncates
+    /// values that legitimately reach `2^64` (e.g. `b[i] + borrow` in
+    /// circomlib's bigint `long_sub` at n=64).
+    FCmpLt = 0x2B,
 
     // Integer ops
     IBin = 0x30,
@@ -261,6 +268,7 @@ impl OpTag {
             0x28 => Some(FShr),
             0x29 => Some(FAnd),
             0x2A => Some(FPow2),
+            0x2B => Some(FCmpLt),
             0x30 => Some(IBin),
             0x31 => Some(INot),
             0x32 => Some(Rotl32),
@@ -384,6 +392,11 @@ pub enum Instr {
         dst: Reg,
         amount: Reg,
     },
+    FCmpLt {
+        dst: Reg,
+        a: Reg,
+        b: Reg,
+    },
 
     // ── Integer ops ────────────────────────────────────────────────
     IBin {
@@ -478,6 +491,7 @@ impl Instr {
             | Instr::FMul { .. }
             | Instr::FDiv { .. }
             | Instr::FEq { .. }
+            | Instr::FCmpLt { .. }
             | Instr::FIDiv { .. }
             | Instr::FIRem { .. }
             | Instr::FShr { .. }

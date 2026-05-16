@@ -42,36 +42,31 @@ impl<'f> LiftState<'f> {
             BinOp::BitXor => Some(self.apply_int_binop_u32(IntBinOp::Xor, a, b)),
             BinOp::ShiftL => Some(self.apply_int_binop_u32(IntBinOp::Shl, a, b)),
             BinOp::ShiftR => Some(self.apply_int_binop_u32(IntBinOp::Shr, a, b)),
-            // Ordered comparisons demote to `IntW::U64` and dispatch
-            // through `IntBinOp::CmpLt` (the only ordered int op
-            // Artik exposes), inverting where necessary. U64 covers
-            // the bigint witness call graph at `n=64, k=4` where
-            // every limb register fits 2^64. Values exceeding `2^64`
-            // would truncate unsoundly — the lift's contract is that
-            // ordered comparisons run on register-width values, not
-            // on accumulators that exceed U64.
+            // Ordered comparisons run at field precision via
+            // `FCmpLt` (canonical-rep unsigned compare in `[0, p)`),
+            // inverting where necessary. Comparing without demoting to
+            // a machine width is required by the bigint witness call
+            // graph at `n=64`: e.g. `b[i] + borrow` in `long_sub`
+            // legitimately equals `2^64`, which a U64 demote would
+            // truncate to `0` and mis-branch the borrow.
             BinOp::Lt | BinOp::Le | BinOp::Gt | BinOp::Ge => self.apply_field_compare(op, a, b),
             _ => None,
         }
     }
 
     fn apply_field_compare(&mut self, op: BinOp, a: Reg, b: Reg) -> Option<Reg> {
-        let a_int = self.builder.int_from_field(IntW::U64, a);
-        let b_int = self.builder.int_from_field(IntW::U64, b);
-        let (lhs_int, rhs_int, invert) = match op {
-            BinOp::Lt => (a_int, b_int, false),
-            BinOp::Gt => (b_int, a_int, false),
-            BinOp::Le => (b_int, a_int, true),
-            BinOp::Ge => (a_int, b_int, true),
+        let (lhs, rhs, invert) = match op {
+            BinOp::Lt => (a, b, false),
+            BinOp::Gt => (b, a, false),
+            BinOp::Le => (b, a, true),
+            BinOp::Ge => (a, b, true),
             _ => unreachable!(),
         };
-        // `IntBinOp::CmpLt` is classified boolean by the validator —
-        // its destination register is bound to `Int(U8)` regardless of
-        // the operand width passed to `IBin`. Promote back through U8
-        // to keep register types consistent.
-        let cmp_int = self
-            .builder
-            .ibin(artik::IntBinOp::CmpLt, IntW::U64, lhs_int, rhs_int);
+        // `FCmpLt` compares the field operands' canonical reps as
+        // unsigned integers in `[0, p)` and yields `Int(U8)`. The lift
+        // returns field registers, so promote back through U8 (and the
+        // invert path needs a field operand for the `1 - x`).
+        let cmp_int = self.builder.fcmplt(lhs, rhs);
         let cmp_field = self.builder.field_from_int(cmp_int, IntW::U8);
         if invert {
             let one = self.push_const_unsigned(1)?;

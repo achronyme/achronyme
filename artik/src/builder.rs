@@ -422,6 +422,15 @@ impl ProgramBuilder {
         dst
     }
 
+    /// `dst (Int U8) = 1 if a < b else 0`, comparing canonical
+    /// representatives as unsigned integers in `[0, p)` — field
+    /// precision, no fixed-width truncation.
+    pub fn fcmplt(&mut self, a: Reg, b: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FCmpLt { dst, a, b });
+        dst
+    }
+
     /// Truncated unsigned division on the canonical representative.
     /// Both operands are field cells; result is a field cell carrying
     /// `floor(a / b)`. Traps at execute time on `b == 0`.

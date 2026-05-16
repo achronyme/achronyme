@@ -549,6 +549,25 @@ fn step<F: FieldBackend>(
             state.write(*dst, Cell::Int(out))?;
             Ok(Flow::Next)
         }
+        Instr::FCmpLt { dst, a, b } => {
+            // Compare the canonical representatives as unsigned 256-bit
+            // integers in `[0, p)`, high limb first. Exact at every
+            // width — unlike the fixed-width `IBin { CmpLt }`, this does
+            // not truncate operands that reach `2^64` (e.g. the
+            // `b[i] + borrow` right-hand side of circomlib's bigint
+            // `long_sub` at n=64).
+            let al = state.read_field(*a)?.to_canonical();
+            let bl = state.read_field(*b)?.to_canonical();
+            let mut out: u64 = 0;
+            for i in (0..4).rev() {
+                if al[i] != bl[i] {
+                    out = u64::from(al[i] < bl[i]);
+                    break;
+                }
+            }
+            state.write(*dst, Cell::Int(out))?;
+            Ok(Flow::Next)
+        }
         Instr::FIDiv { dst, a, b } => {
             let av = *state.read_field(*a)?;
             let bv = *state.read_field(*b)?;
@@ -1108,6 +1127,53 @@ mod tests {
         let sig = [FE::from_u64(42), FE::from_u64(41)];
         let mut slots = [FE::zero()];
         run_bn(&prog, &sig, &mut slots).unwrap();
+        assert_eq!(slots[0], FE::zero());
+    }
+
+    /// `FCmpLt` compares canonical representatives as unsigned integers
+    /// in `[0, p)` with no fixed-width truncation. The pinned case is
+    /// the `2^64 - 1` vs `2^64` boundary: the fixed-width `IBin{CmpLt}`
+    /// path demoted both operands to `u64`, mapping `2^64` to `0` and
+    /// answering `2^64 - 1 < 0` = false — the exact mis-branch behind
+    /// circomlib bigint `long_sub`'s `a[i] >= b[i] + borrow` at n=64.
+    #[test]
+    fn field_cmplt_is_exact_at_two_to_the_64_boundary() {
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::ReadSignal {
+                dst: 1,
+                signal_id: 1,
+            },
+            Instr::FCmpLt { dst: 2, a: 0, b: 1 },
+            Instr::FieldFromInt {
+                dst: 3,
+                src: 2,
+                w: IntW::U8,
+            },
+            Instr::WriteWitness { slot_id: 0, src: 3 },
+            Instr::Return { srcs: Vec::new() },
+        ];
+        let prog = roundtrip(Program::new(FieldFamily::BnLike256, 4, Vec::new(), body));
+
+        let two_pow_64 = FE::from_canonical([0, 1, 0, 0]);
+        let max_u64 = FE::from_u64(u64::MAX); // 2^64 - 1
+
+        // 2^64 - 1 < 2^64  →  true (the borrow-taken case)
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &[max_u64, two_pow_64], &mut slots).unwrap();
+        assert_eq!(slots[0], FE::from_u64(1));
+
+        // 2^64 < 2^64 - 1  →  false
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &[two_pow_64, max_u64], &mut slots).unwrap();
+        assert_eq!(slots[0], FE::zero());
+
+        // equal  →  false
+        let mut slots = [FE::zero()];
+        run_bn(&prog, &[two_pow_64, two_pow_64], &mut slots).unwrap();
         assert_eq!(slots[0], FE::zero());
     }
 
