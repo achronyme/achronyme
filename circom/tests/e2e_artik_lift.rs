@@ -1759,11 +1759,17 @@ fn fn_witness_lift_mux_admits_nested_calls() {
     );
 }
 
-/// Fase 2.3 lift extension: bitwise ops (`&`, `|`, `^`, `<<`, `>>`)
-/// and `~` lift through the int-promotion scaffold
-/// (`IntFromField U32` → `IBin` → `FieldFromInt U32`). Exercised by
-/// a SHA-256 σ0-style function mixing `>>`, `<<`, and `^`. The
-/// Artik payload is decoded, executed on a known 32-bit input, and
+/// Bitwise lowering split: a constant-amount `>>` and a constant
+/// bit-mask `&` lower at field precision (`FShr` / `FAnd`, no width
+/// truncation, exact for operands above `2^32`); every other bit op
+/// (`<<`, `|`, `^`, `~`, a two-variable `&`) lifts through the
+/// int-promotion scaffold (`IntFromField U32` → `IBin` →
+/// `FieldFromInt U32`), which is exact for the <=32-bit gadgets that
+/// rely on its modular wrap. Exercised by a SHA-256 σ0-style function
+/// `rotr(x,7) ^ rotr(x,18) ^ (x >> 3)`: the three `>>` peel to
+/// `FShr`, while the rotate tails (`<<`) and the `|` / `^` combines
+/// stay on the int scaffold. The Artik payload is decoded, executed
+/// on known 32-bit inputs (including the high-bit edge cases), and
 /// the output cross-validated against the hand-computed reference.
 #[test]
 fn fn_witness_lift_handles_bit_ops() {
@@ -1789,23 +1795,37 @@ fn fn_witness_lift_handles_bit_ops() {
     let prog = artik::bytecode::decode(&bytes, Some(memory::FieldFamily::BnLike256))
         .expect("bit-op payload must decode and validate");
 
-    // Structural evidence the lift emitted the int-promotion
-    // scaffold rather than silently bailing: IBin ops appear, and
-    // IntFromField / FieldFromInt bracket them.
+    // Structural evidence of the lowering split: the three constant
+    // `>>` amounts peel to field-precision `FShr` (no int-promotion
+    // scaffold around them), while the non-peeled bit ops (`<<` of
+    // the rotate tails, the `|` and `^` combines) still lift through
+    // `IntFromField U32` → `IBin` → `FieldFromInt U32`.
+    let mut fshr = 0usize;
     let mut ibin = 0usize;
     let mut ito_int = 0usize;
     let mut ito_field = 0usize;
     for instr in &prog.subprograms[0].body {
         match instr {
+            artik::Instr::FShr { .. } => fshr += 1,
             artik::Instr::IBin { .. } => ibin += 1,
             artik::Instr::IntFromField { .. } => ito_int += 1,
             artik::Instr::FieldFromInt { .. } => ito_field += 1,
             _ => {}
         }
     }
-    assert!(ibin >= 7, "expected ≥7 IBin ops for σ0, got {ibin}");
-    assert!(ito_int >= 7, "expected ≥7 IntFromField, got {ito_int}");
-    assert!(ito_field >= 7, "expected ≥7 FieldFromInt, got {ito_field}");
+    assert!(
+        fshr >= 3,
+        "expected ≥3 field-precision FShr (the peeled `>>` amounts), got {fshr}"
+    );
+    assert!(
+        ibin >= 6,
+        "expected ≥6 IBin ops for the non-peeled `<<` / `|` / `^`, got {ibin}"
+    );
+    assert!(
+        ito_int >= 1 && ito_field >= 1,
+        "non-peeled bit ops must still bracket IBin with the int scaffold, \
+         got IntFromField={ito_int} FieldFromInt={ito_field}"
+    );
 
     // End-to-end correctness check: compute σ0(x) = rotr(x,7) ^
     // rotr(x,18) ^ (x >> 3) at u32 width, then pick an input and
@@ -2188,6 +2208,48 @@ fn artik_inlined_named_array_return_in_loop_probe() {
     }
 }
 
+/// Bit-extraction `(e >> j) & 1` over a 64-bit limb must preserve
+/// every bit, including indices 32..63. A constant `>>` lowered at
+/// u32 width would truncate `e` and read those high bits as zero;
+/// peeling it to a field-precision shift keeps them exact. The input
+/// sets bits 0, 31, 32, 62, 63 — the test asserts each extracted bit
+/// matches, so a high-limb truncation regresses it.
+#[test]
+fn fn_witness_lift_bit_extract_preserves_high_limb_bits() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path =
+        manifest_dir.join("test/circomlib/fn_witness_lift_bit_extract_high_limb_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("bit-extract fixture failed to compile: {e}"));
+
+    // Bits set at 0, 31, 32, 62, 63 — spans the 32-bit boundary a
+    // fixed-width demote would truncate.
+    let e: u64 = 0xC000_0001_8000_0001;
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("e".to_string(), FieldElement::<Bn254Fr>::from_u64(e));
+
+    let signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|err| panic!("bit-extract witness computation failed: {err}"));
+
+    for i in 0..64u32 {
+        let key = format!("b_{i}");
+        let actual = signals
+            .get(&key)
+            .unwrap_or_else(|| panic!("missing witness signal `{key}`"));
+        let want = (e >> i) & 1;
+        assert_eq!(
+            *actual,
+            FieldElement::<Bn254Fr>::from_u64(want),
+            "bit {i} mismatch: a high-limb truncation zeroes bits >= 32"
+        );
+    }
+}
+
 /// Cross-validates the multi-fragment witness output of
 /// `secp256k1_addunequal_func(64, 4, ...)` against a reference vector
 /// computed by circom 2.2.3 + snarkjs. Inputs are the secp256k1
@@ -2200,19 +2262,6 @@ fn artik_inlined_named_array_return_in_loop_probe() {
 /// flattening of the 2D return, or a `CircuitExpr::Var(name)` whose
 /// name no longer matches a fragment's `output_bindings`.
 #[test]
-#[ignore = "secp256k1 add-unequal witness-value cross-validation: \
-            the lift covers the whole `secp256k1_addunequal_func(64, \
-            4, ...)` call graph and the bigint `long_div` / \
-            `prod_mod_p` layer now computes correctly at n=64, k=4 \
-            (ordered comparisons lift at field precision, so \
-            `long_sub`'s `b[i] + borrow == 2^64` borrow path is \
-            exact). This still exhausts the 8M-instruction budget in \
-            the mod-exp-heavy iterations before finishing — a budget \
-            gate orthogonal to arithmetic correctness. The known next \
-            correctness blocker beyond budget is the fixed-width (U32) \
-            bitwise demote of `(e[i] >> j) & 1` in `mod_exp`, which \
-            truncates a 64-bit limb. Kept in-tree as the acceptance \
-            target for the remaining bigint witness-execution work."]
 fn fn_witness_decompose_secp256k1_addunequal_values() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path =
