@@ -55,6 +55,7 @@ use crate::lowering::context::LoweringContext;
 
 mod big_eval;
 mod bytecode;
+mod callee;
 mod control;
 mod decompose;
 mod driver;
