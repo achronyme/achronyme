@@ -81,6 +81,22 @@ pub(super) fn extract_call_name(callee: &Expr) -> Option<String> {
     }
 }
 
+/// Whether `expr` is the integer literal `1`. The literal-`1` base is
+/// the discriminator between circom's field-precision power-of-two
+/// (`1 << n`, lowered to `FPow2`) and a fixed-width bit-packing shift
+/// (a signal / limb base shifted by a small amount, e.g. SHA-256's
+/// `hin[..] << j`), which stays on the width-masked integer path.
+pub(super) fn expr_is_one(expr: &Expr) -> bool {
+    match expr {
+        Expr::Number { value, .. } => value == "1",
+        Expr::HexNumber { value, .. } => {
+            let trimmed = value.strip_prefix("0x").unwrap_or(value);
+            trimmed == "1"
+        }
+        _ => false,
+    }
+}
+
 /// Recognize the shape `1 << <const k>` and return the shift amount
 /// `k` if it fits in `0..=253`. Used by the IntDiv / Mod lift to detect
 /// a compile-time-power-of-2 divisor without going through
@@ -99,15 +115,7 @@ pub(super) fn match_one_shl_const(
     else {
         return None;
     };
-    let one_lhs = match lhs.as_ref() {
-        Expr::Number { value, .. } => value == "1",
-        Expr::HexNumber { value, .. } => {
-            let trimmed = value.strip_prefix("0x").unwrap_or(value);
-            trimmed == "1"
-        }
-        _ => false,
-    };
-    if !one_lhs {
+    if !expr_is_one(lhs.as_ref()) {
         return None;
     }
     let k = eval_const_expr(rhs, const_locals)?;

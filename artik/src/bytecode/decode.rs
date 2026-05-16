@@ -217,6 +217,10 @@ fn decode_instrs(bytes: &[u8]) -> Result<(Vec<Instr>, Vec<u32>), ArtikError> {
                 dst: cur.u32()?,
                 src: cur.u32()?,
             },
+            OpTag::FPow2 => Instr::FPow2 {
+                dst: cur.u32()?,
+                amount: cur.u32()?,
+            },
             OpTag::FEq => Instr::FEq {
                 dst: cur.u32()?,
                 a: cur.u32()?,

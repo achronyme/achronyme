@@ -446,6 +446,15 @@ impl ProgramBuilder {
         dst
     }
 
+    /// `2 ^ amount` in the field — the field-precision lowering of
+    /// circom's `1 << amount`. `amount` is a runtime Field register;
+    /// the result is a correct residue for the active backend prime.
+    pub fn fpow2(&mut self, amount: Reg) -> Reg {
+        let dst = self.alloc_reg();
+        self.emit(Instr::FPow2 { dst, amount });
+        dst
+    }
+
     /// AND the canonical representative with a const-pool mask.
     pub fn fand(&mut self, src: Reg, mask_const_id: u32) -> Reg {
         let dst = self.alloc_reg();

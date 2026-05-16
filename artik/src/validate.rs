@@ -238,6 +238,14 @@ fn validate_subprogram(
                 read(&reg_types, *src, RegType::Field)?;
                 bind(&mut reg_types, *dst, RegType::Field)?;
             }
+            Instr::FPow2 { dst, amount } => {
+                // `amount` is a runtime Field register; the executor
+                // computes `2 ^ amount` by repeated squaring bounded by
+                // the canonical representative's bit width, so there is
+                // no shift-amount cap to enforce here.
+                read(&reg_types, *amount, RegType::Field)?;
+                bind(&mut reg_types, *dst, RegType::Field)?;
+            }
             Instr::FEq { dst, a, b } => {
                 read(&reg_types, *a, RegType::Field)?;
                 read(&reg_types, *b, RegType::Field)?;

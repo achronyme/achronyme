@@ -518,6 +518,30 @@ fn step<F: FieldBackend>(
             state.write(*dst, Cell::Field(v))?;
             Ok(Flow::Next)
         }
+        Instr::FPow2 { dst, amount } => {
+            // `2 ^ amount` in the active field — the field-precision
+            // lowering of circom's `1 << amount`. Square-and-multiply
+            // over the canonical representative of `amount` keeps the
+            // result a correct residue for whatever backend prime is
+            // in effect (no modulus constant here) and bounds the work
+            // to the representative's bit width regardless of how large
+            // `amount` is.
+            let exp = (*state.read_field(*amount)?).to_canonical();
+            let mut result = FieldElement::<F>::from_u64(1);
+            let mut base = FieldElement::<F>::from_u64(2);
+            for limb in exp {
+                let mut bits = limb;
+                for _ in 0..64 {
+                    if bits & 1 == 1 {
+                        result = result.mul(&base);
+                    }
+                    base = base.mul(&base);
+                    bits >>= 1;
+                }
+            }
+            state.write(*dst, Cell::Field(result))?;
+            Ok(Flow::Next)
+        }
         Instr::FEq { dst, a, b } => {
             let a = *state.read_field(*a)?;
             let b = *state.read_field(*b)?;
@@ -1088,6 +1112,39 @@ mod tests {
     }
 
     // ── Field-level canonical-rep ops (FIDiv / FIRem / FShr / FAnd) ──
+
+    /// `FPow2` must yield `2 ^ n` as a field value for every shift
+    /// amount, including amounts at and beyond a machine word. The
+    /// width-masked integer shift it replaces returned `1` for any
+    /// `n` that is a multiple of the int width (e.g. `1 << 64`), a
+    /// silent wrong answer; this pins the field-correct result across
+    /// the boundary cases.
+    #[test]
+    fn fpow2_is_field_correct_two_to_the_n() {
+        for n in [0u64, 31, 32, 63, 64, 65] {
+            let body = vec![
+                Instr::ReadSignal {
+                    dst: 0,
+                    signal_id: 0,
+                },
+                Instr::FPow2 { dst: 1, amount: 0 },
+                Instr::WriteWitness { slot_id: 0, src: 1 },
+                Instr::Return { srcs: Vec::new() },
+            ];
+            let prog = roundtrip(Program::new(FieldFamily::BnLike256, 2, Vec::new(), body));
+            let sig = [FE::from_u64(n)];
+            let mut slots = [FE::zero()];
+            run_bn(&prog, &sig, &mut slots).unwrap();
+
+            let mut limbs = [0u64; 4];
+            limbs[(n / 64) as usize] = 1u64 << (n % 64);
+            assert_eq!(
+                slots[0],
+                FE::from_canonical(limbs),
+                "FPow2 must yield 2^{n} as a field value, not a width-masked shift"
+            );
+        }
+    }
 
     /// Drive an FIDiv computation from two signals, return the field result.
     fn run_fidiv(a: FE, b: FE) -> Result<FE, ArtikError> {

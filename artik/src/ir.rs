@@ -202,6 +202,15 @@ pub enum OpTag {
     /// `dst (Field) = src AND mask`, mask loaded from the const pool.
     /// Result is always a valid canonical rep because `(x < p) AND m ≤ x < p`.
     FAnd = 0x29,
+    /// `dst (Field) = 2 ^ amount` in the field (i.e. `(1 << amount) mod
+    /// p`), where `amount` is a runtime Field register. Computed by
+    /// repeated squaring of the field element `2`, so the result is the
+    /// correct residue for the active backend's prime and the work is
+    /// bounded by the canonical representative's bit width — no machine
+    /// width is involved. This is the field-precision lowering of
+    /// circom's `1 << n`, distinct from the fixed-width integer shift
+    /// used for 32-bit bit-packing gadgets.
+    FPow2 = 0x2A,
 
     // Integer ops
     IBin = 0x30,
@@ -251,6 +260,7 @@ impl OpTag {
             0x27 => Some(FIRem),
             0x28 => Some(FShr),
             0x29 => Some(FAnd),
+            0x2A => Some(FPow2),
             0x30 => Some(IBin),
             0x31 => Some(INot),
             0x32 => Some(Rotl32),
@@ -370,6 +380,10 @@ pub enum Instr {
         src: Reg,
         mask_const_id: u32,
     },
+    FPow2 {
+        dst: Reg,
+        amount: Reg,
+    },
 
     // ── Integer ops ────────────────────────────────────────────────
     IBin {
@@ -458,7 +472,7 @@ impl Instr {
             Instr::PushConst { .. } | Instr::ReadSignal { .. } | Instr::WriteWitness { .. } => {
                 1 + 4 + 4
             }
-            Instr::FInv { .. } | Instr::ArrayId { .. } => 1 + 4 + 4,
+            Instr::FInv { .. } | Instr::ArrayId { .. } | Instr::FPow2 { .. } => 1 + 4 + 4,
             Instr::FAdd { .. }
             | Instr::FSub { .. }
             | Instr::FMul { .. }
