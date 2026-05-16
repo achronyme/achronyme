@@ -1,58 +1,20 @@
 //! End-to-end gate for the subprogram witness lift.
 //!
-//! Runs only with `ARTIK_SUBPROGRAM_LIFT=1`. This is a dedicated test
-//! binary, so the env mutation lives in its own process and cannot
-//! affect the rest of the suite (other integration binaries run in
-//! separate processes; the default-off runs are untouched).
-//!
 //! The fixture's `compute(x) = helper(x) + helper(x + 1) = 4*x + 4`
 //! exercises the whole path: a nested call lifted as a real Artik
 //! `Call`, two call sites with the same runtime parameter signature
 //! deduplicated to one callee subprogram, and the callee returning by
-//! value. The decoded program is validated (the Phase-bytecode
-//! validator runs inside `decode`) and then executed to confirm the
-//! witness value is correct.
+//! value. The decoded program is validated (the bytecode validator
+//! runs inside `decode`) and then executed to confirm the witness
+//! value is correct.
 
 use std::path::Path;
 
 use ir_forge::types::CircuitNode;
 use memory::{Bn254Fr, FieldElement};
 
-/// Pins `ARTIK_SUBPROGRAM_LIFT` for its lifetime and restores the
-/// prior value on drop, even on panic.
-struct SubprogramLiftEnvGuard {
-    prior: Option<String>,
-}
-
-impl SubprogramLiftEnvGuard {
-    fn enabled() -> Self {
-        let prior = std::env::var("ARTIK_SUBPROGRAM_LIFT").ok();
-        // SAFETY: this is the only test in this binary and no other
-        // thread here reads the variable; the value is restored on
-        // drop. Separate test binaries are separate processes.
-        unsafe {
-            std::env::set_var("ARTIK_SUBPROGRAM_LIFT", "1");
-        }
-        Self { prior }
-    }
-}
-
-impl Drop for SubprogramLiftEnvGuard {
-    fn drop(&mut self) {
-        // SAFETY: see SubprogramLiftEnvGuard::enabled.
-        unsafe {
-            match &self.prior {
-                Some(v) => std::env::set_var("ARTIK_SUBPROGRAM_LIFT", v),
-                None => std::env::remove_var("ARTIK_SUBPROGRAM_LIFT"),
-            }
-        }
-    }
-}
-
 #[test]
 fn nested_call_lifts_to_subprograms_and_computes_the_witness() {
-    let _env = SubprogramLiftEnvGuard::enabled();
-
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/fn_witness_lift_nested_test.circom");
     let lib_dirs = vec![manifest_dir.join("test/circomlib")];
