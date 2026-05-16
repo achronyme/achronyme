@@ -20,7 +20,7 @@ use crate::ast::{BinOp, Expr, UnaryOp};
 
 use super::big_eval::try_eval_big;
 use super::bytecode::PeelLhs;
-use super::helpers::{eval_const_expr, expr_is_one, extract_call_name};
+use super::helpers::{eval_const_expr, expr_is_mux_compatible, expr_is_one, extract_call_name};
 use super::{LiftState, NestedResult};
 
 impl<'f> LiftState<'f> {
@@ -191,6 +191,39 @@ impl<'f> LiftState<'f> {
                     NestedResult::Scalar(r) => Some(r),
                     NestedResult::Array(_, _) | NestedResult::Array2D(_, _, _) => None,
                 }
+            }
+            Expr::Ternary {
+                condition,
+                if_true,
+                if_false,
+                ..
+            } => {
+                // Compile-time-foldable condition: emit only the taken
+                // arm, mirroring the `if / else` fold. circom truthiness
+                // is "non-zero is true".
+                if let Some(c) = eval_const_expr(condition, &self.const_locals) {
+                    return self.lift_expr(if c != 0 { if_true } else { if_false });
+                }
+                // Runtime condition: branchless select
+                // `cond_bool * if_true + (1 - cond_bool) * if_false`.
+                // Both arms are evaluated unconditionally, so each must
+                // be side-effect-free in the same sense the if/else mux
+                // requires (no nested calls / writes) — the established
+                // expression-mux contract. `lift_expr` yields only a
+                // scalar `Reg`, so an array-valued arm declines here
+                // rather than silently selecting a handle.
+                if !expr_is_mux_compatible(if_true) || !expr_is_mux_compatible(if_false) {
+                    return None;
+                }
+                let raw_cond = self.lift_expr(condition)?;
+                let cond_bool = self.field_to_bool(raw_cond)?;
+                let one = self.push_const_unsigned(1)?;
+                let not_cond = self.builder.fsub(one, cond_bool);
+                let t = self.lift_expr(if_true)?;
+                let f = self.lift_expr(if_false)?;
+                let t_sel = self.builder.fmul(cond_bool, t);
+                let f_sel = self.builder.fmul(not_cond, f);
+                Some(self.builder.fadd(t_sel, f_sel))
             }
             _ => None,
         }

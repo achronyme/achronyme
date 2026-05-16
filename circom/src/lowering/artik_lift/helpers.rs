@@ -206,7 +206,7 @@ pub(super) fn stmt_is_mux_compatible(stmt: &Stmt) -> bool {
 /// runtime mux? Calls bail out: a nested lift could still read
 /// signals or emit work that's fine in isolation, but we keep the
 /// MVP conservative and only admit pure register arithmetic.
-fn expr_is_mux_compatible(expr: &Expr) -> bool {
+pub(super) fn expr_is_mux_compatible(expr: &Expr) -> bool {
     match expr {
         Expr::Number { .. } | Expr::HexNumber { .. } | Expr::Ident { .. } => true,
         Expr::BinOp { lhs, rhs, .. } => expr_is_mux_compatible(lhs) && expr_is_mux_compatible(rhs),
