@@ -799,6 +799,80 @@ impl<'f> LiftState<'f> {
         Some(())
     }
 
+    /// A descending unit-decrement loop counting down to and including
+    /// zero — `for (var i = START; i >= 0; i--)` or the equivalent
+    /// `i > -1`. Naively desugaring this to `while (i >= 0) { body;
+    /// i-- }` is unsound: `i >= 0` is a tautology for an unsigned /
+    /// field counter, so after `i == 0` the decrement underflows to
+    /// the field value `p - 1` and the loop runs on with a wrapped
+    /// counter (garbage array indices, wrong witness, silently). circom
+    /// fully unrolls these (the bound is morally constant); the runtime
+    /// path is reached only when the unroll bailed or overflowed the
+    /// frame cap, and it must still be correct.
+    ///
+    /// Returns the loop's `(var, start_expr)` if it has this shape.
+    /// Matches *exactly* `for (var i = START; i >= 0; i--) BODY` (and the
+    /// `i > -1` spelling) with a unit decrement — the shape circomlib uses
+    /// for descending bigint passes. The scope is deliberately narrow:
+    /// other descending forms (non-unit decrement `i -= 2`, or a positive
+    /// inclusive lower bound `i >= K` for `K > 0` that the counter can step
+    /// past) do *not* match and fall through to the generic runtime-`while`
+    /// path, which is still tautological for a field counter (the canonical
+    /// residue always satisfies the bound) and would underflow the same way.
+    /// Those are the same silent-landmine class; left uncovered intentionally
+    /// until a real circuit exercises one, at which point the rewrite
+    /// generalises here rather than the pathology being rediscovered
+    /// downstream.
+    fn descending_to_zero(
+        &self,
+        init: &Stmt,
+        condition: &Expr,
+        step: &Stmt,
+    ) -> Option<(String, Expr)> {
+        let Stmt::VarDecl {
+            names,
+            init: Some(start_expr),
+            ..
+        } = init
+        else {
+            return None;
+        };
+        let [var_name] = names.as_slice() else {
+            return None;
+        };
+
+        let descending = match step {
+            Stmt::Expr { expr, .. } => is_decrement_on(expr, var_name),
+            Stmt::CompoundAssign {
+                target,
+                op: CompoundOp::Sub,
+                value,
+                ..
+            } => {
+                matches!(target, Expr::Ident { name, .. } if name == var_name)
+                    && eval_const_expr(value, &self.const_locals) == Some(1)
+            }
+            _ => false,
+        };
+        if !descending {
+            return None;
+        }
+
+        let Expr::BinOp { op, lhs, rhs, .. } = condition else {
+            return None;
+        };
+        if !matches!(lhs.as_ref(), Expr::Ident { name, .. } if name == var_name) {
+            return None;
+        }
+        let bound = eval_const_expr(rhs, &self.const_locals)?;
+        // Lower-inclusive bound of exactly zero: `i >= 0` or `i > -1`.
+        let counts_down_to_zero = matches!((op, bound), (BinOp::Ge, 0) | (BinOp::Gt, -1));
+        if !counts_down_to_zero {
+            return None;
+        }
+        Some((var_name.clone(), start_expr.clone()))
+    }
+
     /// Runtime fallback for `for` when the bounds are not literal:
     /// emit `init`, then a `while (cond)` whose body is `body; step;`.
     pub(super) fn lift_for_runtime(
@@ -808,6 +882,59 @@ impl<'f> LiftState<'f> {
         step: &Stmt,
         body: &[Stmt],
     ) -> Option<()> {
+        if let Some((var_name, start_expr)) = self.descending_to_zero(init, condition, step) {
+            // Rewrite `for (i = START; i >= 0; i--) BODY` into the
+            // terminating, underflow-free equivalent
+            //   i = START + 1;
+            //   while (i != 0) { i = i - 1; BODY }
+            // which runs BODY for i = START, START-1, ..., 0 and exits
+            // when the top-of-loop test sees i == 0 — `i != 0` is not a
+            // tautology, and the counter never steps below zero. All of
+            // `lift_while`'s slot-promotion / array-hoist machinery is
+            // reused unchanged.
+            let span = start_expr.span().clone();
+            let one = Expr::Number {
+                value: "1".to_string(),
+                span: span.clone(),
+            };
+            let new_init = Stmt::VarDecl {
+                names: vec![var_name.clone()],
+                dimensions: Vec::new(),
+                init: Some(Expr::BinOp {
+                    op: BinOp::Add,
+                    lhs: Box::new(start_expr),
+                    rhs: Box::new(one.clone()),
+                    span: span.clone(),
+                }),
+                span: span.clone(),
+            };
+            let dec = Stmt::CompoundAssign {
+                target: Expr::Ident {
+                    name: var_name.clone(),
+                    span: span.clone(),
+                },
+                op: CompoundOp::Sub,
+                value: one,
+                span: span.clone(),
+            };
+            let cond_ne_zero = Expr::BinOp {
+                op: BinOp::Neq,
+                lhs: Box::new(Expr::Ident {
+                    name: var_name,
+                    span: span.clone(),
+                }),
+                rhs: Box::new(Expr::Number {
+                    value: "0".to_string(),
+                    span: span.clone(),
+                }),
+                span,
+            };
+            let mut rewritten: Vec<Stmt> = Vec::with_capacity(body.len() + 1);
+            rewritten.push(dec);
+            rewritten.extend_from_slice(body);
+            self.lift_stmt(&new_init)?;
+            return self.lift_while(&cond_ne_zero, &rewritten);
+        }
         self.lift_stmt(init)?;
         let mut combined: Vec<Stmt> = body.to_vec();
         combined.push(step.clone());
