@@ -37,12 +37,19 @@ use crate::error::ArtikError;
 use crate::ir::{ElemT, Instr, IntBinOp, IntW};
 use crate::program::Program;
 
-/// Default cap for the interpreter's instruction counter. Chosen large
-/// enough for realistic witness programs (one SHA-256 round is ~64
-/// instructions; a full block ~4K; a SHA-256 over a 64-byte message
-/// fits comfortably under 32K). Callers that need more should use
-/// [`execute_with_budget`].
-pub const DEFAULT_BUDGET: u64 = 8_000_000;
+/// Default cap for the interpreter's instruction counter. Sized for
+/// the heaviest realistic witness program: a 256-bit modular
+/// inversion (Fermat: a modular exponentiation with a ~256-bit
+/// exponent ≈ 255 modular squarings, each a multi-limb multiply plus
+/// a long-division reduction) runs on the order of 1–3·10⁷
+/// instructions. The cap is set well above that with headroom for
+/// larger fields and heavier helpers, while still bounding runaway
+/// bytecode — a non-terminating loop trips this in well under a
+/// second of interpreter time. Lighter gadgets are far below it (one
+/// SHA-256 round ≈ 64 instructions; a full block ≈ 4K; SHA-256 over a
+/// 64-byte message well under 32K). Callers needing a different bound
+/// use [`execute_with_budget`].
+pub const DEFAULT_BUDGET: u64 = 100_000_000;
 
 /// Cumulative cap on array cells allocated across a single
 /// [`execute`] call. 16M cells corresponds to ~512 MB for BN-like
