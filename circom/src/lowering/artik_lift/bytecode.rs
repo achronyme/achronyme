@@ -3,8 +3,12 @@
 //! Methods that wrap the [`artik::ProgramBuilder`] API into the lift's
 //! preferred shapes:
 //!
+//! - [`LiftState::lift_field_binop`] — dispatch a [`BinOp`] whose
+//!   right operand is an expression, peeling a constant-amount `>>`
+//!   or constant bit-mask `&` to a field-precision `FShr` / `FAnd`
+//!   (no width truncation) before the integer fallback.
 //! - [`LiftState::apply_field_binop`] — dispatch a [`BinOp`] over field
-//!   registers; bit ops promote to [`IntW::U32`] via
+//!   registers; the remaining bit ops promote to [`IntW::U32`] via
 //!   [`LiftState::demote_to_u32`], apply at integer width, then promote
 //!   back via [`LiftState::promote_u32_to_field`].
 //! - [`LiftState::push_const_int`] / `push_const_unsigned` /
@@ -22,6 +26,15 @@ use crate::ast::{BinOp, Expr};
 use super::big_eval::big_to_le_bytes_trimmed;
 use super::helpers::{eval_const_expr, match_one_shl_const};
 use super::{ConstInt, LiftState};
+
+/// Left operand for [`LiftState::lift_field_binop`]: either an
+/// expression still to be lifted (the general `a op b` case) or a
+/// register already materialized (compound-assignment sites that have
+/// loaded the target).
+pub(super) enum PeelLhs<'a> {
+    Expr(&'a Expr),
+    Reg(Reg),
+}
 
 impl<'f> LiftState<'f> {
     /// Apply a binary op to two field-typed registers. Field ops
@@ -163,6 +176,81 @@ impl<'f> LiftState<'f> {
         let b_int = self.demote_to_u32(b);
         let dst_int = self.builder.ibin(op, IntW::U32, a_int, b_int);
         self.promote_u32_to_field(dst_int)
+    }
+
+    /// Dispatch a [`BinOp`] whose right operand is given as an
+    /// expression, peeling a constant-amount shift-right or a constant
+    /// bit-mask to a field-precision op before falling back to the
+    /// u32 bit path.
+    ///
+    /// `x >> <const k>` lowers to `FShr { src, amount: k }` and
+    /// `x & <const m>` to `FAnd { src, mask }`, keeping `x` at field
+    /// precision. This matters for multi-limb bigint code: a 64-bit
+    /// limb shifted/masked through the u32 path
+    /// ([`apply_int_binop_u32`]) is truncated to its low 32 bits,
+    /// silently corrupting any value above `2^32` (e.g. extracting
+    /// exponent bit `j >= 32` of a limb in `mod_exp`). The u32 path
+    /// stays correct for the <=32-bit gadgets (SHA-256 / BLAKE2s) that
+    /// rely on its modular wrap, so only constant shift/mask operands
+    /// are peeled; every other bit op (`<<`, `|`, `^`, a two-variable
+    /// `&`, a negative mask) keeps the u32 path. `&` peels from either
+    /// side (commutative); `>>` only from the right.
+    pub(super) fn lift_field_binop(
+        &mut self,
+        op: BinOp,
+        lhs: PeelLhs<'_>,
+        rhs: &Expr,
+    ) -> Option<Reg> {
+        match op {
+            BinOp::ShiftR => {
+                if let Some(k) = eval_const_expr(rhs, &self.const_locals) {
+                    if (0..=253).contains(&k) {
+                        let src = self.lift_peel_lhs(lhs)?;
+                        return Some(self.builder.fshr(src, k as u32));
+                    }
+                }
+            }
+            BinOp::BitAnd => {
+                if let Some(m) = eval_const_expr(rhs, &self.const_locals) {
+                    if m >= 0 {
+                        let src = self.lift_peel_lhs(lhs)?;
+                        let mask_id = self.intern_mask(m as u128);
+                        return Some(self.builder.fand(src, mask_id));
+                    }
+                }
+                if let PeelLhs::Expr(le) = lhs {
+                    if let Some(m) = eval_const_expr(le, &self.const_locals) {
+                        if m >= 0 {
+                            let src = self.lift_expr(rhs)?;
+                            let mask_id = self.intern_mask(m as u128);
+                            return Some(self.builder.fand(src, mask_id));
+                        }
+                    }
+                }
+            }
+            _ => {}
+        }
+        let a = self.lift_peel_lhs(lhs)?;
+        let b = self.lift_expr(rhs)?;
+        self.apply_field_binop(op, a, b)
+    }
+
+    fn lift_peel_lhs(&mut self, lhs: PeelLhs<'_>) -> Option<Reg> {
+        match lhs {
+            PeelLhs::Expr(e) => self.lift_expr(e),
+            PeelLhs::Reg(r) => Some(r),
+        }
+    }
+
+    /// Intern an arbitrary non-negative bit-mask as trimmed
+    /// little-endian constant bytes (mirrors `push_const_unsigned`'s
+    /// trailing-zero trim) and return its const-pool id for `FAnd`.
+    fn intern_mask(&mut self, m: u128) -> u32 {
+        let mut bytes = m.to_le_bytes().to_vec();
+        while bytes.last() == Some(&0) && bytes.len() > 1 {
+            bytes.pop();
+        }
+        self.builder.intern_const(bytes)
     }
 
     pub(super) fn push_const_int(&mut self, v: ConstInt) -> Option<Reg> {

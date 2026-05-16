@@ -19,6 +19,7 @@ use artik::{ElemT, IntW, Reg};
 use crate::ast::{BinOp, Expr, UnaryOp};
 
 use super::big_eval::try_eval_big;
+use super::bytecode::PeelLhs;
 use super::helpers::{eval_const_expr, expr_is_one, extract_call_name};
 use super::{LiftState, NestedResult};
 
@@ -92,11 +93,7 @@ impl<'f> LiftState<'f> {
                     let amount = self.lift_expr(rhs)?;
                     Some(self.builder.fpow2(amount))
                 }
-                _ => {
-                    let a = self.lift_expr(lhs)?;
-                    let c = self.lift_expr(rhs)?;
-                    self.apply_field_binop(*op, a, c)
-                }
+                _ => self.lift_field_binop(*op, PeelLhs::Expr(lhs.as_ref()), rhs),
             },
             Expr::UnaryOp {
                 op: UnaryOp::Neg,

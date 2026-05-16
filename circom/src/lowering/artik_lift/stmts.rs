@@ -14,6 +14,7 @@ use artik::ElemT;
 
 use crate::ast::{BinOp, Expr, PostfixOp, Stmt};
 
+use super::bytecode::PeelLhs;
 use super::helpers::{compound_to_binop, eval_const_expr};
 use super::{ArrayShape, LiftState, NestedResult, ReturnShape};
 
@@ -473,8 +474,7 @@ impl<'f> LiftState<'f> {
                         let flat_idx_reg =
                             self.flatten_2d_index(inner_idx, outer_idx, rows, cols)?;
                         let cur = self.builder.load_arr(handle, flat_idx_reg);
-                        let rhs_reg = self.lift_expr(value)?;
-                        let new_val = self.apply_field_binop(binop, cur, rhs_reg)?;
+                        let new_val = self.lift_field_binop(binop, PeelLhs::Reg(cur), value)?;
                         self.builder.store_arr(handle, flat_idx_reg, new_val);
                         return Some(());
                     }
@@ -489,8 +489,7 @@ impl<'f> LiftState<'f> {
                     }
                     let idx_reg = self.push_int_const(idx as u64)?;
                     let cur = self.builder.load_arr(arr_reg, idx_reg);
-                    let rhs_reg = self.lift_expr(value)?;
-                    let new_val = self.apply_field_binop(binop, cur, rhs_reg)?;
+                    let new_val = self.lift_field_binop(binop, PeelLhs::Reg(cur), value)?;
                     self.builder.store_arr(arr_reg, idx_reg, new_val);
                     return Some(());
                 }
@@ -512,8 +511,7 @@ impl<'f> LiftState<'f> {
                     }
                 }
                 let lhs_reg = self.lookup_ident(name)?;
-                let rhs_reg = self.lift_expr(value)?;
-                let r = self.apply_field_binop(binop, lhs_reg, rhs_reg)?;
+                let r = self.lift_field_binop(binop, PeelLhs::Reg(lhs_reg), value)?;
                 self.locals.insert(name.clone(), r);
                 self.const_locals.remove(name);
                 Some(())
