@@ -12,11 +12,15 @@
 
 use std::collections::HashMap;
 
-use artik::{ElemT, Reg};
+use artik::{ElemT, Reg, RegType};
 
 use crate::ast::{Expr, FunctionDef};
 
-use super::{ArrayShape, ConstInt, LiftState};
+use super::driver::ParamSig;
+use super::helpers::{
+    compute_dim_signature, eval_const_expr, infer_callee_return_shape, CalleeReturnShape,
+};
+use super::{ArrayShape, ConstInt, LiftState, NestedResult};
 
 /// How one callee parameter is supplied by the call site. A scalar is
 /// the argument register (plus its compile-time value when the caller
@@ -146,6 +150,119 @@ impl LiftState<'_> {
         self.builder.ret_vals(&[r]);
         self.halted = true;
         Some(())
+    }
+
+    /// Lift a nested call as a real Artik `Call` to a callee
+    /// subprogram instead of inlining the callee body. Classifies the
+    /// arguments, derives the callee's parameter signature, reserves
+    /// (or reuses) the matching subprogram, emits the `Call`, and maps
+    /// its result registers back to a [`NestedResult`] so the existing
+    /// call-result consumers are unchanged. The callee body itself is
+    /// not lifted here — it is queued on the driver and drained after
+    /// the entry body. Returns `None` (so the caller falls back to the
+    /// inlining chain) when the call shape is not reservable: an
+    /// unknown function, an arity mismatch, a runtime array dimension
+    /// in the callee body, or an unmodelled return shape.
+    pub(super) fn lift_nested_call_subprogram(
+        &mut self,
+        name: &str,
+        args: &[Expr],
+    ) -> Option<NestedResult> {
+        let func = self.functions.get(name).copied()?;
+        if args.len() != func.params.len() {
+            return None;
+        }
+
+        // Classify each argument: an array argument crosses by handle
+        // register; a scalar argument lifts to a value register and
+        // contributes its compile-time value to the signature when the
+        // caller passed a constant. `arg_regs` is what the `Call`
+        // passes positionally; `param_sig` / `param_types` describe the
+        // callee subprogram.
+        let mut arg_regs: Vec<Reg> = Vec::with_capacity(args.len());
+        let mut param_sig: Vec<ParamSig> = Vec::with_capacity(args.len());
+        let mut param_types: Vec<RegType> = Vec::with_capacity(args.len());
+        let mut scan_consts: HashMap<String, ConstInt> = HashMap::new();
+
+        for (arg, param_name) in args.iter().zip(func.params.iter()) {
+            // `f(..., arr, ...)` — a bare array local crosses by handle.
+            if let Expr::Ident { name: arg_name, .. } = arg {
+                if let Some(&shape) = self.arrays.get(arg_name) {
+                    arg_regs.push(shape.handle());
+                    param_sig.push(array_param_sig(shape));
+                    param_types.push(RegType::Array(ElemT::Field));
+                    continue;
+                }
+            }
+            // `f(..., arr2d[row], ...)` — materialize the row, cross by
+            // its handle.
+            if let Expr::Index { object, index, .. } = arg {
+                if let Expr::Ident { name: arg_name, .. } = object.as_ref() {
+                    if let Some(ArrayShape::Flat2D {
+                        handle: src_handle,
+                        rows,
+                        cols,
+                    }) = self.arrays.get(arg_name).copied()
+                    {
+                        let row_shape =
+                            self.materialize_row_slice(src_handle, rows, cols, index)?;
+                        arg_regs.push(row_shape.handle());
+                        param_sig.push(array_param_sig(row_shape));
+                        param_types.push(RegType::Array(ElemT::Field));
+                        continue;
+                    }
+                }
+            }
+            // Scalar argument.
+            let const_val = eval_const_expr(arg, &self.const_locals);
+            let reg = self.lift_expr(arg)?;
+            arg_regs.push(reg);
+            param_types.push(RegType::Field);
+            match const_val {
+                Some(v) => {
+                    param_sig.push(ParamSig::ScalarConst(v));
+                    scan_consts.insert(param_name.clone(), v);
+                }
+                None => param_sig.push(ParamSig::ScalarRuntime),
+            }
+        }
+
+        // A runtime array dimension in the callee body means no
+        // fixed-shape subprogram can be reserved.
+        compute_dim_signature(&func.body.stmts, &scan_consts)?;
+
+        let ret_shape = infer_callee_return_shape(&func.body.stmts, &scan_consts);
+        let ret_types = ret_shape.to_reg_types()?;
+
+        // Reserve (or reuse) the callee subprogram and emit the Call.
+        // Disjoint field borrows: the registry borrows `self.driver`,
+        // the reservation borrows `self.builder`.
+        let func_id = self.driver.as_mut()?.lookup_or_reserve_callee(
+            &mut self.builder,
+            name,
+            &param_sig,
+            param_types,
+            ret_types.clone(),
+        );
+        let rets = self.builder.call(func_id, &arg_regs, &ret_types);
+        let result = *rets.first()?;
+
+        Some(match ret_shape {
+            CalleeReturnShape::Scalar => NestedResult::Scalar(result),
+            CalleeReturnShape::Array(n) => NestedResult::Array(result, n),
+            CalleeReturnShape::Array2D(r, c) => NestedResult::Array2D(result, r, c),
+            // `to_reg_types` already returned `None` for `Other`.
+            CalleeReturnShape::Other => return None,
+        })
+    }
+}
+
+/// The parameter signature contribution of an array argument of the
+/// given shape.
+fn array_param_sig(shape: ArrayShape) -> ParamSig {
+    match shape {
+        ArrayShape::Flat1D { len, .. } => ParamSig::Array1D(len),
+        ArrayShape::Flat2D { rows, cols, .. } => ParamSig::Array2D(rows, cols),
     }
 }
 
@@ -281,6 +398,68 @@ mod tests {
                 .iter()
                 .any(|i| matches!(i, artik::Instr::WriteWitness { .. })),
             "an array callee return must not write witness slots"
+        );
+    }
+
+    #[test]
+    fn nested_call_emits_call_and_queues_callee() {
+        use crate::ast::{Definition as Def, Expr, Stmt};
+        use crate::lowering::artik_lift::driver::LiftDriver;
+
+        let src = "function inner(x) { return x * x; } function probe(x) { return inner(x); }";
+        let (prog, errors) = parse_circom(src).expect("parse failed");
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let Def::Function(inner) = &prog.definitions[0] else {
+            panic!("expected inner");
+        };
+        let Def::Function(probe) = &prog.definitions[1] else {
+            panic!("expected probe");
+        };
+
+        let mut functions: HashMap<String, &FunctionDef> = HashMap::new();
+        functions.insert("inner".to_string(), inner);
+
+        let mut state = LiftState::new(&[], &[], &functions);
+        state.driver = Some(LiftDriver::new());
+
+        // `x` is a runtime scalar local in the caller.
+        let xr = state.builder.alloc_reg();
+        state.locals.insert("x".to_string(), xr);
+
+        // Pull the `inner(x)` call out of probe's body.
+        let Stmt::Return {
+            value: Expr::Call { callee, args, .. },
+            ..
+        } = &probe.body.stmts[0]
+        else {
+            panic!("expected `return inner(x);`");
+        };
+        let Expr::Ident { name, .. } = callee.as_ref() else {
+            panic!("expected bare callee");
+        };
+
+        let res = state
+            .lift_nested_call(name, args)
+            .expect("subprogram call lifts");
+        assert!(matches!(res, NestedResult::Scalar(_)));
+
+        // `inner` was reserved and queued exactly once, as a runtime
+        // scalar specialization, at subprogram id 1.
+        let driver = state.driver.as_mut().unwrap();
+        let pc = driver.next_pending().expect("inner queued");
+        assert_eq!(pc.name, "inner");
+        assert_eq!(pc.param_sig, vec![super::ParamSig::ScalarRuntime]);
+        assert_eq!(pc.func_id, 1);
+        assert!(driver.next_pending().is_none());
+
+        // A Call to subprogram 1 was emitted into the caller body.
+        let program = state.builder.finish().expect("builder finishes");
+        assert!(
+            program.subprograms[0]
+                .body
+                .iter()
+                .any(|i| matches!(i, artik::Instr::Call { func_id: 1, .. })),
+            "expected a Call to subprogram 1 in the caller body"
         );
     }
 
