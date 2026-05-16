@@ -387,6 +387,12 @@ fn try_lift_via_subprograms(
         program_bytes,
         outputs,
         shape,
+        // Always empty here: a nested call is a real `Call` inside this
+        // one multi-subprogram payload, never a separately-emitted
+        // fragment. An unsupported call shape returns `None` from
+        // `lift_nested_call_subprogram`, declining the whole entry lift
+        // rather than promoting a standalone fragment, so no orphan
+        // fragment can be left needing pre-emission.
         extra_fragments: Vec::new(),
     })
 }
