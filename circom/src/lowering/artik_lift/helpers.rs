@@ -13,11 +13,11 @@
 //! - [`compound_to_binop`] — map a compound-assignment operator to the
 //!   plain binary op the lift knows how to emit.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use artik::{ElemT, RegType};
 
-use crate::ast::{BinOp, CompoundOp, ElseBranch, Expr, PostfixOp, Stmt, UnaryOp};
+use crate::ast::{BinOp, CompoundOp, ElseBranch, Expr, FunctionDef, PostfixOp, Stmt, UnaryOp};
 
 use super::ConstInt;
 
@@ -750,6 +750,8 @@ enum DeclDim {
 pub(super) fn infer_callee_return_shape(
     stmts: &[Stmt],
     param_consts: &HashMap<String, ConstInt>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
 ) -> CalleeReturnShape {
     // `None` value = a name declared as an array whose dimension does
     // not fold against the param consts. Returning such a name is
@@ -765,7 +767,15 @@ pub(super) fn infer_callee_return_shape(
 
     let mut found: Option<CalleeReturnShape> = None;
     let mut ok = true;
-    classify_returns(stmts, param_consts, &dim_map, &mut found, &mut ok);
+    classify_returns(
+        stmts,
+        param_consts,
+        &dim_map,
+        functions,
+        visited,
+        &mut found,
+        &mut ok,
+    );
     if !ok {
         return CalleeReturnShape::Other;
     }
@@ -858,31 +868,38 @@ fn collect_return_dims_in_stmt(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_returns(
     stmts: &[Stmt],
     param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
     found: &mut Option<CalleeReturnShape>,
     ok: &mut bool,
 ) {
     for stmt in stmts {
-        classify_returns_in_stmt(stmt, param_consts, dim_map, found, ok);
+        classify_returns_in_stmt(stmt, param_consts, dim_map, functions, visited, found, ok);
         if !*ok {
             return;
         }
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn classify_returns_in_stmt(
     stmt: &Stmt,
     param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
     found: &mut Option<CalleeReturnShape>,
     ok: &mut bool,
 ) {
     match stmt {
         Stmt::Return { value, .. } => {
-            let shape = match classify_return_expr(value, param_consts, dim_map) {
+            let shape = match classify_return_expr(value, param_consts, dim_map, functions, visited)
+            {
                 Some(s) => s,
                 None => {
                     *ok = false;
@@ -900,23 +917,73 @@ fn classify_returns_in_stmt(
             else_body,
             ..
         } => {
-            classify_returns(&then_body.stmts, param_consts, dim_map, found, ok);
+            classify_returns(
+                &then_body.stmts,
+                param_consts,
+                dim_map,
+                functions,
+                visited,
+                found,
+                ok,
+            );
             match else_body {
-                Some(ElseBranch::Block(b)) => {
-                    classify_returns(&b.stmts, param_consts, dim_map, found, ok)
-                }
-                Some(ElseBranch::IfElse(boxed)) => {
-                    classify_returns_in_stmt(boxed, param_consts, dim_map, found, ok)
-                }
+                Some(ElseBranch::Block(b)) => classify_returns(
+                    &b.stmts,
+                    param_consts,
+                    dim_map,
+                    functions,
+                    visited,
+                    found,
+                    ok,
+                ),
+                Some(ElseBranch::IfElse(boxed)) => classify_returns_in_stmt(
+                    boxed,
+                    param_consts,
+                    dim_map,
+                    functions,
+                    visited,
+                    found,
+                    ok,
+                ),
                 None => {}
             }
         }
-        Stmt::For { body, .. } => classify_returns(&body.stmts, param_consts, dim_map, found, ok),
-        Stmt::While { body, .. } => classify_returns(&body.stmts, param_consts, dim_map, found, ok),
-        Stmt::DoWhile { body, .. } => {
-            classify_returns(&body.stmts, param_consts, dim_map, found, ok)
-        }
-        Stmt::Block(b) => classify_returns(&b.stmts, param_consts, dim_map, found, ok),
+        Stmt::For { body, .. } => classify_returns(
+            &body.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
+        Stmt::While { body, .. } => classify_returns(
+            &body.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
+        Stmt::DoWhile { body, .. } => classify_returns(
+            &body.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
+        Stmt::Block(b) => classify_returns(
+            &b.stmts,
+            param_consts,
+            dim_map,
+            functions,
+            visited,
+            found,
+            ok,
+        ),
         _ => {}
     }
 }
@@ -930,6 +997,8 @@ fn classify_return_expr(
     value: &Expr,
     param_consts: &HashMap<String, ConstInt>,
     dim_map: &HashMap<String, Option<DeclDim>>,
+    functions: &HashMap<String, &FunctionDef>,
+    visited: &mut HashSet<String>,
 ) -> Option<CalleeReturnShape> {
     match value {
         Expr::ArrayLit { elements, .. } => {
@@ -955,8 +1024,8 @@ fn classify_return_expr(
         Expr::Ternary {
             if_true, if_false, ..
         } => {
-            let a = classify_return_expr(if_true, param_consts, dim_map)?;
-            let b = classify_return_expr(if_false, param_consts, dim_map)?;
+            let a = classify_return_expr(if_true, param_consts, dim_map, functions, visited)?;
+            let b = classify_return_expr(if_false, param_consts, dim_map, functions, visited)?;
             (a == b).then_some(a)
         }
         // A forwarded call result resolves to the callee's shape, which
@@ -1097,13 +1166,44 @@ mod tests {
     }
 
     fn shape(body_src: &str) -> CalleeReturnShape {
-        infer_callee_return_shape(&parse_body(body_src), &HashMap::new())
+        infer_callee_return_shape(
+            &parse_body(body_src),
+            &HashMap::new(),
+            &HashMap::new(),
+            &mut HashSet::new(),
+        )
     }
 
     fn shape_with(body_src: &str, consts: &[(&str, ConstInt)]) -> CalleeReturnShape {
         let map: HashMap<String, ConstInt> =
             consts.iter().map(|(k, v)| (k.to_string(), *v)).collect();
-        infer_callee_return_shape(&parse_body(body_src), &map)
+        infer_callee_return_shape(
+            &parse_body(body_src),
+            &map,
+            &HashMap::new(),
+            &mut HashSet::new(),
+        )
+    }
+
+    /// Parse a source holding several `function` definitions and
+    /// classify the return shape of `entry`'s body against a registry
+    /// of all the others — exercises forwarded-call return resolution.
+    fn shape_multi(src: &str, entry: &str) -> CalleeReturnShape {
+        let (prog, errors) = parse_circom(src).expect("parse failed");
+        assert!(errors.is_empty(), "parse errors: {errors:?}");
+        let mut funcs: HashMap<String, &FunctionDef> = HashMap::new();
+        for def in &prog.definitions {
+            if let Definition::Function(f) = def {
+                funcs.insert(f.name.clone(), f);
+            }
+        }
+        let body = funcs
+            .get(entry)
+            .unwrap_or_else(|| panic!("no function {entry}"))
+            .body
+            .stmts
+            .clone();
+        infer_callee_return_shape(&body, &HashMap::new(), &funcs, &mut HashSet::new())
     }
 
     #[test]
@@ -1166,8 +1266,23 @@ mod tests {
     }
 
     #[test]
-    fn forwarded_call_return_is_other() {
+    fn forwarded_call_return_to_unknown_callee_is_other() {
+        // No registry entry for `foo`: shape is unresolvable.
         assert_eq!(shape("return foo(x);"), CalleeReturnShape::Other);
+    }
+
+    #[test]
+    fn forwarded_scalar_call_return_resolves_to_scalar() {
+        // `fwd` ends `return leaf(x);`; `leaf` returns a scalar, so
+        // `fwd`'s return shape is that scalar.
+        assert_eq!(
+            shape_multi(
+                "function leaf(a) { return a + 1; } \
+                 function fwd(x) { return leaf(x); }",
+                "fwd",
+            ),
+            CalleeReturnShape::Scalar
+        );
     }
 
     #[test]

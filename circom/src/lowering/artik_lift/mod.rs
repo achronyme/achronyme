@@ -177,6 +177,24 @@ fn subprogram_lift_enabled() -> bool {
         .unwrap_or(false)
 }
 
+// THROWAWAY measurement instrumentation — remove before merge.
+// Appends to the file named by ARTIK_SUBPROG_TRACE_FILE so traces
+// survive cargo's per-test stdout/stderr capture (which is discarded
+// for passing tests). O_APPEND short-line writes are atomic enough
+// across the parallel test threads for this measurement.
+pub(super) fn sp_trace(what: &str) {
+    use std::io::Write;
+    if let Ok(path) = std::env::var("ARTIK_SUBPROG_TRACE_FILE") {
+        if let Ok(mut f) = std::fs::OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(path)
+        {
+            let _ = writeln!(f, "[SP-TRACE] {what}");
+        }
+    }
+}
+
 pub fn lift_function_to_artik(
     function_name: &str,
     params: &[(String, ParamShape)],
@@ -194,8 +212,10 @@ pub fn lift_function_to_artik(
         if let Some(lifted) =
             try_lift_via_subprograms(function_name, params, param_consts, body, ctx, span)
         {
+            sp_trace(&format!("SUCCESS fn={function_name}"));
             return Some(lifted);
         }
+        sp_trace(&format!("DECLINE-TOPLEVEL fn={function_name}"));
         return None;
     }
     // Copy function refs out of `ctx` so the lift's nested-call
@@ -281,14 +301,33 @@ fn try_lift_via_subprograms(
             _ => None,
         })
         .collect();
-    helpers::compute_dim_signature(body, &param_consts_map)?;
-    helpers::infer_callee_return_shape(body, &param_consts_map).to_reg_types()?;
-
+    if helpers::compute_dim_signature(body, &param_consts_map).is_none() {
+        sp_trace(&format!("decline reason=entry_runtime_dim fn={function_name}"));
+        return None;
+    }
+    // Built before the return-shape gate: a `return f(..)` forwarded
+    // return resolves to f's shape, which the classifier reads from
+    // this registry.
     let functions: HashMap<String, &FunctionDef> = ctx
         .functions
         .iter()
         .map(|(&k, &v)| (k.to_string(), v))
         .collect();
+    if helpers::infer_callee_return_shape(
+        body,
+        &param_consts_map,
+        &functions,
+        &mut std::collections::HashSet::new(),
+    )
+    .to_reg_types()
+    .is_none()
+    {
+        sp_trace(&format!(
+            "decline reason=entry_return_shape fn={function_name}"
+        ));
+        return None;
+    }
+
     let mut state = LiftState::new(params, param_consts, &functions);
     state.driver = Some(driver::LiftDriver::new());
 
@@ -296,12 +335,18 @@ fn try_lift_via_subprograms(
     // the inlining path. Nested calls become `Call`s that reserve and
     // queue their callee subprograms.
     for stmt in body {
-        state.lift_stmt(stmt)?;
+        if state.lift_stmt(stmt).is_none() {
+            sp_trace(&format!(
+                "decline reason=entry_lift_stmt fn={function_name}"
+            ));
+            return None;
+        }
         if state.halted {
             break;
         }
     }
     if !state.halted {
+        sp_trace(&format!("decline reason=entry_no_return fn={function_name}"));
         return None;
     }
     let return_shape = state.return_shape;
@@ -313,10 +358,17 @@ fn try_lift_via_subprograms(
     while let Some(pending) = state.driver.as_mut()?.next_pending() {
         drained += 1;
         if drained > MAX_CALLEE_SUBPROGRAMS {
+            sp_trace(&format!(
+                "decline reason=max_callees fn={function_name}"
+            ));
             return None;
         }
         let callee = state.functions.get(&pending.name).copied()?;
         if callee.params.len() != pending.param_sig.len() {
+            sp_trace(&format!(
+                "decline reason=callee_arity fn={function_name} callee={}",
+                pending.name
+            ));
             return None;
         }
         let bindings: Vec<callee::CalleeParamBinding> = pending
@@ -354,7 +406,13 @@ fn try_lift_via_subprograms(
         let prev = state.builder.begin_subprogram(pending.func_id);
         let saved = state.begin_callee_body(callee, &bindings)?;
         for stmt in &callee.body.stmts {
-            state.lift_stmt(stmt)?;
+            if state.lift_stmt(stmt).is_none() {
+                sp_trace(&format!(
+                    "decline reason=callee_lift_stmt fn={function_name} callee={}",
+                    pending.name
+                ));
+                return None;
+            }
             if state.halted {
                 break;
             }
@@ -365,6 +423,10 @@ fn try_lift_via_subprograms(
         state.end_callee_body(saved);
         state.builder.end_subprogram(prev);
         if !returned {
+            sp_trace(&format!(
+                "decline reason=callee_no_return fn={function_name} callee={}",
+                pending.name
+            ));
             return None;
         }
     }
