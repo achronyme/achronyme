@@ -245,19 +245,22 @@ pub fn lift_function_to_artik(
     })
 }
 
+/// Loud-failure backstop for the callee drain. circom forbids
+/// recursion and the registry deduplicates specializations, so the
+/// pending queue is finite for well-formed input; this cap turns a
+/// pathological non-terminating drain into a clean decline rather than
+/// an unbounded loop.
+const MAX_CALLEE_SUBPROGRAMS: usize = 4096;
+
 /// Lift `body` into a multi-subprogram Artik program: the function
-/// itself becomes the entry subprogram (signal-in / witness-out ABI,
-/// the locked `LiftedWitnessCall` contract — identical to the
-/// inlining path), and every transitively-called circom function
-/// becomes a callee subprogram, reserved once and invoked with a real
-/// Artik `Call`. Returns `None` for any shape the path does not yet
-/// cover; the caller then falls back exactly as if the lift had
-/// declined, so bringing this up never regresses the inlining path
-/// (which stays the default until this is the validated default).
-///
-/// The body of this path lands incrementally across commits on the
-/// subprogram-lift branch; it returns `None` until the supported
-/// surface is wired.
+/// itself is the entry subprogram (signal-in / witness-out ABI, the
+/// locked `LiftedWitnessCall` contract — `outputs` and `shape`
+/// identical to the inlining path, only `program_bytes` differs), and
+/// every transitively-called circom function becomes a callee
+/// subprogram, reserved once per parameter signature and invoked with
+/// a real Artik `Call`. Returns `None` for any shape this path does
+/// not cover; the caller then falls back exactly as if the lift had
+/// declined, so the inlining path is never regressed.
 fn try_lift_via_subprograms(
     function_name: &str,
     params: &[(String, ParamShape)],
@@ -266,11 +269,10 @@ fn try_lift_via_subprograms(
     ctx: &mut LoweringContext<'_>,
     span: &Span,
 ) -> Option<LiftedWitnessCall> {
-    // The subprogram path can only reserve a fixed-shape entry when
-    // every array dimension in the body folds to a constant and the
-    // function's return shape is resolvable. A runtime dimension or an
-    // unmodelled return means no subprogram can be reserved, so the
-    // caller falls back exactly as if the lift had declined.
+    // A fixed-shape entry subprogram can only be reserved when every
+    // array dimension in the body folds to a constant and the return
+    // shape is resolvable. A runtime dimension or an unmodelled return
+    // means the caller falls back exactly as if the lift had declined.
     let param_consts_map: HashMap<String, ConstInt> = params
         .iter()
         .zip(param_consts.iter())
@@ -279,16 +281,114 @@ fn try_lift_via_subprograms(
             _ => None,
         })
         .collect();
+    helpers::compute_dim_signature(body, &param_consts_map)?;
+    helpers::infer_callee_return_shape(body, &param_consts_map).to_reg_types()?;
 
-    let _entry_dim_sig = helpers::compute_dim_signature(body, &param_consts_map)?;
-    let _entry_returns =
-        helpers::infer_callee_return_shape(body, &param_consts_map).to_reg_types()?;
+    let functions: HashMap<String, &FunctionDef> = ctx
+        .functions
+        .iter()
+        .map(|(&k, &v)| (k.to_string(), v))
+        .collect();
+    let mut state = LiftState::new(params, param_consts, &functions);
+    state.driver = Some(driver::LiftDriver::new());
 
-    // Lifting the entry body and draining the reserved callee
-    // subprograms lands in a later change; until then decline so the
-    // existing fallback chain handles the call unchanged.
-    let _ = (function_name, ctx, span);
-    None
+    // Entry subprogram (id 0): same signal-in / witness-out walk as
+    // the inlining path. Nested calls become `Call`s that reserve and
+    // queue their callee subprograms.
+    for stmt in body {
+        state.lift_stmt(stmt)?;
+        if state.halted {
+            break;
+        }
+    }
+    if !state.halted {
+        return None;
+    }
+    let return_shape = state.return_shape;
+
+    // Drain the reserved callees, lifting each body once into its own
+    // subprogram. A callee discovered while lifting another callee is
+    // queued and drained in turn.
+    let mut drained = 0usize;
+    while let Some(pending) = state.driver.as_mut()?.next_pending() {
+        drained += 1;
+        if drained > MAX_CALLEE_SUBPROGRAMS {
+            return None;
+        }
+        let callee = state.functions.get(&pending.name).copied()?;
+        if callee.params.len() != pending.param_sig.len() {
+            return None;
+        }
+        let bindings: Vec<callee::CalleeParamBinding> = pending
+            .param_sig
+            .iter()
+            .enumerate()
+            .map(|(i, sig)| {
+                let reg = i as artik::Reg;
+                match sig {
+                    driver::ParamSig::ScalarConst(v) => callee::CalleeParamBinding::Scalar {
+                        reg,
+                        const_val: Some(*v),
+                    },
+                    driver::ParamSig::ScalarRuntime => callee::CalleeParamBinding::Scalar {
+                        reg,
+                        const_val: None,
+                    },
+                    driver::ParamSig::Array1D(len) => {
+                        callee::CalleeParamBinding::Array(ArrayShape::Flat1D {
+                            handle: reg,
+                            len: *len,
+                        })
+                    }
+                    driver::ParamSig::Array2D(rows, cols) => {
+                        callee::CalleeParamBinding::Array(ArrayShape::Flat2D {
+                            handle: reg,
+                            rows: *rows,
+                            cols: *cols,
+                        })
+                    }
+                }
+            })
+            .collect();
+
+        let prev = state.builder.begin_subprogram(pending.func_id);
+        let saved = state.begin_callee_body(callee, &bindings)?;
+        for stmt in &callee.body.stmts {
+            state.lift_stmt(stmt)?;
+            if state.halted {
+                break;
+            }
+        }
+        // A callee subprogram must end in a `return` — otherwise it
+        // would fall off the end without emitting `Return`.
+        let returned = state.halted;
+        state.end_callee_body(saved);
+        state.builder.end_subprogram(prev);
+        if !returned {
+            return None;
+        }
+    }
+
+    let program = state.builder.finish().ok()?;
+    let program_bytes = artik::bytecode::encode(&program);
+
+    let anon_id = ctx.next_anon_id();
+    let _ = span;
+    let base = format!("__artik_{function_name}_{anon_id}_out");
+    let (outputs, shape) = match return_shape {
+        ReturnShape::Scalar => (vec![base], LiftedShape::Scalar),
+        ReturnShape::Array(len) => {
+            let names: Vec<String> = (0..len).map(|i| format!("{base}_{i}")).collect();
+            (names, LiftedShape::Array(len))
+        }
+    };
+
+    Some(LiftedWitnessCall {
+        program_bytes,
+        outputs,
+        shape,
+        extra_fragments: Vec::new(),
+    })
 }
 
 /// Internal bookkeeping — what the function returned. Populated by
