@@ -7117,17 +7117,19 @@ fn artik_inlined_named_array_return_in_loop_probe() {
 /// name no longer matches a fragment's `output_bindings`.
 #[test]
 #[ignore = "secp256k1 add-unequal witness-value cross-validation: \
-            the field-precision `1 << n` lowering is fixed (FPow2, no \
-            division by zero) and the runtime descending loop in the \
-            mod-exp helper now terminates correctly (no counter \
-            underflow / out-of-range index). Per-statement \
-            decomposition of `secp256k1_addunequal_func(64, 4, ...)` \
-            now executes correctly but exhausts the witness execution \
-            instruction budget — the mod-exp chain runs hundreds of \
-            heavy bigint iterations per fragment. End-to-end witness \
-            execution awaits the subprogram lift covering this chain \
-            (where the folded bounds let the loops unroll under the \
-            frame cap); kept in-tree as the acceptance target."]
+            the subprogram lift now covers the whole \
+            `secp256k1_addunequal_func(64, 4, ...)` call graph (the \
+            row-slice 2D return is modelled, every helper lifts, the \
+            descending mod-exp loop terminates) and executes to \
+            completion, but the resulting witness is incorrect at the \
+            n=64, k=4 / 256-bit config: the circom→artik bigint lift \
+            of the `mod_inv` / `mod_exp` chain diverges from the \
+            reference there while staying correct at small widths. \
+            The defect is independent of the subprogram path — the \
+            per-statement decomposition path produces the identical \
+            wrong value (and additionally exhausts the instruction \
+            budget before finishing). Kept in-tree as the acceptance \
+            target for the bigint-arithmetic fix."]
 fn fn_witness_decompose_secp256k1_addunequal_values() {
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path =
