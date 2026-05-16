@@ -1066,7 +1066,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints, multi-minute compile + R1CS build). The witness lift now covers `getProperRepresentation`'s body, including its runtime-index array stores; compilation still falls back to E212 on `getProperRepresentation` because a callee it reaches, `isNegative`, returns `cond ? 1 : 0` with a runtime condition and the expression lift has no `Expr::Ternary` arm for that shape. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). The witness lift covers the full secp256k1 bigint chain — `getProperRepresentation`, `isNegative`'s runtime `cond ? a : b`, `long_div` and the rest all lift to Artik subprograms — so compilation proceeds past the witness lift. The blocker is downstream: circom->IR lowering of the full ECDSAVerify(64, 4) template (per-iteration component inlining inside the unrolled scalar-multiplication loop) does super-linear work whose memory grows monotonically without converging, so the full compile does not finish in practical time/memory. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 
