@@ -1,4 +1,4 @@
-//! Orchestration state for lifting a circom function and its
+//! Callee registry for lifting a circom function and its
 //! transitively-called functions into a multi-subprogram Artik
 //! program.
 //!
@@ -12,11 +12,17 @@
 //! lifted after their ids are reserved, so a call to a function
 //! defined later in source — or shared between several call sites —
 //! resolves to one subprogram.
+//!
+//! The builder itself is owned by the lift state, not the registry:
+//! every lift method emits into one shared builder, and a callee body
+//! is lifted as an additional pass over that builder via
+//! `begin_subprogram` / `end_subprogram`. The registry only tracks
+//! which specializations have been reserved and which still need a
+//! body.
 
 use std::collections::{HashMap, VecDeque};
 
 use artik::{ProgramBuilder, RegType};
-use memory::FieldFamily;
 
 /// A callee whose subprogram id is reserved but whose body has not yet
 /// been lifted. Reserving the id up front lets a `Call` be emitted at
@@ -28,14 +34,11 @@ pub(super) struct PendingCallee {
     pub dim_sig: Vec<u32>,
 }
 
-/// Builder + callee registry shared across every subprogram of one
-/// lift. A single instance lives for the duration of lifting one
-/// entry function; each subprogram body (entry or callee) is emitted
-/// into the shared [`ProgramBuilder`].
+/// Callee registry shared across every subprogram of one lift. One
+/// instance lives for the duration of lifting a single entry
+/// function.
+#[derive(Default)]
 pub(super) struct LiftDriver {
-    /// Shared builder. Subprogram 0 is the entry; callee subprograms
-    /// are appended by [`LiftDriver::lookup_or_reserve_callee`].
-    pub builder: ProgramBuilder,
     /// `(function name, dimension signature) -> subprogram id`. One
     /// subprogram per distinct specialization; instantiations whose
     /// array dimensions fold to the same values share it.
@@ -46,26 +49,19 @@ pub(super) struct LiftDriver {
 }
 
 impl LiftDriver {
-    /// Build a driver whose entry subprogram (builder subprogram 0,
-    /// empty `Call` signature — it communicates through signals and
-    /// witness slots, not call arguments) is ready to receive the
-    /// function body.
     pub fn new() -> Self {
-        Self {
-            builder: ProgramBuilder::new(FieldFamily::BnLike256),
-            registry: HashMap::new(),
-            pending: VecDeque::new(),
-        }
+        Self::default()
     }
 
     /// Resolve a callee to its subprogram id. The first time a given
     /// `(name, dim_sig)` specialization is seen, its subprogram is
-    /// reserved with the supplied `Call` signature and queued for a
-    /// later body lift; later sightings of the same specialization
-    /// return the same id without re-reserving, so identical
-    /// specializations share one subprogram.
+    /// reserved on `builder` with the supplied `Call` signature and
+    /// queued for a later body lift; later sightings of the same
+    /// specialization return the same id without re-reserving, so
+    /// identical specializations share one subprogram.
     pub fn lookup_or_reserve_callee(
         &mut self,
+        builder: &mut ProgramBuilder,
         name: &str,
         dim_sig: &[u32],
         params: Vec<RegType>,
@@ -75,7 +71,7 @@ impl LiftDriver {
         if let Some(&id) = self.registry.get(&key) {
             return id;
         }
-        let id = self.builder.reserve_subprogram(params, returns);
+        let id = builder.reserve_subprogram(params, returns);
         self.registry.insert(key, id);
         self.pending.push_back(PendingCallee {
             func_id: id,
@@ -92,32 +88,33 @@ impl LiftDriver {
     }
 }
 
-impl Default for LiftDriver {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use artik::ElemT;
+    use memory::FieldFamily;
+
+    fn builder() -> ProgramBuilder {
+        ProgramBuilder::new(FieldFamily::BnLike256)
+    }
 
     #[test]
     fn first_reserved_callee_is_subprogram_one() {
+        let mut b = builder();
         let mut driver = LiftDriver::new();
         // Subprogram 0 is the implicit entry seeded by the builder, so
         // the first reserved callee is subprogram 1.
-        let id = driver.lookup_or_reserve_callee("f", &[], vec![], vec![RegType::Field]);
+        let id = driver.lookup_or_reserve_callee(&mut b, "f", &[], vec![], vec![RegType::Field]);
         assert_eq!(id, 1);
     }
 
     #[test]
     fn same_specialization_dedups_to_one_subprogram() {
+        let mut b = builder();
         let mut driver = LiftDriver::new();
-        let a = driver.lookup_or_reserve_callee("f", &[8], vec![], vec![RegType::Field]);
-        let b = driver.lookup_or_reserve_callee("f", &[8], vec![], vec![RegType::Field]);
-        assert_eq!(a, b);
+        let a = driver.lookup_or_reserve_callee(&mut b, "f", &[8], vec![], vec![RegType::Field]);
+        let c = driver.lookup_or_reserve_callee(&mut b, "f", &[8], vec![], vec![RegType::Field]);
+        assert_eq!(a, c);
         // One pending entry queued for the shared subprogram, no more.
         assert!(driver.next_pending().is_some());
         assert!(driver.next_pending().is_none());
@@ -125,27 +122,30 @@ mod tests {
 
     #[test]
     fn distinct_specializations_get_distinct_subprograms() {
+        let mut b = builder();
         let mut driver = LiftDriver::new();
-        let a = driver.lookup_or_reserve_callee("f", &[8], vec![], vec![RegType::Field]);
-        let b = driver.lookup_or_reserve_callee("f", &[16], vec![], vec![RegType::Field]);
-        let c = driver.lookup_or_reserve_callee("g", &[8], vec![], vec![RegType::Field]);
-        assert_ne!(a, b);
+        let a = driver.lookup_or_reserve_callee(&mut b, "f", &[8], vec![], vec![RegType::Field]);
+        let b2 = driver.lookup_or_reserve_callee(&mut b, "f", &[16], vec![], vec![RegType::Field]);
+        let c = driver.lookup_or_reserve_callee(&mut b, "g", &[8], vec![], vec![RegType::Field]);
+        assert_ne!(a, b2);
         assert_ne!(a, c);
-        assert_ne!(b, c);
+        assert_ne!(b2, c);
     }
 
     #[test]
     fn pending_drains_in_reservation_order_once_each() {
+        let mut b = builder();
         let mut driver = LiftDriver::new();
-        driver.lookup_or_reserve_callee("f", &[1], vec![], vec![RegType::Field]);
+        driver.lookup_or_reserve_callee(&mut b, "f", &[1], vec![], vec![RegType::Field]);
         driver.lookup_or_reserve_callee(
+            &mut b,
             "g",
             &[2],
             vec![RegType::Array(ElemT::Field)],
             vec![RegType::Array(ElemT::Field)],
         );
         // Re-sighting f must not re-queue it.
-        driver.lookup_or_reserve_callee("f", &[1], vec![], vec![RegType::Field]);
+        driver.lookup_or_reserve_callee(&mut b, "f", &[1], vec![], vec![RegType::Field]);
 
         let first = driver.next_pending().expect("f pending");
         assert_eq!(
