@@ -1754,21 +1754,36 @@ impl<F: FieldBackend> Walker<F> {
             // Intern the Artik bytecode blob, resolve input regs,
             // allocate fresh output destinations, and emit.
             //
-            // Two emit paths based on output count:
+            // Two emit paths, chosen by a dual guard:
             //
-            //  - **Classic** (`EmitWitnessCall`): outputs ≤
-            //    `MAX_WITNESS_OUTPUTS_INLINE`. Each output gets a
+            //  - **Classic** (`EmitWitnessCall`): each output gets a
             //    fresh contiguous register; reg-allocator is
-            //    bump-forward.
+            //    bump-forward. Taken only when the call is both
+            //    structurally small (outputs ≤
+            //    `MAX_WITNESS_OUTPUTS_INLINE`) AND its outputs
+            //    provably fit the *current* frame.
             //
-            //  - **Heap** (`EmitWitnessCallHeap`): outputs >
-            //    `MAX_WITNESS_OUTPUTS_INLINE`. The classic path can't
-            //    fit because a single instruction's reg cost would
-            //    exceed `FRAME_CAP = 255` structurally. Outputs go to
-            //    fresh heap slots instead; downstream reads
-            //    materialise via `LoadHeap` through `Walker::resolve`'s
-            //    lazy-reload path. Canonical case: SHA-256's 256-bit
-            //    output hash (256 outputs).
+            //  - **Heap** (`EmitWitnessCallHeap`): outputs go to
+            //    fresh heap slots (zero frame registers); downstream
+            //    reads materialise via `LoadHeap` through
+            //    `Walker::resolve`'s lazy-reload path. Taken when
+            //    either guard trips:
+            //      * a structurally wide call (outputs >
+            //        `MAX_WITNESS_OUTPUTS_INLINE`) — e.g. SHA-256's
+            //        256-output hash; or
+            //      * an otherwise-inline-eligible call whose
+            //        `outputs.len()` would not fit the slots left in
+            //        the current frame. A single `WitnessCall` is
+            //        atomic — the split machinery chains templates
+            //        *between* instructions, never *within* one — so
+            //        an inline call that does not fit cannot be
+            //        rescued by a split. The heap path always fits
+            //        (zero frame regs) and is the correct fallback;
+            //        the static threshold alone is unsound because a
+            //        nested/multi-instruction template can enter this
+            //        call with the frame already near `FRAME_CAP`
+            //        (the bigint helper return shape `[2][100]` =
+            //        200 outputs lands exactly at the static bound).
             Instruction::WitnessCall {
                 outputs,
                 inputs,
@@ -1776,7 +1791,19 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let blob_idx = self.builder.intern_artik_bytecode(program_bytes.clone()) as u16;
 
-                if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
+                // Mirrors the pre-emit split predicate: an inline
+                // call needs `outputs.len()` fresh frame regs, so it
+                // is only safe when `next_slot + outputs + margin`
+                // stays under the cap. Otherwise route to the
+                // always-fitting heap path (a single WitnessCall is
+                // atomic and cannot be split across frames).
+                let inline_would_overflow = self
+                    .allocator
+                    .next_slot()
+                    .saturating_add(outputs.len() as u32)
+                    .saturating_add(FRAME_MARGIN)
+                    >= FRAME_CAP;
+                if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE || inline_would_overflow {
                     // Heap-output path: classify each input into
                     // `InputSrc::Reg(reg)` (already in `ssa_to_reg`,
                     // hot) or `InputSrc::Slot(slot)` (already in

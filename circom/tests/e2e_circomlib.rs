@@ -1045,6 +1045,55 @@ fn eddsa_verifier_compile() {
     );
 }
 
+/// Lysis register-frame ceiling regression.
+///
+/// `Secp256k1AddUnequal(64, 4)` lifts the circomlib bigint helper
+/// `secp256k1_addunequal_func`, whose `var sum[2][100]` return
+/// flattens to a single `WitnessCall` with 200 outputs. The lysis
+/// walker frame is a `u8` ceiling (255 slots); a `WitnessCall` on the
+/// classic register-output path needs one frame register per output
+/// and is atomic (the split machinery chains templates between
+/// instructions, never within one), so a 200-output inline call
+/// entered from an already-populated frame cannot be split and
+/// overflows. Nesting the helper in an outer fixed-bound loop
+/// reproduces that populated-frame context minimally. The walker must
+/// route a wide-output `WitnessCall` to the heap-output path whenever
+/// its outputs would not fit the current frame; this circuit must
+/// instantiate through lysis without a frame overflow. Cheap
+/// (sub-second) — not `#[ignore]`.
+#[test]
+fn secp256k1_addunequal_loop_nested_lysis_frame_fit() {
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/secp256k1_addunequal_loop_nested_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("Secp256k1AddUnequalLoopNested compilation failed: {e}"));
+
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+
+    let program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs::<Bn254Fr>(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| {
+            panic!("Secp256k1AddUnequalLoopNested lysis instantiation failed: {e}")
+        });
+
+    assert!(
+        !program.is_empty(),
+        "lysis program must be non-empty after instantiation"
+    );
+    eprintln!(
+        "  Secp256k1AddUnequalLoopNested — {} nodes → {} instructions — INSTANTIATED ✓",
+        result.prove_ir.body.len(),
+        program.len()
+    );
+}
+
 /// secp256k1 ECDSA signature verification — boss-fight constraint
 /// measurement against `0xPARC/circom-ecdsa`.
 ///
@@ -1066,7 +1115,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). The Circom frontend now lowers the full circuit and the ProveIR compile phase completes. The remaining blocker is in the lysis instantiate roundtrip: the walker overflows its register frame (`register slot 255 exceeds max frame size 255`) — an 8-bit frame-slot ceiling reached by the secp256k1 bigint helper bodies. It is a distinct mechanism from any var-array binding defect: lowering and binding succeed; the failure is frame-slot exhaustion during witness-program walking, a separate arc. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). The wide-output WitnessCall frame overflow that previously blocked the lysis instantiate roundtrip is closed (pinned minimally by secp256k1_addunequal_loop_nested_lysis_frame_fit). This probe stays ignored because it is memory-unrunnable on small dev hardware: the compile phase alone peaks above ~11 GiB, so a machine with ≤16 GiB RAM cannot run it without swap-thrash. On adequate hardware it may surface a distinct downstream blocker, which is handled as a separate arc. Run with --ignored only, under a memory cgroup."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 
