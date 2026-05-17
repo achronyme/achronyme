@@ -1066,7 +1066,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints); compilation completes within ~325 MB. The remaining blocker is a frontend-independent instantiate defect: a 1D template-local `var` array (e.g. circomlib BigMultNoCarry's `out_poly`), self-accumulated from a signal array and then read in an equality constraint, is left unbound at instantiation under several levels of component inlining (`… is not an array`). It is a distinct mechanism from the partial-index row write this arc fixed — here the var array is never bound, rather than bound with the wrong shape. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). The Circom frontend now lowers the full circuit and the ProveIR compile phase completes. The remaining blocker is in the lysis instantiate roundtrip: the walker overflows its register frame (`register slot 255 exceeds max frame size 255`) — an 8-bit frame-slot ceiling reached by the secp256k1 bigint helper bodies. It is a distinct mechanism from any var-array binding defect: lowering and binding succeed; the failure is frame-slot exhaustion during witness-program walking, a separate arc. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 

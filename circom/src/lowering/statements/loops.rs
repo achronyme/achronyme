@@ -1038,6 +1038,7 @@ fn memoize_loop<'a>(
     super::super::known_array_fold::fold_known_array_indices(
         &mut nodes[body_start..body_end],
         &kav_snapshot,
+        Some(&*env),
     );
 
     // Reset env to its pre-iter state. Capture left placeholder-named
@@ -1066,7 +1067,11 @@ fn memoize_loop<'a>(
 
         let mut iter_nodes = body_template.clone();
         substitute_loop_var(&mut iter_nodes, token, iter);
-        super::super::known_array_fold::fold_known_array_indices(&mut iter_nodes, &kav_snapshot);
+        super::super::known_array_fold::fold_known_array_indices(
+            &mut iter_nodes,
+            &kav_snapshot,
+            Some(&*env),
+        );
         nodes.extend(iter_nodes);
     }
 

@@ -521,6 +521,81 @@ fn var_array_2d_row_from_call_wrapped() {
         .unwrap_or_else(|e| panic!("instantiate failed (inlined): {e}"));
 }
 
+/// Positive: an expression-length template-local `var` array read
+/// back inside a loop whose bound is a parameter *expression*
+/// (`2*k-1`). An expression bound routes the loop through the
+/// memoized unroll path, which holds the loop variable as a
+/// placeholder during body capture, so the array-element read is
+/// emitted symbolically rather than as the flat-scalar `acc_<i>` the
+/// direct-unroll path produces. A template-local `var` array carries
+/// no array binding past lowering (only per-element zero-init
+/// `Let`s), so a residual `acc[<const>]` that the post-substitution
+/// fold fails to collapse dangles at instantiate (`… is not an
+/// array`). The witness asserts `out[i] = (Σ a) * (i+1)`, so a wrong
+/// flat-slot name fails here at R1CS verification rather than
+/// slipping through a compile-only check. This is the minimal repro
+/// of the circomlib BigMultNoCarry `out_poly` blocker on the
+/// secp256k1 boss-fight path.
+#[test]
+fn var_array_expr_bound_loop_read_standalone() {
+    let path = std::path::Path::new(env!("CARGO_MANIFEST_DIR"))
+        .parent()
+        .unwrap()
+        .join("test/circomlib/var_array_expr_bound_loop_test.circom");
+
+    let result = circom::compile_file(&path, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    for (i, v) in [(0u32, 2u64), (1, 3), (2, 4)] {
+        inputs.insert(format!("a_{i}"), FieldElement::<Bn254Fr>::from_u64(v));
+    }
+
+    let all_signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness computation failed: {e}"));
+
+    // a = [2,3,4] ⇒ Σa = 9 ⇒ acc[i] = 9*(i+1); 2*k-1 = 5 slots.
+    for (name, want) in [
+        ("out_0", 9u64),
+        ("out_1", 18),
+        ("out_2", 27),
+        ("out_3", 36),
+        ("out_4", 45),
+    ] {
+        let got = all_signals
+            .get(name)
+            .unwrap_or_else(|| panic!("witness missing signal `{name}`"));
+        assert_eq!(
+            *got,
+            FieldElement::<Bn254Fr>::from_u64(want),
+            "expr-bound-loop var-array slot `{name}`: expected {want}, got {got:?}"
+        );
+    }
+
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.set_proven_boolean(proven);
+    let witness = rc
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("R1CS compile-with-witness failed: {e}"));
+    rc.cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("R1CS verify failed: {e}"));
+}
+
 /// Adversarial: declared multi-dim shape whose cell count disagrees
 /// with the initializer's flat length surfaces a clean error, not a
 /// silently mis-strided array.

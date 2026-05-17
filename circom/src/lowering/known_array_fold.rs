@@ -77,6 +77,7 @@ use std::collections::HashMap;
 use ir_forge::types::{ArraySize, CircuitExpr, CircuitNode, FieldConst, ForRange};
 
 use super::const_fold::try_fold_const;
+use super::env::LoweringEnv;
 use super::expressions::indexing::eval_value_to_field_const;
 use super::utils::EvalValue;
 
@@ -90,22 +91,36 @@ use super::utils::EvalValue;
 /// `statements/loops.rs`). Late-bound entries created during body
 /// lowering are rare today but a dedicated risk noted in the Option II
 ///; verify per call site.
-pub fn fold_known_array_indices(slice: &mut [CircuitNode], kav: &HashMap<String, EvalValue>) {
+///
+/// `env`, when `Some`, additionally collapses a residual
+/// `ArrayIndex { array, index }` whose `array` is a template-local
+/// `var` array (`LoweringEnv::local_var_arrays`) and whose index has
+/// folded to a constant, into the flat-scalar `Var("{array}_{linear}")`
+/// — the same rewrite the direct-unroll path performs eagerly in
+/// `expressions::indexing::lower_multi_index`. Local `var` arrays have
+/// no ProveIR array binding (only per-element zero-init `Let`s), so an
+/// uncollapsed residual dangles at instantiate (`… is not an array`).
+/// `None` reproduces the kav-only behaviour exactly (byte-identical).
+pub fn fold_known_array_indices(
+    slice: &mut [CircuitNode],
+    kav: &HashMap<String, EvalValue>,
+    env: Option<&LoweringEnv>,
+) {
     for node in slice {
-        fold_node(node, kav);
+        fold_node(node, kav, env);
     }
 }
 
-fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
+fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>, env: Option<&LoweringEnv>) {
     match node {
         CircuitNode::Let { name: _, value, .. } => {
-            fold_expr(value, kav);
+            fold_expr(value, kav, env);
         }
         CircuitNode::LetArray {
             name: _, elements, ..
         } => {
             for e in elements.iter_mut() {
-                fold_expr(e, kav);
+                fold_expr(e, kav, env);
             }
         }
         CircuitNode::AssertEq {
@@ -114,13 +129,13 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             message: _,
             ..
         } => {
-            fold_expr(lhs, kav);
-            fold_expr(rhs, kav);
+            fold_expr(lhs, kav, env);
+            fold_expr(rhs, kav, env);
         }
         CircuitNode::Assert {
             expr, message: _, ..
         } => {
-            fold_expr(expr, kav);
+            fold_expr(expr, kav, env);
         }
         CircuitNode::For {
             var: _,
@@ -128,9 +143,9 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             body,
             ..
         } => {
-            fold_range(range, kav);
+            fold_range(range, kav, env);
             for n in body.iter_mut() {
-                fold_node(n, kav);
+                fold_node(n, kav, env);
             }
         }
         CircuitNode::If {
@@ -139,16 +154,16 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             else_body,
             ..
         } => {
-            fold_expr(cond, kav);
+            fold_expr(cond, kav, env);
             for n in then_body.iter_mut() {
-                fold_node(n, kav);
+                fold_node(n, kav, env);
             }
             for n in else_body.iter_mut() {
-                fold_node(n, kav);
+                fold_node(n, kav, env);
             }
         }
         CircuitNode::Expr { expr, .. } => {
-            fold_expr(expr, kav);
+            fold_expr(expr, kav, env);
         }
         CircuitNode::Decompose {
             name: _,
@@ -156,13 +171,13 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             num_bits: _,
             ..
         } => {
-            fold_expr(value, kav);
+            fold_expr(value, kav, env);
         }
         CircuitNode::WitnessHint { name: _, hint, .. } => {
-            fold_expr(hint, kav);
+            fold_expr(hint, kav, env);
         }
         CircuitNode::WitnessArrayDecl { name: _, size, .. } => {
-            fold_array_size(size, kav);
+            fold_array_size(size, kav, env);
         }
         CircuitNode::LetIndexed {
             array: _,
@@ -170,8 +185,8 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             value,
             ..
         } => {
-            fold_expr(index, kav);
-            fold_expr(value, kav);
+            fold_expr(index, kav, env);
+            fold_expr(value, kav, env);
         }
         CircuitNode::WitnessHintIndexed {
             array: _,
@@ -179,8 +194,8 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             hint,
             ..
         } => {
-            fold_expr(index, kav);
-            fold_expr(hint, kav);
+            fold_expr(index, kav, env);
+            fold_expr(hint, kav, env);
         }
         CircuitNode::WitnessCall {
             output_bindings: _,
@@ -189,7 +204,7 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             ..
         } => {
             for is in input_signals.iter_mut() {
-                fold_expr(is, kav);
+                fold_expr(is, kav, env);
             }
             // program_bytes is opaque Artik bytecode — same caveat as
             // loop_var_subst's WitnessCall arm.
@@ -199,13 +214,13 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             // first lowered; only the caller-built substitution
             // expressions remain to fold here.
             for (_, e) in param_subs.iter_mut() {
-                fold_expr(e, kav);
+                fold_expr(e, kav, env);
             }
         }
     }
 }
 
-fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
+fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>, env: Option<&LoweringEnv>) {
     match expr {
         // Leaves with no recursion needed.
         CircuitExpr::Const(_)
@@ -219,32 +234,32 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
         CircuitExpr::BinOp { op: _, lhs, rhs }
         | CircuitExpr::Comparison { op: _, lhs, rhs }
         | CircuitExpr::BoolOp { op: _, lhs, rhs } => {
-            fold_expr(lhs, kav);
-            fold_expr(rhs, kav);
+            fold_expr(lhs, kav, env);
+            fold_expr(rhs, kav, env);
         }
         CircuitExpr::UnaryOp { op: _, operand } => {
-            fold_expr(operand, kav);
+            fold_expr(operand, kav, env);
         }
         CircuitExpr::Mux {
             cond,
             if_true,
             if_false,
         } => {
-            fold_expr(cond, kav);
-            fold_expr(if_true, kav);
-            fold_expr(if_false, kav);
+            fold_expr(cond, kav, env);
+            fold_expr(if_true, kav, env);
+            fold_expr(if_false, kav, env);
         }
         CircuitExpr::PoseidonHash { left, right } => {
-            fold_expr(left, kav);
-            fold_expr(right, kav);
+            fold_expr(left, kav, env);
+            fold_expr(right, kav, env);
         }
         CircuitExpr::PoseidonMany(args) => {
             for a in args.iter_mut() {
-                fold_expr(a, kav);
+                fold_expr(a, kav, env);
             }
         }
         CircuitExpr::RangeCheck { value, bits: _ } => {
-            fold_expr(value, kav);
+            fold_expr(value, kav, env);
         }
         CircuitExpr::MerkleVerify {
             root,
@@ -252,15 +267,15 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
             path: _,
             indices: _,
         } => {
-            fold_expr(root, kav);
-            fold_expr(leaf, kav);
+            fold_expr(root, kav, env);
+            fold_expr(leaf, kav, env);
         }
 
         // The fold target. Recurse into the index first so any nested
         // ArrayIndex collapses bottom-up; then attempt the kav-resolve
         // step on the (possibly newly-folded) shape.
         CircuitExpr::ArrayIndex { array, index } => {
-            fold_expr(index, kav);
+            fold_expr(index, kav, env);
             if let Some(arr_val) = kav.get(array.as_str()) {
                 if let Some(idx_fc) = try_fold_const(index) {
                     if let Some(idx_u64) = idx_fc.to_u64() {
@@ -270,10 +285,41 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
                     }
                 }
             }
+
+            // Template-local `var` array residual. The memoized-unroll
+            // capture window emits `arr[<loop-var placeholder>]`
+            // symbolically (the const fast path in
+            // `lower_multi_index` is hard-skipped while a placeholder
+            // is live); `substitute_loop_var` then turns the index
+            // into a constant. The direct-unroll path resolves the
+            // same access eagerly to `Var("{arr}_{linear}")` via
+            // `LoweringEnv::resolve_array_element`. Local `var` arrays
+            // carry NO ProveIR array binding (only per-element
+            // zero-init `Let`s), so an `ArrayIndex` left dangling
+            // here fails at instantiate with `… is not an array`.
+            // Apply the same flat-scalar collapse so the memoized and
+            // direct unroll paths converge. The index is already
+            // row-major-linearised upstream by `lower_multi_index`
+            // (any dimensionality), so no stride math is needed here.
+            if let Some(env) = env {
+                if let CircuitExpr::ArrayIndex { array, index } = &*expr {
+                    if env.local_var_arrays.contains(array.as_str()) {
+                        if let Some(idx_fc) = try_fold_const(index) {
+                            if let Some(linear) = idx_fc.to_u64() {
+                                if let Some(elem) =
+                                    env.resolve_array_element(array, linear as usize)
+                                {
+                                    *expr = CircuitExpr::Var(elem);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
         }
 
         CircuitExpr::Pow { base, exp: _ } => {
-            fold_expr(base, kav);
+            fold_expr(base, kav, env);
         }
         CircuitExpr::IntDiv {
             lhs,
@@ -285,8 +331,8 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
             rhs,
             max_bits: _,
         } => {
-            fold_expr(lhs, kav);
-            fold_expr(rhs, kav);
+            fold_expr(lhs, kav, env);
+            fold_expr(rhs, kav, env);
         }
         CircuitExpr::BitAnd {
             lhs,
@@ -303,14 +349,14 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
             rhs,
             num_bits: _,
         } => {
-            fold_expr(lhs, kav);
-            fold_expr(rhs, kav);
+            fold_expr(lhs, kav, env);
+            fold_expr(rhs, kav, env);
         }
         CircuitExpr::BitNot {
             operand,
             num_bits: _,
         } => {
-            fold_expr(operand, kav);
+            fold_expr(operand, kav, env);
         }
         CircuitExpr::ShiftR {
             operand,
@@ -322,20 +368,24 @@ fn fold_expr(expr: &mut CircuitExpr, kav: &HashMap<String, EvalValue>) {
             shift,
             num_bits: _,
         } => {
-            fold_expr(operand, kav);
-            fold_expr(shift, kav);
+            fold_expr(operand, kav, env);
+            fold_expr(shift, kav, env);
         }
     }
 }
 
-fn fold_range(range: &mut ForRange, kav: &HashMap<String, EvalValue>) {
+fn fold_range(range: &mut ForRange, kav: &HashMap<String, EvalValue>, env: Option<&LoweringEnv>) {
     match range {
         ForRange::Literal { .. } | ForRange::WithCapture { .. } | ForRange::Array(_) => {}
-        ForRange::WithExpr { start: _, end_expr } => fold_expr(end_expr, kav),
+        ForRange::WithExpr { start: _, end_expr } => fold_expr(end_expr, kav, env),
     }
 }
 
-fn fold_array_size(_size: &mut ArraySize, _kav: &HashMap<String, EvalValue>) {
+fn fold_array_size(
+    _size: &mut ArraySize,
+    _kav: &HashMap<String, EvalValue>,
+    _env: Option<&LoweringEnv>,
+) {
     // ArraySize variants carry no expressions — Literal / Capture only.
     // Kept as an explicit no-op so future variants force review here.
 }
@@ -428,7 +478,7 @@ mod tests {
                 rhs: Box::new(const_(1)),
             }),
         };
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, const_(400)); // C[2+1] = C[3] = 400
     }
 
@@ -442,7 +492,7 @@ mod tests {
             array: "C".to_string(),
             index: Box::new(const_(1)),
         };
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, const_(43));
     }
 
@@ -458,7 +508,7 @@ mod tests {
             index: Box::new(CircuitExpr::Var("unresolved".to_string())),
         };
         let mut expr = original.clone();
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, original);
     }
 
@@ -478,7 +528,7 @@ mod tests {
             }),
         };
         let mut expr = original.clone();
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, original);
     }
 
@@ -493,7 +543,7 @@ mod tests {
             index: Box::new(const_(0)),
         };
         let mut expr = original.clone();
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, original);
     }
 
@@ -514,7 +564,7 @@ mod tests {
             array: "M".to_string(),
             index: Box::new(const_(5)),
         };
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, const_(6)); // M[1][2] = 6
     }
 
@@ -531,7 +581,7 @@ mod tests {
             array: "M".to_string(),
             index: Box::new(const_(0)),
         };
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, const_(42));
     }
 
@@ -552,7 +602,7 @@ mod tests {
             index: Box::new(const_(3)),
         };
         let mut expr = original.clone();
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, original);
     }
 
@@ -572,7 +622,7 @@ mod tests {
             index: Box::new(const_(0)),
         };
         let mut expr = original.clone();
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, original);
     }
 
@@ -586,7 +636,7 @@ mod tests {
             index: Box::new(const_(5)),
         };
         let mut expr = original.clone();
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, original);
     }
 
@@ -609,7 +659,7 @@ mod tests {
                 index: Box::new(const_(0)),
             }),
         };
-        fold_expr(&mut expr, &kav);
+        fold_expr(&mut expr, &kav, None);
         assert_eq!(expr, const_(40));
     }
 
@@ -631,7 +681,7 @@ mod tests {
             },
             span: None,
         }];
-        fold_known_array_indices(&mut slice, &kav);
+        fold_known_array_indices(&mut slice, &kav, None);
         if let CircuitNode::Let { value, .. } = &slice[0] {
             assert_eq!(*value, const_(10)); // C[2+1] = C[3] = 10
         } else {
@@ -653,7 +703,7 @@ mod tests {
             span: None,
         }];
         let mut slice = original.clone();
-        fold_known_array_indices(&mut slice, &kav);
+        fold_known_array_indices(&mut slice, &kav, None);
         assert_eq!(slice, original);
     }
 
@@ -710,7 +760,7 @@ mod tests {
         for n in 0..4u64 {
             let mut iter = template.clone();
             substitute_loop_var(&mut iter, 0, n);
-            fold_known_array_indices(&mut iter, &kav);
+            fold_known_array_indices(&mut iter, &kav, None);
             composed.extend(iter);
         }
 

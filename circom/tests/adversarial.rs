@@ -1081,6 +1081,53 @@ fn r1pp_followup_a_mux3_constraint_count_byte_identical_across_modes() {
     );
 }
 
+/// A template-local `var` array whose declared length is a parameter
+/// expression (`2*k-1`), read inside a loop whose bound is that same
+/// expression. The expression bound routes the loop through the
+/// memoized unroll path. Local `var` arrays have no ProveIR array
+/// binding (only per-element zero-init `Let`s), so the memoized
+/// path's post-substitution fold must collapse the residual
+/// `acc[<const>]` to the flat scalar `acc_<i>` exactly as the
+/// direct-unroll path does — otherwise the read dangles at
+/// instantiate (`… is not an array`). `compile_valid_witness` panics
+/// if instantiate fails OR the honest witness does not verify, so
+/// this asserts correctness under BOTH modes; the constraint-count
+/// equality additionally pins mode equivalence. This is the minimal
+/// regression watchdog for the circomlib BigMultNoCarry `out_poly`
+/// blocker on the secp256k1 boss-fight path.
+fn compile_var_array_expr_bound_loop() -> (R1CSCompiler<Bn254Fr>, Vec<Fe>) {
+    compile_valid_witness(
+        "test/circomlib/var_array_expr_bound_loop_test.circom",
+        &[("a_0", 2), ("a_1", 3), ("a_2", 4)],
+        false,
+    )
+}
+
+#[test]
+fn var_array_expr_bound_loop_byte_identical_across_modes() {
+    let (compiler_off, _w_off) = {
+        let _g = R1ppEnvGuard::new("0");
+        compile_var_array_expr_bound_loop()
+    };
+    let count_off = compiler_off.cs.num_constraints();
+
+    let (compiler_on, _w_on) = {
+        let _g = R1ppEnvGuard::new("1");
+        compile_var_array_expr_bound_loop()
+    };
+    let count_on = compiler_on.cs.num_constraints();
+
+    assert_eq!(
+        count_off, count_on,
+        "expression-bound-loop read of a template-local `var` array \
+         must produce identical constraint counts under \
+         R1PP_ENABLED=0 (direct unroll) and R1PP_ENABLED=1 (memoized \
+         unroll). A divergence — or an instantiate panic under \
+         R1PP_ENABLED=1 — means the memoized path failed to collapse \
+         the local-var-array residual to its flat scalar slot."
+    );
+}
+
 /// Dormant until Edit 4 widens memoization to multi-dim bodies. With
 /// the current iteration-count gate (`< 4`) and the still-active
 /// `body_has_multi_dim_index` gate, Mux3's MultiMux3(1) instance never
