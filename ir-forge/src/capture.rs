@@ -147,6 +147,16 @@ fn walk_node(
                 walk_expr(sig, false, structural, constraint);
             }
         }
+        CircuitNode::ComponentCall { param_subs, .. } => {
+            // The shared body uses template-local capture names that
+            // are resolved via `param_subs` at expansion, not by the
+            // instantiator's outer captures. Outer captures are
+            // reached only through the substitution argument
+            // expressions, which were built in the caller's scope.
+            for (_, expr) in param_subs {
+                walk_expr(expr, false, structural, constraint);
+            }
+        }
     }
 }
 

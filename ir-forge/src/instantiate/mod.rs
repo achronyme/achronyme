@@ -41,6 +41,8 @@ use memory::{FieldBackend, FieldElement};
 
 use ir_core::{IrType, SsaVar};
 
+use crate::types::CircuitNode;
+
 pub use api::LysisInstantiateError;
 pub(super) use sink::{ExtendedSink, InstrSink};
 
@@ -116,6 +118,13 @@ pub(super) struct Instantiator<'a, F: FieldBackend> {
     /// `Mul(Const, Const) → Const(fold)`). Populated alongside
     /// [`const_cache`] in [`emit_const`].
     pub(super) const_values: HashMap<SsaVar, FieldElement<F>>,
+    /// Shared, unmangled template bodies (from `ProveIR`), cloned once
+    /// at construction. A [`CircuitNode::ComponentCall`] resolves its
+    /// `body_key` here, mangles the body with the instance prefix, and
+    /// emits it transiently — so peak memory is one mangled body, not
+    /// one inlined copy per instance. Keyed by body key; only bodies
+    /// actually referenced by a `ComponentCall` are present.
+    pub(super) component_bodies: HashMap<String, Vec<CircuitNode>>,
 }
 
 // ---------------------------------------------------------------------------

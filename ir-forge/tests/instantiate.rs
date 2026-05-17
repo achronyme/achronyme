@@ -288,6 +288,7 @@ fn instantiate_missing_capture_error() {
         }],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let result = prove_ir.instantiate_lysis::<Bn254Fr>(&HashMap::new());
     assert!(result.is_err(), "should fail with missing capture");
@@ -464,6 +465,7 @@ fn audit_bool_input_gets_range_check() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let ir = prove_ir
         .instantiate_lysis::<Bn254Fr>(&HashMap::new())
@@ -492,6 +494,7 @@ fn audit_bool_array_input_gets_range_checks() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let ir = prove_ir
         .instantiate_lysis::<Bn254Fr>(&HashMap::new())
@@ -655,6 +658,7 @@ fn audit_for_array_empty() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     // Need "arr" in env as an empty array — not possible from the
     // public API without a LetArray node. Use a LetArray with empty elements instead.
@@ -698,6 +702,7 @@ fn audit_capture_both_is_witness_input() {
             },
         ],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let captures: HashMap<String, FieldElement<Bn254Fr>> =
         [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]
@@ -767,6 +772,7 @@ fn audit_instantiate_rejects_huge_capture_loop() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let captures: HashMap<String, FieldElement<Bn254Fr>> = [(
         "n".to_string(),
@@ -805,6 +811,7 @@ fn audit_both_capture_emits_assert_eq() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let captures: HashMap<String, FieldElement<Bn254Fr>> =
         [("n".to_string(), FieldElement::<Bn254Fr>::from_u64(3))]

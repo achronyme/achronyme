@@ -93,6 +93,7 @@ impl CircomLibraryHandle for CircomLibrary {
                 Ok(CircomInstantiation {
                     body: inst.body,
                     outputs,
+                    component_bodies: inst.component_bodies,
                 })
             }
             Err(e) => Err(convert_error(e, template_name, self)),

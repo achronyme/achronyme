@@ -8,7 +8,7 @@ use std::collections::HashMap;
 use diagnostics::Span;
 use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 
-use crate::lowering::components::mangle_nodes;
+use ir_forge::types::mangle::mangle_nodes;
 
 use super::error::{check_param_count, find_template, LibraryError};
 use super::metadata::resolve_entry;
@@ -46,6 +46,11 @@ pub struct TemplateInstantiation {
     /// distinguished by the [`TemplateOutput`] variant, so callers
     /// never have to special-case `out` vs `out_0` lookup.
     pub outputs: HashMap<String, TemplateOutput>,
+    /// Shared, unmangled component bodies referenced by any
+    /// `CircuitNode::ComponentCall` in `body`. Must be merged into
+    /// the composing parent's `ProveIR::component_bodies` or those
+    /// calls dangle at instantiation.
+    pub component_bodies: HashMap<String, Vec<CircuitNode>>,
 }
 
 /// Reason an instantiation was rejected.
@@ -234,7 +239,11 @@ pub fn instantiate_template_into(
         outputs.insert(out.name.clone(), TemplateOutput::Array { dims, values });
     }
 
-    Ok(TemplateInstantiation { body, outputs })
+    Ok(TemplateInstantiation {
+        body,
+        outputs,
+        component_bodies: lower_result.prove_ir.component_bodies,
+    })
 }
 
 pub(super) fn resolve_output_dims(dims: &[DimensionExpr]) -> Option<Vec<u64>> {

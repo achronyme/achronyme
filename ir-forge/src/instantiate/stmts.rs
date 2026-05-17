@@ -303,6 +303,39 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     program_bytes: program_bytes.clone(),
                 });
             }
+            CircuitNode::ComponentCall {
+                body_key,
+                comp_name,
+                param_subs,
+                ..
+            } => {
+                // Expand a deferred component instance: resolve the
+                // shared unmangled body, mangle it with this
+                // instance's prefix (substituting params), emit each
+                // node, then drop the mangled copy. This runs the
+                // same canonical mangle the lowering-time inline path
+                // runs, so the emitted instructions are byte-identical
+                // to an inlined component — only the materialization
+                // is deferred, keeping peak memory at one mangled
+                // body rather than one inlined copy per instance.
+                // Nested `ComponentCall`s recurse through `emit_node`.
+                let subs: std::collections::HashMap<String, CircuitExpr> =
+                    param_subs.iter().cloned().collect();
+                let mangled = {
+                    let body = self.component_bodies.get(body_key).ok_or_else(|| {
+                        ProveIrError::UnsupportedOperation {
+                            description: format!(
+                                "ComponentCall references unknown body key `{body_key}`"
+                            ),
+                            span: None,
+                        }
+                    })?;
+                    mangle_nodes(body, comp_name, &subs)
+                };
+                for n in &mangled {
+                    self.emit_node(n)?;
+                }
+            }
         }
         Ok(())
     }
@@ -758,7 +791,8 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             | CircuitNode::WitnessHint { .. }
             | CircuitNode::WitnessArrayDecl { .. }
             | CircuitNode::WitnessHintIndexed { .. }
-            | CircuitNode::WitnessCall { .. } => false,
+            | CircuitNode::WitnessCall { .. }
+            | CircuitNode::ComponentCall { .. } => false,
         }
     }
 

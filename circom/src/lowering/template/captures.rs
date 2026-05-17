@@ -148,6 +148,14 @@ fn collect_capture_usage<'a>(
                 collect_expr_captures(sig, circuit);
             }
         }
+        CircuitNode::ComponentCall { param_subs, .. } => {
+            // The shared body is opaque here (already lowered with
+            // its params resolved); only the caller-built
+            // substitution expressions can reference captures.
+            for (_, expr) in param_subs {
+                collect_expr_captures(expr, circuit);
+            }
+        }
     }
 }
 

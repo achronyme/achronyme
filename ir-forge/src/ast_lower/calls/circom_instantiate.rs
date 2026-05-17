@@ -230,6 +230,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             })?;
 
         self.body.extend(instantiation.body);
+        // Carry the sub-template's shared component bodies up so the
+        // ComponentCall nodes just appended to `self.body` resolve
+        // when the assembled ProveIR is instantiated.
+        self.component_bodies.extend(instantiation.component_bodies);
         Ok((instantiation.outputs, signature))
     }
 }

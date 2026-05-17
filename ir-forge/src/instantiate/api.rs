@@ -246,6 +246,7 @@ fn run_walk<'a, F: FieldBackend>(
         output_pub_vars: HashMap::new(),
         const_cache: HashMap::new(),
         const_values: HashMap::new(),
+        component_bodies: prove_ir.component_bodies.clone(),
     };
 
     // 1. Validate all required captures are provided

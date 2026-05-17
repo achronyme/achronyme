@@ -169,6 +169,24 @@ fn subst_node(node: &mut CircuitNode, t: u32, v: u64, ph: &str, vs: &str) {
             // program_bytes intentionally untouched — see the
             // module-level caveat about Artik bytecode opacity.
         }
+        CircuitNode::ComponentCall {
+            body_key: _,
+            comp_name,
+            param_subs,
+            ..
+        } => {
+            // The instance prefix and substitution arguments can
+            // carry the loop variable (e.g. `comp[i]` or `Comp(i)`)
+            // and must be substituted per iteration. The shared body
+            // referenced by `body_key` is iter-independent (it is the
+            // canonical template body, parameterized only through
+            // `param_subs`) and is intentionally not walked — same
+            // rationale as WitnessCall's opaque payload.
+            subst_name(comp_name, ph, vs);
+            for (_, e) in param_subs.iter_mut() {
+                subst_expr(e, t, v, ph, vs);
+            }
+        }
     }
 }
 
@@ -715,6 +733,7 @@ mod tests {
             captures: vec![],
             body,
             capture_arrays: Vec::<CaptureArrayDef>::new(),
+            component_bodies: Default::default(),
         }
     }
 

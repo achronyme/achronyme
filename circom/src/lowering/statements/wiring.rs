@@ -246,7 +246,30 @@ impl<'a> PendingComponent<'a> {
             ctx,
             span,
         )?;
-        propagate_const_nodes(&body, env);
+        // Constant-output propagation lifts constant component outputs
+        // into the parent env. When the body was promoted to a single
+        // deferred instance there are no inlined nodes to scan here;
+        // the promotion is only sound if propagation over the shared
+        // body is a no-op (the cacheable predicate guarantees
+        // runtime-signal inputs ⇒ no constant outputs). Assert that
+        // invariant so a future cacheable template that violates it
+        // fails loudly instead of silently dropping a constant.
+        match body.as_slice() {
+            [CircuitNode::ComponentCall { body_key, .. }] => {
+                if let Some(shared) = ctx.component_bodies.get(body_key.as_str()) {
+                    let before = env.known_constants.len();
+                    propagate_const_nodes(shared, env);
+                    debug_assert_eq!(
+                        env.known_constants.len(),
+                        before,
+                        "ComponentCall promotion changed known_constants: a \
+                         cacheable body produced a constant output that deferred \
+                         expansion would drop"
+                    );
+                }
+            }
+            _ => propagate_const_nodes(&body, env),
+        }
         // R1″ flush tracking: `nodes[start..end]` after this `extend`
         // is exactly the inlined body. The for-loop unroller, when
         // capturing iter 0 for memoization, uses these ranges to
@@ -623,7 +646,7 @@ pub(super) fn extract_component_wiring_with_env(
 /// inlining Edwards2Montgomery with constant inputs, its output signals
 /// (e.g., `e2m.out_0`) become known constants in the parent scope, so
 /// subsequent components (Window4, MontgomeryDouble) can also fold.
-fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
+pub(crate) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
     for node in nodes {
         match node {
             CircuitNode::Let { name, value, .. } => {

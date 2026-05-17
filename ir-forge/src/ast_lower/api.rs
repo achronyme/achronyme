@@ -196,6 +196,10 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             captures,
             body: std::mem::take(&mut compiler.body),
             capture_arrays,
+            // Shared component bodies merged from any inlined circom
+            // template instantiation; referenced by `ComponentCall`
+            // nodes in `body`.
+            component_bodies: std::mem::take(&mut compiler.component_bodies),
         };
         Ok((prove_ir, compiler))
     }

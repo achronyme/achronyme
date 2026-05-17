@@ -197,6 +197,28 @@ fn write_node(f: &mut fmt::Formatter<'_>, node: &CircuitNode, indent: usize) -> 
             }
             writeln!(f, ") [{} bytes]", program_bytes.len())
         }
+        CircuitNode::ComponentCall {
+            body_key,
+            comp_name,
+            param_subs,
+            ..
+        } => {
+            // The expanded body lives in the shared component-body
+            // table; show the instance, the body it references, and
+            // its parameter substitutions.
+            write!(f, "{pad}{comp_name} <-- component({body_key})")?;
+            if !param_subs.is_empty() {
+                write!(f, " [")?;
+                for (i, (name, expr)) in param_subs.iter().enumerate() {
+                    if i > 0 {
+                        write!(f, ", ")?;
+                    }
+                    write!(f, "{name}={expr}")?;
+                }
+                write!(f, "]")?;
+            }
+            writeln!(f)
+        }
     }
 }
 

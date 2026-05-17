@@ -232,6 +232,11 @@ pub struct ProveIrCompiler<F: FieldBackend = Bn254Fr> {
     inline_counter: u32,
     /// Accumulated circuit body nodes.
     body: Vec<CircuitNode>,
+    /// Shared, unmangled component bodies merged from inlined circom
+    /// template instantiations. Carried into
+    /// `ProveIR::component_bodies` so `CircuitNode::ComponentCall`
+    /// nodes in `body` resolve at instantiation.
+    component_bodies: HashMap<String, Vec<CircuitNode>>,
     /// Public input declarations.
     public_inputs: Vec<ProveInputDecl>,
     /// Witness input declarations.

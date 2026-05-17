@@ -39,6 +39,14 @@ pub struct LoweringContext<'a> {
     /// Only entries with empty `const_inputs` and `array_args` are cached,
     /// since those guarantee identical lowered output.
     pub body_cache: HashMap<String, Vec<CircuitNode>>,
+    /// Shared, unmangled template bodies promoted out of the parent
+    /// body so a repeatedly-instantiated component is stored once and
+    /// referenced by a small [`CircuitNode::ComponentCall`] per
+    /// instance. Populated lazily on the first body-cache hit for a
+    /// key (only keys an emitted `ComponentCall` references survive);
+    /// transferred into `ProveIR::component_bodies` at end of
+    /// lowering. Subset of [`Self::body_cache`].
+    pub component_bodies: HashMap<String, Vec<CircuitNode>>,
     /// Side-channel for [`CircuitNode`]s produced during expression
     /// lowering that must land in the enclosing body *before* the
     /// statement whose expression emitted them. Populated by the
@@ -139,6 +147,7 @@ impl<'a> LoweringContext<'a> {
             bus_names,
             anon_counter: 0,
             body_cache: HashMap::new(),
+            component_bodies: HashMap::new(),
             pending_nodes: Vec::new(),
             flush_tracker: FlushTracker::default(),
             placeholder_loop_var: None,
@@ -237,6 +246,7 @@ impl<'a> LoweringContext<'a> {
             functions: HashMap::new(),
             inline_depth: 0,
             body_cache: HashMap::new(),
+            component_bodies: HashMap::new(),
             param_values: HashMap::new(),
             bus_names: HashSet::new(),
             anon_counter: 0,

@@ -15,17 +15,20 @@
 //! - [`inputs`] — input declarations and capture descriptors.
 //! - [`nodes`] — statement-level `CircuitNode` + `ForRange`.
 //! - [`expressions`] — `CircuitExpr` tree + operator enums.
+//! - [`mangle`] — component-prefix name mangling over the node tree.
 //! - [`display`] — human-readable `Display` impls (not re-exported).
 
 pub mod display;
 pub mod expressions;
 pub mod field_const;
 pub mod inputs;
+pub mod mangle;
 pub mod nodes;
 pub mod prove_ir;
 
 pub use expressions::{CircuitBinOp, CircuitBoolOp, CircuitCmpOp, CircuitExpr, CircuitUnaryOp};
 pub use field_const::FieldConst;
 pub use inputs::{ArraySize, CaptureArrayDef, CaptureDef, CaptureUsage, ProveInputDecl};
+pub use mangle::mangle_nodes;
 pub use nodes::{CircuitNode, ForRange};
 pub use prove_ir::ProveIR;

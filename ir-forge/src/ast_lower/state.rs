@@ -29,6 +29,7 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
             call_stack: HashSet::new(),
             inline_counter: 0,
             body: Vec::new(),
+            component_bodies: HashMap::new(),
             public_inputs: Vec::new(),
             witness_inputs: Vec::new(),
             source_dir: None,

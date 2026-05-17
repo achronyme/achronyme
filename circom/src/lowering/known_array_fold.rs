@@ -194,6 +194,14 @@ fn fold_node(node: &mut CircuitNode, kav: &HashMap<String, EvalValue>) {
             // program_bytes is opaque Artik bytecode — same caveat as
             // loop_var_subst's WitnessCall arm.
         }
+        CircuitNode::ComponentCall { param_subs, .. } => {
+            // The shared body had known-array folding applied when
+            // first lowered; only the caller-built substitution
+            // expressions remain to fold here.
+            for (_, e) in param_subs.iter_mut() {
+                fold_expr(e, kav);
+            }
+        }
     }
 }
 

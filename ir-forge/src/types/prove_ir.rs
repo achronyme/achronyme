@@ -30,6 +30,12 @@ pub struct ProveIR {
     /// Array captures from the outer scope. Used at instantiation to
     /// reconstruct `InstEnvValue::Array` entries from individual element captures.
     pub capture_arrays: Vec<CaptureArrayDef>,
+    /// Shared, unmangled template bodies referenced by
+    /// [`CircuitNode::ComponentCall`] nodes, keyed by body key. A body
+    /// instantiated many times is stored once here; each instance is a
+    /// small `ComponentCall` in `body` rather than an inlined copy.
+    /// Empty when no deferred component instances were emitted.
+    pub component_bodies: std::collections::HashMap<String, Vec<CircuitNode>>,
 }
 
 /// Magic header bytes for serialized ProveIR.
@@ -40,7 +46,8 @@ pub(crate) const PROVE_IR_MAGIC: &[u8; 4] = b"ACHP";
 /// v3: added `message` field to CircuitNode::AssertEq.
 /// v4: added PrimeId byte after version (multi-prime support).
 /// v5: CircuitExpr::Const uses FieldConst ([u8;32] canonical LE) instead of FieldElement.
-pub const PROVE_IR_FORMAT_VERSION: u8 = 5;
+/// v6: added `component_bodies` table to ProveIR (deferred component instances).
+pub const PROVE_IR_FORMAT_VERSION: u8 = 6;
 
 /// Maximum allowed size for deserialized ProveIR data (64 MB).
 /// Prevents allocation bombs from crafted length prefixes.
@@ -79,8 +86,19 @@ impl ProveIR {
             }
         }
 
+        // Body keys a `ComponentCall` is allowed to reference.
+        let body_keys: std::collections::HashSet<&str> =
+            self.component_bodies.keys().map(|s| s.as_str()).collect();
+
         for node in &self.body {
-            validate_node(node, &capture_names)?;
+            validate_node(node, &capture_names, &body_keys)?;
+        }
+        // Shared bodies are crafted-input reachable too: validate each
+        // and resolve any nested `ComponentCall` against the same keyset.
+        for body in self.component_bodies.values() {
+            for node in body {
+                validate_node(node, &capture_names, &body_keys)?;
+            }
         }
         Ok(())
     }
@@ -112,10 +130,12 @@ impl ProveIR {
                 ));
             }
             PROVE_IR_FORMAT_VERSION => {
-                // v5: PrimeId byte at offset 5, payload starts at 6.
-                // CircuitExpr::Const uses FieldConst ([u8;32] canonical LE).
+                // Current format: PrimeId byte at offset 5, payload
+                // starts at 6. CircuitExpr::Const uses FieldConst
+                // ([u8;32] canonical LE); ProveIR carries the
+                // component-body table.
                 if bytes.len() < 6 {
-                    return Err("ProveIR v5 data too short (missing prime byte)".into());
+                    return Err("ProveIR data too short (missing prime byte)".into());
                 }
                 let pid = PrimeId::from_byte(bytes[5]).ok_or_else(|| {
                     format!("unknown PrimeId byte 0x{:02x} in ProveIR header", bytes[5])
@@ -146,6 +166,7 @@ const MAX_RANGE_CHECK_BITS: u32 = 253;
 fn validate_node(
     node: &CircuitNode,
     capture_names: &std::collections::HashSet<&str>,
+    body_keys: &std::collections::HashSet<&str>,
 ) -> Result<(), String> {
     match node {
         CircuitNode::Let { value, .. } => validate_expr(value),
@@ -172,7 +193,7 @@ fn validate_node(
             // WithExpr end bounds are validated at instantiation time
             // when capture values are resolved.
             for n in body {
-                validate_node(n, capture_names)?;
+                validate_node(n, capture_names, body_keys)?;
             }
             Ok(())
         }
@@ -184,10 +205,10 @@ fn validate_node(
         } => {
             validate_expr(cond)?;
             for n in then_body {
-                validate_node(n, capture_names)?;
+                validate_node(n, capture_names, body_keys)?;
             }
             for n in else_body {
-                validate_node(n, capture_names)?;
+                validate_node(n, capture_names, body_keys)?;
             }
             Ok(())
         }
@@ -215,6 +236,21 @@ fn validate_node(
         CircuitNode::WitnessCall { input_signals, .. } => {
             for sig in input_signals {
                 validate_expr(sig)?;
+            }
+            Ok(())
+        }
+        CircuitNode::ComponentCall {
+            body_key,
+            param_subs,
+            ..
+        } => {
+            if !body_keys.contains(body_key.as_str()) {
+                return Err(format!(
+                    "invalid ProveIR: ComponentCall references unknown body key `{body_key}`"
+                ));
+            }
+            for (_, expr) in param_subs {
+                validate_expr(expr)?;
             }
             Ok(())
         }

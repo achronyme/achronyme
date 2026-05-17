@@ -2268,7 +2268,11 @@ mod circom_dispatch {
                     ))),
                 );
             }
-            Ok(CircomInstantiation { body, outputs })
+            Ok(CircomInstantiation {
+                body,
+                outputs,
+                component_bodies: std::collections::HashMap::new(),
+            })
         }
     }
 
@@ -2585,6 +2589,7 @@ mod circom_dispatch {
             Ok(CircomInstantiation {
                 body: Vec::new(),
                 outputs,
+                component_bodies: std::collections::HashMap::new(),
             })
         }
     }

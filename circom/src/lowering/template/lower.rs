@@ -202,6 +202,9 @@ pub(crate) fn lower_template_with_ctx<'a>(
             captures,
             body,
             capture_arrays: Vec::new(),
+            // Shared bodies promoted out of `body` during lowering;
+            // referenced by `CircuitNode::ComponentCall` instances.
+            component_bodies: ctx.component_bodies.clone(),
         },
         output_names,
     })

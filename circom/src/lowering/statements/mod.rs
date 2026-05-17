@@ -14,7 +14,7 @@ mod arrays;
 mod loops;
 mod substitution;
 mod targets;
-mod wiring;
+pub(crate) mod wiring;
 
 use std::collections::{HashMap, HashSet};
 

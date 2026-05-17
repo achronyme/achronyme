@@ -152,6 +152,37 @@ pub enum CircuitNode {
         #[serde(skip)]
         span: Option<SpanRange>,
     },
+    /// A deferred component instance.
+    ///
+    /// References a shared, unmangled template body by `body_key` (an
+    /// entry in [`super::ProveIR::component_bodies`]) instead of
+    /// carrying an inlined, name-mangled copy of it. At instantiation
+    /// the referenced body is mangled with `comp_name` (substituting
+    /// `param_subs`) and emitted, exactly as an inlined copy would
+    /// have been — the difference is purely *when* the mangled body
+    /// is materialized.
+    ///
+    /// Emitted when the same `(template, params)` body is instantiated
+    /// many times: a single shared body plus one `ComponentCall` per
+    /// instance keeps memory proportional to the number of distinct
+    /// bodies rather than to instance count × body size. Because the
+    /// instantiator runs the same canonical mangle the inline path
+    /// would have run, constraint output is byte-identical to eager
+    /// inlining.
+    ComponentCall {
+        /// Key into `ProveIR::component_bodies` for the shared,
+        /// unmangled template body this instance expands.
+        body_key: String,
+        /// Instance prefix applied to every name the expanded body
+        /// declares or references (`comp.signal`).
+        comp_name: String,
+        /// Template parameter substitutions (param name → argument
+        /// expression) applied during expansion. `Vec` rather than a
+        /// map for deterministic serialization order.
+        param_subs: Vec<(String, CircuitExpr)>,
+        #[serde(skip)]
+        span: Option<SpanRange>,
+    },
 }
 
 impl CircuitNode {
@@ -170,7 +201,8 @@ impl CircuitNode {
             | CircuitNode::WitnessArrayDecl { span, .. }
             | CircuitNode::LetIndexed { span, .. }
             | CircuitNode::WitnessHintIndexed { span, .. }
-            | CircuitNode::WitnessCall { span, .. } => span.as_ref(),
+            | CircuitNode::WitnessCall { span, .. }
+            | CircuitNode::ComponentCall { span, .. } => span.as_ref(),
         }
     }
 }

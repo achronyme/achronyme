@@ -50,6 +50,11 @@ pub struct CircomInstantiation {
     /// One entry per declared signal output, keyed by the original
     /// output name.
     pub outputs: HashMap<String, CircomTemplateOutput>,
+    /// Shared, unmangled component bodies referenced by any
+    /// `CircuitNode::ComponentCall` in `body`. Merged into the
+    /// composing parent's `ProveIR::component_bodies` so the calls
+    /// resolve at instantiation.
+    pub component_bodies: HashMap<String, Vec<CircuitNode>>,
 }
 
 /// Lightweight declared signature of a circom template — just enough
@@ -290,6 +295,7 @@ pub mod test_support {
             Ok(CircomInstantiation {
                 body: Vec::new(),
                 outputs,
+                component_bodies: HashMap::new(),
             })
         }
     }

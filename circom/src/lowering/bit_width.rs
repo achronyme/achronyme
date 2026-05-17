@@ -613,6 +613,14 @@ pub fn rewrite_num_bits_in_node(node: &mut ir_forge::types::CircuitNode, ctx: &I
                 rewrite_num_bits_in_expr(e, ctx);
             }
         }
+        CircuitNode::ComponentCall { param_subs, .. } => {
+            // The shared body was bit-width-rewritten when first
+            // lowered; only the caller-built substitution
+            // expressions remain to tighten here.
+            for (_, e) in param_subs {
+                rewrite_num_bits_in_expr(e, ctx);
+            }
+        }
     }
 }
 
@@ -631,6 +639,47 @@ pub fn rewrite_num_bits_in_prove_ir(
 ) {
     for node in &mut prove_ir.body {
         rewrite_num_bits_in_node(node, ctx);
+    }
+}
+
+/// Apply the full scan → propagate → rewrite bit-width sequence to
+/// each shared component body.
+///
+/// The eager inline path materializes a component body into
+/// `prove_ir.body`, so the body-level passes above rewrite its
+/// `num_bits`/`max_bits` in place. A deferred `ComponentCall` instead
+/// keeps one shared body in `prove_ir.component_bodies` and expands it
+/// at instantiation; that shared body must receive the identical
+/// width treatment, or its expansion emits constraints that differ
+/// from an inlined copy.
+///
+/// Each shared body is scanned in isolation. This is exact for the
+/// promotion predicate (`const_inputs.is_empty() && array_args
+/// .is_empty()`): with runtime-signal inputs and no constant/array
+/// captures, a body's provable widths come from its own internal
+/// bool constraints, independent of the instance name prefix. Width
+/// inference is monotone-conservative, so any residual cross-body
+/// context only ever widens (never miscomputes) a bound.
+pub fn rewrite_num_bits_in_component_bodies(
+    prove_ir: &mut ir_forge::types::ProveIR,
+    param_values: Option<&HashMap<String, FieldConst>>,
+) {
+    for body in prove_ir.component_bodies.values_mut() {
+        let mut widths = SignalWidths::new();
+        for node in body.iter() {
+            scan_node(node, &mut widths);
+        }
+        for node in body.iter() {
+            propagate_let_in_node(node, &mut widths);
+        }
+        let ctx = InferenceCtx {
+            param_values,
+            known_constants: None,
+            signal_widths: Some(&widths),
+        };
+        for node in body.iter_mut() {
+            rewrite_num_bits_in_node(node, &ctx);
+        }
     }
 }
 
@@ -1459,6 +1508,7 @@ mod tests {
             captures: vec![],
             body: vec![make_bool_assertion("c_out_0")],
             capture_arrays: vec![],
+            component_bodies: Default::default(),
         };
         let widths = scan_bool_constraints(&prove_ir);
         assert_eq!(widths.get("c_out_0").copied(), Some(BitWidth::Exact(1)));
@@ -1487,6 +1537,7 @@ mod tests {
                 span: None,
             }],
             capture_arrays: vec![],
+            component_bodies: Default::default(),
         };
         let widths = scan_bool_constraints(&prove_ir);
         assert_eq!(widths.get("bit").copied(), Some(BitWidth::Exact(1)));
@@ -1515,6 +1566,7 @@ mod tests {
                 span: None,
             }],
             capture_arrays: vec![],
+            component_bodies: Default::default(),
         };
         let widths = scan_bool_constraints(&prove_ir);
         assert_eq!(widths.get("b").copied(), Some(BitWidth::Exact(1)));
@@ -1534,6 +1586,7 @@ mod tests {
                 span: None,
             }],
             capture_arrays: vec![],
+            component_bodies: Default::default(),
         };
         let widths = scan_bool_constraints(&prove_ir);
         assert_eq!(widths.get("nested_bit").copied(), Some(BitWidth::Exact(1)));
@@ -1553,6 +1606,7 @@ mod tests {
                 span: None,
             }],
             capture_arrays: vec![],
+            component_bodies: Default::default(),
         };
         let widths = scan_bool_constraints(&prove_ir);
         assert!(widths.is_empty());
@@ -1580,6 +1634,7 @@ mod tests {
                 },
             ],
             capture_arrays: vec![],
+            component_bodies: Default::default(),
         };
         let widths = scan_bool_constraints(&prove_ir);
         let ctx = InferenceCtx {

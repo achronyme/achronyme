@@ -10,6 +10,7 @@
 
 use std::collections::HashMap;
 
+use ir_forge::types::mangle::mangle_nodes;
 use ir_forge::types::{CircuitExpr, CircuitNode, ForRange, ProveIR};
 use memory::{FieldBackend, FieldElement, FieldFamily, PrimeId};
 
@@ -45,7 +46,12 @@ pub fn compute_witness_hints_with_captures<F: FieldBackend>(
         env.entry(name.clone())
             .or_insert_with(|| FieldElement::<F>::from_u64(*val));
     }
-    collect_hints_recursive(&prove_ir.body, &mut env, captures)?;
+    collect_hints_recursive(
+        &prove_ir.body,
+        &mut env,
+        captures,
+        &prove_ir.component_bodies,
+    )?;
     Ok(env)
 }
 
@@ -67,6 +73,7 @@ fn collect_hints_recursive<F: FieldBackend>(
     nodes: &[CircuitNode],
     env: &mut HashMap<String, FieldElement<F>>,
     captures: &HashMap<String, u64>,
+    comp_bodies: &HashMap<String, Vec<CircuitNode>>,
 ) -> Result<(), WitnessError> {
     for node in nodes {
         match node {
@@ -116,10 +123,10 @@ fn collect_hints_recursive<F: FieldBackend>(
                 if let (Some(start), Some(end)) = (start, end) {
                     for i in start..end {
                         env.insert(var.clone(), FieldElement::<F>::from_u64(i));
-                        collect_hints_recursive(body, env, captures)?;
+                        collect_hints_recursive(body, env, captures, comp_bodies)?;
                     }
                 } else {
-                    collect_hints_recursive(body, env, captures)?;
+                    collect_hints_recursive(body, env, captures, comp_bodies)?;
                 }
             }
             CircuitNode::If {
@@ -130,13 +137,13 @@ fn collect_hints_recursive<F: FieldBackend>(
             } => {
                 if let Some(val) = eval_hint(cond, env) {
                     if val != FieldElement::<F>::zero() {
-                        collect_hints_recursive(then_body, env, captures)?;
+                        collect_hints_recursive(then_body, env, captures, comp_bodies)?;
                     } else {
-                        collect_hints_recursive(else_body, env, captures)?;
+                        collect_hints_recursive(else_body, env, captures, comp_bodies)?;
                     }
                 } else {
-                    collect_hints_recursive(then_body, env, captures)?;
-                    collect_hints_recursive(else_body, env, captures)?;
+                    collect_hints_recursive(then_body, env, captures, comp_bodies)?;
+                    collect_hints_recursive(else_body, env, captures, comp_bodies)?;
                 }
             }
             CircuitNode::Assert { expr, message, .. } => {
@@ -214,7 +221,31 @@ fn collect_hints_recursive<F: FieldBackend>(
                     }
                 }
             }
-            _ => {}
+            CircuitNode::ComponentCall {
+                body_key,
+                comp_name,
+                param_subs,
+                ..
+            } => {
+                // A deferred component instance. Its internal hint
+                // nodes live in the shared body, not here; expand it
+                // with the same canonical mangle the instantiator
+                // uses so the witness values are identical to an
+                // inlined copy. Transient — one mangled body resident
+                // per call.
+                let body = comp_bodies.get(body_key).ok_or_else(|| WitnessError {
+                    message: format!("ComponentCall references unknown body key `{body_key}`"),
+                })?;
+                let subs: HashMap<String, CircuitExpr> = param_subs.iter().cloned().collect();
+                let mangled = mangle_nodes(body, comp_name, &subs);
+                collect_hints_recursive(&mangled, env, captures, comp_bodies)?;
+            }
+            // No witness hints to collect — these emit constraints
+            // only, declare slots, or are evaluated structurally.
+            CircuitNode::AssertEq { .. }
+            | CircuitNode::Expr { .. }
+            | CircuitNode::Decompose { .. }
+            | CircuitNode::WitnessArrayDecl { .. } => {}
         }
     }
     Ok(())

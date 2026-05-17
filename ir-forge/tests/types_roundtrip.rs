@@ -36,6 +36,7 @@ fn round_trip_empty() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     assert_round_trip(&ir);
 }
@@ -337,6 +338,7 @@ fn adversarial_wrong_version() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     }
     .to_bytes(PrimeId::Bn254)
     .unwrap();
@@ -361,6 +363,7 @@ fn adversarial_truncated_payload() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     }
     .to_bytes(PrimeId::Bn254)
     .unwrap();
@@ -401,6 +404,7 @@ fn adversarial_invalid_field_const_rejected_at_instantiation() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     // Serialization + deserialization succeeds (FieldConst is just bytes)
@@ -433,6 +437,7 @@ fn adversarial_poseidon_many_empty_rejected() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     // Serialize directly with bincode (bypass to_bytes header)
     let payload = bincode::serialize(&ir).unwrap();
@@ -464,6 +469,7 @@ fn adversarial_range_check_zero_bits_rejected() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let payload = bincode::serialize(&ir).unwrap();
     let mut bytes = Vec::new();
@@ -493,6 +499,7 @@ fn adversarial_range_check_oversized_bits_rejected() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let payload = bincode::serialize(&ir).unwrap();
     let mut bytes = Vec::new();
@@ -520,6 +527,7 @@ fn v3_and_v4_rejected_with_recompile_message() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     // v3 blob (no prime byte)
     let payload = bincode::serialize(&ir).unwrap();
@@ -555,6 +563,7 @@ fn v4_roundtrip_with_each_prime() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     for prime in [PrimeId::Bn254, PrimeId::Bls12_381, PrimeId::Goldilocks] {
         let bytes = ir.to_bytes(prime).unwrap();
@@ -573,6 +582,7 @@ fn v4_bad_prime_byte_rejected() {
         captures: vec![],
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let mut bytes = ir.to_bytes(PrimeId::Bn254).unwrap();
     bytes[5] = 0xFF; // invalid prime byte
@@ -597,6 +607,7 @@ fn adversarial_array_size_unknown_capture_rejected() {
         captures: vec![], // no capture named "ghost"
         body: vec![],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let err = ir.validate().unwrap_err();
     assert!(
@@ -623,6 +634,7 @@ fn adversarial_for_range_unknown_capture_rejected() {
             span: None,
         }],
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
     let err = ir.validate().unwrap_err();
     assert!(

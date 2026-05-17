@@ -380,6 +380,13 @@ pub fn lower_library_template(
         signal_widths: Some(&signal_widths),
     };
     lowering::bit_width::rewrite_num_bits_in_prove_ir(&mut lower_result.prove_ir, &inference_ctx);
+    // Deferred component bodies are not in `prove_ir.body`; give them
+    // the same width treatment so their instantiate-time expansion is
+    // constraint-identical to an inlined copy.
+    lowering::bit_width::rewrite_num_bits_in_component_bodies(
+        &mut lower_result.prove_ir,
+        Some(&captures),
+    );
 
     Ok(lower_result)
 }
@@ -476,6 +483,13 @@ fn compile_program_with_warnings(
         signal_widths: Some(&signal_widths),
     };
     lowering::bit_width::rewrite_num_bits_in_prove_ir(&mut lower_result.prove_ir, &inference_ctx);
+    // Deferred component bodies are not in `prove_ir.body`; give them
+    // the same width treatment so their instantiate-time expansion is
+    // constraint-identical to an inlined copy.
+    lowering::bit_width::rewrite_num_bits_in_component_bodies(
+        &mut lower_result.prove_ir,
+        Some(&capture_field_consts),
+    );
 
     Ok(CircomCompileResult {
         prove_ir: lower_result.prove_ir,

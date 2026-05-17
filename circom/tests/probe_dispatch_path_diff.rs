@@ -195,6 +195,7 @@ fn probe_ach_dispatch_sha256_64() {
         captures: vec![],
         body: instantiation.body,
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     eprintln!();
@@ -262,6 +263,7 @@ struct CircuitNodeStats {
     n_witness_hint_indexed: usize,
     n_witness_array_decl: usize,
     n_witness_call: usize,
+    n_component_call: usize,
     /// (name, num_bits) for any Decompose >= 100 bits.
     wide_decomposes: Vec<(String, u32)>,
     /// (label, body_len, range_repr) for top-level For nodes.
@@ -284,6 +286,7 @@ impl CircuitNodeStats {
         eprintln!("    WitnessHintIndexed: {}", self.n_witness_hint_indexed);
         eprintln!("    WitnessArrayDecl  : {}", self.n_witness_array_decl);
         eprintln!("    WitnessCall       : {}", self.n_witness_call);
+        eprintln!("    ComponentCall     : {}", self.n_component_call);
         if !self.wide_decomposes.is_empty() {
             eprintln!("    Wide Decompose (>= 100 bits):");
             for (name, n) in &self.wide_decomposes {
@@ -360,6 +363,7 @@ fn walk_nodes(body: &[CircuitNode], path: &str, s: &mut CircuitNodeStats) {
             CircuitNode::WitnessHintIndexed { .. } => s.n_witness_hint_indexed += 1,
             CircuitNode::WitnessArrayDecl { .. } => s.n_witness_array_decl += 1,
             CircuitNode::WitnessCall { .. } => s.n_witness_call += 1,
+            CircuitNode::ComponentCall { .. } => s.n_component_call += 1,
         }
     }
 }
@@ -543,6 +547,7 @@ fn probe_embedded_sha256(n_bits: u64, all_const: bool, label: &str) {
         captures: vec![],
         body: instantiation.body,
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     let captures = HashMap::<String, FieldElement<Bn254Fr>>::new();
@@ -621,6 +626,7 @@ fn probe_embedded_sha256_one_const(n_bits: u64, label: &str) {
         captures: vec![],
         body: instantiation.body,
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     let captures = HashMap::<String, FieldElement<Bn254Fr>>::new();
@@ -677,6 +683,7 @@ fn probe_embedded_sha256_8_var_dump_first_30() {
         captures: vec![],
         body: instantiation.body,
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     let captures = HashMap::<String, FieldElement<Bn254Fr>>::new();
@@ -731,6 +738,7 @@ fn probe_embedded_sha256_8_const_track_low_ssa() {
         captures: vec![],
         body: instantiation.body,
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     let captures = HashMap::<String, FieldElement<Bn254Fr>>::new();
@@ -861,6 +869,7 @@ fn probe_embedded_sha256_8_const_dump_first_30() {
         captures: vec![],
         body: instantiation.body,
         capture_arrays: vec![],
+        component_bodies: Default::default(),
     };
 
     let captures = HashMap::<String, FieldElement<Bn254Fr>>::new();
