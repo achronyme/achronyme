@@ -35,6 +35,7 @@
 
 use std::collections::{HashMap, HashSet};
 
+use ir_forge::types::mangle::mangle_name;
 use ir_forge::types::{CircuitExpr, CircuitNode, FieldConst};
 
 use super::super::const_fold::try_fold_const;
@@ -246,25 +247,47 @@ impl<'a> PendingComponent<'a> {
             ctx,
             span,
         )?;
-        // Constant-output propagation lifts constant component outputs
-        // into the parent env. When the body was promoted to a single
-        // deferred instance there are no inlined nodes to scan here;
-        // the promotion is only sound if propagation over the shared
-        // body is a no-op (the cacheable predicate guarantees
-        // runtime-signal inputs ⇒ no constant outputs). Assert that
-        // invariant so a future cacheable template that violates it
-        // fails loudly instead of silently dropping a constant.
+        // Constant-output propagation lifts a component's constant
+        // outputs into the parent env so downstream constraints that
+        // consume them see `Const` rather than `Var`. The eager path
+        // scans the freshly inlined (already mangled) nodes. A body
+        // promoted to a single deferred `ComponentCall` has no inlined
+        // nodes here; instead the constant outputs that scan would have
+        // produced were captured once at cache time (unmangled,
+        // body-walk order) and are replayed with this instance's mangle
+        // prefix — yielding exactly the names and values the eager scan
+        // would have inserted, so emitted constraints are identical
+        // whether the body was inlined or deferred.
         match body.as_slice() {
             [CircuitNode::ComponentCall { body_key, .. }] => {
-                if let Some(shared) = ctx.component_bodies.get(body_key.as_str()) {
-                    let before = env.known_constants.len();
-                    propagate_const_nodes(shared, env);
-                    debug_assert_eq!(
-                        env.known_constants.len(),
-                        before,
-                        "ComponentCall promotion changed known_constants: a \
-                         cacheable body produced a constant output that deferred \
-                         expansion would drop"
+                if let Some(sig) = ctx.body_const_outputs.get(body_key.as_str()) {
+                    let lifts: Vec<(String, FieldConst)> = sig
+                        .iter()
+                        .map(|(name, fc)| (mangle_name(comp_name, name), *fc))
+                        .collect();
+                    for (name, fc) in &lifts {
+                        env.known_constants.insert(name.clone(), *fc);
+                    }
+                    // The signature preserves body-walk order with
+                    // duplicates, so a later write to the same name
+                    // shadows an earlier one — exactly as the eager
+                    // scan's sequence of map inserts would. The
+                    // post-replay invariant is therefore that every
+                    // key holds its *last* signature value, not that
+                    // every (possibly shadowed) entry is present.
+                    debug_assert!(
+                        {
+                            let mut last: HashMap<&String, &FieldConst> = HashMap::new();
+                            for (n, fc) in &lifts {
+                                last.insert(n, fc);
+                            }
+                            last.iter().all(|(n, fc)| {
+                                env.known_constants.get(n.as_str()) == Some(*fc)
+                            })
+                        },
+                        "deferred const-output replay incomplete: a mangled \
+                         output key is missing or holds the wrong (non-last) \
+                         value after injection"
                     );
                 }
             }
@@ -646,12 +669,20 @@ pub(super) fn extract_component_wiring_with_env(
 /// inlining Edwards2Montgomery with constant inputs, its output signals
 /// (e.g., `e2m.out_0`) become known constants in the parent scope, so
 /// subsequent components (Window4, MontgomeryDouble) can also fold.
-pub(crate) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
+/// Walk `nodes` and collect the `(name, value)` pairs that constant
+/// propagation lifts, in body-walk order (duplicates preserved — a
+/// later write to the same name shadows an earlier one exactly as a
+/// sequence of map inserts would). This is the single source of truth
+/// shared by [`propagate_const_nodes`] (which injects them into an
+/// env) and the deferred-body signature captured at cache time, so the
+/// two can never drift.
+pub(crate) fn collect_const_lifts(nodes: &[CircuitNode]) -> Vec<(String, FieldConst)> {
+    let mut out = Vec::new();
     for node in nodes {
         match node {
             CircuitNode::Let { name, value, .. } => {
                 if let Some(fc) = try_fold_const(value) {
-                    env.known_constants.insert(name.clone(), fc);
+                    out.push((name.clone(), fc));
                 }
             }
             CircuitNode::LetIndexed {
@@ -663,13 +694,13 @@ pub(crate) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv
                 if let (Some(idx_fc), Some(val_fc)) = (try_fold_const(index), try_fold_const(value))
                 {
                     if let Some(idx) = idx_fc.to_u64() {
-                        env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                        out.push((format!("{array}_{idx}"), val_fc));
                     }
                 }
             }
             CircuitNode::WitnessHint { name, hint, .. } => {
                 if let Some(fc) = try_fold_const(hint) {
-                    env.known_constants.insert(name.clone(), fc);
+                    out.push((name.clone(), fc));
                 }
             }
             CircuitNode::WitnessHintIndexed {
@@ -678,12 +709,19 @@ pub(crate) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv
                 if let (Some(idx_fc), Some(val_fc)) = (try_fold_const(index), try_fold_const(hint))
                 {
                     if let Some(idx) = idx_fc.to_u64() {
-                        env.known_constants.insert(format!("{array}_{idx}"), val_fc);
+                        out.push((format!("{array}_{idx}"), val_fc));
                     }
                 }
             }
             _ => {}
         }
+    }
+    out
+}
+
+pub(crate) fn propagate_const_nodes(nodes: &[CircuitNode], env: &mut LoweringEnv) {
+    for (name, fc) in collect_const_lifts(nodes) {
+        env.known_constants.insert(name, fc);
     }
 }
 

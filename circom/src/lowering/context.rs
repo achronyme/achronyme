@@ -47,6 +47,17 @@ pub struct LoweringContext<'a> {
     /// transferred into `ProveIR::component_bodies` at end of
     /// lowering. Subset of [`Self::body_cache`].
     pub component_bodies: HashMap<String, Vec<CircuitNode>>,
+    /// Per cached body, the constant outputs its eager inlining would
+    /// have lifted into the parent env, captured once (in body-walk
+    /// order, unmangled names) at the cache-miss that populated
+    /// [`Self::body_cache`]. A deferred `ComponentCall` skips the
+    /// per-instance scan of inlined nodes, so each hit replays this
+    /// signature with the instance's mangle prefix instead — keeping
+    /// emitted constraints identical to inlining while still deferring
+    /// the body. Empty for bodies with no constant outputs (then the
+    /// replay is a no-op and a hit behaves exactly like the
+    /// no-constant-output case). Keyed like [`Self::body_cache`].
+    pub body_const_outputs: HashMap<String, Vec<(String, FieldConst)>>,
     /// Side-channel for [`CircuitNode`]s produced during expression
     /// lowering that must land in the enclosing body *before* the
     /// statement whose expression emitted them. Populated by the
@@ -148,6 +159,7 @@ impl<'a> LoweringContext<'a> {
             anon_counter: 0,
             body_cache: HashMap::new(),
             component_bodies: HashMap::new(),
+            body_const_outputs: HashMap::new(),
             pending_nodes: Vec::new(),
             flush_tracker: FlushTracker::default(),
             placeholder_loop_var: None,
@@ -247,6 +259,7 @@ impl<'a> LoweringContext<'a> {
             inline_depth: 0,
             body_cache: HashMap::new(),
             component_bodies: HashMap::new(),
+            body_const_outputs: HashMap::new(),
             param_values: HashMap::new(),
             bus_names: HashSet::new(),
             anon_counter: 0,

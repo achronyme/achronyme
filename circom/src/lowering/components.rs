@@ -296,26 +296,27 @@ fn inline_component_body_impl<'a>(
     // Restore parent param_values
     ctx.param_values = saved_params;
 
-    // Cache the unmangled body for future instances — but only when
-    // constant-output propagation over it is a no-op. The eager
-    // inline path runs `propagate_const_nodes` over the *mangled*
-    // body, lifting that instance's constant outputs into the parent
-    // env under prefixed names. A deferred `ComponentCall` skips that
-    // (the body is expanded later, unmangled-then-mangled at
-    // instantiate), so a body that lifts constants must NOT be
-    // promoted: re-lower it per instance instead. Dry-running the
-    // propagation here makes every cached body a provable no-op, so
-    // every later HIT→ComponentCall promotion is sound by
-    // construction. (`const_inputs`/`array_args` emptiness gates the
-    // *inputs*; this gates the *outputs*, which is the actual
-    // soundness condition.)
+    // Cache the unmangled body for future instances. The eager inline
+    // path runs `propagate_const_nodes` over the *mangled* body,
+    // lifting that instance's constant outputs into the parent env
+    // under prefixed names. A deferred `ComponentCall` skips that scan,
+    // so the constant outputs are captured here, once, in body-walk
+    // order with unmangled names: every later HIT replays them with
+    // the instance's mangle prefix (`wiring::inline_into`), which
+    // reproduces exactly the names and values the eager scan inserts
+    // (`mangle_name` is a uniform prefix, and constant folding is
+    // structural ⇒ the lifted set is instance-invariant modulo that
+    // prefix). A body with no constant outputs gets an empty signature
+    // and its hits behave exactly as before. (`const_inputs`/
+    // `array_args` emptiness — the `cacheable` predicate — still gates
+    // *inputs*, guaranteeing the lowered body is identical across
+    // instances modulo the prefix.)
     if cacheable {
-        let mut probe_env = LoweringEnv::new();
-        super::statements::wiring::propagate_const_nodes(&nodes, &mut probe_env);
-        if probe_env.known_constants.is_empty() {
-            let cache_key = build_cache_key(&template.name, &param_values);
-            ctx.body_cache.insert(cache_key, nodes.clone());
-        }
+        let cache_key = build_cache_key(&template.name, &param_values);
+        let const_outputs = super::statements::wiring::collect_const_lifts(&nodes);
+        ctx.body_const_outputs
+            .insert(cache_key.clone(), const_outputs);
+        ctx.body_cache.insert(cache_key, nodes.clone());
     }
 
     // Mangle all names and substitute captures
