@@ -811,7 +811,6 @@ pub(super) fn extract_component_call(
             let mut lowered_args = Vec::new();
             let array_indices: HashSet<usize> =
                 array_arg_indices.iter().map(|(i, _, _)| *i).collect();
-            let all_constants = ctx.all_constants(env);
             for (i, arg) in args.iter().enumerate() {
                 if array_indices.contains(&i) {
                     lowered_args.push(CircuitExpr::Const(FieldConst::zero()));
@@ -821,9 +820,18 @@ pub(super) fn extract_component_call(
                     // This is critical for pending components created inside
                     // loops: if we store Var("nseg"), the flush at a later
                     // iteration would pick up the wrong value.
+                    //
+                    // 3-source O(1) lookup, NOT the merged `all_constants`
+                    // map: this path has no fallback (a miss keeps
+                    // `Var(name)`, which propagates into emitted
+                    // constraints), so it must consult `bound_const_vars`
+                    // too — `resolve_constant_with_bound` reproduces the
+                    // exact `all_constants` first-wins precedence without
+                    // rebuilding the map on every component-call extraction
+                    // inside the unrolled ladder.
                     let resolved = match &lowered {
                         CircuitExpr::Var(name) | CircuitExpr::Capture(name) => {
-                            if let Some(&val) = all_constants.get(name) {
+                            if let Some(val) = ctx.resolve_constant_with_bound(name, env) {
                                 CircuitExpr::Const(val)
                             } else {
                                 lowered

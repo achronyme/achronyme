@@ -187,6 +187,13 @@ impl<'a> LoweringContext<'a> {
     /// Checks `param_values` first (template params, precomputed vars),
     /// then `env.known_constants` (signals with known values). This avoids
     /// the allocation overhead of [`all_constants`] for simple lookups.
+    ///
+    /// **2-source.** Deliberately omits `env.bound_const_vars`. Use this
+    /// only where a `bound_const_vars`-only name must NOT resolve (e.g.
+    /// the index-fold fast path, which falls back to the full
+    /// [`all_constants`] path on a miss so completeness is preserved).
+    /// Where a miss has NO fallback and the result propagates into
+    /// emitted constraints, use [`resolve_constant_with_bound`] instead.
     #[inline]
     pub fn resolve_constant(
         &self,
@@ -196,6 +203,29 @@ impl<'a> LoweringContext<'a> {
         self.param_values
             .get(name)
             .or_else(|| env.known_constants.get(name))
+            .copied()
+    }
+
+    /// Look up a single constant by name across **all three** sources in
+    /// the exact first-wins precedence of [`all_constants`]:
+    /// `param_values > env.known_constants > env.bound_const_vars`
+    /// (proven equivalent — `all_constants` inserts `param_values`
+    /// unconditionally then `or_insert`s the other two in that order).
+    ///
+    /// Use this as the O(1) replacement for `all_constants().get(name)`
+    /// on hot paths where a miss has no fallback and the resolved value
+    /// propagates into emitted constraints (so dropping
+    /// `bound_const_vars`, as [`resolve_constant`] would, is unsound).
+    #[inline]
+    pub fn resolve_constant_with_bound(
+        &self,
+        name: &str,
+        env: &super::env::LoweringEnv,
+    ) -> Option<FieldConst> {
+        self.param_values
+            .get(name)
+            .or_else(|| env.known_constants.get(name))
+            .or_else(|| env.bound_const_vars.get(name))
             .copied()
     }
 

@@ -401,7 +401,6 @@ pub(super) fn try_resolve_component_array_target(
     env: &LoweringEnv,
     ctx: &LoweringContext,
 ) -> Option<String> {
-    let all_constants = ctx.all_constants(env);
     let mut indices: Vec<&Expr> = Vec::new();
     let mut current = target;
     loop {
@@ -420,8 +419,16 @@ pub(super) fn try_resolve_component_array_target(
                     // memoized unroll: per-index placeholder
                     // check. Multi-dim arrays may mix placeholder and
                     // non-placeholder slots (e.g. `mux.c[0][i]`).
+                    // Route through `resolve_const_index_ctx` (shipped
+                    // O(1) fold + the SAME `all_constants` BigVal tail as
+                    // authoritative fallback) instead of materializing the
+                    // merged map up-front on every component-array target
+                    // in the unrolled ladder. Resolvable-index set and
+                    // values are unchanged (predecessor equivalence lemma);
+                    // only the per-target `all_constants` allocation on the
+                    // `n*i+j` fast path is eliminated.
                     let idx_segment = ctx.placeholder_index_segment(idx_expr).or_else(|| {
-                        resolve_const_index(idx_expr, &all_constants).map(|v| v.to_string())
+                        resolve_const_index_ctx(idx_expr, ctx, env).map(|v| v.to_string())
                     })?;
                     comp_name = format!("{comp_name}_{idx_segment}");
                 }
