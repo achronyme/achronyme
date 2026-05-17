@@ -1066,7 +1066,7 @@ fn eddsa_verifier_compile() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints). Compilation now completes within ~325 MB (a repeatedly-instantiated component body is lowered once and emitted as a deferred ComponentCall instead of materializing one inlined copy per ladder step). The remaining blocker is a separate, frontend-independent instantiate defect: a compile-time `var`-array output (e.g. circomlib BigMult's `out_poly`) consumed by name across nested components resolves as a scalar at instantiation (`… is not an array`). This reproduces identically with components fully inlined, so it is unrelated to the deferred-instance path. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints); compilation completes within ~325 MB. The remaining blocker is a frontend-independent instantiate defect: a 1D template-local `var` array (e.g. circomlib BigMultNoCarry's `out_poly`), self-accumulated from a signal array and then read in an equality constraint, is left unbound at instantiation under several levels of component inlining (`… is not an array`). It is a distinct mechanism from the partial-index row write this arc fixed — here the var array is never bound, rather than bound with the wrong shape. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 

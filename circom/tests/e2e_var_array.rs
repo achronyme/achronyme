@@ -396,6 +396,131 @@ fn multidim_var_from_call_memoizable_loop_compiles() {
     circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
 }
 
+// A *partial-index* write into a multi-dim var array — one row at a
+// time from an array-returning call inside a loop — is the shape
+// circomlib `LongToShortNoEndCarry` uses: `var split[k][3];` then
+// `split[i] = SplitThreeFn(in[i], n, n, n);`. The row's cells must
+// land in the flat slots `split_{i*C + j}` the read side resolves
+// for `split[i][j]`. Binding the row under a single name instead
+// trips a scalar/array mismatch at instantiate; mis-striding the
+// base index points writes and reads at different slots.
+
+const ROW_FROM_CALL_LEAF: &str = r#"
+        function tri(x) {
+            var r[3];
+            r[0] = x;
+            r[1] = x + 1;
+            r[2] = x + 2;
+            return r;
+        }
+        template Leaf(k) {
+            signal input  in[k];
+            signal output out[k];
+            var split[k][3];
+            for (var i = 0; i < k; i++) {
+                split[i] = tri(in[i]);
+            }
+            for (var i = 0; i < k; i++) {
+                out[i] <-- split[i][0] + split[i][1] + split[i][2];
+                out[i] === 3 * in[i] + 3;
+            }
+        }
+"#;
+
+/// Positive: per-row assignment from an array-returning call, read
+/// back via full 2D index, instantiated and R1CS-verified. The
+/// witness asserts `out[i] = 3*in[i]+3`, so a wrong base index or a
+/// row bound under a single name (rather than fanned into flat
+/// slots) fails here rather than slipping through a compile-only
+/// check.
+#[test]
+fn var_array_2d_row_from_call_standalone() {
+    let src = format!(
+        "pragma circom 2.0.0;\n{ROW_FROM_CALL_LEAF}\ncomponent main {{public [in]}} = Leaf(3);\n"
+    );
+    let tmp = std::env::temp_dir().join("ach_var_array_2d_row_call.circom");
+    std::fs::write(&tmp, src).unwrap();
+
+    let result = circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    inputs.insert("in_0".into(), FieldElement::<Bn254Fr>::from_u64(4));
+    inputs.insert("in_1".into(), FieldElement::<Bn254Fr>::from_u64(5));
+    inputs.insert("in_2".into(), FieldElement::<Bn254Fr>::from_u64(6));
+
+    let all_signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness computation failed: {e}"));
+
+    for (name, want) in [("out_0", 15u64), ("out_1", 18), ("out_2", 21)] {
+        let got = all_signals
+            .get(name)
+            .unwrap_or_else(|| panic!("witness missing signal `{name}`"));
+        assert_eq!(
+            *got,
+            FieldElement::<Bn254Fr>::from_u64(want),
+            "row-from-call slot `{name}`: expected {want}, got {got:?}"
+        );
+    }
+
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.set_proven_boolean(proven);
+    let witness = rc
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("R1CS compile-with-witness failed: {e}"));
+    rc.cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("R1CS verify failed: {e}"));
+}
+
+/// Positive: the same body one component level deep. The defect is
+/// independent of component inlining (the row write is mishandled
+/// with or without a `comp.` prefix); this locks that in so the bug
+/// class cannot silently re-emerge only under a prefix.
+#[test]
+fn var_array_2d_row_from_call_wrapped() {
+    let src = format!(
+        r#"pragma circom 2.0.0;
+{ROW_FROM_CALL_LEAF}
+        template Wrap(k) {{
+            signal input  in[k];
+            signal output out[k];
+            component leaf = Leaf(k);
+            for (var i = 0; i < k; i++) {{ leaf.in[i] <== in[i]; }}
+            for (var i = 0; i < k; i++) {{ out[i] <== leaf.out[i]; }}
+        }}
+        component main {{public [in]}} = Wrap(3);
+"#
+    );
+    let tmp = std::env::temp_dir().join("ach_var_array_2d_row_call_wrapped.circom");
+    std::fs::write(&tmp, src).unwrap();
+
+    let result = circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("instantiate failed (inlined): {e}"));
+}
+
 /// Adversarial: declared multi-dim shape whose cell count disagrees
 /// with the initializer's flat length surfaces a clean error, not a
 /// silently mis-strided array.
