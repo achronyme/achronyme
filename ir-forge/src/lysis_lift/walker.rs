@@ -1791,16 +1791,40 @@ impl<F: FieldBackend> Walker<F> {
             } => {
                 let blob_idx = self.builder.intern_artik_bytecode(program_bytes.clone()) as u16;
 
-                // Mirrors the pre-emit split predicate: an inline
-                // call needs `outputs.len()` fresh frame regs, so it
-                // is only safe when `next_slot + outputs + margin`
-                // stays under the cap. Otherwise route to the
-                // always-fitting heap path (a single WitnessCall is
-                // atomic and cannot be split across frames).
+                // Mirrors the pre-emit split predicate, but for the
+                // *classic* register-output path's full frame cost.
+                // That path allocates one fresh reg per output AND,
+                // via `resolve()`, one fresh reg per cold input — an
+                // input in `ssa_to_heap` but not `ssa_to_reg`, faulted
+                // back into the frame with a `LoadHeap` (a preceding
+                // split that spills this call's own inputs is exactly
+                // what makes them cold). The call is only safe inline
+                // when `next_slot + outputs + cold_inputs + margin`
+                // stays under the cap; otherwise route to the
+                // always-fitting heap path, where inputs become
+                // `InputSrc::Slot`/`Reg` and outputs go to heap slots
+                // (zero frame regs). A single WitnessCall is atomic
+                // and cannot be split across frames, so a split cannot
+                // rescue an inline call that does not fit.
+                //
+                // `cold_inputs` counts occurrences, so a repeated cold
+                // input is counted more than once even though the
+                // classic loop allocates it only once (the first
+                // `resolve` binds it into `ssa_to_reg`; later dups hit
+                // the fast path). That only over-estimates the classic
+                // cost and can over-route to the always-correct heap
+                // path — never unsafe. Do not de-dup it.
+                let cold_inputs = inputs
+                    .iter()
+                    .filter(|v| {
+                        !self.ssa_to_reg.contains_key(v) && self.ssa_to_heap.contains_key(v)
+                    })
+                    .count() as u32;
+                let classic_cost = (outputs.len() as u32).saturating_add(cold_inputs);
                 let inline_would_overflow = self
                     .allocator
                     .next_slot()
-                    .saturating_add(outputs.len() as u32)
+                    .saturating_add(classic_cost)
                     .saturating_add(FRAME_MARGIN)
                     >= FRAME_CAP;
                 if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE || inline_would_overflow {
@@ -4632,6 +4656,89 @@ mod tests {
         assert_eq!(
             program.header.heap_size_hint, 256,
             "heap_size_hint reflects allocated slots"
+        );
+    }
+
+    #[test]
+    fn witness_call_routes_to_heap_when_cold_inputs_would_overflow_classic() {
+        // Regression: a wide-output `WitnessCall` whose `outputs.len()`
+        // alone would fit the post-split frame, but whose *cold
+        // inputs* (spilled to the heap by the split that the call's
+        // own reg cost triggered, then faulted back in via `LoadHeap`
+        // on the classic path) push `outputs + cold_inputs` over
+        // `FRAME_CAP`. The emit-arm guard must account for the
+        // classic path's cold-input reg cost — not just `outputs` —
+        // and route to the always-fitting heap path.
+        //
+        // 60 producers (all live, all consumed only as the call's
+        // inputs) → the call's `cost = 200` trips the pre-emit split;
+        // `do_split` keeps the first MAX_CAPTURES_HOT (48) hot and
+        // spills the remaining 12 to the heap. On the post-split
+        // frame `next_slot = 48`, so `48 + 200 + margin < FRAME_CAP`
+        // (the outputs-only guard stays false) — but the classic path
+        // would then `resolve()` the 12 cold inputs (+12 regs) and
+        // allocate 200 outputs, overflowing 255. Pre-fix this panics
+        // in `lower()`; the guard must instead pick the heap variant.
+        let n_inputs = 60u32;
+        let mut body: Vec<ExtendedInstruction<Bn254Fr>> = (0..n_inputs)
+            .map(|i| {
+                plain(Instruction::Const {
+                    result: ssa(i),
+                    value: fe(u64::from(i) + 1),
+                })
+            })
+            .collect();
+        let outputs: Vec<SsaVar> = (n_inputs..n_inputs + 200).map(ssa).collect();
+        let inputs: Vec<SsaVar> = (0..n_inputs).map(ssa).collect();
+        body.push(plain(Instruction::WitnessCall {
+            outputs,
+            inputs,
+            program_bytes: vec![0xFF],
+        }));
+
+        let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        let program = walker
+            .lower(body)
+            .expect("wide-output WitnessCall with cold inputs must lower without a frame overflow");
+
+        let classic_count = program
+            .body
+            .iter()
+            .filter(|i| matches!(i.opcode, lysis::Opcode::EmitWitnessCall { .. }))
+            .count();
+        let heap_count = program
+            .body
+            .iter()
+            .filter(|i| matches!(i.opcode, lysis::Opcode::EmitWitnessCallHeap { .. }))
+            .count();
+        // A genuine split forwards the hot live set as captures; the
+        // trivial root entry is `InstantiateTemplate(0, [], [])` with
+        // *empty* capture_regs, so filtering on a non-empty capture
+        // set distinguishes a real `do_split` from the always-present
+        // root and keeps this assertion non-vacuous.
+        let split_count = program
+            .body
+            .iter()
+            .filter(|i| {
+                matches!(
+                    &i.opcode,
+                    lysis::Opcode::InstantiateTemplate { capture_regs, .. }
+                        if !capture_regs.is_empty()
+                )
+            })
+            .count();
+
+        assert_eq!(
+            classic_count, 0,
+            "the cold-input-pressured call must not take the classic path"
+        );
+        assert_eq!(heap_count, 1, "it must take the always-fitting heap path");
+        assert!(
+            split_count >= 1,
+            "the scenario must actually exercise a split (the call's \
+             inputs must be spilled to make them cold); without a real \
+             capture-forwarding split there are no cold inputs and the \
+             pin would be vacuous"
         );
     }
 

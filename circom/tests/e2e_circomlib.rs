@@ -1115,7 +1115,7 @@ fn secp256k1_addunequal_loop_nested_lysis_frame_fit() {
 /// `cargo test --release ecdsa_verify_boss_fight -- --ignored
 /// --nocapture` to capture wall-clock + constraint shape.
 #[test]
-#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints), kept ignored as a slow integration probe. It now compiles cheaply (well under a gigabyte). The wide-output WitnessCall frame overflow that previously blocked the lysis instantiate roundtrip is closed (pinned minimally by secp256k1_addunequal_loop_nested_lysis_frame_fit). The probe currently fails later in that roundtrip with a register-frame overflow in the lysis walker — a wider trigger than the closed wide-output case — which is handled as a separate arc. Run with --ignored only."]
+#[ignore = "ECDSAVerify(64, 4) is the heaviest probe in this file (>1.5M constraints), kept ignored as a slow integration probe. It compiles cheaply (well under a gigabyte). The wide-output WitnessCall lysis frame overflow is closed on both the outputs-only path (pinned by secp256k1_addunequal_loop_nested_lysis_frame_fit) and the cold-input path (pinned by walker's witness_call_routes_to_heap_when_cold_inputs_would_overflow_classic): the probe now advances through compile and the full lysis instantiate frame-overflow surface. Its remaining wall is the instantiate-phase memory scale of the genuine 1.5M-constraint circuit, handled as a separate arc. Run with --ignored only."]
 fn ecdsa_verify_boss_fight() {
     use std::time::Instant;
 

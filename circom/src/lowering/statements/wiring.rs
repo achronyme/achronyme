@@ -281,9 +281,8 @@ impl<'a> PendingComponent<'a> {
                             for (n, fc) in &lifts {
                                 last.insert(n, fc);
                             }
-                            last.iter().all(|(n, fc)| {
-                                env.known_constants.get(n.as_str()) == Some(*fc)
-                            })
+                            last.iter()
+                                .all(|(n, fc)| env.known_constants.get(n.as_str()) == Some(*fc))
                         },
                         "deferred const-output replay incomplete: a mangled \
                          output key is missing or holds the wrong (non-last) \
