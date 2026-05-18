@@ -1379,6 +1379,47 @@ mod tests {
         assert!(matches!(err, LysisError::BudgetExhausted { .. }));
     }
 
+    #[test]
+    fn for_internal_replay_lifts_the_instruction_ceiling() {
+        // One program, built once. The executor ticks the budget once
+        // per loop turn including the turn that reaches `Halt`, so this
+        // 4-instruction body needs 4 ticks to complete.
+        let prog = {
+            let mut builder = b();
+            builder.intern_field(one());
+            builder.intern_field(seven());
+            builder
+                .load_const(0, 0)
+                .load_const(1, 1)
+                .emit_add(2, 0, 1)
+                .halt();
+            builder.finish()
+        };
+        const K: u64 = 4;
+
+        // The trusted internal-replay config lifts the instruction
+        // ceiling: the same program runs to completion.
+        let mut sink = StubSink::<Bn254Fr>::new();
+        execute(&prog, &[], &LysisConfig::for_internal_replay(), &mut sink)
+            .expect("internal-replay config must not impose the instruction ceiling");
+
+        // The same program under a finite budget one short of what it
+        // needs still trips the backstop, fail-loud, with the exact
+        // `ran`/`budget` — the ceiling stays real for non-replay
+        // callers using `Default`.
+        let capped = LysisConfig {
+            instruction_budget: K - 1,
+            ..Default::default()
+        };
+        let mut sink2 = StubSink::<Bn254Fr>::new();
+        let err = execute(&prog, &[], &capped, &mut sink2).unwrap_err();
+        assert!(
+            matches!(err, LysisError::BudgetExhausted { ran, budget } if ran == K && budget == K - 1),
+            "expected BudgetExhausted {{ ran: {K}, budget: {} }}, got {err:?}",
+            K - 1
+        );
+    }
+
     // -----------------------------------------------------------------
     // Scope opcodes are no-ops.
     // -----------------------------------------------------------------

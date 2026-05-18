@@ -133,7 +133,12 @@ pub fn lysis_roundtrip<F: FieldBackend>(
     }
 
     let mut sink = InterningSink::<F>::new();
-    execute(&decoded, &[], &LysisConfig::default(), &mut sink)?;
+    execute(
+        &decoded,
+        &[],
+        &LysisConfig::for_internal_replay(),
+        &mut sink,
+    )?;
     let instructions = materialize_interning_sink(sink);
 
     let mut out = IrProgram::<F>::new();

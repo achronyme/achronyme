@@ -38,3 +38,37 @@ impl Default for LysisConfig {
         }
     }
 }
+
+impl LysisConfig {
+    /// Config for the compiler-internal replay of walker-generated
+    /// bytecode (the instantiate / round-trip path that encodes,
+    /// decodes and executes a program produced by the walker within
+    /// one call).
+    ///
+    /// On that path termination is guaranteed structurally, so the
+    /// `instruction_budget` — whose only purpose is to bound a
+    /// non-terminating data-dependent body — does not apply and is
+    /// lifted (`u64::MAX`, no cap):
+    ///
+    /// - the only backward control flow is `LoopUnroll`, whose bounds
+    ///   are compile-time `u32` constants baked into the opcode (no
+    ///   runtime value can extend an iteration count);
+    /// - `JumpIf` always falls through and `Jump` is a static offset,
+    ///   so no field value can redirect control flow;
+    /// - the call graph is acyclic with a bounded longest path,
+    ///   enforced statically and re-checked at runtime via
+    ///   `max_call_depth`.
+    ///
+    /// The instruction budget therefore only ever truncated
+    /// legitimate emission of large-but-finite circuits on this path.
+    /// `max_call_depth` is retained unchanged: it is the structural
+    /// guard for the call-graph axis. [`LysisConfig::default`] keeps
+    /// the finite `instruction_budget` as the backstop for any other
+    /// (e.g. adversarial-bytecode) executor caller.
+    pub fn for_internal_replay() -> Self {
+        Self {
+            instruction_budget: u64::MAX,
+            ..Self::default()
+        }
+    }
+}

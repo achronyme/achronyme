@@ -188,7 +188,13 @@ fn lower_extended_through_lysis<F: FieldBackend>(
     }
 
     let mut sink = InterningSink::<F>::new();
-    execute(&decoded, &[], &LysisConfig::default(), &mut sink).map_err(RoundTripError::Lysis)?;
+    execute(
+        &decoded,
+        &[],
+        &LysisConfig::for_internal_replay(),
+        &mut sink,
+    )
+    .map_err(RoundTripError::Lysis)?;
     let instructions = materialize_interning_sink(sink);
 
     // Reassemble: the materialised stream replaces the body, but
