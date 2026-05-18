@@ -79,6 +79,15 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     pub(crate) timeline: Vec<Emission>,
     /// Monotonic across both pure and opaque ids. Never rewound.
     pub(crate) next_node_id: u32,
+    /// When false, `node_spans` / `effect_spans` are never populated.
+    /// `materialize` discards both channels unconditionally, so a
+    /// consumer that only needs the flat instruction stream (no
+    /// per-node source-span diagnostics) can skip accumulating them
+    /// — on a fully-unrolled circuit that is one `SpanList` per
+    /// interned node, a per-input-size memory cost for data that is
+    /// then thrown away. Defaults to true; the span channels stay
+    /// behaviourally identical for every existing caller.
+    pub(crate) record_spans: bool,
 }
 
 impl<F: FieldBackend> Default for NodeInterner<F> {
@@ -97,6 +106,19 @@ impl<F: FieldBackend> NodeInterner<F> {
             effect_spans: Vec::new(),
             timeline: Vec::new(),
             next_node_id: 0,
+            record_spans: true,
+        }
+    }
+
+    /// Empty interner that never accumulates per-node span lists.
+    /// Use when the only consumer is `materialize` (which discards
+    /// the span channels): identical instruction stream, no span
+    /// bookkeeping. Everything else — node ids, dedup, timeline,
+    /// effect order — is byte-for-byte identical to [`Self::new`].
+    pub fn without_span_tracking() -> Self {
+        Self {
+            record_spans: false,
+            ..Self::new()
         }
     }
 
@@ -122,8 +144,10 @@ impl<F: FieldBackend> NodeInterner<F> {
         let hash = deterministic_hash(&key);
         let insertion_idx = self.nodes.len();
         self.nodes.insert(key, NodeMeta { id, hash });
-        debug_assert_eq!(self.node_spans.len(), insertion_idx);
-        self.node_spans.push(SpanList::with_span(span));
+        if self.record_spans {
+            debug_assert_eq!(self.node_spans.len(), insertion_idx);
+            self.node_spans.push(SpanList::with_span(span));
+        }
         self.timeline.push(Emission::Pure(insertion_idx));
         id
     }
@@ -138,7 +162,9 @@ impl<F: FieldBackend> NodeInterner<F> {
         let eff_idx = self.effects.len();
         let eff_id = EffectId::from_zero_based(eff_idx);
         self.effects.push(effect);
-        self.effect_spans.push(SpanList::with_span(span));
+        if self.record_spans {
+            self.effect_spans.push(SpanList::with_span(span));
+        }
         self.timeline.push(Emission::Effect(eff_idx));
         eff_id
     }
@@ -438,5 +464,65 @@ mod tests {
             .collect();
         assert_eq!(kinds.len(), 2);
         assert_ne!(kinds[0], kinds[1]);
+    }
+
+    // ------------------------------------------------------------------
+    // Span-tracking opt-out preserves the materialized stream.
+    // ------------------------------------------------------------------
+
+    /// Build a representative sequence — pure dedup hit, distinct pure
+    /// nodes, and two side-effects — into the supplied interner.
+    fn build_sequence(ix: &mut NodeInterner<Bn254Fr>) {
+        let a = ix.intern_pure(NodeKey::Const(fe(1)), span(1));
+        let b = ix.intern_pure(NodeKey::Const(fe(2)), span(2));
+        let _dup = ix.intern_pure(NodeKey::Const(fe(1)), span(3)); // dedup hit
+        let s = ix.intern_pure(NodeKey::Add(a, b), span(4));
+        let _ = ix.intern_pure(NodeKey::Mul(s, a), span(5));
+        let r = ix.reserve_opaque_id();
+        ix.emit_effect(
+            SideEffect::RangeCheck {
+                result: r,
+                operand: s,
+                bits: 8,
+            },
+            span(6),
+        );
+        let w = ix.reserve_opaque_id();
+        ix.emit_effect(
+            SideEffect::Input {
+                output: w,
+                name: "x".into(),
+                visibility: Visibility::Public,
+            },
+            span(7),
+        );
+    }
+
+    #[test]
+    fn without_span_tracking_materializes_identically_to_default() {
+        let mut recorded = NodeInterner::<Bn254Fr>::new();
+        let mut skipped = NodeInterner::<Bn254Fr>::without_span_tracking();
+        build_sequence(&mut recorded);
+        build_sequence(&mut skipped);
+
+        // Same node/effect accounting either way.
+        assert_eq!(recorded.pure_len(), skipped.pure_len());
+        assert_eq!(recorded.effect_len(), skipped.effect_len());
+
+        // The span-skipping interner accumulates no span lists; the
+        // default one does. This is the memory invariant the opt-out
+        // exists for.
+        assert!(!recorded.node_spans.is_empty());
+        assert!(!recorded.effect_spans.is_empty());
+        assert!(skipped.node_spans.is_empty());
+        assert!(skipped.effect_spans.is_empty());
+
+        // …yet the flat instruction stream is identical, because
+        // `materialize` discards both span channels. `InstructionKind`
+        // is not `PartialEq`; compare via its `Debug` projection.
+        assert_eq!(
+            format!("{:?}", recorded.materialize()),
+            format!("{:?}", skipped.materialize()),
+        );
     }
 }

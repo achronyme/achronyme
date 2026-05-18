@@ -44,6 +44,7 @@ impl<F: FieldBackend> NodeInterner<F> {
             effect_spans: _,
             timeline,
             next_node_id: _,
+            record_spans: _,
         } = self;
 
         let estimated = timeline.len();

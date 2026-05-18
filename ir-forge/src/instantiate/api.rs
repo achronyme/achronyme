@@ -187,7 +187,13 @@ fn lower_extended_through_lysis<F: FieldBackend>(
             .map_err(RoundTripError::Lysis)?;
     }
 
-    let mut sink = InterningSink::<F>::new();
+    // This path's only consumer of the sink is
+    // `materialize_interning_sink`, which discards the interner's
+    // span channels. Skip accumulating them — on a fully-unrolled
+    // circuit they are one `SpanList` per interned node, a
+    // per-input-size memory cost for data that is then thrown away.
+    // The materialized instruction stream is byte-identical.
+    let mut sink = InterningSink::<F>::without_span_tracking();
     execute(
         &decoded,
         &[],

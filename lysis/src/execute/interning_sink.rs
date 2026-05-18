@@ -42,6 +42,19 @@ impl<F: FieldBackend> InterningSink<F> {
         }
     }
 
+    /// Sink whose interner never accumulates per-node span lists.
+    /// The executor only ever feeds `SpanRange::UNKNOWN` and the sole
+    /// consumer of an execute-produced interner is `materialize`,
+    /// which discards both span channels — so on a fully-unrolled
+    /// circuit this drops one `SpanList` per interned node (a
+    /// per-input-size cost for data that is thrown away) while
+    /// keeping the materialized instruction stream byte-identical.
+    pub fn without_span_tracking() -> Self {
+        Self {
+            interner: NodeInterner::without_span_tracking(),
+        }
+    }
+
     /// Borrow the underlying interner — mainly for tests and the
     /// determinism harness.
     pub fn interner(&self) -> &NodeInterner<F> {
