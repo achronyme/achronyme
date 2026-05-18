@@ -204,6 +204,19 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
                 frames[frame_idx].pc += 1;
                 frames.push(new_frame);
             }
+            Step::TailCall(mut new_frame) => {
+                // The caller is in tail position with no outputs to
+                // forward: replace it with the callee instead of
+                // growing the stack. The callee inherits the caller's
+                // return target so the eventual leaf `Return` unwinds
+                // to the caller's caller (for the walker's split-chain
+                // that is the root), keeping the chain O(1) in frames.
+                let caller = frames.pop().expect("frame_idx valid implies a frame");
+                new_frame.caller_frame_idx = caller.caller_frame_idx;
+                new_frame.caller_output_regs = caller.caller_output_regs;
+                new_frame.output_slots = vec![None; new_frame.caller_output_regs.len()];
+                frames.push(new_frame);
+            }
             Step::PopFrame => {
                 pop_frame(&mut frames)?;
             }
@@ -220,6 +233,13 @@ enum Step {
     Next,
     JumpToIndex(usize),
     PushFrame(Frame),
+    /// Tail-call: the caller is in tail position (its only remaining
+    /// instruction is `Return`) with no outputs to forward, so the
+    /// callee *replaces* the caller frame instead of growing the
+    /// stack. A linear template chain (the walker emits one
+    /// `InstantiateTemplate(next); Return` per split) thus runs in
+    /// O(1) frames instead of one frame per chain link.
+    TailCall(Frame),
     PopFrame,
     Halt,
 }
@@ -465,7 +485,30 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 caller_frame_idx: Some(frame_idx),
                 loop_stack: Vec::new(),
             };
-            Ok(Step::PushFrame(new_frame))
+
+            // Tail-call elimination. The caller has nothing left to do
+            // after the callee returns iff the instruction right after
+            // this `InstantiateTemplate` is `Return`, the caller is not
+            // mid-loop-iteration, and there are no outputs to project
+            // back (this call's `output_regs` and the caller's own
+            // `caller_output_regs` are both empty). The walker's
+            // split-chain (`InstantiateTemplate(next); Return`, empty
+            // output_regs) satisfies this for every link, so the chain
+            // runs in O(1) frames. Any other shape falls back to the
+            // stack-growing push.
+            let caller = &frames[frame_idx];
+            let tail = output_regs.is_empty()
+                && caller.caller_output_regs.is_empty()
+                && caller.loop_stack.is_empty()
+                && matches!(
+                    program.body.get(caller.pc + 1).map(|i| &i.opcode),
+                    Some(Opcode::Return)
+                );
+            if tail {
+                Ok(Step::TailCall(new_frame))
+            } else {
+                Ok(Step::PushFrame(new_frame))
+            }
         }
         TemplateOutput {
             output_idx,
@@ -1595,6 +1638,177 @@ mod tests {
             sink.instructions()[1],
             InstructionKind::Mul { .. }
         ));
+    }
+
+    /// Build a linear template chain: root `InstantiateTemplate(0)`
+    /// then `Halt`; template `i` (`i < n-1`) body is
+    /// `InstantiateTemplate(i+1)` then (optionally a `LoadConst`
+    /// *between*, making the call NON-tail) then `Return`; the leaf
+    /// template `n-1` is `LoadConst(0,0); Return` (its `Const(7)` in
+    /// the sink proves the chain reached the leaf). This is exactly
+    /// the shape the walker emits per split, scaled down.
+    fn tail_chain_program(n: u16, non_tail: bool) -> Program<Bn254Fr> {
+        use crate::bytecode::encoding::encode_opcode;
+        use crate::header::LysisHeader;
+        use crate::program::{Instr, Template};
+        use crate::ConstPool;
+
+        assert!(n >= 1);
+        let mut buf = Vec::new();
+        let mut body: Vec<Instr> = Vec::new();
+        let emit = |op: Opcode, buf: &mut Vec<u8>, body: &mut Vec<Instr>| {
+            let before = buf.len() as u32;
+            encode_opcode(&op, buf);
+            body.push(Instr {
+                opcode: op,
+                offset: before,
+            });
+        };
+
+        // Root prefix: DefineTemplate(0..n), InstantiateTemplate(0),
+        // Halt. DefineTemplate offsets patched after bodies are laid.
+        let mut define_offsets: Vec<u32> = Vec::with_capacity(n as usize);
+        for id in 0..n {
+            define_offsets.push(buf.len() as u32);
+            emit(
+                Opcode::DefineTemplate {
+                    template_id: id,
+                    frame_size: 2,
+                    n_params: 0,
+                    body_offset: 0,
+                    body_len: 0,
+                },
+                &mut buf,
+                &mut body,
+            );
+        }
+        emit(
+            Opcode::InstantiateTemplate {
+                template_id: 0,
+                capture_regs: vec![],
+                output_regs: vec![],
+            },
+            &mut buf,
+            &mut body,
+        );
+        emit(Opcode::Halt, &mut buf, &mut body);
+
+        // Template bodies, recording (offset, len) per id.
+        let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(n as usize);
+        for id in 0..n {
+            let start = buf.len() as u32;
+            if id < n - 1 {
+                emit(
+                    Opcode::InstantiateTemplate {
+                        template_id: id + 1,
+                        capture_regs: vec![],
+                        output_regs: vec![],
+                    },
+                    &mut buf,
+                    &mut body,
+                );
+                if non_tail {
+                    // An op between the call and Return ⇒ the call is
+                    // NOT in tail position; TCO must not fire.
+                    emit(Opcode::LoadConst { dst: 0, idx: 0 }, &mut buf, &mut body);
+                }
+            } else {
+                // Leaf: observable side effect proving it ran.
+                emit(Opcode::LoadConst { dst: 0, idx: 0 }, &mut buf, &mut body);
+            }
+            emit(Opcode::Return, &mut buf, &mut body);
+            ranges.push((start, buf.len() as u32 - start));
+        }
+
+        // Patch DefineTemplate body_offset/len.
+        for (id, &doff) in define_offsets.iter().enumerate() {
+            let (bo, bl) = ranges[id];
+            for instr in body.iter_mut() {
+                if instr.offset == doff {
+                    if let Opcode::DefineTemplate {
+                        template_id,
+                        frame_size,
+                        n_params,
+                        ..
+                    } = instr.opcode
+                    {
+                        instr.opcode = Opcode::DefineTemplate {
+                            template_id,
+                            frame_size,
+                            n_params,
+                            body_offset: bo,
+                            body_len: bl,
+                        };
+                    }
+                }
+            }
+        }
+
+        let mut const_pool = ConstPool::<Bn254Fr>::new(FieldFamily::BnLike256);
+        const_pool.push(crate::bytecode::ConstPoolEntry::Field(seven()));
+        let templates = (0..n)
+            .map(|id| {
+                let (bo, bl) = ranges[id as usize];
+                Template {
+                    id,
+                    frame_size: 2,
+                    n_params: 0,
+                    body_offset: bo,
+                    body_len: bl,
+                }
+            })
+            .collect();
+        Program {
+            header: LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0),
+            const_pool,
+            templates,
+            body,
+        }
+    }
+
+    #[test]
+    fn tail_chain_runs_in_constant_stack_past_max_call_depth() {
+        // A 20-deep linear tail-chain with max_call_depth=4 is
+        // impossible without tail-call elimination (frames would grow
+        // to 20 and trip the runtime backstop ~frame 4). With TCO each
+        // `InstantiateTemplate(next); Return` replaces the caller, so
+        // the chain runs in O(1) frames and the leaf's Const(7)
+        // materializes.
+        let program = tail_chain_program(20, false);
+        let cfg = LysisConfig {
+            max_call_depth: 4,
+            ..Default::default()
+        };
+        let mut sink = InterningSink::<Bn254Fr>::new();
+        execute(&program, &[], &cfg, &mut sink)
+            .expect("tail chain must run in constant stack, not CallStackOverflow");
+        let flat = sink.materialize();
+        assert!(
+            flat.iter().any(|n| matches!(
+                n,
+                InstructionKind::Const { value, .. } if *value == seven()
+            )),
+            "the leaf template's Const(7) must materialize (chain reached the leaf)"
+        );
+    }
+
+    #[test]
+    fn non_tail_call_chain_still_overflows_under_low_max_call_depth() {
+        // Guard: TCO must fire ONLY in tail position. With a
+        // `LoadConst` between the `InstantiateTemplate` and `Return`
+        // the call is not tail, so the stack still grows and a
+        // 3-deep chain must trip max_call_depth=2 exactly as before.
+        let program = tail_chain_program(3, true);
+        let cfg = LysisConfig {
+            max_call_depth: 2,
+            ..Default::default()
+        };
+        let mut sink = StubSink::<Bn254Fr>::new();
+        let err = execute(&program, &[], &cfg, &mut sink).unwrap_err();
+        assert!(
+            matches!(err, LysisError::CallStackOverflow { .. }),
+            "non-tail chain must still overflow (TCO must not swallow it), got {err:?}"
+        );
     }
 
     #[test]

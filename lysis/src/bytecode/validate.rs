@@ -566,27 +566,48 @@ fn check_call_graph<F: FieldBackend>(
     // edge `hosting_template(off) -> target_template`. The same rule
     // applies to LoopRolled / LoopRange, which dispatch to a template
     // body per iteration.
-    let mut graph: HashMap<Option<u16>, Vec<u16>> = HashMap::new();
+    // Edge = (target, is_tail). A tail edge is a plain
+    // `InstantiateTemplate` whose very next body instruction is
+    // `Return` with no outputs to forward — the executor
+    // tail-eliminates it (replaces the caller frame instead of
+    // pushing), so it adds 0 to runtime call depth. Counting it as a
+    // depth edge here would reject (in debug builds, the only place
+    // this validator runs) the linear split-chains the executor runs
+    // fine in release — a debug/release divergence. `LoopRolled` /
+    // `LoopRange` dispatch a body per iteration and are never
+    // tail-eliminated.
+    let mut graph: HashMap<Option<u16>, Vec<(u16, bool)>> = HashMap::new();
     graph.entry(None).or_default();
     for t in &program.templates {
         graph.entry(Some(t.id)).or_default();
     }
-    for instr in &program.body {
+    for (i, instr) in program.body.iter().enumerate() {
         let host = hosting_template(program, instr.offset);
-        let target = match &instr.opcode {
-            Opcode::InstantiateTemplate { template_id, .. }
-            | Opcode::LoopRolled {
+        let (target, is_tail) = match &instr.opcode {
+            Opcode::InstantiateTemplate {
+                template_id,
+                output_regs,
+                ..
+            } => {
+                let tail = output_regs.is_empty()
+                    && matches!(
+                        program.body.get(i + 1).map(|n| &n.opcode),
+                        Some(Opcode::Return)
+                    );
+                (Some(*template_id), tail)
+            }
+            Opcode::LoopRolled {
                 body_template_id: template_id,
                 ..
             }
             | Opcode::LoopRange {
                 body_template_id: template_id,
                 ..
-            } => Some(*template_id),
-            _ => None,
+            } => (Some(*template_id), false),
+            _ => (None, false),
         };
         if let Some(t) = target {
-            graph.entry(host).or_default().push(t);
+            graph.entry(host).or_default().push((t, is_tail));
         }
     }
 
@@ -610,7 +631,7 @@ fn check_call_graph<F: FieldBackend>(
 
 fn dfs_longest(
     node: Option<u16>,
-    graph: &HashMap<Option<u16>, Vec<u16>>,
+    graph: &HashMap<Option<u16>, Vec<(u16, bool)>>,
     stack: &mut HashSet<Option<u16>>,
     max_depth: u32,
 ) -> Result<u32, LysisError> {
@@ -622,8 +643,11 @@ fn dfs_longest(
     stack.insert(node);
     let mut best = 0u32;
     if let Some(edges) = graph.get(&node) {
-        for &child in edges {
-            let depth = dfs_longest(Some(child), graph, stack, max_depth)?.saturating_add(1);
+        for &(child, is_tail) in edges {
+            // Recurse for cycle detection + deeper-subtree depth, but a
+            // tail-eliminated edge does not add a stack frame.
+            let sub = dfs_longest(Some(child), graph, stack, max_depth)?;
+            let depth = if is_tail { sub } else { sub.saturating_add(1) };
             if depth > best {
                 best = depth;
             }
@@ -1060,6 +1084,103 @@ mod tests {
         builder.halt();
         let err = check_call_graph(&builder.finish(), &cfg).unwrap_err();
         assert!(matches!(err, LysisError::MaxCallDepthExceeded { .. }));
+    }
+
+    #[test]
+    fn rule11_tail_chain_does_not_count_toward_depth() {
+        use crate::program::{Instr, Template};
+
+        // Build a linear N-template chain with synthetic offsets ==
+        // body positions. Root: DefineTemplate(0..N),
+        // InstantiateTemplate(0), Halt. Template i (<N-1) body:
+        // InstantiateTemplate(i+1) then — if `non_tail`, a LoadConst —
+        // then Return. Leaf: Return. The executor tail-eliminates the
+        // `InstantiateTemplate(next); Return` links (runtime depth
+        // O(1)); Rule 11 must mirror that, else a debug build rejects
+        // the very chains release runs fine.
+        fn chain(n: u16, non_tail: bool) -> Program<Bn254Fr> {
+            let mut body: Vec<Instr> = Vec::new();
+            let push = |op: Opcode, body: &mut Vec<Instr>| {
+                let off = body.len() as u32;
+                body.push(Instr {
+                    opcode: op,
+                    offset: off,
+                });
+            };
+            for id in 0..n {
+                push(
+                    Opcode::DefineTemplate {
+                        template_id: id,
+                        frame_size: 2,
+                        n_params: 0,
+                        body_offset: 0,
+                        body_len: 0,
+                    },
+                    &mut body,
+                );
+            }
+            push(
+                Opcode::InstantiateTemplate {
+                    template_id: 0,
+                    capture_regs: vec![],
+                    output_regs: vec![],
+                },
+                &mut body,
+            );
+            push(Opcode::Halt, &mut body);
+            let mut ranges: Vec<(u32, u32)> = Vec::with_capacity(n as usize);
+            for id in 0..n {
+                let start = body.len() as u32;
+                if id < n - 1 {
+                    push(
+                        Opcode::InstantiateTemplate {
+                            template_id: id + 1,
+                            capture_regs: vec![],
+                            output_regs: vec![],
+                        },
+                        &mut body,
+                    );
+                    if non_tail {
+                        push(Opcode::LoadConst { dst: 0, idx: 0 }, &mut body);
+                    }
+                }
+                push(Opcode::Return, &mut body);
+                ranges.push((start, body.len() as u32 - start));
+            }
+            let templates = (0..n)
+                .map(|id| {
+                    let (bo, bl) = ranges[id as usize];
+                    Template {
+                        id,
+                        frame_size: 2,
+                        n_params: 0,
+                        body_offset: bo,
+                        body_len: bl,
+                    }
+                })
+                .collect();
+            Program {
+                header: crate::header::LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0),
+                const_pool: crate::ConstPool::<Bn254Fr>::new(FieldFamily::BnLike256),
+                templates,
+                body,
+            }
+        }
+
+        let cfg = LysisConfig {
+            max_call_depth: 10,
+            ..Default::default()
+        };
+        // 100 tail links + 1 non-tail root→t0 edge ⇒ longest path 1.
+        check_call_graph(&chain(100, false), &cfg)
+            .expect("a 100-deep tail-chain must validate (tail edges add 0 depth)");
+        // The same chain with a non-tail op per link DOES grow the
+        // stack ⇒ must still be rejected — proves only tail edges are
+        // zero-counted, not all InstantiateTemplate edges.
+        assert!(matches!(
+            check_call_graph(&chain(100, true), &cfg).unwrap_err(),
+            LysisError::MaxCallDepthExceeded { .. }
+        ));
     }
 
     // -----------------------------------------------------------------
