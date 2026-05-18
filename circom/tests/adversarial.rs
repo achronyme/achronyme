@@ -1226,3 +1226,92 @@ fn r1pp_followup_b_eddsaposeidon_constraint_count_byte_identical_across_modes() 
          vestigial-gate cleanup, breaking cross-mode equivalence."
     );
 }
+
+/// Components that are declared but never wire-triggered (e.g. a
+/// sub-component whose input signal is never assigned) are inlined at
+/// the end of statement lowering by draining the `pending` component
+/// map. That map is a `HashMap`, whose key iteration order is
+/// per-process random; if the drain followed that order, the lowered
+/// node sequence — and therefore every downstream IR, bytecode, and
+/// constraint the circuit emits — would differ from one process to the
+/// next for byte-identical input. The drain sorts the component names
+/// so the inline order is stable and reproducible.
+///
+/// This pin builds twelve such components in a scrambled declaration
+/// order, each emitting a uniquely identifiable `===` constraint, and
+/// asserts the constraints land in name-sorted order in the lowered
+/// body. With twelve components an unsorted (hash-order) drain matches
+/// the sorted order with probability 1/12! ≈ 2e-9, so a regression
+/// that drops the canonical ordering fails this test in essentially
+/// every process — without depending on any specific hash seed.
+#[test]
+fn unwired_pending_components_inline_in_deterministic_name_order() {
+    use ir_forge::types::{CircuitExpr, CircuitNode};
+
+    // Scrambled declaration order: neither sorted nor reverse-sorted,
+    // so a stable result can only come from explicit canonicalization.
+    let decl = [
+        "c05", "c11", "c01", "c08", "c03", "c12", "c07", "c02", "c10", "c04", "c09", "c06",
+    ];
+    let mut body = String::from("signal output d;");
+    for (i, c) in decl.iter().enumerate() {
+        // `Mk`'s input `x` is never wired, so each instance falls
+        // through to the leftover-pending drain. The unique parameter
+        // makes every emitted `===` constraint individually identifiable.
+        body.push_str(&format!("component {c} = Mk({});", 700_001 + i));
+    }
+    body.push_str("d <== 0;");
+    let src = format!(
+        "template Mk(k) {{ signal input x; x === k; }} \
+         template Main() {{ {body} }} \
+         component main = Main();"
+    );
+
+    let result = circom::compile_to_prove_ir(&src).expect("compile_to_prove_ir failed");
+
+    // Collect, in body order, the instance name of every `cNN.x === k`
+    // constraint the drained components emit.
+    fn collect(nodes: &[CircuitNode], seq: &mut Vec<String>) {
+        for n in nodes {
+            match n {
+                CircuitNode::AssertEq {
+                    lhs: CircuitExpr::Var(v),
+                    ..
+                } => {
+                    if let Some(inst) = v.strip_suffix(".x") {
+                        seq.push(inst.to_string());
+                    }
+                }
+                CircuitNode::For { body, .. } => collect(body, seq),
+                CircuitNode::If {
+                    then_body,
+                    else_body,
+                    ..
+                } => {
+                    collect(then_body, seq);
+                    collect(else_body, seq);
+                }
+                _ => {}
+            }
+        }
+    }
+    let mut seq = Vec::new();
+    collect(&result.prove_ir.body, &mut seq);
+
+    assert_eq!(
+        seq.len(),
+        decl.len(),
+        "expected one inlined `===` per pending component; got {seq:?}"
+    );
+
+    let mut sorted = seq.clone();
+    sorted.sort();
+    assert_eq!(
+        seq, sorted,
+        "leftover-pending components inlined out of name-sorted order \
+         ({seq:?}); the drain must canonicalize the HashMap iteration \
+         order, or the lowered body — and all downstream IR, bytecode, \
+         and constraints — become per-process non-deterministic for \
+         identical input"
+    );
+}

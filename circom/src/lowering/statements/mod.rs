@@ -88,7 +88,16 @@ fn lower_stmts_with_pending<'a>(
 
     // Inline any components that weren't triggered by wiring completion
     // (e.g., components with no input signals, or partial wiring).
-    let remaining: Vec<String> = pending.keys().cloned().collect();
+    //
+    // `pending` is a `HashMap`, so its key iteration order is
+    // per-process random. Each inlined component appends a whole body
+    // chunk to `nodes`; emitting them in hash order would make the
+    // lowered node sequence — and therefore every downstream IR,
+    // bytecode, and constraint emission — non-deterministic across
+    // processes for the same input. Sort by component name to pin a
+    // stable, reproducible inline order.
+    let mut remaining: Vec<String> = pending.keys().cloned().collect();
+    remaining.sort();
     for comp_name in remaining {
         if let Some(comp) = pending.remove(&comp_name) {
             let span = comp.template_span().clone();
