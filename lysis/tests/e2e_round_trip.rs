@@ -54,7 +54,7 @@ fn num2bits_4_runs_through_full_pipeline() {
     let in_name = builder.intern_string("in");
 
     builder
-        .load_input(0, in_name as u16, Visibility::Witness) // r0 = in
+        .load_input(0, in_name, Visibility::Witness) // r0 = in
         .emit_decompose(1, 0, 4) // r1..r4 = bits(r0)
         .emit_range_check(1, 1)
         .emit_range_check(2, 1)
@@ -90,12 +90,12 @@ fn poseidon_pseudo_round_runs() {
     let s2 = builder.intern_string("s2");
 
     builder
-        .load_input(0, s0 as u16, Visibility::Witness)
-        .load_input(1, s1 as u16, Visibility::Witness)
-        .load_input(2, s2 as u16, Visibility::Witness)
-        .load_const(3, c0 as u16)
-        .load_const(4, c1 as u16)
-        .load_const(5, c2 as u16)
+        .load_input(0, s0, Visibility::Witness)
+        .load_input(1, s1, Visibility::Witness)
+        .load_input(2, s2, Visibility::Witness)
+        .load_const(3, c0)
+        .load_const(4, c1)
+        .load_const(5, c2)
         .emit_add(6, 0, 3)
         .emit_add(7, 1, 4)
         .emit_add(8, 2, 5)
@@ -152,7 +152,7 @@ fn sha256_round_skeleton_runs() {
         .load_input(6, 7, Visibility::Public) // g
         .load_input(7, 8, Visibility::Public) // h
         .load_input(8, 9, Visibility::Witness) // w
-        .load_const(9, k_t as u16) // K_t
+        .load_const(9, k_t) // K_t
         .emit_add(10, 7, 9) // h + K_t
         .emit_add(11, 10, 8) // + w
         .emit_add(12, 11, 4) // + e
@@ -200,8 +200,8 @@ fn side_effects_preserve_emission_order() {
     let mut builder = b();
     let seven = builder.intern_field(fe(7));
     builder
-        .load_const(0, seven as u16)
-        .load_const(1, seven as u16)
+        .load_const(0, seven)
+        .load_const(1, seven)
         .emit_assert_eq(0, 1) // first assertion
         .emit_assert_eq(0, 0) // second assertion, textually identical
         .halt();

@@ -292,7 +292,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     .get(*idx as usize)
                     .ok_or(LysisError::ConstIdxOutOfRange {
                         at_offset: offset,
-                        idx: *idx as u32,
+                        idx: *idx,
                         len: program.const_pool.len() as u32,
                     })?;
             let fe = match entry {
@@ -317,7 +317,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             let entry = program.const_pool.get(*name_idx as usize).ok_or(
                 LysisError::ConstIdxOutOfRange {
                     at_offset: offset,
-                    idx: *name_idx as u32,
+                    idx: *name_idx,
                     len: program.const_pool.len() as u32,
                 },
             )?;
@@ -613,7 +613,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             let entry = program.const_pool.get(*msg_idx as usize).ok_or(
                 LysisError::ConstIdxOutOfRange {
                     at_offset: offset,
-                    idx: *msg_idx as u32,
+                    idx: *msg_idx,
                     len: program.const_pool.len() as u32,
                 },
             )?;
@@ -656,7 +656,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             let entry = program.const_pool.get(*bytecode_const_idx as usize).ok_or(
                 LysisError::ConstIdxOutOfRange {
                     at_offset: offset,
-                    idx: *bytecode_const_idx as u32,
+                    idx: *bytecode_const_idx,
                     len: program.const_pool.len() as u32,
                 },
             )?;
@@ -820,7 +820,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             let entry = program.const_pool.get(*bytecode_const_idx as usize).ok_or(
                 LysisError::ConstIdxOutOfRange {
                     at_offset: offset,
-                    idx: *bytecode_const_idx as u32,
+                    idx: *bytecode_const_idx,
                     len: program.const_pool.len() as u32,
                 },
             )?;
@@ -1775,7 +1775,7 @@ mod tests {
             .load_const(0, 0)
             .load_const(1, 0)
             .emit_witness_call_heap(
-                blob_idx as u16,
+                blob_idx,
                 vec![InputSrc::Reg(0), InputSrc::Reg(1)],
                 vec![0, 1, 2, 3], // out_slots
             )
@@ -1804,7 +1804,7 @@ mod tests {
         let mut builder = b().with_heap_size_hint(4);
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![99])
+            .emit_witness_call_heap(blob_idx, vec![], vec![99])
             .halt();
         let mut sink = StubSink::<Bn254Fr>::new();
         let err = execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink).unwrap_err();

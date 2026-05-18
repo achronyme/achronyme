@@ -129,11 +129,11 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         self.push(Opcode::LoadCapture { dst, idx })
     }
 
-    pub fn load_const(&mut self, dst: u8, idx: u16) -> &mut Self {
+    pub fn load_const(&mut self, dst: u8, idx: u32) -> &mut Self {
         self.push(Opcode::LoadConst { dst, idx })
     }
 
-    pub fn load_input(&mut self, dst: u8, name_idx: u16, vis: Visibility) -> &mut Self {
+    pub fn load_input(&mut self, dst: u8, name_idx: u32, vis: Visibility) -> &mut Self {
         self.push(Opcode::LoadInput { dst, name_idx, vis })
     }
 
@@ -301,7 +301,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
 
     pub fn emit_witness_call(
         &mut self,
-        bytecode_const_idx: u16,
+        bytecode_const_idx: u32,
         in_regs: Vec<u8>,
         out_regs: Vec<u8>,
     ) -> &mut Self {
@@ -355,7 +355,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     /// materialise into regs without overflowing the cap.
     pub fn emit_witness_call_heap(
         &mut self,
-        bytecode_const_idx: u16,
+        bytecode_const_idx: u32,
         inputs: Vec<crate::bytecode::opcode::InputSrc>,
         out_slots: Vec<u16>,
     ) -> &mut Self {
@@ -494,7 +494,7 @@ mod tests {
     fn chained_builder_produces_valid_roundtrip() {
         let mut b = ProgramBuilder::<Bn254Fr>::new(FieldFamily::BnLike256);
         let in_idx = b.intern_string("x");
-        b.load_input(0, in_idx as u16, Visibility::Witness)
+        b.load_input(0, in_idx, Visibility::Witness)
             .emit_range_check(0, 8)
             .emit_add(1, 0, 0)
             .halt();

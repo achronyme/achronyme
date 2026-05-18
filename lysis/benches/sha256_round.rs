@@ -41,7 +41,7 @@ fn build_sha256_round() -> lysis::Program<Bn254Fr> {
         .load_input(6, 7, Visibility::Public)
         .load_input(7, 8, Visibility::Public)
         .load_input(8, 9, Visibility::Witness)
-        .load_const(9, k_t as u16)
+        .load_const(9, k_t)
         .emit_add(10, 7, 9)
         .emit_add(11, 10, 8)
         .emit_add(12, 11, 4)

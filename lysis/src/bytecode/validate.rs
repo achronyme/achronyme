@@ -97,28 +97,28 @@ fn check_const_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), Lysis
     for instr in &program.body {
         match &instr.opcode {
             Opcode::LoadConst { idx, .. } => {
-                if (*idx as u32) >= pool_len {
+                if *idx >= pool_len {
                     return Err(LysisError::ConstIdxOutOfRange {
                         at_offset: instr.offset,
-                        idx: *idx as u32,
+                        idx: *idx,
                         len: pool_len,
                     });
                 }
             }
             Opcode::LoadInput { name_idx, .. } => {
-                if (*name_idx as u32) >= pool_len {
+                if *name_idx >= pool_len {
                     return Err(LysisError::ConstIdxOutOfRange {
                         at_offset: instr.offset,
-                        idx: *name_idx as u32,
+                        idx: *name_idx,
                         len: pool_len,
                     });
                 }
             }
             Opcode::EmitAssertEqMsg { msg_idx, .. } => {
-                if (*msg_idx as u32) >= pool_len {
+                if *msg_idx >= pool_len {
                     return Err(LysisError::ConstIdxOutOfRange {
                         at_offset: instr.offset,
-                        idx: *msg_idx as u32,
+                        idx: *msg_idx,
                         len: pool_len,
                     });
                 }
@@ -126,10 +126,10 @@ fn check_const_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), Lysis
             Opcode::EmitWitnessCall {
                 bytecode_const_idx, ..
             } => {
-                if (*bytecode_const_idx as u32) >= pool_len {
+                if *bytecode_const_idx >= pool_len {
                     return Err(LysisError::ConstIdxOutOfRange {
                         at_offset: instr.offset,
-                        idx: *bytecode_const_idx as u32,
+                        idx: *bytecode_const_idx,
                         len: pool_len,
                     });
                 }
@@ -1247,7 +1247,7 @@ mod tests {
         let mut builder = b().with_heap_size_hint(4);
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![99]) // 99 ≥ 4
+            .emit_witness_call_heap(blob_idx, vec![], vec![99]) // 99 ≥ 4
             .halt();
         let err = check_heap_slot_bounds(&builder.finish()).unwrap_err();
         assert!(matches!(err, LysisError::ValidationFailed { rule: 12, .. }));
@@ -1258,7 +1258,7 @@ mod tests {
         let mut builder = b().with_heap_size_hint(8);
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![0, 1, 2, 7])
+            .emit_witness_call_heap(blob_idx, vec![], vec![0, 1, 2, 7])
             .halt();
         check_heap_slot_bounds(&builder.finish()).unwrap();
     }
@@ -1270,8 +1270,8 @@ mod tests {
         let mut builder = b().with_heap_size_hint(4);
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![1])
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![1])
+            .emit_witness_call_heap(blob_idx, vec![], vec![1])
+            .emit_witness_call_heap(blob_idx, vec![], vec![1])
             .halt();
         let err = check_heap_single_static_store(&builder.finish()).unwrap_err();
         assert!(matches!(err, LysisError::ValidationFailed { rule: 13, .. }));
@@ -1289,7 +1289,7 @@ mod tests {
         builder
             .load_const(0, 0)
             .store_heap(0, 1)
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![1, 2])
+            .emit_witness_call_heap(blob_idx, vec![], vec![1, 2])
             .halt();
         let err = check_heap_single_static_store(&builder.finish()).unwrap_err();
         assert!(matches!(err, LysisError::ValidationFailed { rule: 13, .. }));
@@ -1300,8 +1300,8 @@ mod tests {
         let mut builder = b().with_heap_size_hint(8);
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![0, 1, 2])
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![3, 4, 5])
+            .emit_witness_call_heap(blob_idx, vec![], vec![0, 1, 2])
+            .emit_witness_call_heap(blob_idx, vec![], vec![3, 4, 5])
             .halt();
         check_heap_single_static_store(&builder.finish()).unwrap();
     }
@@ -1311,7 +1311,7 @@ mod tests {
         let mut builder = b().with_heap_size_hint(4);
         let blob_idx = builder.intern_artik_bytecode(vec![0u8]);
         builder
-            .emit_witness_call_heap(blob_idx as u16, vec![], vec![0, 1, 2, 3])
+            .emit_witness_call_heap(blob_idx, vec![], vec![0, 1, 2, 3])
             .halt();
         validate(&builder.finish(), &default_config()).unwrap();
     }

@@ -38,11 +38,11 @@ pub enum Opcode {
     },
     LoadConst {
         dst: u8,
-        idx: u16,
+        idx: u32,
     },
     LoadInput {
         dst: u8,
-        name_idx: u16,
+        name_idx: u32,
         vis: Visibility,
     },
     EnterScope,
@@ -162,14 +162,14 @@ pub enum Opcode {
     EmitAssertEqMsg {
         lhs: u8,
         rhs: u8,
-        msg_idx: u16,
+        msg_idx: u32,
     },
     EmitRangeCheck {
         var: u8,
         max_bits: u8,
     },
     EmitWitnessCall {
-        bytecode_const_idx: u16,
+        bytecode_const_idx: u32,
         in_regs: Vec<u8>,
         out_regs: Vec<u8>,
     },
@@ -250,7 +250,7 @@ pub enum Opcode {
     // structurally as emitting outputs to regs would.
     // -----------------------------------------------------------------
     EmitWitnessCallHeap {
-        bytecode_const_idx: u16,
+        bytecode_const_idx: u32,
         inputs: Vec<InputSrc>,
         out_slots: Vec<u16>,
     },

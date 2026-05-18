@@ -407,12 +407,12 @@ fn decode_opcode_at(
         }
         code::LOAD_CONST => {
             let dst = read_u8(bytes, pos)?;
-            let idx = read_u16(bytes, pos)?;
+            let idx = read_u32(bytes, pos)?;
             Ok(Opcode::LoadConst { dst, idx })
         }
         code::LOAD_INPUT => {
             let dst = read_u8(bytes, pos)?;
-            let name_idx = read_u16(bytes, pos)?;
+            let name_idx = read_u32(bytes, pos)?;
             let vis_byte = read_u8(bytes, pos)?;
             let vis = Visibility::from_u8(vis_byte).ok_or(LysisError::BadVisibility {
                 at_offset: instr_offset,
@@ -560,7 +560,7 @@ fn decode_opcode_at(
         code::EMIT_ASSERT_EQ_MSG => {
             let lhs = read_u8(bytes, pos)?;
             let rhs = read_u8(bytes, pos)?;
-            let msg_idx = read_u16(bytes, pos)?;
+            let msg_idx = read_u32(bytes, pos)?;
             Ok(Opcode::EmitAssertEqMsg { lhs, rhs, msg_idx })
         }
         code::EMIT_RANGE_CHECK => {
@@ -569,7 +569,7 @@ fn decode_opcode_at(
             Ok(Opcode::EmitRangeCheck { var, max_bits })
         }
         code::EMIT_WITNESS_CALL => {
-            let bytecode_const_idx = read_u16(bytes, pos)?;
+            let bytecode_const_idx = read_u32(bytes, pos)?;
             let in_regs = read_length_prefixed_regs(bytes, pos)?;
             let out_regs = read_length_prefixed_regs(bytes, pos)?;
             Ok(Opcode::EmitWitnessCall {
@@ -615,7 +615,7 @@ fn decode_opcode_at(
             Ok(Opcode::LoadHeap { dst_reg, slot })
         }
         code::EMIT_WITNESS_CALL_HEAP => {
-            let bytecode_const_idx = read_u16(bytes, pos)?;
+            let bytecode_const_idx = read_u32(bytes, pos)?;
             let n_in = read_u16(bytes, pos)? as usize;
             let mut inputs = Vec::with_capacity(n_in);
             for _ in 0..n_in {
@@ -853,7 +853,7 @@ mod tests {
         roundtrip_opcode(Opcode::EmitAssertEqMsg {
             lhs: 200,
             rhs: 201,
-            msg_idx: u16::MAX,
+            msg_idx: u32::MAX,
         });
         roundtrip_opcode(Opcode::EmitRangeCheck {
             var: 13,
@@ -1030,12 +1030,13 @@ mod tests {
 
     #[test]
     fn decode_rejects_bad_visibility() {
-        let header = LysisHeader::new(FieldFamily::BnLike256, 0, 0, 5);
+        // LOAD_INPUT body = opcode(1) + dst(1) + name_idx(4) + vis(1).
+        let header = LysisHeader::new(FieldFamily::BnLike256, 0, 0, 7);
         let mut bytes = Vec::new();
         bytes.extend_from_slice(&header.encode());
         bytes.push(code::LOAD_INPUT);
         bytes.push(0); // dst
-        bytes.extend_from_slice(&0u16.to_le_bytes()); // name_idx
+        bytes.extend_from_slice(&0u32.to_le_bytes()); // name_idx
         bytes.push(9); // bad visibility
         let err = decode::<Bn254Fr>(&bytes).unwrap_err();
         assert!(matches!(err, LysisError::BadVisibility { got: 9, .. }));
