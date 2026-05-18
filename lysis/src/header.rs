@@ -22,20 +22,33 @@ pub const MAGIC: [u8; 4] = *b"LYSI";
 /// Current Lysis bytecode version. v2 carries `heap_size_hint`; the
 /// v1 layout (16 bytes, no heap field) is still accepted by the
 /// decoder but `encode()` always emits v2.
+///
+/// `heap_size_hint` is a `u32` (4 wire bytes): the number of distinct
+/// spilled cold vars scales with circuit size, so a >1.5 M-constraint
+/// circuit needs >65 535 heap slots. The version is intentionally
+/// **not** bumped for this width despite the v1/v2 dispatch below:
+/// Lysis bytecode is never persisted or cross-version-decoded — every
+/// production `encode` is followed by a `decode` in the *same* process
+/// call (the round-trip is purely an in-memory serialization boundary,
+/// not a stored-artifact contract). The only decoder that ever sees
+/// bytes it did not just encode is the fuzz harness, which checks
+/// panic-safety, not value fidelity. So redefining the v2 payload in
+/// place has zero compatibility surface; a version bump would falsely
+/// signal that some persisted pre-bump v2 stream exists and is valid.
 pub const VERSION: u16 = 2;
 
 /// Legacy version tag. v1 streams are still readable; the decoder
 /// treats their absent `heap_size_hint` as 0.
 pub const VERSION_V1: u16 = 1;
 
-/// Header size for the current version (v2: 18 bytes).
+/// Header size for the current version (v2: 20 bytes).
 pub const HEADER_SIZE: usize = HEADER_SIZE_V2;
 
 /// Header size for v1 — preserved for backward-compatible reads.
 pub const HEADER_SIZE_V1: usize = 16;
 
-/// Header size for v2: 18 bytes (v1 16 + 2 byte `heap_size_hint`).
-pub const HEADER_SIZE_V2: usize = 18;
+/// Header size for v2: 20 bytes (v1 16 + 4 byte `heap_size_hint`).
+pub const HEADER_SIZE_V2: usize = 20;
 
 /// Bit 0 of `flags`: the program uses `EmitWitnessCall` (opcode 0x49)
 /// and therefore the const pool carries at least one Artik bytecode
@@ -51,7 +64,7 @@ pub const FLAGS_DEFINED_MASK: u8 = FLAG_HAS_WITNESS_CALLS;
 
 /// Decoded bytecode header.
 ///
-/// Layout v2 (18 bytes, little-endian — current default):
+/// Layout v2 (20 bytes, little-endian — current default):
 ///
 /// ```text
 /// 0..4    magic                    "LYSI"
@@ -60,7 +73,7 @@ pub const FLAGS_DEFINED_MASK: u8 = FLAG_HAS_WITNESS_CALLS;
 /// 7       flags                    u8 (bit 0: has_witness_calls)
 /// 8..12   const_pool_len           u32 LE (number of entries)
 /// 12..16  body_len                 u32 LE (bytes after const pool)
-/// 16..18  heap_size_hint           u16 LE (spill heap entries)
+/// 16..20  heap_size_hint           u32 LE (spill heap entries)
 /// ```
 ///
 /// Layout v1 (16 bytes) is identical to v2 minus `heap_size_hint`; a
@@ -79,7 +92,7 @@ pub struct LysisHeader {
     /// program-global heap. For v1 streams the field is absent and
     /// decodes as 0; for v2 streams that don't use heap opcodes the
     /// writer also leaves this 0.
-    pub heap_size_hint: u16,
+    pub heap_size_hint: u32,
 }
 
 impl LysisHeader {
@@ -101,7 +114,7 @@ impl LysisHeader {
     /// Builder-style setter for `heap_size_hint`. Returning `Self`
     /// keeps the call site as a one-liner with all other fields still
     /// supplied via `new()`.
-    pub fn with_heap_size_hint(mut self, hint: u16) -> Self {
+    pub fn with_heap_size_hint(mut self, hint: u32) -> Self {
         self.heap_size_hint = hint;
         self
     }
@@ -118,7 +131,7 @@ impl LysisHeader {
     }
 
     /// Serialize this header to canonical bytes. Always emits v2
-    /// (18 bytes); v1 emission is intentionally not exposed because
+    /// (20 bytes); v1 emission is intentionally not exposed because
     /// the canonical writer always tags new programs with the latest
     /// version. To re-emit a decoded v1 header in v1 form, callers
     /// would need a v1-specific encoder; none exists today (zero
@@ -131,7 +144,7 @@ impl LysisHeader {
         out[7] = self.flags;
         out[8..12].copy_from_slice(&self.const_pool_len.to_le_bytes());
         out[12..16].copy_from_slice(&self.body_len.to_le_bytes());
-        out[16..18].copy_from_slice(&self.heap_size_hint.to_le_bytes());
+        out[16..20].copy_from_slice(&self.heap_size_hint.to_le_bytes());
         out
     }
 
@@ -183,7 +196,7 @@ impl LysisHeader {
         let heap_size_hint = if version == VERSION_V1 {
             0
         } else {
-            u16::from_le_bytes([bytes[16], bytes[17]])
+            u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]])
         };
         Ok(Self {
             version,
@@ -206,15 +219,15 @@ mod tests {
     }
 
     #[test]
-    fn header_size_is_eighteen_bytes_v2() {
-        assert_eq!(HEADER_SIZE, 18);
-        assert_eq!(HEADER_SIZE_V2, 18);
+    fn header_size_is_twenty_bytes_v2() {
+        assert_eq!(HEADER_SIZE, 20);
+        assert_eq!(HEADER_SIZE_V2, 20);
         assert_eq!(HEADER_SIZE_V1, 16);
         assert_eq!(
             LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0)
                 .encode()
                 .len(),
-            18
+            20
         );
     }
 
@@ -248,15 +261,15 @@ mod tests {
     }
 
     #[test]
-    fn header_rejects_v2_truncated_below_eighteen() {
-        // Magic + version=2 but only 17 bytes total — one short of v2.
+    fn header_rejects_v2_truncated_below_twenty() {
+        // Magic + version=2 but only 19 bytes total — one short of v2.
         let bytes = LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0).encode();
-        let truncated = &bytes[..17];
+        let truncated = &bytes[..19];
         assert!(matches!(
             LysisHeader::decode(truncated),
             Err(LysisError::UnexpectedEof {
                 needed: HEADER_SIZE_V2,
-                remaining: 17,
+                remaining: 19,
             })
         ));
     }
@@ -325,12 +338,21 @@ mod tests {
     }
 
     #[test]
-    fn v2_max_heap_hint_roundtrips() {
-        // Boundary: u16::MAX is the documented maximum (research
-        //). Make sure encode/decode preserves it.
-        let h = LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0).with_heap_size_hint(u16::MAX);
-        let decoded = LysisHeader::decode(&h.encode()).unwrap();
-        assert_eq!(decoded.heap_size_hint, u16::MAX);
+    fn v2_heap_hint_survives_above_u16_ceiling() {
+        // A >1.5 M-constraint circuit spills >65 535 distinct cold
+        // vars, so `heap_size_hint` must carry values past the old
+        // u16 ceiling without truncation. Assert a value that would
+        // have wrapped under u16 (200_000 ≡ 3392 mod 65 536) and the
+        // full u32::MAX both round-trip exactly.
+        for hint in [u32::from(u16::MAX) + 1, 200_000, u32::MAX] {
+            let h = LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0).with_heap_size_hint(hint);
+            let decoded = LysisHeader::decode(&h.encode()).unwrap();
+            assert_eq!(decoded.heap_size_hint, hint);
+            assert!(
+                decoded.heap_size_hint > u32::from(u16::MAX),
+                "heap_size_hint must not be truncated to u16"
+            );
+        }
     }
 
     #[test]
@@ -368,7 +390,7 @@ mod tests {
             flags: FLAG_HAS_WITNESS_CALLS,
             const_pool_len: 0x0A_0B_0C_0D,
             body_len: 0x11_22_33_44,
-            heap_size_hint: 0xCAFE,
+            heap_size_hint: 0xCAFE_1234,
         };
         let bytes = h.encode();
         assert_eq!(&bytes[0..4], b"LYSI");
@@ -383,6 +405,9 @@ mod tests {
             u32::from_le_bytes([bytes[12], bytes[13], bytes[14], bytes[15]]),
             0x11_22_33_44,
         );
-        assert_eq!(u16::from_le_bytes([bytes[16], bytes[17]]), 0xCAFE);
+        assert_eq!(
+            u32::from_le_bytes([bytes[16], bytes[17], bytes[18], bytes[19]]),
+            0xCAFE_1234,
+        );
     }
 }

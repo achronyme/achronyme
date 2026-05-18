@@ -213,8 +213,11 @@ pub enum Opcode {
     // Heap spill — captures-overflow escape valve.
     //
     // Both opcodes operate on a program-global heap.
-    // `slot` is u16 → up to 65 535 distinct entries; the
-    // `heap_size_hint` field on the v2 bytecode header sizes the
+    // `slot` is u32: the number of distinct spilled cold vars scales
+    // with circuit size (a >1.5 M-constraint circuit spills >65 535),
+    // so the slot index space is bounded by the circuit, not by a
+    // structural cap. The `heap_size_hint` field on the v2 bytecode
+    // header (also u32) sizes the
     // executor's heap vector at load time. The walker emits these
     // only when a split's live set exceeds `MAX_CAPTURES_HOT`;
     // programs that fit in 64 captures emit zero heap opcodes and
@@ -222,11 +225,11 @@ pub enum Opcode {
     // -----------------------------------------------------------------
     StoreHeap {
         src_reg: u8,
-        slot: u16,
+        slot: u32,
     },
     LoadHeap {
         dst_reg: u8,
-        slot: u16,
+        slot: u32,
     },
 
     // -----------------------------------------------------------------
@@ -241,7 +244,7 @@ pub enum Opcode {
     //
     // Both **inputs** and **outputs** can live in heap slots, not
     // just outputs. Each input is `InputSrc::Reg(u8)` (read from a
-    // frame register, classic path) or `InputSrc::Slot(u16)` (read
+    // frame register, classic path) or `InputSrc::Slot(u32)` (read
     // directly from a heap slot, bypassing the LoadHeap + alloc
     // dance entirely). Outputs always land in heap slots. This
     // matters for SHA-256-class circuits where a single
@@ -252,7 +255,7 @@ pub enum Opcode {
     EmitWitnessCallHeap {
         bytecode_const_idx: u32,
         inputs: Vec<InputSrc>,
-        out_slots: Vec<u16>,
+        out_slots: Vec<u32>,
     },
 }
 
@@ -264,13 +267,13 @@ pub enum Opcode {
 /// directly). Order is preserved across the wire so the Artik
 /// runtime sees its inputs in the original IR order.
 ///
-/// Wire format per element: `1 byte tag + 1-or-2 byte payload`.
+/// Wire format per element: `1 byte tag + 1-or-4 byte payload`.
 /// - `Reg(u8)`: tag `0x00`, payload 1 byte → 2 bytes total.
-/// - `Slot(u16)`: tag `0x01`, payload 2 bytes LE → 3 bytes total.
+/// - `Slot(u32)`: tag `0x01`, payload 4 bytes LE → 5 bytes total.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum InputSrc {
     Reg(u8),
-    Slot(u16),
+    Slot(u32),
 }
 
 /// Wire-format tag for [`InputSrc::Reg`].

@@ -32,7 +32,7 @@ fn fe(n: u64) -> FieldElement<Bn254Fr> {
 /// frame is bounded by the maximum dst_reg used (≤ 200 in this
 /// fixture, well below 255).
 fn build_sha_like_fixture() -> lysis::Program<Bn254Fr> {
-    const N_SLOTS: u16 = 250;
+    const N_SLOTS: u32 = 250;
     let mut builder =
         ProgramBuilder::<Bn254Fr>::new(FieldFamily::BnLike256).with_heap_size_hint(N_SLOTS);
     // Pool: 250 distinct field constants.

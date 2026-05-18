@@ -1717,6 +1717,62 @@ mod tests {
     }
 
     #[test]
+    fn heap_slot_above_u16_ceiling_round_trips_the_right_value() {
+        // A >1.5 M-constraint circuit spills >65 535 distinct cold
+        // vars, so a heap slot index can exceed the old u16 ceiling.
+        // The slot field (`StoreHeap.slot` / `LoadHeap.slot`, 4 wire
+        // bytes) and `heap_size_hint` (u32) must carry the true index;
+        // a narrowing back to u16 would wrap slot 100_000 onto
+        // 100_000 & 0xFFFF == 34_464, reading the wrong var's value.
+        //
+        // Store seven() at slot 100_000 and one() at exactly that
+        // wrap target 34_464, then LoadHeap slot 100_000: the loaded
+        // value is seven() iff the slot is NOT truncated (u16 wrap
+        // would read 34_464 == one()).
+        const SLOT_HI: u32 = 100_000;
+        const SLOT_WRAP: u32 = SLOT_HI & 0xFFFF; // 34_464
+        assert!(SLOT_HI > u32::from(u16::MAX));
+
+        let mut builder = b().with_heap_size_hint(SLOT_HI + 1);
+        builder.intern_field(seven()); // const idx 0
+        builder.intern_field(one()); // const idx 1
+        builder
+            .load_const(0, 0) // r0 = seven()
+            .store_heap(0, SLOT_HI) // heap[100_000] = seven()
+            .load_const(1, 1) // r1 = one()
+            .store_heap(1, SLOT_WRAP) // heap[34_464] = one()
+            .load_heap(2, SLOT_HI) // r2 = heap[100_000]
+            .emit_neg(3, 2) // observable: Neg(r2)
+            .halt();
+
+        let mut sink = InterningSink::<Bn254Fr>::new();
+        execute(&builder.finish(), &[], &LysisConfig::default(), &mut sink)
+            .expect("execute must not rule-12/13 on a >u16 heap slot");
+        let flat = sink.materialize();
+
+        let const_value: std::collections::HashMap<NodeId, FieldElement<Bn254Fr>> = flat
+            .iter()
+            .filter_map(|n| match n {
+                InstructionKind::Const { result, value } => Some((*result, *value)),
+                _ => None,
+            })
+            .collect();
+        let neg_operand = flat
+            .iter()
+            .find_map(|n| match n {
+                InstructionKind::Neg { operand, .. } => Some(*operand),
+                _ => None,
+            })
+            .expect("the Neg consuming the loaded slot must be emitted");
+        assert_eq!(
+            const_value.get(&neg_operand).copied(),
+            Some(seven()),
+            "LoadHeap from slot {SLOT_HI} must read seven() (its true \
+             value); reading one() means the slot wrapped to {SLOT_WRAP}"
+        );
+    }
+
+    #[test]
     fn zero_heap_size_hint_rejects_any_heap_op() {
         // heap_size_hint=0 → any slot is out of bounds. This is the
         // contract that protects v1 streams (which never declare

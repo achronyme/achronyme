@@ -374,15 +374,17 @@ pub struct Walker<F: FieldBackend> {
     /// between templates). Each `StoreHeap` emission claims the next
     /// free slot id and increments this counter. `finalize()` writes
     /// the final value into the v2 header's `heap_size_hint` field so
-    /// the executor pre-sizes its heap.
-    heap_alloc: u16,
+    /// the executor pre-sizes its heap. `u32` because the number of
+    /// distinct spilled cold vars scales with circuit size — a
+    /// >1.5 M-constraint circuit spills well past the u16 ceiling.
+    heap_alloc: u32,
     /// `SsaVar` → heap slot for vars that were spilled at any prior
     /// split. Persists across template boundaries (unlike
     /// `ssa_to_reg`, which is wiped at every `perform_split`). A var
     /// is in this map iff it was emitted as `StoreHeap` somewhere in
     /// the program; subsequent uses produce one `LoadHeap` per
     /// template body that references it.
-    ssa_to_heap: HashMap<SsaVar, u16>,
+    ssa_to_heap: HashMap<SsaVar, u32>,
 }
 
 impl<F: FieldBackend> Walker<F> {
@@ -1855,7 +1857,7 @@ impl<F: FieldBackend> Walker<F> {
                     // pull via `Walker::resolve` lazy-reload (LoadHeap
                     // emit) or, if they're another WitnessCallHeap,
                     // directly through this same Slot classification.
-                    let mut out_slots: Vec<u16> = Vec::with_capacity(outputs.len());
+                    let mut out_slots: Vec<u32> = Vec::with_capacity(outputs.len());
                     for o in outputs {
                         let slot = self.heap_alloc;
                         self.heap_alloc = self.heap_alloc.saturating_add(1);
@@ -2665,7 +2667,7 @@ fn reg_cost_of_extinst<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> u32 {
 #[allow(clippy::doc_lazy_continuation)] // false positive: docstring is fresh, not continuing the previous fn's bullet list
 fn cold_load_cost<F: FieldBackend>(
     inst: &ExtendedInstruction<F>,
-    ssa_to_heap: &HashMap<SsaVar, u16>,
+    ssa_to_heap: &HashMap<SsaVar, u32>,
     ssa_to_reg: &HashMap<SsaVar, RegId>,
 ) -> u32 {
     if ssa_to_heap.is_empty() {
@@ -4832,6 +4834,74 @@ mod tests {
             last, 1,
             "the > u16-indexed field must materialise with its true value"
         );
+    }
+
+    #[test]
+    fn heap_slots_stay_distinct_when_spill_count_exceeds_u16_ceiling() {
+        // The program-global heap-slot allocator (`heap_alloc`) and the
+        // `StoreHeap.slot` / `heap_size_hint` it feeds are u32: the
+        // number of distinct spilled cold vars scales with circuit
+        // size, so a >1.5 M-constraint circuit spills well past 65 535.
+        // With a u16 allocator the bump counter saturates at 65 535 and
+        // every distinct var past the ceiling aliases slot 65 535 — a
+        // silent slot-aliasing miscompile (a later `LoadHeap` reads the
+        // wrong var's value), and `heap_size_hint` under-sizes the
+        // executor heap. Drive >65 536 distinct cold-var spills through
+        // a single split and assert every slot is distinct, the max
+        // exceeds the old u16 ceiling, and the stamped `heap_size_hint`
+        // covers them all.
+        const N: u32 = 70_000; // N - 1 > u16::MAX (65 535)
+        let cold: Vec<SsaVar> = (0..N).map(ssa).collect();
+
+        let mut w = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        // `spill_cold_var` reads `ssa_to_reg[&var]` for the StoreHeap
+        // src_reg; the reg value is irrelevant to slot allocation, so
+        // bind them all to reg 0. An empty hot set keeps the split's
+        // Step-2 O(1) (no capture forwarding).
+        for &v in &cold {
+            w.ssa_to_reg.insert(v, 0);
+        }
+        w.perform_split(&[], &cold)
+            .expect("split must spill every cold var");
+        let program = w.finalize().expect("finalize");
+
+        // Every distinct cold var must get its own distinct slot.
+        let slots: Vec<u32> = program
+            .body
+            .iter()
+            .filter_map(|i| match i.opcode {
+                lysis::Opcode::StoreHeap { slot, .. } => Some(slot),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(
+            slots.len() as u32,
+            N,
+            "every distinct cold var must emit one StoreHeap"
+        );
+        let distinct: std::collections::HashSet<u32> = slots.iter().copied().collect();
+        assert_eq!(
+            distinct.len() as u32,
+            N,
+            "slots must be all-distinct — a u16 allocator saturates at \
+             65 535 and aliases every var past the ceiling onto one slot"
+        );
+        let max_slot = slots.iter().copied().max().expect("≥1 StoreHeap");
+        assert!(
+            max_slot > u32::from(u16::MAX),
+            "max heap slot must exceed the old u16 ceiling (got {max_slot})"
+        );
+        assert_eq!(
+            program.header.heap_size_hint, N,
+            "heap_size_hint must size the executor heap for every \
+             allocated slot, not the u16-saturated count"
+        );
+        // This pin owns the *walker* axis (the allocator emits distinct
+        // u32 slots and stamps a matching hint instead of saturating at
+        // 65 535). The wire + executor axis for a >u16 slot — encode
+        // (4-byte slot) -> decode -> execute reading back the right
+        // value — is owned by the layered companion
+        // `heap_slot_above_u16_ceiling_round_trips_the_right_value`.
     }
 
     #[test]

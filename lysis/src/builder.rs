@@ -35,7 +35,7 @@ pub struct ProgramBuilder<F: FieldBackend = Bn254Fr> {
     body: Vec<Instr>,
     templates: Vec<Template>,
     body_len_bytes: u32,
-    heap_size_hint: u16,
+    heap_size_hint: u32,
 }
 
 impl<F: FieldBackend> ProgramBuilder<F> {
@@ -64,7 +64,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     /// pre-sizes its `heap` vector to this value, so a program that
     /// emits `StoreHeap { slot }` opcodes must declare a hint
     /// `> max_slot`.
-    pub fn with_heap_size_hint(mut self, hint: u16) -> Self {
+    pub fn with_heap_size_hint(mut self, hint: u32) -> Self {
         self.heap_size_hint = hint;
         self
     }
@@ -72,7 +72,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     /// Mutable setter form of [`Self::with_heap_size_hint`]. Used by
     /// callers that own the builder by `&mut` rather than value (e.g.
     /// the walker's `finalize()` path).
-    pub fn set_heap_size_hint(&mut self, hint: u16) {
+    pub fn set_heap_size_hint(&mut self, hint: u32) {
         self.heap_size_hint = hint;
     }
 
@@ -336,13 +336,13 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     /// Emit a `StoreHeap { src_reg, slot }` opcode.
     /// The receiving program must declare `heap_size_hint > slot` —
     /// see [`Self::with_heap_size_hint`].
-    pub fn store_heap(&mut self, src_reg: u8, slot: u16) -> &mut Self {
+    pub fn store_heap(&mut self, src_reg: u8, slot: u32) -> &mut Self {
         self.push(Opcode::StoreHeap { src_reg, slot })
     }
 
     /// Emit a `LoadHeap { dst_reg, slot }` opcode.
     /// Pairs with a prior `StoreHeap` to the same slot.
-    pub fn load_heap(&mut self, dst_reg: u8, slot: u16) -> &mut Self {
+    pub fn load_heap(&mut self, dst_reg: u8, slot: u32) -> &mut Self {
         self.push(Opcode::LoadHeap { dst_reg, slot })
     }
 
@@ -357,7 +357,7 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         &mut self,
         bytecode_const_idx: u32,
         inputs: Vec<crate::bytecode::opcode::InputSrc>,
-        out_slots: Vec<u16>,
+        out_slots: Vec<u32>,
     ) -> &mut Self {
         self.push(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx,

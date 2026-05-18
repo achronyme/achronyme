@@ -223,7 +223,7 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
         }
         // StoreHeap.src_reg and LoadHeap.dst_reg are distinct fields
         // semantically (one reads a reg, one writes one) but identical
-        // on the wire — both are `u8 reg + u16 slot`. The shared
+        // on the wire — both are `u8 reg + u32 slot`. The shared
         // pattern keeps the encoder honest about that.
         Opcode::StoreHeap { src_reg: reg, slot } | Opcode::LoadHeap { dst_reg: reg, slot } => {
             buf.push(*reg);
@@ -232,8 +232,11 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
         // EmitWitnessCallHeap is the heap-output twin of
         // EmitWitnessCall. Inputs and outputs both length-prefixed
         // by `u16` (so the design supports up to 65535 of each, well
-        // above the SHA-256 ~700-input + 256-output worst case).
-        // Each input is tagged Reg(u8) or Slot(u16) so the executor
+        // above the SHA-256 ~700-input + 256-output worst case — a
+        // single call's input/output arity is structurally bounded by
+        // the Artik program, not by circuit size, so the count prefix
+        // stays u16). Each input is tagged Reg(u8) or Slot(u32) so the
+        // executor
         // can read it from a frame register or a heap slot without
         // an intermediate LoadHeap emit.
         Opcode::EmitWitnessCallHeap {
@@ -606,12 +609,12 @@ fn decode_opcode_at(
         }
         code::STORE_HEAP => {
             let src_reg = read_u8(bytes, pos)?;
-            let slot = read_u16(bytes, pos)?;
+            let slot = read_u32(bytes, pos)?;
             Ok(Opcode::StoreHeap { src_reg, slot })
         }
         code::LOAD_HEAP => {
             let dst_reg = read_u8(bytes, pos)?;
-            let slot = read_u16(bytes, pos)?;
+            let slot = read_u32(bytes, pos)?;
             Ok(Opcode::LoadHeap { dst_reg, slot })
         }
         code::EMIT_WITNESS_CALL_HEAP => {
@@ -622,7 +625,7 @@ fn decode_opcode_at(
                 let tag = read_u8(bytes, pos)?;
                 let src = match tag {
                     INPUT_SRC_REG => InputSrc::Reg(read_u8(bytes, pos)?),
-                    INPUT_SRC_SLOT => InputSrc::Slot(read_u16(bytes, pos)?),
+                    INPUT_SRC_SLOT => InputSrc::Slot(read_u32(bytes, pos)?),
                     _ => {
                         return Err(LysisError::ValidationFailed {
                             rule: 4,
@@ -636,7 +639,7 @@ fn decode_opcode_at(
             let n_out = read_u16(bytes, pos)? as usize;
             let mut out_slots = Vec::with_capacity(n_out);
             for _ in 0..n_out {
-                out_slots.push(read_u16(bytes, pos)?);
+                out_slots.push(read_u32(bytes, pos)?);
             }
             Ok(Opcode::EmitWitnessCallHeap {
                 bytecode_const_idx,
@@ -807,7 +810,7 @@ mod tests {
             inputs: vec![InputSrc::Reg(1), InputSrc::Slot(2), InputSrc::Reg(3)],
             out_slots: vec![100, 101, 102],
         });
-        let big_outputs: Vec<u16> = (0u16..256).collect();
+        let big_outputs: Vec<u32> = (0u32..256).collect();
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0xCAFE,
             inputs: vec![InputSrc::Reg(1), InputSrc::Reg(2)],
@@ -820,8 +823,8 @@ mod tests {
         // Wire format invariant: input and output count fields are
         // both u16 — the design supports up to 65535 of each, well
         // above any expected workload.
-        let big_inputs: Vec<InputSrc> = (0u16..1024).map(InputSrc::Slot).collect();
-        let big_outputs: Vec<u16> = (0u16..1024).collect();
+        let big_inputs: Vec<InputSrc> = (0u32..1024).map(InputSrc::Slot).collect();
+        let big_outputs: Vec<u32> = (0u32..1024).collect();
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 1,
             inputs: big_inputs,
@@ -863,9 +866,10 @@ mod tests {
 
     #[test]
     fn roundtrip_heap_ops() {
-        // Sample edge cases for the u16 slot field: zero, mid-range,
-        // and the maximum so a regression on slot width (e.g.,
-        // accidental u8 truncation) trips the test.
+        // Sample edge cases for the u32 slot field: zero, mid-range,
+        // the old u16 ceiling, and values past it (a >1.5 M-constraint
+        // circuit spills >65 535 cold vars) so a regression that
+        // narrows the slot back to u16/u8 trips the test.
         roundtrip_opcode(Opcode::StoreHeap {
             src_reg: 0,
             slot: 0,
@@ -876,7 +880,11 @@ mod tests {
         });
         roundtrip_opcode(Opcode::StoreHeap {
             src_reg: 255,
-            slot: u16::MAX,
+            slot: u32::from(u16::MAX) + 1,
+        });
+        roundtrip_opcode(Opcode::StoreHeap {
+            src_reg: 255,
+            slot: u32::MAX,
         });
         roundtrip_opcode(Opcode::LoadHeap {
             dst_reg: 0,
@@ -888,15 +896,19 @@ mod tests {
         });
         roundtrip_opcode(Opcode::LoadHeap {
             dst_reg: 255,
-            slot: u16::MAX,
+            slot: 250_000,
+        });
+        roundtrip_opcode(Opcode::LoadHeap {
+            dst_reg: 255,
+            slot: u32::MAX,
         });
     }
 
     #[test]
-    fn heap_ops_emit_4_bytes() {
-        // Wire-format invariant from: each heap
-        // op is `u8 opcode + u8 reg + u16 slot = 4 bytes`. A change
-        // in this number is an ABI break.
+    fn heap_ops_emit_6_bytes() {
+        // Wire-format invariant: each heap op is
+        // `u8 opcode + u8 reg + u32 slot = 6 bytes`. A change in this
+        // number is an ABI break.
         let mut buf = Vec::new();
         encode_opcode(
             &Opcode::StoreHeap {
@@ -905,7 +917,7 @@ mod tests {
             },
             &mut buf,
         );
-        assert_eq!(buf.len(), 4, "StoreHeap must encode to exactly 4 bytes");
+        assert_eq!(buf.len(), 6, "StoreHeap must encode to exactly 6 bytes");
         let mut buf = Vec::new();
         encode_opcode(
             &Opcode::LoadHeap {
@@ -914,7 +926,7 @@ mod tests {
             },
             &mut buf,
         );
-        assert_eq!(buf.len(), 4, "LoadHeap must encode to exactly 4 bytes");
+        assert_eq!(buf.len(), 6, "LoadHeap must encode to exactly 6 bytes");
     }
 
     #[test]

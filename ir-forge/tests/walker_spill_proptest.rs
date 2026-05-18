@@ -67,7 +67,7 @@ proptest! {
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
         let Ok(program) = walker.lower(body.clone()) else { return Ok(()); };
 
-        let mut slot_writes: std::collections::HashMap<u16, u32> =
+        let mut slot_writes: std::collections::HashMap<u32, u32> =
             std::collections::HashMap::new();
         for instr in &program.body {
             if let Opcode::StoreHeap { slot, .. } = instr.opcode {
@@ -98,7 +98,7 @@ proptest! {
 
         let store_count = count_opcodes(&program, |op| matches!(op, Opcode::StoreHeap { .. }));
         prop_assert_eq!(
-            usize::from(program.header.heap_size_hint),
+            program.header.heap_size_hint as usize,
             store_count,
             "heap_size_hint must equal the number of distinct StoreHeap emissions"
         );
