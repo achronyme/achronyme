@@ -225,12 +225,26 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
     let walker = Walker::<F>::new(expected_family::<F>());
     let bytecode = walker.lower(body).map_err(RoundTripError::Walk)?;
 
-    let bytes = lysis::encode(&bytecode);
-    let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
-    if cfg!(debug_assertions) {
-        lysis::bytecode::validate(&decoded, &LysisConfig::default())
-            .map_err(RoundTripError::Lysis)?;
-    }
+    // `LYSIS_SKIP_ROUNDTRIP=1` opts out of the wire-format encode →
+    // decode round-trip on the trusted internal-replay path. The
+    // round-trip is a serialization-correctness probe (validator is
+    // already `cfg!(debug_assertions)`-gated; encode/decode is not),
+    // structurally an identity on the walker's `Program<F>` output.
+    // Skipping it releases the encoded `Vec<u8>` and the re-parsed
+    // `Program<F>` — both alive alongside the walker output until
+    // execute begins.
+    let skip_roundtrip = std::env::var("LYSIS_SKIP_ROUNDTRIP").as_deref() == Ok("1");
+    let decoded = if skip_roundtrip {
+        bytecode
+    } else {
+        let bytes = lysis::encode(&bytecode);
+        let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
+        if cfg!(debug_assertions) {
+            lysis::bytecode::validate(&decoded, &LysisConfig::default())
+                .map_err(RoundTripError::Lysis)?;
+        }
+        decoded
+    };
 
     // The materialized stream's only consumer here is
     // `materialize_interning_sink`, which discards the interner's
@@ -257,7 +271,18 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
     {
-        Some(window) => InterningSink::<F>::with_streaming_window(window),
+        Some(window) => {
+            // `LYSIS_CHUNKED_OUTPUT=1` selects a per-chunk emission
+            // buffer instead of a single doubling Vec. Same dedup
+            // contract; the worst-case single allocation drops from
+            // the next Vec doubling target (multi-gigabyte at the
+            // boss-fight) to one chunk.
+            if std::env::var("LYSIS_CHUNKED_OUTPUT").as_deref() == Ok("1") {
+                InterningSink::<F>::with_streaming_window_chunked(window)
+            } else {
+                InterningSink::<F>::with_streaming_window(window)
+            }
+        }
         None => InterningSink::<F>::without_span_tracking(),
     };
     execute(

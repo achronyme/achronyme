@@ -37,6 +37,14 @@ use crate::intern::{InstructionKind, NodeId};
 /// to remeasure cardinality, not raise the cap silently.
 pub(crate) const MUL_CC_TIER_CAP: usize = 64;
 
+/// Per-chunk capacity for the chunked streaming-output layout. Sized
+/// to land above glibc's mmap threshold (typically 128 KB to 64 MB) so
+/// each chunk gets its own backing region the allocator returns
+/// directly to the OS when the chunk drops. Smaller than the smallest
+/// observed doubling target so the worst-case single allocation under
+/// chunked mode is one chunk, not a multi-gigabyte Vec realloc.
+pub(crate) const STREAMING_CHUNK_CAPACITY: usize = 1_000_000;
+
 /// Metadata stored alongside each interned key. The cached hash lets
 /// us answer "were these two nodes structurally equivalent?" in
 /// constant time after the fact (useful for oracles / diagnostics).
@@ -116,8 +124,8 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     /// eager path byte-for-byte unchanged.
     pub(crate) window_size: Option<usize>,
     /// Incrementally-built materialized output Vec, populated only when
-    /// `window_size.is_some()`. Holds one entry per fresh pure insert
-    /// + one per emitted effect, in emission order.
+    /// `window_size.is_some()` AND `chunked == false`. Holds one entry
+    /// per fresh pure insert + one per emitted effect, in emission order.
     pub(crate) streaming_output: Vec<InstructionKind<F>>,
     /// FIFO eviction order parallel to `nodes`. Populated only when
     /// streaming; `pop_front` returns the oldest key for `swap_remove`
@@ -128,6 +136,20 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     /// at `intern_pure` time without touching the `nodes` IndexMap
     /// (which may have evicted the Const entries already).
     pub(crate) const_nodes: HashSet<NodeId>,
+    /// When `true`, the streaming-mode output is laid out as a sequence
+    /// of fixed-capacity chunks (`streaming_chunks`) instead of a single
+    /// doubling Vec. Each chunk allocates independently — the worst-case
+    /// single allocation is one chunk, so the multi-gigabyte realloc
+    /// transient that a doubling Vec triggers at very high instruction
+    /// counts is eliminated. Used together with `window_size.is_some()`;
+    /// when `false`, the eager `streaming_output` Vec is used (legacy
+    /// behaviour).
+    pub(crate) chunked: bool,
+    /// Chunked-mode emission buffer. Populated only when `window_size.is_some()`
+    /// AND `chunked == true`. Each inner Vec is pre-allocated with capacity
+    /// [`STREAMING_CHUNK_CAPACITY`]; a new chunk is pushed once the current
+    /// one fills.
+    pub(crate) streaming_chunks: Vec<Vec<InstructionKind<F>>>,
 }
 
 impl<F: FieldBackend> Default for NodeInterner<F> {
@@ -155,6 +177,8 @@ impl<F: FieldBackend> NodeInterner<F> {
             streaming_output: Vec::new(),
             eviction_queue: VecDeque::new(),
             const_nodes: HashSet::new(),
+            chunked: false,
+            streaming_chunks: Vec::new(),
         }
     }
 
@@ -190,6 +214,58 @@ impl<F: FieldBackend> NodeInterner<F> {
             record_spans: false,
             window_size: Some(window_size),
             ..Self::new()
+        }
+    }
+
+    /// Streaming mode with chunked output storage. Same dedup contract
+    /// as [`Self::with_streaming_window`] (Tier 1/2 eternal tables, Tier
+    /// 3 windowed `nodes`, FIFO eviction). Differs only in the layout of
+    /// the materialized emission buffer: instead of a single doubling
+    /// Vec, each fresh push lands in the current chunk; when that chunk
+    /// fills its capacity the interner allocates a fresh one. Worst-case
+    /// single allocation is one chunk, eliminating multi-gigabyte Vec
+    /// realloc transients on circuits with very high instruction counts.
+    ///
+    /// The materialized stream remains observable as a single
+    /// `Vec<InstructionKind<F>>` via [`Self::materialize`] (which
+    /// flattens chunks at the boundary), or via
+    /// [`Self::into_chunked_iter`] which drains chunks lazily without
+    /// the boundary Vec.
+    pub fn with_streaming_window_chunked(window_size: usize) -> Self {
+        let window_size = window_size.max(1);
+        let mut me = Self::with_streaming_window(window_size);
+        me.chunked = true;
+        me.streaming_chunks
+            .push(Vec::with_capacity(STREAMING_CHUNK_CAPACITY));
+        me
+    }
+
+    /// Push a freshly-emitted `InstructionKind<F>` into the streaming
+    /// output. Chooses between the eager `Vec` and the chunked layout
+    /// based on `self.chunked`. Caller has already verified
+    /// `window_size.is_some()`.
+    #[inline]
+    pub(crate) fn push_streaming(&mut self, inst: InstructionKind<F>) {
+        if self.chunked {
+            // Allocate a fresh chunk if the current one is full or the
+            // chunk vector is empty (defensive — the constructor seeds
+            // the first chunk, but `Self::new()`-then-`chunked=true`
+            // patches would not).
+            if self
+                .streaming_chunks
+                .last()
+                .map(|c| c.len() == c.capacity())
+                .unwrap_or(true)
+            {
+                self.streaming_chunks
+                    .push(Vec::with_capacity(STREAMING_CHUNK_CAPACITY));
+            }
+            self.streaming_chunks
+                .last_mut()
+                .expect("last chunk seeded above")
+                .push(inst);
+        } else {
+            self.streaming_output.push(inst);
         }
     }
 
@@ -273,7 +349,7 @@ impl<F: FieldBackend> NodeInterner<F> {
         if let Some(cap) = self.window_size {
             // Streaming path: emit to output immediately, then insert
             // into `nodes`, then maybe evict the oldest entry.
-            self.streaming_output.push(key.clone().into_instruction(id));
+            self.push_streaming(key.clone().into_instruction(id));
             self.eviction_queue.push_back(key.clone());
             self.nodes.insert(key, NodeMeta { id, hash });
             // record_spans is conventionally false in streaming mode,
@@ -330,8 +406,7 @@ impl<F: FieldBackend> NodeInterner<F> {
             // path's contract (caller uses the output Vec). Skipping
             // the push releases the dominant non-node accumulator
             // (~1.1 GB on the boss-fight).
-            self.streaming_output
-                .push(SideEffect::into_instruction::<F>(effect));
+            self.push_streaming(SideEffect::into_instruction::<F>(effect));
         } else {
             self.effects.push(effect);
             if self.record_spans {

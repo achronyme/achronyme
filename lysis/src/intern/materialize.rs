@@ -45,6 +45,41 @@ impl<F: FieldBackend> NodeInterner<F> {
         self.materialize().into_iter()
     }
 
+    /// Lazily drain the emission stream chunk-by-chunk. Returns an
+    /// iterator that yields one `InstructionKind<F>` per advance and
+    /// drops each consumed chunk's backing allocation as the iterator
+    /// crosses chunk boundaries. Under chunked streaming mode
+    /// ([`Self::with_streaming_window_chunked`]) this avoids ever
+    /// materialising the full emission stream as a single Vec —
+    /// downstream consumers operate on one chunk at a time and the
+    /// peak resident footprint shrinks to (already-allocated chunks)
+    /// rather than (already-allocated chunks + flattened Vec).
+    ///
+    /// Under non-chunked streaming and eager modes, the stream is
+    /// materialised once via [`Self::materialize`] and then drained
+    /// from the resulting Vec — semantically equivalent to
+    /// `into_instruction_stream`, returned through an `impl Iterator`
+    /// shell so the caller can be agnostic to layout.
+    pub fn into_chunked_iter(mut self) -> Box<dyn Iterator<Item = InstructionKind<F>> + 'static>
+    where
+        F: 'static,
+    {
+        if self.chunked {
+            let chunks = std::mem::take(&mut self.streaming_chunks);
+            // `flat_map(Vec::into_iter)` drops each chunk's backing
+            // allocation when its inner iterator is exhausted, so the
+            // resident footprint shrinks monotonically as the consumer
+            // pulls items.
+            Box::new(
+                chunks
+                    .into_iter()
+                    .flat_map(<Vec<InstructionKind<F>>>::into_iter),
+            )
+        } else {
+            Box::new(self.materialize().into_iter())
+        }
+    }
+
     /// Consume the interner, producing a flat `Vec<InstructionKind<F>>`.
     ///
     /// Walks the `timeline` log so pure nodes and side-effects appear
@@ -54,7 +89,21 @@ impl<F: FieldBackend> NodeInterner<F> {
     /// that downstream `Add`/`Mul`/etc. reference. An earlier version
     /// split the stream into "pure prefix + effect suffix" and
     /// produced a forward-referencing Vec in exactly that case.
-    pub fn materialize(self) -> Vec<InstructionKind<F>> {
+    pub fn materialize(mut self) -> Vec<InstructionKind<F>> {
+        // Chunked streaming path: flatten the per-chunk buffers into a
+        // single Vec. The flatten boundary pays one Vec construction
+        // (peak == total content + transient doubling of the flatten
+        // Vec); callers that cannot afford this should drain via
+        // [`Self::into_chunked_iter`] instead.
+        if self.window_size.is_some() && self.chunked {
+            let chunks = std::mem::take(&mut self.streaming_chunks);
+            let total: usize = chunks.iter().map(Vec::len).sum();
+            let mut flat = Vec::with_capacity(total);
+            for chunk in chunks {
+                flat.extend(chunk);
+            }
+            return flat;
+        }
         // Streaming path: the materialized stream was built
         // incrementally as fresh inserts + effects flowed through; just
         // hand back the buffer.
@@ -79,6 +128,8 @@ impl<F: FieldBackend> NodeInterner<F> {
             streaming_output: _,
             eviction_queue: _,
             const_nodes: _,
+            chunked: _,
+            streaming_chunks: _,
         } = self;
 
         let estimated = timeline.len();
@@ -290,6 +341,69 @@ mod tests {
         assert_eq!(via_vec.len(), via_iter.len());
         for (v, i) in via_vec.iter().zip(via_iter.iter()) {
             assert_eq!(format!("{v:?}"), format!("{i:?}"));
+        }
+    }
+
+    #[test]
+    fn chunked_materialize_matches_non_chunked_streaming() {
+        // Drive the same input through `with_streaming_window` and
+        // `with_streaming_window_chunked`; the materialised instruction
+        // stream must be equivalent (same length, same sequence).
+        let build = |chunked: bool| {
+            let mut ix = if chunked {
+                NodeInterner::<Bn254Fr>::with_streaming_window_chunked(8)
+            } else {
+                NodeInterner::<Bn254Fr>::with_streaming_window(8)
+            };
+            for i in 0..32u64 {
+                let v = ix.intern_pure(NodeKey::Const(fe(i)), SpanRange::UNKNOWN);
+                let _ = ix.intern_pure(NodeKey::Add(v, v), SpanRange::UNKNOWN);
+                if i.is_multiple_of(4) {
+                    let r = ix.reserve_opaque_id();
+                    ix.emit_effect(
+                        SideEffect::RangeCheck {
+                            result: r,
+                            operand: v,
+                            bits: 8,
+                        },
+                        SpanRange::UNKNOWN,
+                    );
+                }
+            }
+            ix
+        };
+        let non_chunked = build(false).materialize();
+        let chunked = build(true).materialize();
+        assert_eq!(
+            non_chunked.len(),
+            chunked.len(),
+            "chunked and non-chunked emit the same instruction count"
+        );
+        for (a, b) in non_chunked.iter().zip(chunked.iter()) {
+            assert_eq!(
+                format!("{a:?}"),
+                format!("{b:?}"),
+                "chunked entry diverges from non-chunked"
+            );
+        }
+    }
+
+    #[test]
+    fn chunked_into_chunked_iter_drains_in_emission_order() {
+        // The lazy chunked iterator must yield the same sequence as the
+        // flat `materialize()` Vec.
+        let build = || {
+            let mut ix = NodeInterner::<Bn254Fr>::with_streaming_window_chunked(8);
+            for i in 0..20u64 {
+                let _ = ix.intern_pure(NodeKey::Const(fe(i)), SpanRange::UNKNOWN);
+            }
+            ix
+        };
+        let flat = build().materialize();
+        let lazy: Vec<_> = build().into_chunked_iter().collect();
+        assert_eq!(flat.len(), lazy.len());
+        for (a, b) in flat.iter().zip(lazy.iter()) {
+            assert_eq!(format!("{a:?}"), format!("{b:?}"));
         }
     }
 
