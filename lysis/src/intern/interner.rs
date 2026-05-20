@@ -147,9 +147,14 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     pub(crate) chunked: bool,
     /// Chunked-mode emission buffer. Populated only when `window_size.is_some()`
     /// AND `chunked == true`. Each inner Vec is pre-allocated with capacity
-    /// [`STREAMING_CHUNK_CAPACITY`]; a new chunk is pushed once the current
+    /// [`Self::chunk_capacity`]; a new chunk is pushed once the current
     /// one fills.
     pub(crate) streaming_chunks: Vec<Vec<InstructionKind<F>>>,
+    /// Per-chunk slot count used when allocating fresh chunks. Production
+    /// uses [`STREAMING_CHUNK_CAPACITY`]; tests override via
+    /// [`Self::with_streaming_window_chunked_capacity`] so the chunk-seal
+    /// pop/allocate boundary can be exercised on small fixtures.
+    pub(crate) chunk_capacity: usize,
 }
 
 impl<F: FieldBackend> Default for NodeInterner<F> {
@@ -179,6 +184,7 @@ impl<F: FieldBackend> NodeInterner<F> {
             const_nodes: HashSet::new(),
             chunked: false,
             streaming_chunks: Vec::new(),
+            chunk_capacity: STREAMING_CHUNK_CAPACITY,
         }
     }
 
@@ -232,11 +238,24 @@ impl<F: FieldBackend> NodeInterner<F> {
     /// [`Self::into_chunked_iter`] which drains chunks lazily without
     /// the boundary Vec.
     pub fn with_streaming_window_chunked(window_size: usize) -> Self {
+        Self::with_streaming_window_chunked_capacity(window_size, STREAMING_CHUNK_CAPACITY)
+    }
+
+    /// Chunked-streaming constructor with the per-chunk capacity
+    /// overridable. The production path uses
+    /// [`STREAMING_CHUNK_CAPACITY`] (~72 MB per chunk on `Bn254Fr`);
+    /// tests dial it down to exercise the chunk-seal pop/allocate
+    /// boundary without emitting a million instructions.
+    pub fn with_streaming_window_chunked_capacity(
+        window_size: usize,
+        chunk_capacity: usize,
+    ) -> Self {
         let window_size = window_size.max(1);
+        let chunk_capacity = chunk_capacity.max(1);
         let mut me = Self::with_streaming_window(window_size);
         me.chunked = true;
-        me.streaming_chunks
-            .push(Vec::with_capacity(STREAMING_CHUNK_CAPACITY));
+        me.chunk_capacity = chunk_capacity;
+        me.streaming_chunks.push(Vec::with_capacity(chunk_capacity));
         me
     }
 
@@ -258,7 +277,7 @@ impl<F: FieldBackend> NodeInterner<F> {
                 .unwrap_or(true)
             {
                 self.streaming_chunks
-                    .push(Vec::with_capacity(STREAMING_CHUNK_CAPACITY));
+                    .push(Vec::with_capacity(self.chunk_capacity));
             }
             self.streaming_chunks
                 .last_mut()

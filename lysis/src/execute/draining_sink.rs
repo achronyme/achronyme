@@ -56,6 +56,24 @@ impl<'a, F: FieldBackend> ChunkDrainingSink<'a, F> {
         }
     }
 
+    /// Like [`Self::with_streaming_window_chunked`] but with the
+    /// per-chunk capacity overridable. Used by tests that exercise the
+    /// chunk-seal pop-and-drain boundary without filling a production-
+    /// sized chunk.
+    pub fn with_streaming_window_chunked_capacity(
+        window_size: usize,
+        chunk_capacity: usize,
+        consumer: &'a mut dyn FnMut(Vec<InstructionKind<F>>),
+    ) -> Self {
+        Self {
+            inner: InterningSink::with_streaming_window_chunked_capacity(
+                window_size,
+                chunk_capacity,
+            ),
+            consumer,
+        }
+    }
+
     /// Borrow the underlying interning sink — diagnostics only.
     pub fn inner(&self) -> &InterningSink<F> {
         &self.inner
@@ -166,6 +184,49 @@ mod tests {
         let r = received.borrow();
         assert_eq!(r.len(), 1);
         assert_eq!(r[0].len(), 1);
+    }
+
+    #[test]
+    fn full_chunk_pops_and_calls_consumer_then_allocates_fresh_tail() {
+        // Load-bearing contract: when a chunk fills to `chunk_capacity`,
+        // the next emit pops the full chunk, calls the consumer with
+        // it, and allocates a fresh tail to hold the new emission.
+        // Production capacity is 1_000_000 — too large to exercise
+        // here. Use a small capacity to force seal events.
+        //
+        // Emit 10 items with chunk_cap=4: expect 2 sealed chunks (4+4)
+        // delivered to the consumer at seal time, plus 1 partial chunk
+        // (2 items) delivered at finalize. Total: 3 consumer calls,
+        // chunk sizes [4, 4, 2].
+        let received: RefCell<Vec<Vec<InstructionKind<F>>>> = RefCell::new(Vec::new());
+        let mut consumer = |chunk: Vec<InstructionKind<F>>| {
+            received.borrow_mut().push(chunk);
+        };
+        let mut sink =
+            ChunkDrainingSink::<F>::with_streaming_window_chunked_capacity(128, 4, &mut consumer);
+        // Emit 10 effectful items — Input variants get fresh ids and
+        // never dedup, so each push lands a fresh chunk slot.
+        for i in 0..10u32 {
+            let v = sink.fresh_id();
+            sink.emit_effect(InstructionKind::Input {
+                result: v,
+                name: format!("x{i}"),
+                visibility: Visibility::Public,
+            });
+        }
+        // Before finalize: 2 sealed chunks delivered.
+        {
+            let r = received.borrow();
+            assert_eq!(r.len(), 2, "two chunks should have sealed pre-finalize");
+            assert_eq!(r[0].len(), 4, "first sealed chunk holds 4 items");
+            assert_eq!(r[1].len(), 4, "second sealed chunk holds 4 items");
+        }
+        sink.finalize();
+        let r = received.borrow();
+        assert_eq!(r.len(), 3, "finalize delivers the partial tail");
+        assert_eq!(r[2].len(), 2, "tail partial holds the 2 remaining items");
+        // Total items preserved across all chunks.
+        assert_eq!(r.iter().map(Vec::len).sum::<usize>(), 10);
     }
 
     #[test]

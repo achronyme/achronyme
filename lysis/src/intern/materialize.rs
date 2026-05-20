@@ -130,6 +130,7 @@ impl<F: FieldBackend> NodeInterner<F> {
             const_nodes: _,
             chunked: _,
             streaming_chunks: _,
+            chunk_capacity: _,
         } = self;
 
         let estimated = timeline.len();
