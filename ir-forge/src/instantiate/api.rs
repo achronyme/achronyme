@@ -125,7 +125,7 @@ impl ProveIR {
         output_names: &HashSet<String>,
     ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
         let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
-        lower_extended_to_sink(extended)
+        lower_extended_to_sink(extended, false)
     }
 
     /// Streaming counterpart of [`Self::instantiate_lysis`]: same shape
@@ -136,7 +136,7 @@ impl ProveIR {
         captures: &HashMap<String, FieldElement<F>>,
     ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
         let extended = self.instantiate_extended::<F>(captures)?;
-        lower_extended_to_sink(extended)
+        lower_extended_to_sink(extended, false)
     }
 }
 
@@ -196,6 +196,15 @@ impl From<RoundTripError> for LysisInstantiateError {
 /// the lifter splits the pipeline at the post-execute boundary. The
 /// `IrProgram` reassembly path consumes this together with the
 /// materialized instruction stream; the streaming path discards it.
+///
+/// The metadata maps (`var_names`, `var_types`, `var_spans`,
+/// `input_spans`) are populated only on the reassembly path. The
+/// streaming entry points ([`ProveIR::instantiate_lysis_sink`] and
+/// [`ProveIR::instantiate_lysis_sink_with_outputs`]) leave them empty
+/// — the streaming consumer drains the sink iterator into a
+/// constraint backend that does not consume semantic metadata, so
+/// keeping the maps alive across the executor run would waste peak
+/// resident footprint on multi-million-variable circuits.
 pub struct LysisSinkBundle<F: FieldBackend> {
     pub sink: InterningSink<F>,
     pub next_var: u32,
@@ -207,12 +216,24 @@ pub struct LysisSinkBundle<F: FieldBackend> {
 
 /// Drive a populated [`ExtendedIrProgram<F>`] through Walker →
 /// encode → decode → executor and return the still-populated
-/// [`InterningSink<F>`] together with the metadata maps. The
-/// `IrProgram` reassembly path ([`lower_extended_through_lysis`]) is
-/// one consumer; a streaming-to-backend path that never materializes
-/// `Vec<Instruction<F>>` is the other.
+/// [`InterningSink<F>`] together with (optionally) the metadata maps.
+/// The `IrProgram` reassembly path ([`lower_extended_through_lysis`])
+/// is one consumer; a streaming-to-backend path that never
+/// materializes `Vec<Instruction<F>>` is the other.
+///
+/// `keep_metadata` controls the fate of the four metadata maps that
+/// arrived inside `extended`. The reassembly path passes `true` —
+/// those maps then ride alongside the sink into the reassembled
+/// `IrProgram`. The streaming path passes `false` — the maps drop
+/// immediately on entry, before the Walker runs, so the
+/// multi-hundred-megabyte hash tables they hold do not coexist with
+/// the bytecode + sink + executor working set during the dominant
+/// pre-execute window. The returned bundle still carries empty
+/// `HashMap`s in the dropped slots so the field shape is stable for
+/// callers that hold the bundle by value.
 pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
+    keep_metadata: bool,
 ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
     let ExtendedIrProgram {
         body,
@@ -222,6 +243,20 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
         var_spans,
         input_spans,
     } = extended;
+    let (var_names, var_types, var_spans, input_spans) = if keep_metadata {
+        (var_names, var_types, var_spans, input_spans)
+    } else {
+        drop(var_names);
+        drop(var_types);
+        drop(var_spans);
+        drop(input_spans);
+        (
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+            HashMap::new(),
+        )
+    };
     let walker = Walker::<F>::new(expected_family::<F>());
     let bytecode = walker.lower(body).map_err(RoundTripError::Walk)?;
 
@@ -306,7 +341,7 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
 fn lower_extended_through_lysis<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
 ) -> Result<IrProgram<F>, LysisInstantiateError> {
-    let bundle = lower_extended_to_sink(extended)?;
+    let bundle = lower_extended_to_sink(extended, true)?;
     let instructions = materialize_interning_sink(bundle.sink);
 
     // Reassemble: the materialised stream replaces the body, but
@@ -516,6 +551,67 @@ mod tests {
         assert!(
             !extended.var_types.is_empty(),
             "var_types should track Inputs/RangeChecks"
+        );
+    }
+
+    #[test]
+    fn streaming_sink_with_outputs_path_leaves_metadata_empty() {
+        // Sibling of `streaming_sink_path_leaves_metadata_empty` for the
+        // `_with_outputs` variant. The two share dispatch through
+        // `lower_extended_to_sink(_, false)`, but pinning both heads
+        // separately keeps the contract enforced if they ever diverge.
+        let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+        let prove_ir = compile_circuit(source).expect("compile_circuit");
+        let outputs: std::collections::HashSet<String> =
+            std::iter::once("out".to_string()).collect();
+        let bundle = prove_ir
+            .instantiate_lysis_sink_with_outputs::<F>(&HashMap::new(), &outputs)
+            .expect("instantiate_lysis_sink_with_outputs");
+        assert!(bundle.var_names.is_empty(), "var_names must be empty");
+        assert!(bundle.var_types.is_empty(), "var_types must be empty");
+        assert!(bundle.var_spans.is_empty(), "var_spans must be empty");
+        assert!(bundle.input_spans.is_empty(), "input_spans must be empty");
+    }
+
+    #[test]
+    fn streaming_sink_path_leaves_metadata_empty() {
+        // Contract pin: the streaming entry points
+        // (`instantiate_lysis_sink`, `instantiate_lysis_sink_with_outputs`)
+        // drop the four metadata maps before the Walker runs. The bundle's
+        // metadata fields are exposed for type-shape compatibility with the
+        // reassembly bundle and must be empty on this path — restoring them
+        // would coexist with the executor working set on multi-million-
+        // variable circuits and reintroduce the pre-execute peak.
+        let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+        let prove_ir = compile_circuit(source).expect("compile_circuit");
+        // Same fixture as the sibling test: confirm the maps would have been
+        // populated on the reassembly path before checking the streaming path
+        // empties them.
+        let extended = prove_ir
+            .instantiate_extended::<F>(&HashMap::new())
+            .expect("instantiate_extended");
+        assert!(
+            !extended.var_names.is_empty(),
+            "fixture precondition: extended.var_names must be populated"
+        );
+        let bundle = prove_ir
+            .instantiate_lysis_sink::<F>(&HashMap::new())
+            .expect("instantiate_lysis_sink");
+        assert!(
+            bundle.var_names.is_empty(),
+            "streaming sink path must leave var_names empty"
+        );
+        assert!(
+            bundle.var_types.is_empty(),
+            "streaming sink path must leave var_types empty"
+        );
+        assert!(
+            bundle.var_spans.is_empty(),
+            "streaming sink path must leave var_spans empty"
+        );
+        assert!(
+            bundle.input_spans.is_empty(),
+            "streaming sink path must leave input_spans empty"
         );
     }
 }
