@@ -125,6 +125,23 @@ impl<F: FieldBackend> PlonkishCompiler<F> {
         Ok(())
     }
 
+    /// Streaming counterpart of [`compile_ir`](Self::compile_ir): consume
+    /// owned instructions from any [`IntoIterator`] source so each
+    /// `Instruction<F>` drops the moment its constraints are emitted.
+    ///
+    /// Lookup-table finalization runs at the end, matching the
+    /// [`compile_ir`](Self::compile_ir) contract.
+    pub fn compile_instructions<I>(&mut self, instructions: I) -> Result<(), PlonkishError>
+    where
+        F: PoseidonParamsProvider,
+        I: IntoIterator<Item = IrInstruction<F>>,
+    {
+        self.range_bounds.clear();
+        <Self as constraints::ConstraintBackend<F>>::compile_instructions(self, instructions)?;
+        self.finalize_lookup_tables();
+        Ok(())
+    }
+
     /// Pad lookup tables and finalize `num_rows`. Called once per
     /// `compile_ir` after every instruction has been emitted.
     fn finalize_lookup_tables(&mut self) {

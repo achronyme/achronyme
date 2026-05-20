@@ -47,4 +47,27 @@ pub trait ConstraintBackend<F: FieldBackend> {
         }
         Ok(())
     }
+
+    /// Streaming counterpart of [`compile_ir`](Self::compile_ir): consume
+    /// owned instructions one-at-a-time so each `Instruction<F>` drops
+    /// the moment its constraints are emitted. The bridge code can feed
+    /// `lysis::NodeInterner::into_instruction_stream().map(...)` here to
+    /// avoid materializing a `Vec<Instruction<F>>` between the interner
+    /// and the backend.
+    ///
+    /// The `ir_idx` passed to [`compile_instruction`](Self::compile_instruction)
+    /// is the iterator position starting at 0; backends that track
+    /// constraint provenance (`R1CSCompiler::constraint_origins`) assume
+    /// the backend is fresh — call this on a newly constructed compiler
+    /// or one that explicitly cleared its accumulators.
+    fn compile_instructions<I>(&mut self, instructions: I) -> Result<(), Self::Error>
+    where
+        F: PoseidonParamsProvider,
+        I: IntoIterator<Item = Instruction<F>>,
+    {
+        for (ir_idx, inst) in instructions.into_iter().enumerate() {
+            self.compile_instruction(ir_idx, &inst)?;
+        }
+        Ok(())
+    }
 }
