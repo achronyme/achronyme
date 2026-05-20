@@ -26,7 +26,9 @@
 
 use std::collections::{HashMap, HashSet};
 
-use lysis::{execute, expected_family, InterningSink, LysisConfig};
+use lysis::{
+    execute, expected_family, ChunkDrainingSink, InstructionKind, InterningSink, LysisConfig,
+};
 use memory::{FieldBackend, FieldElement};
 
 use super::{ExtendedSink, InstEnvValue, Instantiator, InstrSink};
@@ -138,6 +140,35 @@ impl ProveIR {
         let extended = self.instantiate_extended::<F>(captures)?;
         lower_extended_to_sink(extended, false)
     }
+
+    /// Chunk-draining counterpart of
+    /// [`Self::instantiate_lysis_sink_with_outputs`]: instead of
+    /// accumulating every sealed chunk in the interner's
+    /// `streaming_chunks` Vec for the caller to drain after the
+    /// executor returns, hands each sealed chunk to `chunk_consumer`
+    /// the moment it fills. Peak resident footprint inside the
+    /// executor stays at `dedup state + 1 chunk`, independent of the
+    /// total emitted instruction count.
+    ///
+    /// `chunk_consumer` is invoked once per chunk, in emission order.
+    /// The trailing partial chunk is delivered at the end of
+    /// execution. The closure receives the chunk by value so the
+    /// caller can drain it into a constraint backend and let the
+    /// chunk's backing allocation return to the OS once the call
+    /// returns.
+    ///
+    /// The returned [`LysisDrainBundle`] carries the interner's
+    /// post-execute dedup state (eternal Const tier, sliding window)
+    /// for diagnostics — the emission buffer is empty.
+    pub fn instantiate_lysis_drain_with_outputs<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+        output_names: &HashSet<String>,
+        chunk_consumer: &mut dyn FnMut(Vec<InstructionKind<F>>),
+    ) -> Result<LysisDrainBundle<F>, LysisInstantiateError> {
+        let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
+        lower_extended_with_chunk_drain(extended, chunk_consumer)
+    }
 }
 
 /// Errors raised by the `instantiate_lysis*` family. Bridges
@@ -212,6 +243,20 @@ pub struct LysisSinkBundle<F: FieldBackend> {
     pub var_types: HashMap<SsaVar, ir_core::IrType>,
     pub var_spans: HashMap<SsaVar, diagnostics::SpanRange>,
     pub input_spans: HashMap<String, diagnostics::SpanRange>,
+}
+
+/// Output of the chunk-draining entry point
+/// ([`ProveIR::instantiate_lysis_drain_with_outputs`]). The emission
+/// stream has already been delivered to the caller's consumer
+/// closure; this bundle carries post-execute bookkeeping the caller
+/// still needs after the chunks are gone — the `next_var` watermark
+/// for any further SSA allocation, plus the underlying interning
+/// sink whose dedup tier state (eternal Const table, sliding window,
+/// node id counter) is preserved for diagnostics. The sink's
+/// emission buffer is empty.
+pub struct LysisDrainBundle<F: FieldBackend> {
+    pub residual_sink: InterningSink<F>,
+    pub next_var: u32,
 }
 
 /// Drive a populated [`ExtendedIrProgram<F>`] through Walker →
@@ -335,6 +380,76 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
         var_types,
         var_spans,
         input_spans,
+    })
+}
+
+/// Chunk-draining variant of [`lower_extended_to_sink`]. Walks
+/// `extended` through Walker → optional encode/decode → executor,
+/// using a [`ChunkDrainingSink`] backed by a chunked streaming
+/// interner so each filled chunk is handed to `chunk_consumer` at
+/// seal time. The metadata maps are dropped unconditionally on entry
+/// (same rationale as the streaming sink path — the chunk consumer
+/// does not consume semantic metadata).
+///
+/// The window/chunking selection bypasses the `LYSIS_STREAMING_WINDOW`
+/// and `LYSIS_CHUNKED_OUTPUT` environment toggles: the drain path is
+/// only meaningful under chunked streaming, so it always uses
+/// chunked mode with the default window of 131072 (the same value
+/// every chunked-streaming caller has picked in practice).
+/// `LYSIS_SKIP_ROUNDTRIP` is honored — the wire-format round-trip
+/// stays as the schema-drift gate but can be skipped on trusted
+/// internal-replay paths to release the encoded byte buffer earlier.
+pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
+    extended: ExtendedIrProgram<F>,
+    chunk_consumer: &mut dyn FnMut(Vec<InstructionKind<F>>),
+) -> Result<LysisDrainBundle<F>, LysisInstantiateError> {
+    let ExtendedIrProgram {
+        body,
+        next_var,
+        var_names,
+        var_types,
+        var_spans,
+        input_spans,
+    } = extended;
+    drop(var_names);
+    drop(var_types);
+    drop(var_spans);
+    drop(input_spans);
+
+    let walker = Walker::<F>::new(expected_family::<F>());
+    let bytecode = walker.lower(body).map_err(RoundTripError::Walk)?;
+
+    let skip_roundtrip = std::env::var("LYSIS_SKIP_ROUNDTRIP").as_deref() == Ok("1");
+    let decoded = if skip_roundtrip {
+        bytecode
+    } else {
+        let bytes = lysis::encode(&bytecode);
+        let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
+        if cfg!(debug_assertions) {
+            lysis::bytecode::validate(&decoded, &LysisConfig::default())
+                .map_err(RoundTripError::Lysis)?;
+        }
+        decoded
+    };
+
+    let window = std::env::var("LYSIS_STREAMING_WINDOW")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(131_072);
+    let mut sink = ChunkDrainingSink::<F>::with_streaming_window_chunked(window, chunk_consumer);
+    execute(
+        &decoded,
+        &[],
+        &LysisConfig::for_internal_replay(),
+        &mut sink,
+    )
+    .map_err(RoundTripError::Lysis)?;
+    let residual_sink = sink.finalize();
+
+    Ok(LysisDrainBundle {
+        residual_sink,
+        next_var,
     })
 }
 
@@ -571,6 +686,64 @@ mod tests {
         assert!(bundle.var_types.is_empty(), "var_types must be empty");
         assert!(bundle.var_spans.is_empty(), "var_spans must be empty");
         assert!(bundle.input_spans.is_empty(), "input_spans must be empty");
+    }
+
+    #[test]
+    fn chunk_drain_path_delivers_full_emission_stream() {
+        // Contract pin: the chunk-draining entry point
+        // (`instantiate_lysis_drain_with_outputs`) delivers exactly
+        // the same emission stream that the streaming sink path
+        // would produce, just routed through the consumer closure
+        // instead of accumulating in `streaming_chunks`. On a tiny
+        // circuit the stream is a single partial chunk, drained at
+        // `sink.finalize()` time.
+        use std::cell::RefCell;
+        let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+        let prove_ir = compile_circuit(source).expect("compile_circuit");
+        let outputs: std::collections::HashSet<String> =
+            std::iter::once("out".to_string()).collect();
+
+        // Reference: collect the emission stream via the streaming
+        // sink path.
+        let reference_bundle = prove_ir
+            .instantiate_lysis_sink_with_outputs::<F>(&HashMap::new(), &outputs)
+            .expect("reference instantiate_lysis_sink_with_outputs");
+        let reference_stream: Vec<_> = reference_bundle.sink.into_chunked_iter().collect();
+
+        // Subject: collect the emission stream via the chunk-drain
+        // entry point's consumer closure.
+        let received: RefCell<Vec<lysis::InstructionKind<F>>> = RefCell::new(Vec::new());
+        let mut consumer = |chunk: Vec<lysis::InstructionKind<F>>| {
+            received.borrow_mut().extend(chunk);
+        };
+        let mut drain_bundle = prove_ir
+            .instantiate_lysis_drain_with_outputs::<F>(&HashMap::new(), &outputs, &mut consumer)
+            .expect("instantiate_lysis_drain_with_outputs");
+
+        // The drain bundle's residual sink carries the dedup state
+        // but the emission buffer is empty.
+        assert!(
+            drain_bundle.residual_sink.take_sealed_chunks().is_empty(),
+            "drain residual sink should have no sealed chunks left"
+        );
+        assert!(
+            drain_bundle.residual_sink.drain_all_chunks().is_empty(),
+            "drain residual sink should have no partial chunk left either"
+        );
+
+        let drained = received.into_inner();
+        assert_eq!(
+            drained.len(),
+            reference_stream.len(),
+            "drain path must deliver the same number of instructions"
+        );
+        for (i, (d, r)) in drained.iter().zip(reference_stream.iter()).enumerate() {
+            assert_eq!(
+                format!("{d:?}"),
+                format!("{r:?}"),
+                "instruction {i} diverges between drain and streaming-sink paths"
+            );
+        }
     }
 
     #[test]

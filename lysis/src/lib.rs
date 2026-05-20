@@ -50,7 +50,9 @@ pub use builder::ProgramBuilder;
 pub use bytecode::{decode, encode, ConstPool, ConstPoolEntry, InputSrc, Opcode};
 pub use config::LysisConfig;
 pub use error::LysisError;
-pub use execute::{execute, expected_family, Frame, InterningSink, IrSink, StubSink};
+pub use execute::{
+    execute, expected_family, ChunkDrainingSink, Frame, InterningSink, IrSink, StubSink,
+};
 pub use header::{
     LysisHeader, FLAGS_DEFINED_MASK, FLAG_HAS_WITNESS_CALLS, HEADER_SIZE, HEADER_SIZE_V1,
     HEADER_SIZE_V2, MAGIC, VERSION, VERSION_V1,
