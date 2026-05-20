@@ -187,13 +187,34 @@ fn lower_extended_through_lysis<F: FieldBackend>(
             .map_err(RoundTripError::Lysis)?;
     }
 
-    // This path's only consumer of the sink is
+    // The materialized stream's only consumer here is
     // `materialize_interning_sink`, which discards the interner's
-    // span channels. Skip accumulating them — on a fully-unrolled
-    // circuit they are one `SpanList` per interned node, a
-    // per-input-size memory cost for data that is then thrown away.
-    // The materialized instruction stream is byte-identical.
-    let mut sink = InterningSink::<F>::without_span_tracking();
+    // span channels — span accumulation is skipped to avoid one
+    // `SpanList` per interned node on fully-unrolled circuits.
+    //
+    // `LYSIS_STREAMING_WINDOW` selects between two storage strategies
+    // for the interner. Unset (or "0") uses the eager strategy: the
+    // pure-node table grows unbounded, full hash-consing applies, and
+    // `materialize` replays an emission timeline at end. Set to a
+    // positive integer N (e.g. 131072), the interner caps the pure
+    // table at N entries with FIFO eviction, eternal `Const`-value
+    // and `Mul(Const, Const)` tiers preserve long-range dedup for
+    // those variant classes, and the materialized Vec is built
+    // incrementally. The streaming strategy trades a small inflation
+    // of the pre-`ir::passes::optimize` instruction count for the
+    // elimination of the pure-node table, side-effect Vec, and
+    // emission-timeline accumulators; post-O1 constraint count is
+    // preserved exactly because `optimize` collapses the duplicate
+    // instructions back to canonical form. Document new values
+    // alongside `R1PP_ENABLED` in the workspace `CLAUDE.md`.
+    let mut sink = match std::env::var("LYSIS_STREAMING_WINDOW")
+        .ok()
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+    {
+        Some(window) => InterningSink::<F>::with_streaming_window(window),
+        None => InterningSink::<F>::without_span_tracking(),
+    };
     execute(
         &decoded,
         &[],

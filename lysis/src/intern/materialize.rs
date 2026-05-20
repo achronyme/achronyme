@@ -34,6 +34,13 @@ impl<F: FieldBackend> NodeInterner<F> {
     /// split the stream into "pure prefix + effect suffix" and
     /// produced a forward-referencing Vec in exactly that case.
     pub fn materialize(self) -> Vec<InstructionKind<F>> {
+        // Streaming path: the materialized stream was built
+        // incrementally as fresh inserts + effects flowed through; just
+        // hand back the buffer.
+        if self.window_size.is_some() {
+            return self.streaming_output;
+        }
+
         // De-structure so each field drops on its own schedule. Pulling
         // fields out by pattern avoids the partial-move pitfalls of
         // touching `self` through multiple accessors during the loop.
@@ -45,6 +52,12 @@ impl<F: FieldBackend> NodeInterner<F> {
             timeline,
             next_node_id: _,
             record_spans: _,
+            const_table: _,
+            mul_cc_table: _,
+            window_size: _,
+            streaming_output: _,
+            eviction_queue: _,
+            const_nodes: _,
         } = self;
 
         let estimated = timeline.len();

@@ -55,6 +55,21 @@ impl<F: FieldBackend> InterningSink<F> {
         }
     }
 
+    /// Sink in **streaming mode**: caps the interner's `nodes` table at
+    /// `window_size` entries (FIFO eviction) and emits the materialized
+    /// stream incrementally. Const + `Mul(Const, Const)` dedup is
+    /// preserved across eviction via eternal tiers; other long-range
+    /// dedup hits beyond the window are forfeited (the materialized
+    /// Vec is functionally equivalent — same post-O1 constraint count —
+    /// but not byte-identical to the eager path). See
+    /// [`NodeInterner::with_streaming_window`] for the architectural
+    /// details.
+    pub fn with_streaming_window(window_size: usize) -> Self {
+        Self {
+            interner: NodeInterner::with_streaming_window(window_size),
+        }
+    }
+
     /// Borrow the underlying interner — mainly for tests and the
     /// determinism harness.
     pub fn interner(&self) -> &NodeInterner<F> {

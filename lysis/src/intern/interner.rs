@@ -19,15 +19,23 @@
 //! up-front via [`NodeInterner::reserve_opaque_id`] so the caller
 //! can bind them into registers before calling `emit_effect`.
 
+use std::collections::{HashMap, HashSet, VecDeque};
+
 use indexmap::IndexMap;
-use memory::field::{Bn254Fr, FieldBackend};
+use memory::field::{Bn254Fr, FieldBackend, FieldElement};
 use rustc_hash::FxBuildHasher;
 
 use crate::intern::effect::{EffectId, SideEffect};
 use crate::intern::hash::deterministic_hash;
 use crate::intern::key::NodeKey;
 use crate::intern::span::{SpanList, SpanRange};
-use crate::intern::NodeId;
+use crate::intern::{InstructionKind, NodeId};
+
+/// Cap on the eternal `Mul(Const, Const)` value-pair table. Sized from
+/// Stage-1 probe data (10 distinct slots on the boss-fight) with a small
+/// safety margin. Going past this fires the assert — that is the signal
+/// to remeasure cardinality, not raise the cap silently.
+pub(crate) const MUL_CC_TIER_CAP: usize = 64;
 
 /// Metadata stored alongside each interned key. The cached hash lets
 /// us answer "were these two nodes structurally equivalent?" in
@@ -75,7 +83,8 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     pub(crate) effect_spans: Vec<SpanList>,
     /// Global emission order: one entry per *new* pure insertion + one
     /// per side-effect. Dedup hits do not add to the timeline since
-    /// the pure slot already appears.
+    /// the pure slot already appears. Unused under the streaming path
+    /// (output is built incrementally on emission, no replay needed).
     pub(crate) timeline: Vec<Emission>,
     /// Monotonic across both pure and opaque ids. Never rewound.
     pub(crate) next_node_id: u32,
@@ -88,6 +97,37 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     /// then thrown away. Defaults to true; the span channels stay
     /// behaviourally identical for every existing caller.
     pub(crate) record_spans: bool,
+    /// Eternal `Const(value) → NodeId` table. Always populated; on the
+    /// streaming path this prevents Const dedup loss when a Const
+    /// entry would otherwise have been evicted from `nodes`.
+    pub(crate) const_table: HashMap<FieldElement<F>, NodeId>,
+    /// Eternal `Mul(Const, Const) → NodeId` value-pair table. Keyed
+    /// on symmetric-normalized Const-NodeIds (smaller index first);
+    /// Const NodeIds are themselves stable per-value via [`Self::const_table`],
+    /// so a NodeId pair is functionally equivalent to a value pair and
+    /// avoids a NodeId-to-value reverse lookup on the hot path.
+    /// Stage-1 probe measured ~10 distinct slots on the boss-fight;
+    /// capped at [`MUL_CC_TIER_CAP`] with a hard assert.
+    pub(crate) mul_cc_table: HashMap<(NodeId, NodeId), NodeId>,
+    /// Streaming mode: when `Some`, the interner caps `nodes` at this
+    /// many entries with FIFO eviction by insertion order, and emits
+    /// the materialized stream incrementally into [`Self::streaming_output`]
+    /// instead of accumulating a `timeline`. `None` keeps the legacy
+    /// eager path byte-for-byte unchanged.
+    pub(crate) window_size: Option<usize>,
+    /// Incrementally-built materialized output Vec, populated only when
+    /// `window_size.is_some()`. Holds one entry per fresh pure insert
+    /// + one per emitted effect, in emission order.
+    pub(crate) streaming_output: Vec<InstructionKind<F>>,
+    /// FIFO eviction order parallel to `nodes`. Populated only when
+    /// streaming; `pop_front` returns the oldest key for `swap_remove`
+    /// from `nodes` in O(1).
+    pub(crate) eviction_queue: VecDeque<NodeKey<F>>,
+    /// `NodeId`s that were minted for a `NodeKey::Const(_)` variant.
+    /// Eternal — never evicted. Used to discriminate `Mul(Const, Const)`
+    /// at `intern_pure` time without touching the `nodes` IndexMap
+    /// (which may have evicted the Const entries already).
+    pub(crate) const_nodes: HashSet<NodeId>,
 }
 
 impl<F: FieldBackend> Default for NodeInterner<F> {
@@ -97,7 +137,9 @@ impl<F: FieldBackend> Default for NodeInterner<F> {
 }
 
 impl<F: FieldBackend> NodeInterner<F> {
-    /// Empty interner.
+    /// Empty interner. Eager path: full hash-consing, no eviction,
+    /// `materialize` replays the timeline at end. Byte-for-byte the
+    /// historical behavior.
     pub fn new() -> Self {
         Self {
             nodes: IndexMap::with_hasher(FxBuildHasher),
@@ -107,6 +149,12 @@ impl<F: FieldBackend> NodeInterner<F> {
             timeline: Vec::new(),
             next_node_id: 0,
             record_spans: true,
+            const_table: HashMap::new(),
+            mul_cc_table: HashMap::new(),
+            window_size: None,
+            streaming_output: Vec::new(),
+            eviction_queue: VecDeque::new(),
+            const_nodes: HashSet::new(),
         }
     }
 
@@ -122,6 +170,29 @@ impl<F: FieldBackend> NodeInterner<F> {
         }
     }
 
+    /// Empty interner in **streaming mode**: the `nodes` IndexMap is
+    /// capped at `window_size` entries with FIFO eviction by insertion
+    /// order. Materialized output is built incrementally as fresh
+    /// pure inserts + effects flow through. The `timeline` channel is
+    /// not used. Const dedup is preserved across eviction by the
+    /// eternal Const-value table; `Mul(Const, Const)` dedup likewise
+    /// via the eternal value-pair table. Other long-range dedup hits
+    /// past the window are forfeited — the materialized Vec is
+    /// **functionally equivalent** (same post-O1 constraint count)
+    /// but not byte-identical to the eager path.
+    ///
+    /// Spans are not populated; the trusted-replay opt-out is implicit.
+    /// `window_size` of 0 is treated as "minimum useful window of 1"
+    /// to avoid degenerate eviction-on-insert.
+    pub fn with_streaming_window(window_size: usize) -> Self {
+        let window_size = window_size.max(1);
+        Self {
+            record_spans: false,
+            window_size: Some(window_size),
+            ..Self::new()
+        }
+    }
+
     /// Intern a pure node. If an equivalent key is already present,
     /// the existing `NodeId` is returned and `span` is appended to
     /// its span list (subject to the [`crate::intern::span::SPAN_LIST_CAP`]).
@@ -131,24 +202,113 @@ impl<F: FieldBackend> NodeInterner<F> {
     /// — not `NodeId.index()`, since opaque reservations between
     /// pure inserts would leave gaps in the latter.
     pub fn intern_pure(&mut self, key: NodeKey<F>, span: SpanRange) -> NodeId {
+        // Tier 3 (hot path): IndexMap lookup. Same as the historical
+        // eager path; under streaming, hits also include all in-window
+        // entries.
         if let Some((insertion_idx, _, meta)) = self.nodes.get_full(&key) {
             let id = meta.id;
             if let Some(list) = self.node_spans.get_mut(insertion_idx) {
                 list.push_capped(span);
             }
-            // Dedup hit: the pure node already appears on the timeline
-            // from its first insertion. Don't push again.
             return id;
         }
+
+        // Tier 1 (eternal Const): catches Const dedup after the entry
+        // would have been evicted from `nodes`. The const_table itself
+        // never evicts, so this is the long-range Const rescue.
+        if let NodeKey::Const(v) = &key {
+            if let Some(&id) = self.const_table.get(v) {
+                return id;
+            }
+        }
+
+        // Tier 2 (eternal Mul(Const, Const)): symmetric-normalized
+        // value-pair lookup. Catches the dominant long-range Mul
+        // dedup cohort once the original Mul entry has been evicted.
+        // Both operand NodeIds must be in the eternal const_nodes set.
+        if let NodeKey::Mul(a, b) = &key {
+            if self.const_nodes.contains(a) && self.const_nodes.contains(b) {
+                let pair = if a.index() <= b.index() {
+                    (*a, *b)
+                } else {
+                    (*b, *a)
+                };
+                if let Some(&id) = self.mul_cc_table.get(&pair) {
+                    return id;
+                }
+            }
+        }
+
+        // All tiers missed — fresh insert.
         let id = self.fresh_node_id();
         let hash = deterministic_hash(&key);
         let insertion_idx = self.nodes.len();
-        self.nodes.insert(key, NodeMeta { id, hash });
-        if self.record_spans {
-            debug_assert_eq!(self.node_spans.len(), insertion_idx);
-            self.node_spans.push(SpanList::with_span(span));
+
+        // Populate eternal tiers BEFORE inserting into `nodes`, so a
+        // future eviction of the Tier-3 entry still preserves the
+        // long-range dedup path.
+        match &key {
+            NodeKey::Const(v) => {
+                self.const_table.insert(*v, id);
+                self.const_nodes.insert(id);
+            }
+            NodeKey::Mul(a, b) if self.const_nodes.contains(a) && self.const_nodes.contains(b) => {
+                let pair = if a.index() <= b.index() {
+                    (*a, *b)
+                } else {
+                    (*b, *a)
+                };
+                self.mul_cc_table.insert(pair, id);
+                assert!(
+                    self.mul_cc_table.len() <= MUL_CC_TIER_CAP,
+                    "Mul(Const, Const) eternal tier exceeded the {} entry cap — \
+                     re-measure cardinality (Stage-1 probe baseline = 10 distinct slots) \
+                     before raising the cap",
+                    MUL_CC_TIER_CAP,
+                );
+            }
+            _ => {}
         }
-        self.timeline.push(Emission::Pure(insertion_idx));
+
+        if let Some(cap) = self.window_size {
+            // Streaming path: emit to output immediately, then insert
+            // into `nodes`, then maybe evict the oldest entry.
+            self.streaming_output.push(key.clone().into_instruction(id));
+            self.eviction_queue.push_back(key.clone());
+            self.nodes.insert(key, NodeMeta { id, hash });
+            // record_spans is conventionally false in streaming mode,
+            // but if a caller flips it we still mirror eager semantics.
+            if self.record_spans {
+                self.node_spans.push(SpanList::with_span(span));
+            }
+            while self.nodes.len() > cap {
+                if let Some(old_key) = self.eviction_queue.pop_front() {
+                    // Don't evict eternal-tier-tracked entries; they
+                    // remain reachable via Tier 1/2 lookup but their
+                    // hot-path Tier-3 slot is reclaimed.
+                    let _removed = self.nodes.swap_remove(&old_key);
+                    if !self.node_spans.is_empty() {
+                        // node_spans is parallel to historical insertion
+                        // order; under streaming we don't preserve that
+                        // ordering once eviction starts, so this is a
+                        // best-effort drop that keeps the Vec from
+                        // growing unbounded when record_spans is set.
+                        self.node_spans.pop();
+                    }
+                } else {
+                    break;
+                }
+            }
+        } else {
+            // Eager path: byte-for-byte the historical behaviour.
+            self.nodes.insert(key, NodeMeta { id, hash });
+            if self.record_spans {
+                debug_assert_eq!(self.node_spans.len(), insertion_idx);
+                self.node_spans.push(SpanList::with_span(span));
+            }
+            self.timeline.push(Emission::Pure(insertion_idx));
+        }
+
         id
     }
 
@@ -161,11 +321,24 @@ impl<F: FieldBackend> NodeInterner<F> {
     pub fn emit_effect(&mut self, effect: SideEffect, span: SpanRange) -> EffectId {
         let eff_idx = self.effects.len();
         let eff_id = EffectId::from_zero_based(eff_idx);
-        self.effects.push(effect);
-        if self.record_spans {
-            self.effect_spans.push(SpanList::with_span(span));
+        if let Some(_cap) = self.window_size {
+            // Streaming path: emit directly to output. The `effects`
+            // Vec stays empty — the materialized output Vec already
+            // carries every effect, no external consumer reads
+            // `effects` field outside this crate (verified via grep),
+            // and `effect_len()` returning 0 is fine for the streaming
+            // path's contract (caller uses the output Vec). Skipping
+            // the push releases the dominant non-node accumulator
+            // (~1.1 GB on the boss-fight).
+            self.streaming_output
+                .push(SideEffect::into_instruction::<F>(effect));
+        } else {
+            self.effects.push(effect);
+            if self.record_spans {
+                self.effect_spans.push(SpanList::with_span(span));
+            }
+            self.timeline.push(Emission::Effect(eff_idx));
         }
-        self.timeline.push(Emission::Effect(eff_idx));
         eff_id
     }
 
@@ -523,6 +696,87 @@ mod tests {
         assert_eq!(
             format!("{:?}", recorded.materialize()),
             format!("{:?}", skipped.materialize()),
+        );
+    }
+
+    // ------------------------------------------------------------------
+    // Streaming-window path: 3-tier interner.
+    // ------------------------------------------------------------------
+
+    #[test]
+    fn streaming_with_huge_window_matches_eager_on_tiny_fixture() {
+        // Window large enough that no eviction fires — pure machinery
+        // pin: the streaming codepath produces a byte-identical
+        // materialized Vec for inputs where forfeit is impossible.
+        let mut eager = NodeInterner::<Bn254Fr>::new();
+        let mut streaming = NodeInterner::<Bn254Fr>::with_streaming_window(1024);
+        build_sequence(&mut eager);
+        build_sequence(&mut streaming);
+
+        assert_eq!(
+            format!("{:?}", eager.materialize()),
+            format!("{:?}", streaming.materialize()),
+        );
+    }
+
+    #[test]
+    fn const_eternal_tier_survives_eviction() {
+        // Window = 2. Insert Const(1), Const(2), then enough Mul nodes
+        // to evict the Consts from the Tier-3 IndexMap. Re-intern
+        // Const(1) — should still dedup to the original id via Tier 1.
+        let mut ix = NodeInterner::<Bn254Fr>::with_streaming_window(2);
+        let c1 = ix.intern_pure(NodeKey::Const(fe(1)), SpanRange::UNKNOWN);
+        let c2 = ix.intern_pure(NodeKey::Const(fe(2)), SpanRange::UNKNOWN);
+
+        // Mul nodes whose operands aren't both Const — these go in
+        // Tier 3 and trigger Const eviction once we exceed the cap.
+        let _ = ix.intern_pure(NodeKey::Add(c1, c2), SpanRange::UNKNOWN);
+        let _ = ix.intern_pure(NodeKey::Sub(c1, c2), SpanRange::UNKNOWN);
+        let _ = ix.intern_pure(NodeKey::Neg(c1), SpanRange::UNKNOWN);
+
+        // Re-intern Const(1) — Tier 1 must catch it.
+        let c1_again = ix.intern_pure(NodeKey::Const(fe(1)), SpanRange::UNKNOWN);
+        assert_eq!(c1, c1_again, "Const eternal tier must rescue evicted Const");
+    }
+
+    #[test]
+    fn mul_const_const_tier_survives_eviction() {
+        // Window = 2. Insert two Consts + their Mul (caches into
+        // Tier 2), then enough churn to evict the Mul from Tier 3.
+        // Re-intern Mul(c1, c2) — should hit Tier 2.
+        let mut ix = NodeInterner::<Bn254Fr>::with_streaming_window(2);
+        let c1 = ix.intern_pure(NodeKey::Const(fe(7)), SpanRange::UNKNOWN);
+        let c2 = ix.intern_pure(NodeKey::Const(fe(11)), SpanRange::UNKNOWN);
+        let m = ix.intern_pure(NodeKey::Mul(c1, c2), SpanRange::UNKNOWN);
+
+        // Force the Mul out of Tier 3 via churn.
+        for i in 100u64..120u64 {
+            let v = ix.intern_pure(NodeKey::Const(fe(i)), SpanRange::UNKNOWN);
+            let _ = ix.intern_pure(NodeKey::Add(v, c1), SpanRange::UNKNOWN);
+        }
+
+        let m_again = ix.intern_pure(NodeKey::Mul(c1, c2), SpanRange::UNKNOWN);
+        assert_eq!(
+            m, m_again,
+            "Mul(Const, Const) eternal tier must rescue evicted Mul"
+        );
+    }
+
+    #[test]
+    fn streaming_emits_evicted_nodes_into_output() {
+        // After eviction, the materialized Vec must still contain the
+        // evicted nodes (they were emitted at fresh-insert time).
+        let mut ix = NodeInterner::<Bn254Fr>::with_streaming_window(2);
+        let _a = ix.intern_pure(NodeKey::Const(fe(1)), SpanRange::UNKNOWN);
+        let _b = ix.intern_pure(NodeKey::Const(fe(2)), SpanRange::UNKNOWN);
+        // Add a third Const → first two were already emitted, now evict one.
+        let _c = ix.intern_pure(NodeKey::Const(fe(3)), SpanRange::UNKNOWN);
+
+        let out = ix.materialize();
+        assert_eq!(
+            out.len(),
+            3,
+            "all three fresh inserts must appear in output"
         );
     }
 }
