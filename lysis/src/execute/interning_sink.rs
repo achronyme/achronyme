@@ -70,6 +70,17 @@ impl<F: FieldBackend> InterningSink<F> {
         }
     }
 
+    /// Streaming sink with chunked output storage. Mirrors
+    /// [`NodeInterner::with_streaming_window_chunked`] — same dedup
+    /// contract as [`Self::with_streaming_window`], differs only in
+    /// the emission buffer layout (per-chunk allocation instead of a
+    /// single doubling Vec).
+    pub fn with_streaming_window_chunked(window_size: usize) -> Self {
+        Self {
+            interner: NodeInterner::with_streaming_window_chunked(window_size),
+        }
+    }
+
     /// Borrow the underlying interner — mainly for tests and the
     /// determinism harness.
     pub fn interner(&self) -> &NodeInterner<F> {
@@ -95,6 +106,19 @@ impl<F: FieldBackend> InterningSink<F> {
     /// memory.
     pub fn into_instruction_stream(self) -> std::vec::IntoIter<InstructionKind<F>> {
         self.interner.into_instruction_stream()
+    }
+
+    /// Lazy chunk-draining iterator over the emission stream. See
+    /// [`NodeInterner::into_chunked_iter`] for the layout contract;
+    /// briefly: when the underlying interner was built with chunked
+    /// streaming, chunks drop as the iterator drains them, so the
+    /// resident footprint shrinks monotonically while the downstream
+    /// consumer runs.
+    pub fn into_chunked_iter(self) -> Box<dyn Iterator<Item = InstructionKind<F>> + 'static>
+    where
+        F: 'static,
+    {
+        self.interner.into_chunked_iter()
     }
 
     /// Number of unique pure nodes the interner has accumulated.

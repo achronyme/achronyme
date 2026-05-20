@@ -46,8 +46,8 @@ pub use extended_program::ExtendedIrProgram;
 pub use instantiate::{LysisInstantiateError, LysisSinkBundle};
 pub use lysis_bridge::{instruction_from_kind, instruction_from_kind_owned, ssa_var_from_node_id};
 pub use lysis_materialize::{
-    lysis_instruction_stream, lysis_sink_instruction_stream, materialize_interner,
-    materialize_interning_sink,
+    lysis_instruction_stream, lysis_sink_chunked_instruction_stream, lysis_sink_instruction_stream,
+    materialize_interner, materialize_interning_sink,
 };
 pub use lysis_roundtrip::{lysis_roundtrip, RoundTripError};
 pub use types::{

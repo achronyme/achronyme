@@ -76,6 +76,20 @@ pub fn lysis_sink_instruction_stream<F: FieldBackend>(
     lysis_instruction_stream(sink.into_interner())
 }
 
+/// Chunk-draining counterpart of [`lysis_sink_instruction_stream`].
+/// When the sink was built with chunked streaming
+/// ([`lysis::InterningSink::with_streaming_window_chunked`]), each
+/// chunk's allocation drops as the iterator drains it — so the
+/// downstream consumer can free memory progressively instead of
+/// holding the full emission stream as a single Vec at the boundary.
+/// When the sink was built non-chunked, this falls back to the same
+/// behaviour as [`lysis_sink_instruction_stream`] via materialize().
+pub fn lysis_sink_chunked_instruction_stream<F: FieldBackend + 'static>(
+    sink: lysis::InterningSink<F>,
+) -> impl Iterator<Item = Instruction<F>> {
+    sink.into_chunked_iter().map(instruction_from_kind_owned)
+}
+
 #[cfg(test)]
 mod tests {
     use memory::{Bn254Fr, FieldElement};
