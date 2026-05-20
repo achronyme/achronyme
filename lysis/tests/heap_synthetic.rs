@@ -47,7 +47,7 @@ fn build_sha_like_fixture() -> lysis::Program<Bn254Fr> {
     // explicit.
     for i in 0..N_SLOTS {
         let scratch = (i % 50) as u8;
-        builder.load_const(scratch, u32::from(i));
+        builder.load_const(scratch, i);
         builder.store_heap(scratch, i);
     }
     // Step 2: read each heap slot back into a recycled scratch reg
