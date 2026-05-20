@@ -24,6 +24,27 @@ use crate::intern::interner::{Emission, NodeInterner};
 use crate::intern::InstructionKind;
 
 impl<F: FieldBackend> NodeInterner<F> {
+    /// Consume the interner and return a single-pass iterator over the
+    /// emission stream. Drop semantics: each yielded
+    /// `InstructionKind<F>` releases its slot from the backing buffer
+    /// as the iterator advances, so consumers that fold instructions
+    /// into a downstream representation can avoid holding the whole
+    /// IR in memory simultaneously.
+    ///
+    /// Concrete iterator type is `std::vec::IntoIter` — same as
+    /// `materialize().into_iter()`, but expressed as the API contract
+    /// so callers can rely on the single-pass behaviour and the
+    /// concrete type without dyn dispatch.
+    ///
+    /// Under streaming mode (`with_streaming_window`), the underlying
+    /// buffer is the incrementally-built `streaming_output` Vec.
+    /// Under eager mode, the timeline is walked into a fresh Vec
+    /// first, then drained — byte-identical to the eager
+    /// [`Self::materialize`] output.
+    pub fn into_instruction_stream(self) -> std::vec::IntoIter<InstructionKind<F>> {
+        self.materialize().into_iter()
+    }
+
     /// Consume the interner, producing a flat `Vec<InstructionKind<F>>`.
     ///
     /// Walks the `timeline` log so pure nodes and side-effects appear
@@ -242,6 +263,60 @@ mod tests {
                 );
             }
             seen_ids.insert(result);
+        }
+    }
+
+    #[test]
+    fn into_instruction_stream_matches_materialize() {
+        let build = || {
+            let mut ix = NodeInterner::<Bn254Fr>::new();
+            let a = ix.intern_pure(NodeKey::Const(fe(1)), SpanRange::UNKNOWN);
+            let b = ix.intern_pure(NodeKey::Const(fe(2)), SpanRange::UNKNOWN);
+            let c = ix.intern_pure(NodeKey::Mul(a, b), SpanRange::UNKNOWN);
+            let _ = ix.intern_pure(NodeKey::Add(c, a), SpanRange::UNKNOWN);
+            let opaque = ix.reserve_opaque_id();
+            ix.emit_effect(
+                SideEffect::RangeCheck {
+                    result: opaque,
+                    operand: a,
+                    bits: 8,
+                },
+                SpanRange::UNKNOWN,
+            );
+            ix
+        };
+        let via_vec = build().materialize();
+        let via_iter: Vec<_> = build().into_instruction_stream().collect();
+        assert_eq!(via_vec.len(), via_iter.len());
+        for (v, i) in via_vec.iter().zip(via_iter.iter()) {
+            assert_eq!(format!("{v:?}"), format!("{i:?}"));
+        }
+    }
+
+    #[test]
+    fn into_instruction_stream_matches_materialize_streaming() {
+        let build = || {
+            let mut ix = NodeInterner::<Bn254Fr>::with_streaming_window(64);
+            let a = ix.intern_pure(NodeKey::Const(fe(1)), SpanRange::UNKNOWN);
+            let b = ix.intern_pure(NodeKey::Const(fe(2)), SpanRange::UNKNOWN);
+            let c = ix.intern_pure(NodeKey::Mul(a, b), SpanRange::UNKNOWN);
+            let _ = ix.intern_pure(NodeKey::Add(c, a), SpanRange::UNKNOWN);
+            let opaque = ix.reserve_opaque_id();
+            ix.emit_effect(
+                SideEffect::RangeCheck {
+                    result: opaque,
+                    operand: a,
+                    bits: 8,
+                },
+                SpanRange::UNKNOWN,
+            );
+            ix
+        };
+        let via_vec = build().materialize();
+        let via_iter: Vec<_> = build().into_instruction_stream().collect();
+        assert_eq!(via_vec.len(), via_iter.len());
+        for (v, i) in via_vec.iter().zip(via_iter.iter()) {
+            assert_eq!(format!("{v:?}"), format!("{i:?}"));
         }
     }
 

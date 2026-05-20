@@ -88,6 +88,15 @@ impl<F: FieldBackend> InterningSink<F> {
         self.interner.materialize()
     }
 
+    /// Single-pass iterator over the emission stream. Same contract
+    /// as [`NodeInterner::into_instruction_stream`]: each yielded
+    /// `InstructionKind<F>` releases its slot from the backing buffer
+    /// so streaming consumers don't need to hold the whole IR in
+    /// memory.
+    pub fn into_instruction_stream(self) -> std::vec::IntoIter<InstructionKind<F>> {
+        self.interner.into_instruction_stream()
+    }
+
     /// Number of unique pure nodes the interner has accumulated.
     pub fn pure_len(&self) -> usize {
         self.interner.pure_len()
@@ -282,6 +291,37 @@ mod tests {
         }
         let flat = sink.materialize();
         assert_eq!(flat.len(), 2); // 1 Const + 1 Add
+    }
+
+    #[test]
+    fn into_instruction_stream_matches_materialize_on_sink() {
+        let build = || {
+            let mut sink = InterningSink::<Bn254Fr>::new();
+            let a = sink.intern_pure(InstructionKind::Const {
+                result: NodeId::from_zero_based(0),
+                value: fe(7),
+            });
+            for _ in 0..3 {
+                sink.intern_pure(InstructionKind::Add {
+                    result: NodeId::from_zero_based(0),
+                    lhs: a,
+                    rhs: a,
+                });
+            }
+            let r = sink.fresh_id();
+            sink.emit_effect(InstructionKind::RangeCheck {
+                result: r,
+                operand: a,
+                bits: 8,
+            });
+            sink
+        };
+        let via_vec = build().materialize();
+        let via_iter: Vec<_> = build().into_instruction_stream().collect();
+        assert_eq!(via_vec.len(), via_iter.len());
+        for (v, i) in via_vec.iter().zip(via_iter.iter()) {
+            assert_eq!(format!("{v:?}"), format!("{i:?}"));
+        }
     }
 
     #[test]
