@@ -618,6 +618,7 @@ dependencies = [
  "ir",
  "ir-core",
  "ir-forge",
+ "lysis",
  "memory",
  "num-bigint",
  "num-traits",

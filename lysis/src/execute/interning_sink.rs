@@ -130,6 +130,20 @@ impl<F: FieldBackend> InterningSink<F> {
     pub fn effect_len(&self) -> usize {
         self.interner.effect_len()
     }
+
+    /// Pop and return every fully-filled chunk in the underlying
+    /// interner's streaming-output buffer. See
+    /// [`NodeInterner::take_sealed_chunks`] for the layout contract.
+    pub fn take_sealed_chunks(&mut self) -> Vec<Vec<InstructionKind<F>>> {
+        self.interner.take_sealed_chunks()
+    }
+
+    /// Drain every remaining chunk — sealed AND partial — leaving
+    /// the interner's emission buffer empty. See
+    /// [`NodeInterner::drain_all_chunks`].
+    pub fn drain_all_chunks(&mut self) -> Vec<Vec<InstructionKind<F>>> {
+        self.interner.drain_all_chunks()
+    }
 }
 
 impl<F: FieldBackend> IrSink<F> for InterningSink<F> {

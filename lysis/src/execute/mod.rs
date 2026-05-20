@@ -26,11 +26,13 @@
 //! surfaces it as [`LysisError::ReadUndefinedRegister`] or similar
 //! so the program crashes loud rather than silently.
 
+pub mod draining_sink;
 pub mod frame;
 pub mod interning_sink;
 pub mod ir_sink;
 pub mod stub_sink;
 
+pub use draining_sink::ChunkDrainingSink;
 pub use frame::{Frame, LoopState};
 pub use interning_sink::InterningSink;
 pub use ir_sink::IrSink;

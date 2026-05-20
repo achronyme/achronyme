@@ -450,6 +450,40 @@ impl<F: FieldBackend> NodeInterner<F> {
         self.effects.len()
     }
 
+    /// Pop and return every chunk that has filled to capacity. The
+    /// currently-filling tail chunk (the last one in
+    /// [`Self::streaming_chunks`]) stays behind so subsequent
+    /// [`Self::push_streaming`] calls have somewhere to land. Caller
+    /// drains each returned chunk and drops it, releasing its backing
+    /// region to the OS.
+    ///
+    /// Returns an empty Vec when chunked streaming is not active, when
+    /// no chunks exist yet, or when only the partially-filled tail
+    /// chunk is present. Safe to call after every emission — the
+    /// no-sealed-chunks fast path costs one len comparison.
+    pub fn take_sealed_chunks(&mut self) -> Vec<Vec<InstructionKind<F>>> {
+        if !self.chunked || self.streaming_chunks.len() <= 1 {
+            return Vec::new();
+        }
+        let tail = self.streaming_chunks.pop().expect("len > 1 just verified");
+        let sealed = std::mem::take(&mut self.streaming_chunks);
+        self.streaming_chunks.push(tail);
+        sealed
+    }
+
+    /// Drain every remaining chunk — sealed AND partial — leaving
+    /// [`Self::streaming_chunks`] empty. Called once at end of
+    /// execution to capture the final partial chunk before the
+    /// interner is discarded.
+    ///
+    /// Returns an empty Vec when chunked streaming is not active.
+    pub fn drain_all_chunks(&mut self) -> Vec<Vec<InstructionKind<F>>> {
+        if !self.chunked {
+            return Vec::new();
+        }
+        std::mem::take(&mut self.streaming_chunks)
+    }
+
     /// Total opaque NodeIds allocated (pure nodes + opaque reservations).
     #[inline]
     pub fn total_node_ids(&self) -> u32 {
