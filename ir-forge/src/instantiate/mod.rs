@@ -43,7 +43,7 @@ use ir_core::{IrType, SsaVar};
 
 use crate::types::CircuitNode;
 
-pub use api::LysisInstantiateError;
+pub use api::{LysisInstantiateError, LysisSinkBundle};
 pub(super) use sink::{ExtendedSink, InstrSink};
 
 /// Maximum iterations allowed during instantiation (loop unrolling).

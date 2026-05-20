@@ -313,6 +313,25 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         self.divmod_cache.clear();
         <Self as constraints::ConstraintBackend<F>>::compile_ir(self, program)
     }
+
+    /// Streaming counterpart of [`compile_ir`](Self::compile_ir): consume
+    /// owned instructions from any [`IntoIterator`] source so each
+    /// `Instruction<F>` drops the moment its constraints are emitted.
+    /// Lets the bridge feed a Lysis interner directly into the backend
+    /// without ever materializing a `Vec<Instruction<F>>`.
+    ///
+    /// The per-program caches are cleared up front, matching the
+    /// [`compile_ir`](Self::compile_ir) contract.
+    pub fn compile_instructions<I>(&mut self, instructions: I) -> Result<(), R1CSError>
+    where
+        F: PoseidonParamsProvider,
+        I: IntoIterator<Item = IrInstruction<F>>,
+    {
+        self.lc_map.clear();
+        self.range_bounds.clear();
+        self.divmod_cache.clear();
+        <Self as constraints::ConstraintBackend<F>>::compile_instructions(self, instructions)
+    }
 }
 
 impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
@@ -1008,5 +1027,72 @@ mod tests {
             .filter(|o| o.ir_index == 3)
             .collect();
         assert_eq!(poseidon_origins.len(), 361); // PoseidonHash = 361 constraints
+    }
+
+    #[test]
+    fn compile_instructions_matches_compile_ir_on_mixed_circuit() {
+        // Pin: the streaming `compile_instructions` entry point and
+        // the eager `compile_ir(&IrProgram)` entry point produce
+        // byte-identical R1CS output (same constraint count, same
+        // constraint_origins) on a representative mixed circuit.
+        // Reuses the constraint_origins_count_matches_constraints
+        // shape.
+        let build_prog = || {
+            let mut prog: IrProgram = IrProgram::new();
+            let v0 = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: v0,
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let v1 = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: v1,
+                name: "y".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let v2 = prog.fresh_var();
+            prog.push(Instruction::Mul {
+                result: v2,
+                lhs: v0,
+                rhs: v1,
+            });
+            let v3 = prog.fresh_var();
+            prog.push(Instruction::PoseidonHash {
+                result: v3,
+                left: v0,
+                right: v1,
+            });
+            let v4 = prog.fresh_var();
+            prog.push(Instruction::AssertEq {
+                result: v4,
+                lhs: v2,
+                rhs: v3,
+                message: None,
+            });
+            prog
+        };
+
+        let mut eager = R1CSCompiler::new();
+        eager.compile_ir(&build_prog()).unwrap();
+
+        let mut streaming = R1CSCompiler::new();
+        streaming
+            .compile_instructions(build_prog().into_instructions())
+            .unwrap();
+
+        assert_eq!(eager.cs.num_constraints(), streaming.cs.num_constraints());
+        assert_eq!(
+            eager.constraint_origins.len(),
+            streaming.constraint_origins.len()
+        );
+        for (a, b) in eager
+            .constraint_origins
+            .iter()
+            .zip(streaming.constraint_origins.iter())
+        {
+            assert_eq!(a.ir_index, b.ir_index);
+            assert_eq!(a.result_var, b.result_var);
+        }
     }
 }

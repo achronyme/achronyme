@@ -25,7 +25,7 @@
 use ir_core::Instruction;
 use memory::FieldBackend;
 
-use crate::lysis_bridge::instruction_from_kind;
+use crate::lysis_bridge::{instruction_from_kind, instruction_from_kind_owned};
 
 /// Consume a Lysis [`NodeInterner`] and produce a flat
 /// `Vec<Instruction<F>>` ready for the R1CS backend.
@@ -46,6 +46,34 @@ pub fn materialize_interning_sink<F: FieldBackend>(
     sink: lysis::InterningSink<F>,
 ) -> Vec<Instruction<F>> {
     materialize_interner(sink.into_interner())
+}
+
+/// Streaming counterpart of [`materialize_interner`]: return an
+/// iterator that yields owned `Instruction<F>` values as each
+/// `InstructionKind<F>` flows out of the interner. The interner's
+/// owning `Vec<InstructionKind<F>>` stays alive for the iterator's
+/// lifetime (`std::vec::IntoIter` keeps the buffer); the IR-side
+/// `Vec<Instruction<F>>` is never built.
+///
+/// Feed the returned iterator into a backend's
+/// `compile_instructions(...)` to skip the intermediate
+/// `Vec<Instruction<F>>` allocation entirely — on circuits where
+/// that Vec would be the larger allocation (boss-fight scale:
+/// 4.83 GB at 2^26 instructions), this is the saving.
+pub fn lysis_instruction_stream<F: FieldBackend>(
+    interner: lysis::NodeInterner<F>,
+) -> impl Iterator<Item = Instruction<F>> {
+    interner
+        .into_instruction_stream()
+        .map(instruction_from_kind_owned)
+}
+
+/// [`InterningSink`] convenience wrapper around
+/// [`lysis_instruction_stream`].
+pub fn lysis_sink_instruction_stream<F: FieldBackend>(
+    sink: lysis::InterningSink<F>,
+) -> impl Iterator<Item = Instruction<F>> {
+    lysis_instruction_stream(sink.into_interner())
 }
 
 #[cfg(test)]
@@ -154,6 +182,53 @@ mod tests {
             }
             _ => panic!("expected Const"),
         }
+    }
+
+    #[test]
+    fn lysis_sink_instruction_stream_matches_materialize() {
+        // Pin: the streaming entry point yields the same sequence of
+        // owned instructions that the eager materialize path produces.
+        // Same generator, same byte-shape per entry — the only
+        // difference is when the `Vec<Instruction<F>>` lives.
+        let make_sink = || {
+            run_builder(|b| {
+                b.intern_field(fe(1));
+                b.intern_field(fe(2));
+                b.load_const(0, 0)
+                    .load_const(1, 1)
+                    .emit_add(2, 0, 1)
+                    .emit_assert_eq(2, 1)
+                    .emit_add(3, 0, 1)
+                    .halt();
+            })
+        };
+        let eager = materialize_interning_sink(make_sink());
+        let streamed: Vec<_> = lysis_sink_instruction_stream(make_sink()).collect();
+        assert_eq!(eager.len(), streamed.len());
+        for (e, s) in eager.iter().zip(streamed.iter()) {
+            assert_eq!(format!("{e:?}"), format!("{s:?}"));
+        }
+    }
+
+    #[test]
+    fn lysis_instruction_stream_drains_through_a_consumer() {
+        // Demonstrates the consumer side: pull one Instruction at a
+        // time, never collect. Pins that `lysis_instruction_stream`
+        // is a true Iterator the consumer can drive — not an
+        // accidental `Vec::into_iter()` that defeats the arc.
+        let sink = run_builder(|b| {
+            b.intern_field(fe(7));
+            b.load_const(0, 0).halt();
+        });
+        let mut count = 0;
+        for inst in lysis_sink_instruction_stream::<Bn254Fr>(sink) {
+            match inst {
+                Instruction::Const { value, .. } => assert_eq!(value, fe(7)),
+                other => panic!("unexpected variant: {other:?}"),
+            }
+            count += 1;
+        }
+        assert_eq!(count, 1);
     }
 
     #[test]

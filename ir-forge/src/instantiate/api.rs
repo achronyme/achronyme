@@ -112,6 +112,32 @@ impl ProveIR {
         let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
         lower_extended_through_lysis(extended)
     }
+
+    /// Streaming counterpart of [`Self::instantiate_lysis_with_outputs`]:
+    /// return the populated [`InterningSink<F>`] (plus the metadata
+    /// maps) directly, without materializing a `Vec<Instruction<F>>`
+    /// or assembling an `IrProgram`. Lets callers feed the instruction
+    /// stream straight into a constraint backend via
+    /// [`crate::lysis_sink_instruction_stream`].
+    pub fn instantiate_lysis_sink_with_outputs<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+        output_names: &HashSet<String>,
+    ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
+        let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
+        lower_extended_to_sink(extended)
+    }
+
+    /// Streaming counterpart of [`Self::instantiate_lysis`]: same shape
+    /// as [`Self::instantiate_lysis_sink_with_outputs`] without the
+    /// `output_names` projection.
+    pub fn instantiate_lysis_sink<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+    ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
+        let extended = self.instantiate_extended::<F>(captures)?;
+        lower_extended_to_sink(extended)
+    }
 }
 
 /// Errors raised by the `instantiate_lysis*` family. Bridges
@@ -166,9 +192,28 @@ impl From<RoundTripError> for LysisInstantiateError {
 /// `cargo test --workspace` (which runs in debug mode unless
 /// `--release` is forced); the wire-format round-trip catches
 /// encode/decode drift in either build.
-fn lower_extended_through_lysis<F: FieldBackend>(
+/// Side-data carried alongside a populated [`InterningSink<F>`] when
+/// the lifter splits the pipeline at the post-execute boundary. The
+/// `IrProgram` reassembly path consumes this together with the
+/// materialized instruction stream; the streaming path discards it.
+pub struct LysisSinkBundle<F: FieldBackend> {
+    pub sink: InterningSink<F>,
+    pub next_var: u32,
+    pub var_names: HashMap<SsaVar, String>,
+    pub var_types: HashMap<SsaVar, ir_core::IrType>,
+    pub var_spans: HashMap<SsaVar, diagnostics::SpanRange>,
+    pub input_spans: HashMap<String, diagnostics::SpanRange>,
+}
+
+/// Drive a populated [`ExtendedIrProgram<F>`] through Walker →
+/// encode → decode → executor and return the still-populated
+/// [`InterningSink<F>`] together with the metadata maps. The
+/// `IrProgram` reassembly path ([`lower_extended_through_lysis`]) is
+/// one consumer; a streaming-to-backend path that never materializes
+/// `Vec<Instruction<F>>` is the other.
+pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
-) -> Result<IrProgram<F>, LysisInstantiateError> {
+) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
     let ExtendedIrProgram {
         body,
         next_var,
@@ -222,7 +267,22 @@ fn lower_extended_through_lysis<F: FieldBackend>(
         &mut sink,
     )
     .map_err(RoundTripError::Lysis)?;
-    let instructions = materialize_interning_sink(sink);
+
+    Ok(LysisSinkBundle {
+        sink,
+        next_var,
+        var_names,
+        var_types,
+        var_spans,
+        input_spans,
+    })
+}
+
+fn lower_extended_through_lysis<F: FieldBackend>(
+    extended: ExtendedIrProgram<F>,
+) -> Result<IrProgram<F>, LysisInstantiateError> {
+    let bundle = lower_extended_to_sink(extended)?;
+    let instructions = materialize_interning_sink(bundle.sink);
 
     // Reassemble: the materialised stream replaces the body, but
     // metadata (var_names/var_types/var_spans/input_spans) carries
@@ -232,13 +292,13 @@ fn lower_extended_through_lysis<F: FieldBackend>(
     // missing entries gracefully (Option<T> returns).
     let mut out = IrProgram::<F>::new();
     let watermark = ssa_watermark(&instructions);
-    let final_next_var = watermark.max(next_var);
+    let final_next_var = watermark.max(bundle.next_var);
     out.set_instructions(instructions);
     out.set_next_var(final_next_var);
-    out.var_names = var_names;
-    out.var_types = var_types;
-    out.var_spans = var_spans;
-    out.input_spans = input_spans;
+    out.var_names = bundle.var_names;
+    out.var_types = bundle.var_types;
+    out.var_spans = bundle.var_spans;
+    out.input_spans = bundle.input_spans;
     Ok(out)
 }
 
