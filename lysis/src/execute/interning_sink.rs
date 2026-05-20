@@ -81,6 +81,22 @@ impl<F: FieldBackend> InterningSink<F> {
         }
     }
 
+    /// Chunked-streaming sink with the per-chunk capacity overridable.
+    /// Mirrors [`NodeInterner::with_streaming_window_chunked_capacity`].
+    /// Used by tests that need to exercise the chunk-seal boundary
+    /// without filling a production-sized chunk.
+    pub fn with_streaming_window_chunked_capacity(
+        window_size: usize,
+        chunk_capacity: usize,
+    ) -> Self {
+        Self {
+            interner: NodeInterner::with_streaming_window_chunked_capacity(
+                window_size,
+                chunk_capacity,
+            ),
+        }
+    }
+
     /// Borrow the underlying interner — mainly for tests and the
     /// determinism harness.
     pub fn interner(&self) -> &NodeInterner<F> {
