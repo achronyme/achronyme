@@ -396,9 +396,17 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
 /// only meaningful under chunked streaming, so it always uses
 /// chunked mode with the default window of 131072 (the same value
 /// every chunked-streaming caller has picked in practice).
-/// `LYSIS_SKIP_ROUNDTRIP` is honored — the wire-format round-trip
-/// stays as the schema-drift gate but can be skipped on trusted
-/// internal-replay paths to release the encoded byte buffer earlier.
+///
+/// The wire-format encode/decode round-trip is **skipped** on this
+/// path. The walker's `Program<F>` is consumed directly by `execute`,
+/// and the encode/decode is structurally an identity (same `Program<F>`
+/// in, same `Program<F>` out). On large fixtures the round-trip's
+/// encoded `Vec<u8>` and decoded `Program<F>` coexist with the walker
+/// output until execute begins, contributing ~1 GB of duplicated state
+/// on ECDSAVerify-scale circuits. The schema-drift gate that the
+/// round-trip used to provide is preserved by running
+/// `lysis::bytecode::validate` directly on the walker output under
+/// `cfg!(debug_assertions)`.
 pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
     chunk_consumer: &mut dyn FnMut(Vec<InstructionKind<F>>),
@@ -417,20 +425,11 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
     drop(input_spans);
 
     let walker = Walker::<F>::new(expected_family::<F>());
-    let bytecode = walker.lower(body).map_err(RoundTripError::Walk)?;
-
-    let skip_roundtrip = std::env::var("LYSIS_SKIP_ROUNDTRIP").as_deref() == Ok("1");
-    let decoded = if skip_roundtrip {
-        bytecode
-    } else {
-        let bytes = lysis::encode(&bytecode);
-        let decoded = lysis::decode::<F>(&bytes).map_err(RoundTripError::Lysis)?;
-        if cfg!(debug_assertions) {
-            lysis::bytecode::validate(&decoded, &LysisConfig::default())
-                .map_err(RoundTripError::Lysis)?;
-        }
-        decoded
-    };
+    let decoded = walker.lower(body).map_err(RoundTripError::Walk)?;
+    if cfg!(debug_assertions) {
+        lysis::bytecode::validate(&decoded, &LysisConfig::default())
+            .map_err(RoundTripError::Lysis)?;
+    }
 
     let window = std::env::var("LYSIS_STREAMING_WINDOW")
         .ok()
