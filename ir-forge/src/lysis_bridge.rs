@@ -27,9 +27,9 @@
 //! Every `InstructionKind<F>` variant has a 1:1 counterpart in
 //! `Instruction<F>` by name and field layout — that was the point
 //! of the mirror. The only non-trivial bit is [`NodeId`] →
-//! [`SsaVar`]: `NodeId` is a `NonZeroU32` one-based handle with a
+//! [`SsaVar`]: `NodeId` is a `NonZeroU64` one-based handle with a
 //! zero-based `index()` accessor, while `SsaVar` is a plain
-//! `u32` newtype. Converting via `SsaVar(id.index() as u32)` maps
+//! `u64` newtype. Converting via `SsaVar(id.index() as u64)` maps
 //! the interner's insertion order directly onto the SSA var
 //! numbering the backend expects.
 //!
@@ -43,7 +43,7 @@ use memory::FieldBackend;
 /// Convert a Lysis `NodeId` into the SSA var numbering the IR uses.
 #[inline]
 pub fn ssa_var_from_node_id(id: NodeId) -> SsaVar {
-    SsaVar(id.index() as u32)
+    SsaVar(id.index() as u64)
 }
 
 #[inline]

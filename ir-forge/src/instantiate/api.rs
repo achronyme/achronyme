@@ -238,7 +238,7 @@ impl From<RoundTripError> for LysisInstantiateError {
 /// resident footprint on multi-million-variable circuits.
 pub struct LysisSinkBundle<F: FieldBackend> {
     pub sink: InterningSink<F>,
-    pub next_var: u32,
+    pub next_var: u64,
     pub var_names: HashMap<SsaVar, String>,
     pub var_types: HashMap<SsaVar, ir_core::IrType>,
     pub var_spans: HashMap<SsaVar, diagnostics::SpanRange>,
@@ -256,7 +256,7 @@ pub struct LysisSinkBundle<F: FieldBackend> {
 /// emission buffer is empty.
 pub struct LysisDrainBundle<F: FieldBackend> {
     pub residual_sink: InterningSink<F>,
-    pub next_var: u32,
+    pub next_var: u64,
 }
 
 /// Drive a populated [`ExtendedIrProgram<F>`] through Walker →
@@ -480,9 +480,9 @@ fn lower_extended_through_lysis<F: FieldBackend>(
 /// Highest result-var index across `insts` plus 1. Mirrors the
 /// helper in `lysis_roundtrip.rs`; copied to avoid making the
 /// internal helper public.
-fn ssa_watermark<F: FieldBackend>(insts: &[ir_core::Instruction<F>]) -> u32 {
-    let mut max: Option<u32> = None;
-    let mut bump = |v: u32| match max {
+fn ssa_watermark<F: FieldBackend>(insts: &[ir_core::Instruction<F>]) -> u64 {
+    let mut max: Option<u64> = None;
+    let mut bump = |v: u64| match max {
         Some(m) if v <= m => {}
         _ => max = Some(v),
     };

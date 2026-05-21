@@ -5,7 +5,7 @@ use memory::{Bn254Fr, FieldBackend, FieldElement};
 
 /// An SSA variable — defined exactly once.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct SsaVar(pub u32);
+pub struct SsaVar(pub u64);
 
 /// Whether a circuit input is public (instance) or private (witness).
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -517,7 +517,7 @@ impl std::fmt::Display for IrType {
 #[derive(Debug)]
 pub struct IrProgram<F: FieldBackend = Bn254Fr> {
     pub instructions: Vec<Instruction<F>>,
-    pub next_var: u32,
+    pub next_var: u64,
     pub var_names: HashMap<SsaVar, String>,
     pub var_types: HashMap<SsaVar, IrType>,
     pub input_spans: HashMap<String, SpanRange>,
@@ -649,14 +649,14 @@ impl<F: FieldBackend> IrProgram<F> {
     }
 
     /// Current `next_var` watermark (the id the next `fresh_var()` will return).
-    pub fn next_var(&self) -> u32 {
+    pub fn next_var(&self) -> u64 {
         self.next_var
     }
 
     /// Force the `next_var` watermark — needed by passes that re-number SSA
     /// (canonicalization, oracle harness setup). Avoid in normal compile paths;
     /// use `fresh_var()` instead.
-    pub fn set_next_var(&mut self, n: u32) {
+    pub fn set_next_var(&mut self, n: u64) {
         self.next_var = n;
     }
 

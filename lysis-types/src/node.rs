@@ -4,22 +4,22 @@
 //! `StubSink` and the hash-consing `InterningSink`. Downstream code
 //! consumes `NodeId` without caring which sink minted it.
 
-use std::num::NonZeroU32;
+use std::num::NonZeroU64;
 
-/// Opaque 32-bit handle for an emitted IR node.
+/// Opaque 64-bit handle for an emitted IR node.
 ///
-/// `NonZeroU32` means `Option<NodeId>` is the same size as `NodeId`,
+/// `NonZeroU64` means `Option<NodeId>` is the same size as `NodeId`,
 /// which we rely on in the register file (`Vec<Option<NodeId>>`).
 /// Node 0 is reserved as a sentinel; real nodes start at 1.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct NodeId(NonZeroU32);
+pub struct NodeId(NonZeroU64);
 
 impl NodeId {
     /// The minimum real `NodeId` — `1` one-based, index `0`. Useful
     /// as a placeholder when the real id is assigned elsewhere (e.g.,
     /// the `result` slot of a pure instruction handed to
     /// `IrSink::intern_pure`, which the sink overwrites).
-    pub const PLACEHOLDER: Self = NodeId(match NonZeroU32::new(1) {
+    pub const PLACEHOLDER: Self = NodeId(match NonZeroU64::new(1) {
         Some(n) => n,
         None => unreachable!(),
     });
@@ -27,8 +27,8 @@ impl NodeId {
     /// Construct from a 1-based index. `NodeId::from_one_based(1)` is
     /// the first real node.
     #[inline]
-    pub const fn from_one_based(idx: u32) -> Option<Self> {
-        match NonZeroU32::new(idx) {
+    pub const fn from_one_based(idx: u64) -> Option<Self> {
+        match NonZeroU64::new(idx) {
             Some(n) => Some(NodeId(n)),
             None => None,
         }
@@ -38,13 +38,11 @@ impl NodeId {
     /// Maps `0 -> NodeId(1)`, `1 -> NodeId(2)`, etc.
     #[inline]
     pub fn from_zero_based(idx: usize) -> Self {
-        // Saturating +1 at u32::MAX is unreachable in practice — programs
-        // that emit 4 billion nodes exhaust memory long before.
-        let one_based = u32::try_from(idx)
-            .expect("node index overflows u32")
+        let one_based = u64::try_from(idx)
+            .expect("node index overflows u64")
             .checked_add(1)
-            .expect("node index + 1 overflows u32");
-        NodeId(NonZeroU32::new(one_based).expect("one-based idx is non-zero"))
+            .expect("node index + 1 overflows u64");
+        NodeId(NonZeroU64::new(one_based).expect("one-based idx is non-zero"))
     }
 
     /// Zero-based index into the emission `Vec`.
@@ -55,7 +53,7 @@ impl NodeId {
 
     /// One-based raw value (matches the `Display` formatting).
     #[inline]
-    pub fn raw(self) -> u32 {
+    pub fn raw(self) -> u64 {
         self.0.get()
     }
 }
@@ -70,7 +68,7 @@ impl std::fmt::Display for NodeId {
 /// `InterningSink` mints its own ids and ignores this generator.
 #[derive(Debug, Default)]
 pub struct NodeIdGen {
-    next: u32,
+    next: u64,
 }
 
 impl NodeIdGen {
@@ -87,7 +85,7 @@ impl NodeIdGen {
     }
 
     /// Number of ids already handed out.
-    pub fn count(&self) -> u32 {
+    pub fn count(&self) -> u64 {
         self.next
     }
 }
@@ -124,5 +122,20 @@ mod tests {
     fn display_uses_percent_notation() {
         let id = NodeId::from_zero_based(42);
         assert_eq!(format!("{id}"), "%42");
+    }
+
+    // must stay in this file — accesses private `NodeIdGen.next`.
+    #[test]
+    fn fresh_node_id_advances_past_u32_max() {
+        let mut g = NodeIdGen {
+            next: (u32::MAX as u64) - 5,
+        };
+        for _ in 0..4 {
+            let _ = g.fresh();
+        }
+        let id = g.fresh();
+        assert_eq!(id.raw(), u32::MAX as u64);
+        let past = g.fresh();
+        assert_eq!(past.raw(), (u32::MAX as u64) + 1);
     }
 }

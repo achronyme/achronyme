@@ -36,7 +36,7 @@ use crate::types::{Instruction, IrProgram, SsaVar};
 /// next instruction's primary).
 pub fn canonicalize_ssa<F: FieldBackend>(p: &IrProgram<F>) -> IrProgram<F> {
     let mut renamer: HashMap<SsaVar, SsaVar> = HashMap::with_capacity(p.next_var as usize);
-    let mut next: u32 = 0;
+    let mut next: u64 = 0;
 
     for inst in &p.instructions {
         renamer.insert(inst.result_var(), SsaVar(next));
@@ -209,7 +209,7 @@ mod tests {
     }
 
     fn assert_canonical_shape<F: FieldBackend>(p: &IrProgram<F>) {
-        let mut expected = 0u32;
+        let mut expected = 0u64;
         for inst in &p.instructions {
             assert_eq!(
                 inst.result_var(),

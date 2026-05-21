@@ -159,7 +159,7 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
     }
 
     #[allow(dead_code)]
-    pub(super) fn next_var(&self) -> u32 {
+    pub(super) fn next_var(&self) -> u64 {
         self.sink.next_var()
     }
 }

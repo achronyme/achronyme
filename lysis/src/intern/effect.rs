@@ -14,25 +14,25 @@
 //! API only accepts `SideEffect`, so the language itself makes it
 //! impossible to accidentally intern an assert or a witness call.
 
-use std::num::NonZeroU32;
+use std::num::NonZeroU64;
 
 use memory::field::FieldBackend;
 
 use crate::intern::{InstructionKind, NodeId, Visibility};
 
-/// Opaque handle for a side-effect slot. `NonZeroU32` so
+/// Opaque handle for a side-effect slot. `NonZeroU64` so
 /// `Option<EffectId>` stays pointer-sized.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
-pub struct EffectId(NonZeroU32);
+pub struct EffectId(NonZeroU64);
 
 impl EffectId {
     #[inline]
     pub fn from_zero_based(idx: usize) -> Self {
-        let one_based = u32::try_from(idx)
-            .expect("effect index overflows u32")
+        let one_based = u64::try_from(idx)
+            .expect("effect index overflows u64")
             .checked_add(1)
-            .expect("effect index + 1 overflows u32");
-        EffectId(NonZeroU32::new(one_based).expect("one-based idx is non-zero"))
+            .expect("effect index + 1 overflows u64");
+        EffectId(NonZeroU64::new(one_based).expect("one-based idx is non-zero"))
     }
 
     #[inline]

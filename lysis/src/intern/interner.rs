@@ -95,7 +95,7 @@ pub struct NodeInterner<F: FieldBackend = Bn254Fr> {
     /// (output is built incrementally on emission, no replay needed).
     pub(crate) timeline: Vec<Emission>,
     /// Monotonic across both pure and opaque ids. Never rewound.
-    pub(crate) next_node_id: u32,
+    pub(crate) next_node_id: u64,
     /// When false, `node_spans` / `effect_spans` are never populated.
     /// `materialize` discards both channels unconditionally, so a
     /// consumer that only needs the flat instruction stream (no
@@ -453,7 +453,7 @@ impl<F: FieldBackend> NodeInterner<F> {
         self.next_node_id = self
             .next_node_id
             .checked_add(1)
-            .expect("NodeId counter overflows u32");
+            .expect("NodeId counter overflows u64");
         id
     }
 
@@ -505,7 +505,7 @@ impl<F: FieldBackend> NodeInterner<F> {
 
     /// Total opaque NodeIds allocated (pure nodes + opaque reservations).
     #[inline]
-    pub fn total_node_ids(&self) -> u32 {
+    pub fn total_node_ids(&self) -> u64 {
         self.next_node_id
     }
 

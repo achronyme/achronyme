@@ -21,7 +21,7 @@ use memory::{Bn254Fr, FieldElement, FieldFamily};
 
 #[allow(dead_code)]
 fn ssa(i: u32) -> SsaVar {
-    SsaVar(i)
+    SsaVar(i.into())
 }
 
 #[allow(dead_code)]

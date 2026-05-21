@@ -38,7 +38,7 @@ fn fe(n: u64) -> FieldElement<F> {
 /// A program that computes `y = x * x` over a public witness and
 /// asserts `y == z`. SSA numbering starts at `start` so the fixture
 /// can be instantiated with different base offsets for renaming tests.
-fn square_assert(start: u32) -> IrProgram<F> {
+fn square_assert(start: u64) -> IrProgram<F> {
     let mut p: IrProgram<F> = IrProgram::new();
     let z = SsaVar(start);
     let x = SsaVar(start + 1);

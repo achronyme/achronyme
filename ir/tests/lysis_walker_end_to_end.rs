@@ -28,7 +28,7 @@ fn fe(n: u64) -> FieldElement<Bn254Fr> {
 }
 
 fn ssa(i: u32) -> SsaVar {
-    SsaVar(i)
+    SsaVar(i.into())
 }
 
 fn plain(inst: Instruction<Bn254Fr>) -> ExtendedInstruction<Bn254Fr> {

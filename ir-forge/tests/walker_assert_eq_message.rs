@@ -23,7 +23,7 @@ use lysis::bytecode::Opcode;
 use memory::{Bn254Fr, FieldElement, FieldFamily};
 
 fn ssa(i: u32) -> SsaVar {
-    SsaVar(i)
+    SsaVar(i.into())
 }
 
 fn fe(n: u64) -> FieldElement<Bn254Fr> {

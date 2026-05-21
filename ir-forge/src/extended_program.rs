@@ -49,7 +49,7 @@ use crate::extended::ExtendedInstruction;
 #[derive(Debug)]
 pub struct ExtendedIrProgram<F: FieldBackend = Bn254Fr> {
     pub body: Vec<ExtendedInstruction<F>>,
-    pub next_var: u32,
+    pub next_var: u64,
     pub var_names: HashMap<SsaVar, String>,
     pub var_types: HashMap<SsaVar, IrType>,
     pub input_spans: HashMap<String, SpanRange>,

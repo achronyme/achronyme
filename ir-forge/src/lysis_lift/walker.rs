@@ -3229,7 +3229,7 @@ mod tests {
     }
 
     fn ssa(i: u32) -> SsaVar {
-        SsaVar(i)
+        SsaVar(i.into())
     }
 
     fn plain(inst: Instruction<Bn254Fr>) -> ExtendedInstruction<Bn254Fr> {

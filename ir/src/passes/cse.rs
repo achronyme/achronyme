@@ -223,11 +223,11 @@ mod tests {
     use super::*;
     use crate::types::{IrProgram, SsaVar};
 
-    fn var(n: u32) -> SsaVar {
+    fn var(n: u64) -> SsaVar {
         SsaVar(n)
     }
 
-    fn make_program(instructions: Vec<Instruction>, next_var: u32) -> IrProgram {
+    fn make_program(instructions: Vec<Instruction>, next_var: u64) -> IrProgram {
         IrProgram {
             instructions,
             next_var,
