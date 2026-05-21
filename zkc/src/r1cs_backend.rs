@@ -332,6 +332,42 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         self.divmod_cache.clear();
         <Self as constraints::ConstraintBackend<F>>::compile_instructions(self, instructions)
     }
+
+    /// Multi-batch counterpart of
+    /// [`compile_instructions`](Self::compile_instructions). Consumes
+    /// owned instructions from any [`IntoIterator`] source like the
+    /// single-batch entry point, but does **not** clear the per-program
+    /// caches (`lc_map`, `range_bounds`, `divmod_cache`) on entry —
+    /// state carries across calls so operands defined in an earlier
+    /// batch remain resolvable in a later batch.
+    ///
+    /// Intended for feeding a single program in multiple batches, one
+    /// batch per emission chunk from a chunk-draining lysis sink. The
+    /// chunk-drain bridge minted in [`lysis::ChunkDrainingSink`] hands a
+    /// `Vec<InstructionKind<F>>` to its consumer at every chunk seal;
+    /// the consumer routes each chunk here so per-chunk allocations
+    /// drop while operand lookup state survives the seal boundary.
+    ///
+    /// Caller manages cache lifecycle: invoke this on a freshly
+    /// constructed [`R1CSCompiler::new`] for the first batch of a
+    /// program, then continue invoking it for every subsequent batch of
+    /// the same program. Reusing the compiler across distinct programs
+    /// requires constructing a fresh instance — the trait's
+    /// [`compile_ir`](Self::compile_ir) /
+    /// [`compile_instructions`](Self::compile_instructions) entries
+    /// keep the cache-clearing semantics for that case.
+    ///
+    /// `constraint_origins.ir_index` is the per-call iterator position
+    /// (starting at 0 in every batch), not a program-global index.
+    /// Consumers that depend on a program-global index must track batch
+    /// starts externally.
+    pub fn compile_instructions_streaming<I>(&mut self, instructions: I) -> Result<(), R1CSError>
+    where
+        F: PoseidonParamsProvider,
+        I: IntoIterator<Item = IrInstruction<F>>,
+    {
+        <Self as constraints::ConstraintBackend<F>>::compile_instructions(self, instructions)
+    }
 }
 
 impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
@@ -1094,5 +1130,129 @@ mod tests {
             assert_eq!(a.ir_index, b.ir_index);
             assert_eq!(a.result_var, b.result_var);
         }
+    }
+
+    #[test]
+    fn compile_instructions_streaming_resolves_operands_across_batches() {
+        // Pin: `compile_instructions_streaming` does NOT clear the
+        // per-program operand-lookup caches between calls, so an
+        // operand defined in an earlier batch remains resolvable in a
+        // later batch. The chunk-draining lysis-to-R1CS bridge relies
+        // on this: a `Mul` (or any operand-taking instruction) sealed
+        // into chunk N may reference an SsaVar first emitted in chunk
+        // M<N when the interner's dedup tiers return a cross-chunk
+        // `NodeId`. Wipe the cache per chunk and the cross-chunk
+        // operand lookup fails.
+        //
+        // The companion `compile_instructions_does_clear_caches_*` test
+        // below shows the dual: feeding the same batched stream through
+        // the single-batch `compile_instructions` entry point fails on
+        // the second batch because its operands look up wires the
+        // entry point cleared.
+        let build_prog = || {
+            let mut prog: IrProgram = IrProgram::new();
+            let x = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: x,
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let c = prog.fresh_var();
+            prog.push(Instruction::Const {
+                result: c,
+                value: FieldElement::<Bn254Fr>::from_u64(5),
+            });
+            let y = prog.fresh_var();
+            prog.push(Instruction::Mul {
+                result: y,
+                lhs: x,
+                rhs: c,
+            });
+            let out = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: out,
+                name: "out".into(),
+                visibility: IrVisibility::Public,
+            });
+            let assertion = prog.fresh_var();
+            prog.push(Instruction::AssertEq {
+                result: assertion,
+                lhs: y,
+                rhs: out,
+                message: None,
+            });
+            prog
+        };
+
+        // Reference path: single eager `compile_ir` call.
+        let mut eager = R1CSCompiler::<Bn254Fr>::new();
+        eager.compile_ir(&build_prog()).unwrap();
+
+        // Subject path: split the same program across three batches.
+        // Batch 1 defines `x` (Input) and `c` (Const).
+        // Batch 2 has `Mul y = x * c` — operands cross the batch
+        //   boundary; both `x` and `c` were defined in batch 1.
+        // Batch 3 defines `out` (Input) and asserts `y == out` —
+        //   the AssertEq references `y` from batch 2 and `out` from
+        //   batch 3, exercising both cross-batch and within-batch
+        //   operand lookup on the same call.
+        let instrs: Vec<_> = build_prog().into_instructions();
+        let batch1: Vec<_> = instrs[0..2].to_vec();
+        let batch2: Vec<_> = instrs[2..3].to_vec();
+        let batch3: Vec<_> = instrs[3..].to_vec();
+
+        let mut streaming = R1CSCompiler::<Bn254Fr>::new();
+        streaming.compile_instructions_streaming(batch1).unwrap();
+        streaming.compile_instructions_streaming(batch2).unwrap();
+        streaming.compile_instructions_streaming(batch3).unwrap();
+
+        assert_eq!(eager.cs.num_constraints(), streaming.cs.num_constraints());
+        assert_eq!(eager.cs.num_variables(), streaming.cs.num_variables());
+        assert_eq!(eager.cs.num_pub_inputs(), streaming.cs.num_pub_inputs());
+        assert_eq!(eager.public_inputs, streaming.public_inputs);
+        assert_eq!(eager.witnesses, streaming.witnesses);
+    }
+
+    #[test]
+    fn compile_instructions_clears_caches_so_batched_operand_lookup_fails() {
+        // Dual of the streaming pin: feeding the SAME batched stream
+        // through the single-batch `compile_instructions` entry point
+        // fails on the second batch because the entry point clears
+        // `lc_map` on every call. Pinning this guards against an
+        // accidental removal of the clearing semantics from
+        // `compile_instructions` proper — that entry point IS the
+        // "fresh compiler per program" boundary; the streaming entry
+        // point is the explicit opt-in to no-clear behavior.
+        let mut prog: IrProgram = IrProgram::new();
+        let x = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: x,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let c = prog.fresh_var();
+        prog.push(Instruction::Const {
+            result: c,
+            value: FieldElement::<Bn254Fr>::from_u64(5),
+        });
+        let y = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: y,
+            lhs: x,
+            rhs: c,
+        });
+        let instrs: Vec<_> = prog.into_instructions();
+        let batch1: Vec<_> = instrs[0..2].to_vec();
+        let batch2: Vec<_> = instrs[2..].to_vec();
+
+        let mut compiler = R1CSCompiler::<Bn254Fr>::new();
+        compiler.compile_instructions(batch1).unwrap();
+        // Batch 2 references `x` and `c` from batch 1; the entry
+        // point cleared `lc_map` on entry, so lookup fails.
+        let err = compiler.compile_instructions(batch2).unwrap_err();
+        assert!(
+            matches!(err, R1CSError::UnsupportedOperation(_, _)),
+            "expected undefined-SSA-variable error, got {err:?}"
+        );
     }
 }
