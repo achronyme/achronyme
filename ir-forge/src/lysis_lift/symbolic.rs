@@ -743,7 +743,7 @@ mod tests {
     }
 
     fn ssa(i: u32) -> SsaVar {
-        SsaVar(i)
+        SsaVar(i.into())
     }
 
     fn push_const(body: &mut Vec<ExtendedInstruction<Bn254Fr>>, result: u32, v: u64) {

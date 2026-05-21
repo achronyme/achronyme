@@ -185,7 +185,7 @@ mod tests {
     /// Build a small program: input `z` (public), input `x` and `y`
     /// (witness), and assert `x * y == z`. The SSA numbering starts
     /// at `start` so we can test renaming.
-    fn mul_eq_program(start: u32) -> IrProgram<Bn254Fr> {
+    fn mul_eq_program(start: u64) -> IrProgram<Bn254Fr> {
         let mut p: IrProgram<Bn254Fr> = IrProgram::new();
         p.set_next_var(start + 4);
 

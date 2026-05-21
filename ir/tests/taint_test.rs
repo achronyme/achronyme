@@ -3,7 +3,7 @@ use ir::types::{Instruction, IrProgram, SsaVar, Visibility};
 use memory::FieldElement;
 
 /// Helper: build a program manually.
-fn prog(instructions: Vec<Instruction>, next_var: u32) -> IrProgram {
+fn prog(instructions: Vec<Instruction>, next_var: u64) -> IrProgram {
     let mut p = IrProgram::new();
     for inst in instructions {
         p.push(inst);

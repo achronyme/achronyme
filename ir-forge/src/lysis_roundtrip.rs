@@ -152,9 +152,9 @@ pub fn lysis_roundtrip<F: FieldBackend>(
 /// plus 1 — the value `IrProgram::fresh_var()` would return next.
 /// Considers both `result_var()` and `extra_result_vars()` (Decompose
 /// produces N bit slots beyond its primary result).
-fn ssa_watermark<F: FieldBackend>(insts: &[Instruction<F>]) -> u32 {
-    let mut max: Option<u32> = None;
-    let mut bump = |v: u32| match max {
+fn ssa_watermark<F: FieldBackend>(insts: &[Instruction<F>]) -> u64 {
+    let mut max: Option<u64> = None;
+    let mut bump = |v: u64| match max {
         Some(m) if v <= m => {}
         _ => max = Some(v),
     };
@@ -178,7 +178,7 @@ mod tests {
     }
 
     fn ssa(i: u32) -> SsaVar {
-        SsaVar(i)
+        SsaVar(i.into())
     }
 
     /// Build a tiny IrProgram: one Input + two Consts + Add + AssertEq.

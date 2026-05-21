@@ -64,7 +64,7 @@ fn fe(n: u64) -> FieldElement<F> {
 }
 
 fn ssa(i: u32) -> SsaVar {
-    SsaVar(i)
+    SsaVar(i.into())
 }
 
 /// Round-trip a programmatically-built fixture and assert that the

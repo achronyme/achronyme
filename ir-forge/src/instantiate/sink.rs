@@ -72,7 +72,7 @@ pub(crate) trait InstrSink<F: FieldBackend> {
     /// Current SSA var watermark (the id the next [`fresh_var`] would
     /// return). Used by `set_next_var` callers and by the
     /// canonicaliser.
-    fn next_var(&self) -> u32;
+    fn next_var(&self) -> u64;
 
     /// Begin a symbolic loop body — switch the sink's active push
     /// target to a fresh sub-buffer that
@@ -221,7 +221,7 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
         self.metadata.set_input_span(name, span);
     }
 
-    fn next_var(&self) -> u32 {
+    fn next_var(&self) -> u64 {
         self.metadata.next_var()
     }
 

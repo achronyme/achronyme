@@ -144,10 +144,10 @@ fn build_lift_sequence(
     assert_recipe: Vec<(usize, usize)>,
 ) -> Vec<ExtendedInstruction<Bn254Fr>> {
     let mut body: Vec<ExtendedInstruction<Bn254Fr>> = Vec::new();
-    let mut next_var: u32 = 0;
+    let mut next_var: u64 = 0;
     let mut defined: Vec<SsaVar> = Vec::new();
 
-    let fresh = |defined: &mut Vec<SsaVar>, next_var: &mut u32| -> SsaVar {
+    let fresh = |defined: &mut Vec<SsaVar>, next_var: &mut u64| -> SsaVar {
         let v = SsaVar(*next_var);
         *next_var += 1;
         defined.push(v);

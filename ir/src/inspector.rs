@@ -42,7 +42,7 @@ pub struct InspectorNode {
     /// Human-readable label (e.g., "PoseidonHash", "Mul", "Input(x)").
     pub label: String,
     /// The SSA variable defined by this instruction.
-    pub result_var: u32,
+    pub result_var: u64,
     /// Evaluated value as a display string, if witness is available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,
@@ -75,7 +75,7 @@ pub struct InspectorEdge {
     /// Index of the consumer node (uses the wire).
     pub to_node: usize,
     /// The SSA variable (wire) connecting them.
-    pub wire_id: u32,
+    pub wire_id: u64,
     /// Wire value as a display string, if witness is available.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub value: Option<String>,

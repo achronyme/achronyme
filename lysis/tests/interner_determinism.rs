@@ -263,12 +263,12 @@ fn two_runs_assign_identical_node_ids() {
     // The interner's insertion-order iteration yields identical (id, key)
     // pairs — ids are monotonic in insertion order, and structural dedup
     // makes insertion order deterministic.
-    let list1: Vec<(u32, String)> = intern1
+    let list1: Vec<(u64, String)> = intern1
         .interner()
         .iter_pure()
         .map(|(id, key, _)| (id.raw(), format!("{key:?}")))
         .collect();
-    let list2: Vec<(u32, String)> = intern2
+    let list2: Vec<(u64, String)> = intern2
         .interner()
         .iter_pure()
         .map(|(id, key, _)| (id.raw(), format!("{key:?}")))
