@@ -30,4 +30,4 @@ pub mod error;
 pub mod types;
 
 pub use error::{span_box, IrError, OptSpan};
-pub use types::{Instruction, IrProgram, IrType, SsaVar, Visibility};
+pub use types::{Instruction, IrProgram, IrType, SsaVar, Visibility, WitnessCallBody};

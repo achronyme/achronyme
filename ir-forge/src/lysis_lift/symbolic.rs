@@ -640,25 +640,22 @@ fn emit_plain<F: FieldBackend>(
         } => un_op(OpTag::Assert, *result, *operand, tree, ssa_to_idx),
 
         // ---------- witness call ----------
-        Instruction::WitnessCall {
-            outputs,
-            inputs,
-            program_bytes,
-        } => {
-            let ops: SmallVec<[NodeIdx; 3]> = inputs
+        Instruction::WitnessCall(call) => {
+            let ops: SmallVec<[NodeIdx; 3]> = call
+                .inputs
                 .iter()
                 .map(|v| resolve_operand(*v, tree, ssa_to_idx))
                 .collect();
-            let bytes_hash = fxhash_bytes(program_bytes);
+            let bytes_hash = fxhash_bytes(&call.program_bytes);
             let idx = tree.push(SymbolicNode::Op {
                 tag: OpTag::WitnessCall {
-                    n_inputs: inputs.len() as u16,
-                    n_outputs: outputs.len() as u16,
+                    n_inputs: call.inputs.len() as u16,
+                    n_outputs: call.outputs.len() as u16,
                     bytes_hash,
                 },
                 operands: ops,
             });
-            for out in outputs {
+            for out in &call.outputs {
                 ssa_to_idx.insert(*out, idx);
             }
             idx
@@ -737,6 +734,7 @@ mod tests {
 
     use super::*;
     use crate::TemplateId;
+    use ir_core::WitnessCallBody;
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])
@@ -962,24 +960,27 @@ mod tests {
 
     #[test]
     fn witness_call_hashes_program_bytes() {
-        let a: Vec<ExtendedInstruction<Bn254Fr>> =
-            vec![ExtendedInstruction::Plain(Instruction::WitnessCall {
+        let a: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::Plain(
+            Instruction::WitnessCall(Box::new(WitnessCallBody {
                 outputs: vec![ssa(0)],
                 inputs: vec![],
                 program_bytes: vec![0xAA, 0xBB],
-            })];
-        let b: Vec<ExtendedInstruction<Bn254Fr>> =
-            vec![ExtendedInstruction::Plain(Instruction::WitnessCall {
+            })),
+        )];
+        let b: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::Plain(
+            Instruction::WitnessCall(Box::new(WitnessCallBody {
                 outputs: vec![ssa(0)],
                 inputs: vec![],
                 program_bytes: vec![0xAA, 0xBB],
-            })];
-        let c: Vec<ExtendedInstruction<Bn254Fr>> =
-            vec![ExtendedInstruction::Plain(Instruction::WitnessCall {
+            })),
+        )];
+        let c: Vec<ExtendedInstruction<Bn254Fr>> = vec![ExtendedInstruction::Plain(
+            Instruction::WitnessCall(Box::new(WitnessCallBody {
                 outputs: vec![ssa(0)],
                 inputs: vec![],
                 program_bytes: vec![0xCC, 0xDD],
-            })];
+            })),
+        )];
         let ta = symbolic_emit::<Bn254Fr>(&a, &[]);
         let tb = symbolic_emit::<Bn254Fr>(&b, &[]);
         let tc = symbolic_emit::<Bn254Fr>(&c, &[]);

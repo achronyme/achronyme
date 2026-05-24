@@ -36,7 +36,7 @@
 //! | `AssertEq { result, lhs, rhs, message }`  | `AssertEq`    |
 //! | `Assert { result, operand, message }`     | `Assert`      |
 //! | `RangeCheck { result, operand, bits }`    | `RangeCheck`  |
-//! | `WitnessCall { outputs, inputs, program_bytes }` | `WitnessCall` |
+//! | `WitnessCall(WitnessCallBody)`            | `WitnessCall` |
 //!
 //! Side-effect classification:
 //! **side-effectful** = `Input`, `AssertEq`, `Assert`, `RangeCheck`,
@@ -73,6 +73,18 @@ impl Visibility {
     pub const fn as_u8(self) -> u8 {
         self as u8
     }
+}
+
+/// Payload of [`InstructionKind::WitnessCall`].
+///
+/// Boxed in the enum so the rare witness-calculator variant does not
+/// force every other variant to inherit its three `Vec` headers. See
+/// `ir::types::WitnessCallBody` for the parallel `ir`-side struct.
+#[derive(Debug, Clone)]
+pub struct WitnessCallBody {
+    pub outputs: Vec<NodeId>,
+    pub inputs: Vec<NodeId>,
+    pub program_bytes: Vec<u8>,
 }
 
 /// An emitted IR instruction, in the Lysis-internal representation.
@@ -233,11 +245,7 @@ pub enum InstructionKind<F: FieldBackend = Bn254Fr> {
         operand: NodeId,
         bits: u32,
     },
-    WitnessCall {
-        outputs: Vec<NodeId>,
-        inputs: Vec<NodeId>,
-        program_bytes: Vec<u8>,
-    },
+    WitnessCall(Box<WitnessCallBody>),
 }
 
 impl<F: FieldBackend> InstructionKind<F> {
@@ -271,7 +279,8 @@ impl<F: FieldBackend> InstructionKind<F> {
             | Self::AssertEq { result, .. }
             | Self::Assert { result, .. }
             | Self::RangeCheck { result, .. } => *result,
-            Self::WitnessCall { outputs, .. } => outputs
+            Self::WitnessCall(call) => call
+                .outputs
                 .first()
                 .copied()
                 .expect("WitnessCall must have ≥1 output"),
@@ -290,7 +299,7 @@ impl<F: FieldBackend> InstructionKind<F> {
                 | Self::Assert { .. }
                 | Self::RangeCheck { .. }
                 | Self::Decompose { .. }
-                | Self::WitnessCall { .. }
+                | Self::WitnessCall(_)
         )
     }
 
@@ -416,7 +425,7 @@ impl<F: FieldBackend> InstructionKind<F> {
             | Self::Assert { .. }
             | Self::RangeCheck { .. }
             | Self::Decompose { .. }
-            | Self::WitnessCall { .. } => {
+            | Self::WitnessCall(_) => {
                 panic!("with_result called on side-effect variant; use emit_effect")
             }
         }
@@ -443,11 +452,11 @@ mod tests {
 
     #[test]
     fn witness_call_result_is_first_output() {
-        let call = InstructionKind::<Bn254Fr>::WitnessCall {
+        let call = InstructionKind::<Bn254Fr>::WitnessCall(Box::new(WitnessCallBody {
             outputs: vec![n(10), n(11), n(12)],
             inputs: vec![n(1), n(2)],
             program_bytes: vec![0xAA; 8],
-        };
+        }));
         assert_eq!(call.result(), n(10));
     }
 
@@ -484,5 +493,16 @@ mod tests {
         assert_eq!(Visibility::from_u8(2), None);
         assert_eq!(Visibility::Public.as_u8(), 0);
         assert_eq!(Visibility::Witness.as_u8(), 1);
+    }
+
+    // Pin the enum's in-memory size so layout changes are intentional, not
+    // accidental. This kind flows through the lysis interner at chunk-emission
+    // scale (millions of entries on ECDSA-class circuits). `WitnessCall` is
+    // boxed; the in-place size is bounded by the next-largest variant
+    // (`AssertEq` with its `Option<String>` message, or `Decompose` with a
+    // `Vec` header plus three ids).
+    #[test]
+    fn instruction_kind_size_pinned() {
+        assert_eq!(std::mem::size_of::<InstructionKind<Bn254Fr>>(), 56);
     }
 }

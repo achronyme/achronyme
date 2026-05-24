@@ -395,14 +395,10 @@ fn node_label<F: FieldBackend>(inst: &Instruction<F>, program: &IrProgram<F>) ->
         }
         Instruction::IntDiv { result, .. } => label_with_name("IntDiv", *result, program),
         Instruction::IntMod { result, .. } => label_with_name("IntMod", *result, program),
-        Instruction::WitnessCall {
-            outputs,
-            program_bytes,
-            ..
-        } => {
-            let primary = outputs.first().copied().unwrap_or(SsaVar(0));
-            let bytes = program_bytes.len();
-            let base = format!("WitnessCall[{}x]({} bytes)", outputs.len(), bytes);
+        Instruction::WitnessCall(call) => {
+            let primary = call.outputs.first().copied().unwrap_or(SsaVar(0));
+            let bytes = call.program_bytes.len();
+            let base = format!("WitnessCall[{}x]({} bytes)", call.outputs.len(), bytes);
             match program.get_name(primary) {
                 Some(name) => format!("{base} ({name})"),
                 None => base,

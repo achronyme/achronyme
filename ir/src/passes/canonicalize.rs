@@ -180,13 +180,11 @@ fn rewrite_all_vars<F: FieldBackend>(inst: &mut Instruction<F>, renamer: &HashMa
                 r(b);
             }
         }
-        Instruction::WitnessCall {
-            outputs, inputs, ..
-        } => {
-            for o in outputs.iter_mut() {
+        Instruction::WitnessCall(call) => {
+            for o in call.outputs.iter_mut() {
                 r(o);
             }
-            for i in inputs.iter_mut() {
+            for i in call.inputs.iter_mut() {
                 r(i);
             }
         }
@@ -196,7 +194,7 @@ fn rewrite_all_vars<F: FieldBackend>(inst: &mut Instruction<F>, renamer: &HashMa
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::types::{IrType, Visibility};
+    use crate::types::{IrType, Visibility, WitnessCallBody};
     use diagnostics::SpanRange;
     use memory::{Bn254Fr, FieldElement};
 
@@ -377,11 +375,12 @@ mod tests {
             name: "in".into(),
             visibility: Visibility::Witness,
         });
-        p.instructions.push(Instruction::WitnessCall {
-            outputs: vec![SsaVar(90), SsaVar(91), SsaVar(92)],
-            inputs: vec![SsaVar(80)],
-            program_bytes: vec![0xAB, 0xCD],
-        });
+        p.instructions
+            .push(Instruction::WitnessCall(Box::new(WitnessCallBody {
+                outputs: vec![SsaVar(90), SsaVar(91), SsaVar(92)],
+                inputs: vec![SsaVar(80)],
+                program_bytes: vec![0xAB, 0xCD],
+            })));
 
         let q = canonicalize_ssa(&p);
 
@@ -389,14 +388,10 @@ mod tests {
         assert_canonical_shape(&q);
 
         match &q.instructions[1] {
-            Instruction::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => {
-                assert_eq!(*outputs, vec![SsaVar(1), SsaVar(2), SsaVar(3)]);
-                assert_eq!(*inputs, vec![SsaVar(0)]);
-                assert_eq!(*program_bytes, vec![0xAB, 0xCD]);
+            Instruction::WitnessCall(call) => {
+                assert_eq!(call.outputs, vec![SsaVar(1), SsaVar(2), SsaVar(3)]);
+                assert_eq!(call.inputs, vec![SsaVar(0)]);
+                assert_eq!(call.program_bytes, vec![0xAB, 0xCD]);
             }
             _ => panic!("expected WitnessCall"),
         }

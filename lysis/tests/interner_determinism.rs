@@ -203,7 +203,7 @@ fn operands(instr: &InstructionKind<Bn254Fr>) -> Vec<NodeId> {
         K::PoseidonHash { left, right, .. } => vec![*left, *right],
         K::IsLtBounded { lhs, rhs, .. } | K::IsLeBounded { lhs, rhs, .. } => vec![*lhs, *rhs],
         K::IntDiv { lhs, rhs, .. } | K::IntMod { lhs, rhs, .. } => vec![*lhs, *rhs],
-        K::WitnessCall { inputs, .. } => inputs.clone(),
+        K::WitnessCall(call) => call.inputs.clone(),
     }
 }
 

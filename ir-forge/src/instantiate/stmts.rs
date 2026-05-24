@@ -297,11 +297,13 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     };
                     outputs.push(v);
                 }
-                self.push_inst(Instruction::WitnessCall {
-                    outputs,
-                    inputs,
-                    program_bytes: program_bytes.clone(),
-                });
+                self.push_inst(Instruction::WitnessCall(Box::new(
+                    ir_core::WitnessCallBody {
+                        outputs,
+                        inputs,
+                        program_bytes: program_bytes.clone(),
+                    },
+                )));
             }
             CircuitNode::ComponentCall {
                 body_key,

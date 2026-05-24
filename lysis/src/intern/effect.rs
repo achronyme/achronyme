@@ -18,7 +18,7 @@ use std::num::NonZeroU64;
 
 use memory::field::FieldBackend;
 
-use crate::intern::{InstructionKind, NodeId, Visibility};
+use crate::intern::{InstructionKind, NodeId, Visibility, WitnessCallBody};
 
 /// Opaque handle for a side-effect slot. `NonZeroU64` so
 /// `Option<EffectId>` stays pointer-sized.
@@ -143,15 +143,18 @@ impl SideEffect {
                 bit_results,
                 num_bits,
             },
-            K::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => SideEffect::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            },
+            K::WitnessCall(call) => {
+                let WitnessCallBody {
+                    outputs,
+                    inputs,
+                    program_bytes,
+                } = *call;
+                SideEffect::WitnessCall {
+                    outputs,
+                    inputs,
+                    program_bytes,
+                }
+            }
 
             // Pure variants: caller must route through `NodeKey`.
             K::Const { .. }
@@ -237,11 +240,11 @@ impl SideEffect {
                 outputs,
                 inputs,
                 program_bytes,
-            } => K::WitnessCall {
+            } => K::WitnessCall(Box::new(WitnessCallBody {
                 outputs,
                 inputs,
                 program_bytes,
-            },
+            })),
         }
     }
 

@@ -36,8 +36,12 @@
 //! [`InstructionKind<F>`]: lysis_types::InstructionKind
 //! [`NodeId`]: lysis_types::NodeId
 
-use ir_core::{Instruction, SsaVar, Visibility as IrVisibility};
-use lysis_types::{InstructionKind, NodeId, Visibility as LysisVisibility};
+use ir_core::{
+    Instruction, SsaVar, Visibility as IrVisibility, WitnessCallBody as IrWitnessCallBody,
+};
+use lysis_types::{
+    InstructionKind, NodeId, Visibility as LysisVisibility, WitnessCallBody as LysisWitnessCallBody,
+};
 use memory::FieldBackend;
 
 /// Convert a Lysis `NodeId` into the SSA var numbering the IR uses.
@@ -244,15 +248,11 @@ pub fn instruction_from_kind<F: FieldBackend>(kind: &InstructionKind<F>) -> Inst
             rhs: ssa_var_from_node_id(*rhs),
             max_bits: *max_bits,
         },
-        K::WitnessCall {
-            outputs,
-            inputs,
-            program_bytes,
-        } => Instruction::WitnessCall {
-            outputs: map_vec_ids(outputs),
-            inputs: map_vec_ids(inputs),
-            program_bytes: program_bytes.clone(),
-        },
+        K::WitnessCall(call) => Instruction::WitnessCall(Box::new(IrWitnessCallBody {
+            outputs: map_vec_ids(&call.outputs),
+            inputs: map_vec_ids(&call.inputs),
+            program_bytes: call.program_bytes.clone(),
+        })),
     }
 }
 
@@ -441,15 +441,18 @@ pub fn instruction_from_kind_owned<F: FieldBackend>(kind: InstructionKind<F>) ->
             rhs: ssa_var_from_node_id(rhs),
             max_bits,
         },
-        K::WitnessCall {
-            outputs,
-            inputs,
-            program_bytes,
-        } => Instruction::WitnessCall {
-            outputs: map_vec_ids_owned(outputs),
-            inputs: map_vec_ids_owned(inputs),
-            program_bytes,
-        },
+        K::WitnessCall(call) => {
+            let LysisWitnessCallBody {
+                outputs,
+                inputs,
+                program_bytes,
+            } = *call;
+            Instruction::WitnessCall(Box::new(IrWitnessCallBody {
+                outputs: map_vec_ids_owned(outputs),
+                inputs: map_vec_ids_owned(inputs),
+                program_bytes,
+            }))
+        }
     }
 }
 
@@ -560,21 +563,18 @@ mod tests {
 
     #[test]
     fn witness_call_maps_outputs_inputs_and_bytes() {
-        let k = lysis_types::InstructionKind::<Bn254Fr>::WitnessCall {
-            outputs: vec![node(7), node(8)],
-            inputs: vec![node(1), node(2), node(3)],
-            program_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
-        };
+        let k =
+            lysis_types::InstructionKind::<Bn254Fr>::WitnessCall(Box::new(LysisWitnessCallBody {
+                outputs: vec![node(7), node(8)],
+                inputs: vec![node(1), node(2), node(3)],
+                program_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
+            }));
         let ir = instruction_from_kind(&k);
         match ir {
-            Instruction::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => {
-                assert_eq!(outputs, vec![SsaVar(7), SsaVar(8)]);
-                assert_eq!(inputs, vec![SsaVar(1), SsaVar(2), SsaVar(3)]);
-                assert_eq!(program_bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
+            Instruction::WitnessCall(call) => {
+                assert_eq!(call.outputs, vec![SsaVar(7), SsaVar(8)]);
+                assert_eq!(call.inputs, vec![SsaVar(1), SsaVar(2), SsaVar(3)]);
+                assert_eq!(call.program_bytes, vec![0xDE, 0xAD, 0xBE, 0xEF]);
             }
             _ => panic!("expected WitnessCall"),
         }
@@ -659,11 +659,11 @@ mod tests {
                 operand: node(0),
                 num_bits: 4,
             },
-            lysis_types::InstructionKind::WitnessCall {
+            lysis_types::InstructionKind::WitnessCall(Box::new(LysisWitnessCallBody {
                 outputs: vec![node(7), node(8)],
                 inputs: vec![node(1), node(2), node(3)],
                 program_bytes: vec![0xDE, 0xAD, 0xBE, 0xEF],
-            },
+            })),
         ];
         for k in cases {
             let by_ref = instruction_from_kind(&k);

@@ -1786,11 +1786,10 @@ impl<F: FieldBackend> Walker<F> {
             //        call with the frame already near `FRAME_CAP`
             //        (the bigint helper return shape `[2][100]` =
             //        200 outputs lands exactly at the static bound).
-            Instruction::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => {
+            Instruction::WitnessCall(call) => {
+                let outputs = &call.outputs;
+                let inputs = &call.inputs;
+                let program_bytes = &call.program_bytes;
                 let blob_idx = self.builder.intern_artik_bytecode(program_bytes.clone());
 
                 // Mirrors the pre-emit split predicate, but for the
@@ -2382,12 +2381,10 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
             rhs: 0,
         }),
 
-        Instruction::WitnessCall {
-            outputs, inputs, ..
-        } => bin(Opcode::EmitWitnessCall {
+        Instruction::WitnessCall(call) => bin(Opcode::EmitWitnessCall {
             bytecode_const_idx: 0,
-            in_regs: vec![0u8; inputs.len()],
-            out_regs: vec![0u8; outputs.len()],
+            in_regs: vec![0u8; call.inputs.len()],
+            out_regs: vec![0u8; call.outputs.len()],
         }),
 
         // Field Div: one 3-byte EmitDiv opcode, same shape as
@@ -2523,8 +2520,8 @@ fn extinst_summary<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> String {
     match inst {
         ExtendedInstruction::Plain(i) => match i {
             Instruction::Decompose { num_bits, .. } => format!("Decompose({num_bits})"),
-            Instruction::WitnessCall { outputs, .. } => {
-                format!("WitnessCall(out={})", outputs.len())
+            Instruction::WitnessCall(call) => {
+                format!("WitnessCall(out={})", call.outputs.len())
             }
             Instruction::Or { .. } => "Or".into(),
             Instruction::IsNeq { .. } => "IsNeq".into(),
@@ -2680,8 +2677,8 @@ fn cold_load_cost<F: FieldBackend>(
     // inputs, so cold operands cost 0 frame regs. Mirror the walker's
     // emit-time branch in `emit_plain` so the split-trigger doesn't
     // over-estimate and fragment the program unnecessarily.
-    if let ExtendedInstruction::Plain(Instruction::WitnessCall { outputs, .. }) = inst {
-        if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
+    if let ExtendedInstruction::Plain(Instruction::WitnessCall(call)) = inst {
+        if call.outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
             return 0;
         }
     }
@@ -2723,15 +2720,15 @@ fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
 
         // Variable-cost ops.
         Instruction::Decompose { num_bits, .. } => *num_bits,
-        Instruction::WitnessCall { outputs, .. } => {
+        Instruction::WitnessCall(call) => {
             // Outputs above the threshold land in heap slots, not
             // regs. The cost estimator must mirror the walker's
             // emit-time branch: heap-output variant is `cost = 0`
             // for the frame, classic variant is `cost = outputs.len()`.
-            if outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
+            if call.outputs.len() > MAX_WITNESS_OUTPUTS_INLINE {
                 0
             } else {
-                outputs.len() as u32
+                call.outputs.len() as u32
             }
         }
     }
@@ -3063,8 +3060,8 @@ fn record_last_use_in_instruction<F: FieldBackend>(
             bump_last_use(out, *left, idx);
             bump_last_use(out, *right, idx);
         }
-        Instruction::WitnessCall { inputs, .. } => {
-            for v in inputs {
+        Instruction::WitnessCall(call) => {
+            for v in &call.inputs {
                 bump_last_use(out, *v, idx);
             }
         }
@@ -3208,8 +3205,8 @@ fn collect_in_instruction<F: FieldBackend>(inst: &Instruction<F>, out: &mut Hash
             out.insert(*left);
             out.insert(*right);
         }
-        Instruction::WitnessCall { inputs, .. } => {
-            for v in inputs {
+        Instruction::WitnessCall(call) => {
+            for v in &call.inputs {
                 out.insert(*v);
             }
         }
@@ -3222,7 +3219,7 @@ mod tests {
     use memory::{Bn254Fr, FieldElement};
 
     use super::*;
-    use ir_core::Visibility as IrVisibility;
+    use ir_core::{Visibility as IrVisibility, WitnessCallBody};
 
     fn fe(n: u64) -> FieldElement<Bn254Fr> {
         FieldElement::from_canonical([n, 0, 0, 0])
@@ -4422,11 +4419,11 @@ mod tests {
                 name: "x".into(),
                 visibility: IrVisibility::Witness,
             }),
-            plain(Instruction::WitnessCall {
+            plain(Instruction::WitnessCall(Box::new(WitnessCallBody {
                 outputs: vec![ssa(1), ssa(2), ssa(3)],
                 inputs: vec![ssa(0)],
                 program_bytes: blob,
-            }),
+            }))),
         ];
         // `run` goes through a full execute via InterningSink. WitnessCall
         // is a side-effect that produces OPAQUE output slots — the
@@ -4436,7 +4433,7 @@ mod tests {
         let calls: Vec<_> = out
             .iter()
             .filter_map(|i| match i {
-                lysis::InstructionKind::WitnessCall { outputs, .. } => Some(outputs.len()),
+                lysis::InstructionKind::WitnessCall(call) => Some(call.outputs.len()),
                 _ => None,
             })
             .collect();
@@ -4576,15 +4573,15 @@ mod tests {
     #[test]
     fn lowers_witness_call_empty_inputs() {
         // Zero inputs, single output.
-        let body = vec![plain(Instruction::WitnessCall {
+        let body = vec![plain(Instruction::WitnessCall(Box::new(WitnessCallBody {
             outputs: vec![ssa(0)],
             inputs: vec![],
             program_bytes: vec![0xFF],
-        })];
+        })))];
         let out = run(&body);
         let call_count = out
             .iter()
-            .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall { .. }))
+            .filter(|i| matches!(i, lysis::InstructionKind::WitnessCall(_)))
             .count();
         assert_eq!(call_count, 1);
     }
@@ -4595,11 +4592,11 @@ mod tests {
         // because `outputs.len() > MAX_WITNESS_OUTPUTS_INLINE` is
         // false when outputs.len() == 200.
         let outputs: Vec<SsaVar> = (0..200u32).map(ssa).collect();
-        let body = vec![plain(Instruction::WitnessCall {
+        let body = vec![plain(Instruction::WitnessCall(Box::new(WitnessCallBody {
             outputs,
             inputs: vec![],
             program_bytes: vec![0xFF],
-        })];
+        })))];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
         let program = walker.lower(body.clone()).expect("lower");
 
@@ -4627,11 +4624,11 @@ mod tests {
         // to the heap-output variant because classic would need 256
         // fresh regs and overflow `FRAME_CAP = 255`.
         let outputs: Vec<SsaVar> = (0..256u32).map(ssa).collect();
-        let body = vec![plain(Instruction::WitnessCall {
+        let body = vec![plain(Instruction::WitnessCall(Box::new(WitnessCallBody {
             outputs,
             inputs: vec![],
             program_bytes: vec![0xFF],
-        })];
+        })))];
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
         let program = walker.lower(body.clone()).expect("lower");
 
@@ -4692,11 +4689,11 @@ mod tests {
             .collect();
         let outputs: Vec<SsaVar> = (n_inputs..n_inputs + 200).map(ssa).collect();
         let inputs: Vec<SsaVar> = (0..n_inputs).map(ssa).collect();
-        body.push(plain(Instruction::WitnessCall {
+        body.push(plain(Instruction::WitnessCall(Box::new(WitnessCallBody {
             outputs,
             inputs,
             program_bytes: vec![0xFF],
-        }));
+        }))));
 
         let walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
         let program = walker
@@ -4910,11 +4907,11 @@ mod tests {
         // an output must trigger a `LoadHeap` emit through resolve().
         let outputs: Vec<SsaVar> = (0..256u32).map(ssa).collect();
         let body = vec![
-            plain(Instruction::WitnessCall {
+            plain(Instruction::WitnessCall(Box::new(WitnessCallBody {
                 outputs,
                 inputs: vec![],
                 program_bytes: vec![0xFF],
-            }),
+            }))),
             // Reference output ssa(0) — should LoadHeap from slot 0
             // and then AssertEq it against itself (a trivial use).
             plain(Instruction::AssertEq {

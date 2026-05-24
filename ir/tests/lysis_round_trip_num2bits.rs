@@ -222,6 +222,6 @@ fn operands(inst: &Instruction<Bn254Fr>) -> Vec<SsaVar> {
         I::PoseidonHash { left, right, .. } => vec![*left, *right],
         I::IsLtBounded { lhs, rhs, .. } | I::IsLeBounded { lhs, rhs, .. } => vec![*lhs, *rhs],
         I::IntDiv { lhs, rhs, .. } | I::IntMod { lhs, rhs, .. } => vec![*lhs, *rhs],
-        I::WitnessCall { inputs, .. } => inputs.clone(),
+        I::WitnessCall(call) => call.inputs.clone(),
     }
 }

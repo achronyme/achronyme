@@ -234,8 +234,8 @@ impl CircuitStats {
                 // wire, no constraints. Count each output slot toward
                 // the witness-input tally so size reports reflect the
                 // real witness surface, then skip category accounting.
-                Instruction::WitnessCall { outputs, .. } => {
-                    n_witness += outputs.len();
+                Instruction::WitnessCall(call) => {
+                    n_witness += call.outputs.len();
                     continue;
                 }
             };

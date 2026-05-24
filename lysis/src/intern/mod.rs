@@ -26,5 +26,5 @@ pub use effect::{EffectId, SideEffect};
 pub use hash::{deterministic_hash, DeterministicBuildHasher};
 pub use interner::{NodeInterner, NodeMeta};
 pub use key::NodeKey;
-pub use lysis_types::{InstructionKind, NodeId, NodeIdGen, Visibility};
+pub use lysis_types::{InstructionKind, NodeId, NodeIdGen, Visibility, WitnessCallBody};
 pub use span::{SpanList, SpanRange, SPAN_LIST_CAP};

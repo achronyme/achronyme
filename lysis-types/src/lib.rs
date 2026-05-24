@@ -21,5 +21,5 @@
 pub mod kind;
 pub mod node;
 
-pub use kind::{InstructionKind, Visibility};
+pub use kind::{InstructionKind, Visibility, WitnessCallBody};
 pub use node::{NodeId, NodeIdGen};

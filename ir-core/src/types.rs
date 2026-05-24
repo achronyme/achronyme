@@ -29,6 +29,22 @@ impl std::fmt::Display for Visibility {
     }
 }
 
+/// Payload of [`Instruction::WitnessCall`].
+///
+/// Carried behind a `Box` so the rare witness-calculator variant does
+/// not force every other `Instruction` variant to pay for its three
+/// `Vec` headers. The boxed payload keeps the enum compact at the
+/// cost of one extra heap allocation per emitted call (negligible:
+/// witness calls are sparse compared to arithmetic instructions).
+#[derive(Debug, Clone)]
+pub struct WitnessCallBody {
+    pub outputs: Vec<SsaVar>,
+    pub inputs: Vec<SsaVar>,
+    /// Serialized Artik program — validated once on emission; the
+    /// prover decodes + executes it at witness-gen time.
+    pub program_bytes: Vec<u8>,
+}
+
 /// A single SSA instruction.
 ///
 /// Each instruction defines exactly one `result` variable. The program is a
@@ -219,13 +235,9 @@ pub enum Instruction<F: FieldBackend = Bn254Fr> {
     /// extras (used when the lifted circom function returned an
     /// array, one slot per element). At least one output is
     /// guaranteed by the lift.
-    WitnessCall {
-        outputs: Vec<SsaVar>,
-        inputs: Vec<SsaVar>,
-        /// Serialized Artik program — validated once on emission; the
-        /// prover decodes + executes it at witness-gen time.
-        program_bytes: Vec<u8>,
-    },
+    ///
+    /// Payload is boxed; see [`WitnessCallBody`].
+    WitnessCall(Box<WitnessCallBody>),
 }
 
 impl<F: FieldBackend> Instruction<F> {
@@ -256,7 +268,8 @@ impl<F: FieldBackend> Instruction<F> {
             | Instruction::Decompose { result, .. }
             | Instruction::IntDiv { result, .. }
             | Instruction::IntMod { result, .. } => *result,
-            Instruction::WitnessCall { outputs, .. } => outputs
+            Instruction::WitnessCall(call) => call
+                .outputs
                 .first()
                 .copied()
                 .expect("WitnessCall must have at least one output — enforced by the lift"),
@@ -269,7 +282,7 @@ impl<F: FieldBackend> Instruction<F> {
     pub fn extra_result_vars(&self) -> &[SsaVar] {
         match self {
             Instruction::Decompose { bit_results, .. } => bit_results,
-            Instruction::WitnessCall { outputs, .. } if outputs.len() > 1 => &outputs[1..],
+            Instruction::WitnessCall(call) if call.outputs.len() > 1 => &call.outputs[1..],
             _ => &[],
         }
     }
@@ -283,7 +296,7 @@ impl<F: FieldBackend> Instruction<F> {
                 | Instruction::RangeCheck { .. }
                 | Instruction::Assert { .. }
                 | Instruction::Decompose { .. }
-                | Instruction::WitnessCall { .. }
+                | Instruction::WitnessCall(_)
         )
     }
 
@@ -320,7 +333,7 @@ impl<F: FieldBackend> Instruction<F> {
             Instruction::IntDiv { lhs, rhs, .. } | Instruction::IntMod { lhs, rhs, .. } => {
                 vec![*lhs, *rhs]
             }
-            Instruction::WitnessCall { inputs, .. } => inputs.clone(),
+            Instruction::WitnessCall(call) => call.inputs.clone(),
         }
     }
 }
@@ -436,17 +449,15 @@ impl<F: FieldBackend> std::fmt::Display for Instruction<F> {
                 rhs,
                 max_bits,
             } => write!(f, "{result} = IntMod({lhs}, {rhs}, {max_bits})"),
-            Instruction::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => {
-                let out_list = outputs
+            Instruction::WitnessCall(call) => {
+                let out_list = call
+                    .outputs
                     .iter()
                     .map(|v| format!("{v}"))
                     .collect::<Vec<_>>()
                     .join(", ");
-                let in_list = inputs
+                let in_list = call
+                    .inputs
                     .iter()
                     .map(|v| format!("{v}"))
                     .collect::<Vec<_>>()
@@ -454,7 +465,7 @@ impl<F: FieldBackend> std::fmt::Display for Instruction<F> {
                 write!(
                     f,
                     "[{out_list}] = WitnessCall([{in_list}], <{} bytes>)",
-                    program_bytes.len()
+                    call.program_bytes.len()
                 )
             }
         }
@@ -874,4 +885,15 @@ mod tests {
 
     // `var_spans_survive_dce` moved to `ir/src/passes/dce.rs` — it exercises
     // the DCE pass, which lives in `ir` not `ir-core`.
+
+    // Pin the enum's in-memory size so layout changes are intentional, not
+    // accidental. The total scales O(post-O1 instruction count) — at
+    // ECDSA-scale circuits (~20M instructions) every byte here is hundreds
+    // of MB. `WitnessCall` is boxed; the in-place size is currently bounded
+    // by `AssertEq` (`Option<String>` payload) and `Decompose` (a `Vec`
+    // header plus three ids).
+    #[test]
+    fn instruction_size_pinned() {
+        assert_eq!(std::mem::size_of::<Instruction<Bn254Fr>>(), 56);
+    }
 }

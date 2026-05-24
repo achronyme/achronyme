@@ -7,7 +7,7 @@ pub mod lower;
 pub mod passes;
 pub mod stats;
 
-pub use ir_core::{Instruction, IrError, IrProgram, IrType, SsaVar, Visibility};
+pub use ir_core::{Instruction, IrError, IrProgram, IrType, SsaVar, Visibility, WitnessCallBody};
 pub use lower::IrLowering;
 
 /// Disambiguating alias. `Visibility` collides with `lysis::Visibility`

@@ -47,7 +47,7 @@ use crate::bytecode::const_pool::ConstPoolEntry;
 use crate::bytecode::Opcode;
 use crate::config::LysisConfig;
 use crate::error::LysisError;
-use crate::intern::{InstructionKind, NodeId};
+use crate::intern::{InstructionKind, NodeId, WitnessCallBody};
 use crate::program::Program;
 
 /// Shorthand for the `result` placeholder used in pure kinds passed
@@ -720,11 +720,11 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 .map(|r| read_reg(&frames[frame_idx], *r, offset))
                 .collect::<Result<_, _>>()?;
             let outputs: Vec<NodeId> = (0..out_regs.len()).map(|_| sink.fresh_id()).collect();
-            sink.emit_effect(InstructionKind::WitnessCall {
+            sink.emit_effect(InstructionKind::WitnessCall(Box::new(WitnessCallBody {
                 outputs: outputs.clone(),
                 inputs,
                 program_bytes: blob,
-            });
+            })));
             let frame = &mut frames[frame_idx];
             for (out_reg, id) in out_regs.iter().zip(outputs.iter()) {
                 if (*out_reg as usize) < frame.regs.len() {
@@ -906,11 +906,11 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 })
                 .collect::<Result<_, _>>()?;
             let outputs: Vec<NodeId> = (0..out_slots.len()).map(|_| sink.fresh_id()).collect();
-            sink.emit_effect(InstructionKind::WitnessCall {
+            sink.emit_effect(InstructionKind::WitnessCall(Box::new(WitnessCallBody {
                 outputs: outputs.clone(),
                 inputs: resolved_inputs,
                 program_bytes: blob,
-            });
+            })));
             for (slot, id) in out_slots.iter().zip(outputs.iter()) {
                 let slot_idx = *slot as usize;
                 if slot_idx >= heap.len() {

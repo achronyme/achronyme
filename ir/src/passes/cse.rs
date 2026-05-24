@@ -210,8 +210,8 @@ fn rewrite_operands<F: FieldBackend>(
             r(lhs);
             r(rhs);
         }
-        Instruction::WitnessCall { inputs, .. } => {
-            for v in inputs.iter_mut() {
+        Instruction::WitnessCall(call) => {
+            for v in call.inputs.iter_mut() {
                 r(v);
             }
         }

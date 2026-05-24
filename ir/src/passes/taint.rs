@@ -237,18 +237,16 @@ pub fn taint_analysis<F: FieldBackend>(
                 let t = taint_of(&taints, *lhs).merge(taint_of(&taints, *rhs));
                 taints.insert(*result, t);
             }
-            Instruction::WitnessCall {
-                outputs, inputs, ..
-            } => {
+            Instruction::WitnessCall(call) => {
                 // Each output is a witness-only wire whose value comes
                 // from Artik — taint-wise equivalent to `Input
                 // { visibility: Witness }`. Inputs flow in and get
                 // marked used; no constraints are emitted here so
                 // `constrained_vars` stays untouched.
-                for v in inputs {
+                for v in &call.inputs {
                     used_vars.insert(*v);
                 }
-                for v in outputs {
+                for v in &call.outputs {
                     taints.insert(*v, Taint::Witness);
                 }
             }

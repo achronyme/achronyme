@@ -504,12 +504,13 @@ pub fn evaluate<F: FieldBackend + PoseidonParamsProvider>(
                 let (_, r) = int_divmod_field(&a, &b);
                 values.insert(*result, r);
             }
-            Instruction::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => {
-                dispatch_witness_call(inputs, outputs, program_bytes, &mut values)?;
+            Instruction::WitnessCall(call) => {
+                dispatch_witness_call(
+                    &call.inputs,
+                    &call.outputs,
+                    &call.program_bytes,
+                    &mut values,
+                )?;
             }
         }
     }
@@ -738,22 +739,25 @@ pub fn evaluate_lenient<F: FieldBackend + PoseidonParamsProvider>(
                     values.insert(*result, r);
                 }
             }
-            Instruction::WitnessCall {
-                outputs,
-                inputs,
-                program_bytes,
-            } => {
+            Instruction::WitnessCall(call) => {
                 // Lenient eval tolerates missing inputs (leaves values
                 // absent); the Artik dispatch needs all inputs, so
                 // bail silently and record the failure index if any
                 // are unresolved. This matches the behaviour of other
                 // lenient arms that skip incomplete computations.
-                let all_resolved = inputs.iter().all(|v| values.contains_key(v));
+                let all_resolved = call.inputs.iter().all(|v| values.contains_key(v));
                 if !all_resolved {
                     failures.push(idx);
                     continue;
                 }
-                if dispatch_witness_call(inputs, outputs, program_bytes, &mut values).is_err() {
+                if dispatch_witness_call(
+                    &call.inputs,
+                    &call.outputs,
+                    &call.program_bytes,
+                    &mut values,
+                )
+                .is_err()
+                {
                     failures.push(idx);
                 }
             }
