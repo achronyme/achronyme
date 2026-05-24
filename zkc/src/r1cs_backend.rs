@@ -6,6 +6,7 @@ use memory::field::PrimeId;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
 
 // Per-call-site bool-check emission counters. Each tracks how many
 // `b · (1 − b) = 0` constraints a specific code path has emitted
@@ -138,6 +139,19 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// the cached result instead of emitting duplicate constraints.
     #[allow(clippy::type_complexity)]
     divmod_cache: HashMap<(SsaVar, SsaVar, u32), (LinearCombination<F>, LinearCombination<F>)>,
+    /// Content-hash intern table for Artik bytecode payloads.
+    /// Holds `Arc<[u8]>` so identical payloads emitted at multiple
+    /// `WitnessCall` sites share one heap allocation. A flat `Vec`
+    /// (not `HashMap`) is the right shape here: a single compilation
+    /// typically yields a handful of unique templates, and linear scan
+    /// over a cache-resident `Vec<(u64, Arc<[u8]>)>` beats `HashMap`
+    /// probing for that cardinality — no empty-slot overhead, fully
+    /// deterministic insertion order. The secondary slice equality
+    /// check on a `u64` hash hit is mandatory: a 64-bit collision
+    /// (astronomically unlikely but not impossible) would otherwise
+    /// alias distinct programs to the same `Arc` and corrupt witness
+    /// execution.
+    artik_program_intern: Vec<(u64, Arc<[u8]>)>,
 }
 
 impl<F: FieldBackend> Default for R1CSCompiler<F> {
@@ -165,6 +179,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             lc_map: HashMap::new(),
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
+            artik_program_intern: Vec::new(),
         }
     }
 
@@ -185,6 +200,38 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut c = Self::new();
         c.track_constraint_origins = false;
         c
+    }
+
+    /// Intern an Artik bytecode payload. Returns an `Arc<[u8]>` shared
+    /// with prior emissions whose `program_bytes` are byte-identical;
+    /// otherwise allocates a fresh `Arc` and registers it.
+    ///
+    /// Linear scan is intentional — see the field doc on
+    /// `artik_program_intern` for the cardinality reasoning.
+    fn intern_artik_program(&mut self, bytes: &[u8]) -> Arc<[u8]> {
+        use std::collections::hash_map::DefaultHasher;
+        use std::hash::{Hash, Hasher};
+
+        let mut hasher = DefaultHasher::new();
+        bytes.hash(&mut hasher);
+        let digest = hasher.finish();
+
+        for (h, arc) in self.artik_program_intern.iter() {
+            if *h == digest && arc.as_ref() == bytes {
+                return arc.clone();
+            }
+        }
+        let arc: Arc<[u8]> = Arc::from(bytes);
+        self.artik_program_intern.push((digest, arc.clone()));
+        arc
+    }
+
+    /// Number of unique Artik bytecode payloads currently interned.
+    /// Test-only accessor — production code has no reason to inspect
+    /// the intern table.
+    #[cfg(test)]
+    pub(crate) fn artik_program_intern_len(&self) -> usize {
+        self.artik_program_intern.len()
     }
 
     /// Look up the cached `LinearCombination` for `var`. Returns an error if
@@ -913,10 +960,11 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     self.lc_map
                         .insert(*out_ssa, LinearCombination::from_variable(out_var));
                 }
+                let interned = self.intern_artik_program(&call.program_bytes);
                 self.witness_ops.push(WitnessOp::ArtikCall {
                     outputs: output_vars,
                     inputs: input_vars,
-                    program_bytes: call.program_bytes.clone(),
+                    program_bytes: interned,
                 });
             }
         }
@@ -1392,5 +1440,196 @@ mod tests {
             matches!(err, R1CSError::UnsupportedOperation(_, _)),
             "expected undefined-SSA-variable error, got {err:?}"
         );
+    }
+
+    /// Build an `IrProgram` that emits two `WitnessCall`s. Each call
+    /// declares one fresh input and one fresh output; `program_bytes`
+    /// per call is supplied by the caller. The bytecode is opaque to
+    /// `compile_ir` — it is only stored, never decoded.
+    fn build_two_witness_call_prog(bytes_a: Vec<u8>, bytes_b: Vec<u8>) -> IrProgram {
+        use ir::types::WitnessCallBody;
+
+        let mut prog: IrProgram = IrProgram::new();
+        let in_a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: in_a,
+            name: "in_a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let in_b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: in_b,
+            name: "in_b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let out_a = prog.fresh_var();
+        prog.push(Instruction::WitnessCall(Box::new(WitnessCallBody {
+            outputs: vec![out_a],
+            inputs: vec![in_a],
+            program_bytes: bytes_a,
+        })));
+        let out_b = prog.fresh_var();
+        prog.push(Instruction::WitnessCall(Box::new(WitnessCallBody {
+            outputs: vec![out_b],
+            inputs: vec![in_b],
+            program_bytes: bytes_b,
+        })));
+        prog
+    }
+
+    #[test]
+    fn artik_intern_shares_arc_for_identical_payloads() {
+        // Pin: two `WitnessCall`s carrying byte-identical `program_bytes`
+        // collapse to a single `Arc<[u8]>` in the intern table, and the
+        // resulting `WitnessOp::ArtikCall` entries share the same pointer.
+        let payload = vec![0x01, 0x02, 0x03, 0x04, 0x05];
+        let prog = build_two_witness_call_prog(payload.clone(), payload.clone());
+
+        let mut c = R1CSCompiler::<Bn254Fr>::new();
+        c.compile_ir(&prog).unwrap();
+
+        assert_eq!(
+            c.artik_program_intern_len(),
+            1,
+            "byte-identical payloads must collapse to a single intern entry"
+        );
+
+        let artik_ops: Vec<&WitnessOp<_>> = c
+            .witness_ops
+            .iter()
+            .filter(|op| matches!(op, WitnessOp::ArtikCall { .. }))
+            .collect();
+        assert_eq!(artik_ops.len(), 2, "expected two ArtikCall entries");
+        let (a, b) = match (&artik_ops[0], &artik_ops[1]) {
+            (
+                WitnessOp::ArtikCall {
+                    program_bytes: pa, ..
+                },
+                WitnessOp::ArtikCall {
+                    program_bytes: pb, ..
+                },
+            ) => (pa, pb),
+            _ => unreachable!(),
+        };
+        assert!(
+            Arc::ptr_eq(a, b),
+            "intern table must hand out the same Arc to identical payloads"
+        );
+    }
+
+    #[test]
+    fn artik_intern_survives_across_streaming_batches() {
+        // Pin: the intern table is owned by the compiler, not by a
+        // single `compile_ir` call, so two `compile_instructions_streaming`
+        // batches that each carry a byte-identical `WitnessCall` payload
+        // still collapse to a single `Arc<[u8]>`. The chunk-drain entry
+        // point relies on this — it routes each sealed chunk through
+        // `compile_instructions_streaming` against the same compiler,
+        // so intern hits must accumulate across chunks.
+        use ir::types::WitnessCallBody;
+
+        let payload = vec![0xDE, 0xAD, 0xBE, 0xEF];
+
+        let mut prog: IrProgram = IrProgram::new();
+        let in_a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: in_a,
+            name: "in_a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let out_a = prog.fresh_var();
+        prog.push(Instruction::WitnessCall(Box::new(WitnessCallBody {
+            outputs: vec![out_a],
+            inputs: vec![in_a],
+            program_bytes: payload.clone(),
+        })));
+        let in_b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: in_b,
+            name: "in_b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let out_b = prog.fresh_var();
+        prog.push(Instruction::WitnessCall(Box::new(WitnessCallBody {
+            outputs: vec![out_b],
+            inputs: vec![in_b],
+            program_bytes: payload.clone(),
+        })));
+
+        let instrs: Vec<_> = prog.into_instructions();
+        let batch1: Vec<_> = instrs[0..2].to_vec();
+        let batch2: Vec<_> = instrs[2..].to_vec();
+
+        let mut c = R1CSCompiler::<Bn254Fr>::new();
+        c.compile_instructions_streaming(batch1).unwrap();
+        c.compile_instructions_streaming(batch2).unwrap();
+
+        assert_eq!(
+            c.artik_program_intern_len(),
+            1,
+            "intern table must persist across streaming batches"
+        );
+        let artik_ops: Vec<&WitnessOp<_>> = c
+            .witness_ops
+            .iter()
+            .filter(|op| matches!(op, WitnessOp::ArtikCall { .. }))
+            .collect();
+        assert_eq!(artik_ops.len(), 2);
+        let (a, b) = match (&artik_ops[0], &artik_ops[1]) {
+            (
+                WitnessOp::ArtikCall {
+                    program_bytes: pa, ..
+                },
+                WitnessOp::ArtikCall {
+                    program_bytes: pb, ..
+                },
+            ) => (pa, pb),
+            _ => unreachable!(),
+        };
+        assert!(
+            Arc::ptr_eq(a, b),
+            "Arc identity must hold across streaming batch boundaries"
+        );
+    }
+
+    #[test]
+    fn artik_intern_keeps_distinct_arcs_for_different_payloads() {
+        // Pin: payloads that differ in even a single byte get distinct
+        // intern entries and distinct `Arc`s — the secondary slice
+        // equality check guards against any `u64` hash collision aliasing
+        // the two programs.
+        let prog = build_two_witness_call_prog(vec![0xAA, 0xBB], vec![0xAA, 0xCC]);
+
+        let mut c = R1CSCompiler::<Bn254Fr>::new();
+        c.compile_ir(&prog).unwrap();
+
+        assert_eq!(
+            c.artik_program_intern_len(),
+            2,
+            "byte-distinct payloads must occupy distinct intern entries"
+        );
+
+        let artik_ops: Vec<&WitnessOp<_>> = c
+            .witness_ops
+            .iter()
+            .filter(|op| matches!(op, WitnessOp::ArtikCall { .. }))
+            .collect();
+        let (a, b) = match (&artik_ops[0], &artik_ops[1]) {
+            (
+                WitnessOp::ArtikCall {
+                    program_bytes: pa, ..
+                },
+                WitnessOp::ArtikCall {
+                    program_bytes: pb, ..
+                },
+            ) => (pa, pb),
+            _ => unreachable!(),
+        };
+        assert!(
+            !Arc::ptr_eq(a, b),
+            "distinct payloads must NOT share an Arc"
+        );
+        assert_eq!(a.as_ref(), &[0xAA, 0xBB][..]);
+        assert_eq!(b.as_ref(), &[0xAA, 0xCC][..]);
     }
 }
