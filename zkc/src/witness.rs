@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::fmt;
+use std::sync::Arc;
 
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{LinearCombination, Variable};
@@ -71,10 +72,15 @@ pub enum WitnessOp<F: FieldBackend = Bn254Fr> {
     /// reading `inputs` from the current witness vector and writing
     /// one element per `outputs`. Emitted by the R1CS backend for
     /// every `Instruction::WitnessCall` in the IR.
+    ///
+    /// `program_bytes` is `Arc<[u8]>` so the R1CS backend can intern
+    /// identical bytecode payloads across emitted Artik calls — at
+    /// boss-fight scale a handful of unique templates account for
+    /// ~99% of the bytecode bytes accumulated in `witness_ops`.
     ArtikCall {
         outputs: Vec<Variable>,
         inputs: Vec<Variable>,
-        program_bytes: Vec<u8>,
+        program_bytes: Arc<[u8]>,
     },
 }
 
@@ -453,7 +459,7 @@ impl<F: FieldBackend> WitnessGenerator<F> {
                 inputs,
                 program_bytes,
             } => {
-                dispatch_artik_call::<F>(outputs, inputs, program_bytes, witness)?;
+                dispatch_artik_call::<F>(outputs, inputs, &program_bytes[..], witness)?;
             }
         }
         Ok(())
