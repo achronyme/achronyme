@@ -114,8 +114,15 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// is used in multiple Mux/And/Or instructions.
     bool_enforced: std::collections::HashSet<ir::types::SsaVar>,
     /// Maps each R1CS constraint index to the IR instruction that generated it.
-    /// Built during `compile_ir`, parallel to `cs.constraints()`.
+    /// Built during `compile_ir`, parallel to `cs.constraints()`. Skipped when
+    /// `track_constraint_origins` is false (see `R1CSCompiler::new_lean`).
     pub constraint_origins: Vec<ConstraintOrigin>,
+    /// Toggle for `constraint_origins` population. Defaults to `true` so the
+    /// inspector / CLI provenance readers keep working. Setting it to `false`
+    /// (via `new_lean`) skips the per-constraint origin push on the hot
+    /// emission path, freeing ~16 B per emitted constraint plus Vec capacity
+    /// tail — material on circuits emitting tens of millions of constraints.
+    track_constraint_origins: bool,
     /// Variable substitution map from R1CS linear constraint elimination.
     /// Set by `optimize_r1cs()`. Used by witness generation to compute
     /// values for substituted-away wires.
@@ -153,11 +160,31 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             proven_boolean: std::collections::HashSet::new(),
             bool_enforced: std::collections::HashSet::new(),
             constraint_origins: Vec::new(),
+            track_constraint_origins: true,
             substitution_map: None,
             lc_map: HashMap::new(),
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
         }
+    }
+
+    /// Create an R1CS compiler that skips per-constraint origin tracking.
+    ///
+    /// `constraint_origins` is left empty across the full emission. Callers
+    /// that don't need IR-instruction provenance (high-volume circuits that
+    /// only run prove/verify, never inspect) save ~16 B per emitted
+    /// constraint plus the parallel Vec's capacity-tail. On boss-fight-class
+    /// circuits emitting ~10M constraints this is hundreds of MB of peak
+    /// RSS.
+    ///
+    /// Note that `optimize_r1cs*` already clears `constraint_origins` after
+    /// linear substitution rebuilds the constraint vec, so downstream
+    /// readers must already tolerate an empty origins vec — `new_lean`
+    /// extends that tolerance window to before the optimize step too.
+    pub fn new_lean() -> Self {
+        let mut c = Self::new();
+        c.track_constraint_origins = false;
+        c
     }
 
     /// Look up the cached `LinearCombination` for `var`. Returns an error if
@@ -894,14 +921,17 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
             }
         }
 
-        // Record which IR instruction generated each new constraint.
-        let constraints_after = self.cs.num_constraints();
-        let result_var = inst.result_var();
-        for _ in constraints_before..constraints_after {
-            self.constraint_origins.push(ConstraintOrigin {
-                ir_index: ir_idx,
-                result_var,
-            });
+        // Record which IR instruction generated each new constraint, when
+        // the compiler was constructed in tracking mode.
+        if self.track_constraint_origins {
+            let constraints_after = self.cs.num_constraints();
+            let result_var = inst.result_var();
+            for _ in constraints_before..constraints_after {
+                self.constraint_origins.push(ConstraintOrigin {
+                    ir_index: ir_idx,
+                    result_var,
+                });
+            }
         }
 
         Ok(())
@@ -1126,6 +1156,118 @@ mod tests {
             assert_eq!(a.ir_index, b.ir_index);
             assert_eq!(a.result_var, b.result_var);
         }
+    }
+
+    #[test]
+    fn lean_compiler_skips_constraint_origins() {
+        // Pin: a compiler built via `new_lean` leaves `constraint_origins`
+        // empty after emission, while the eager `new` constructor populates
+        // it as usual on the same program.
+        let mut prog: IrProgram = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+
+        let mut lean = R1CSCompiler::new_lean();
+        lean.compile_ir(&prog).unwrap();
+        assert!(
+            lean.constraint_origins.is_empty(),
+            "lean compiler must not populate constraint_origins"
+        );
+        assert!(
+            lean.cs.num_constraints() > 0,
+            "lean compiler must still emit constraints"
+        );
+    }
+
+    #[test]
+    fn lean_compiler_matches_eager_on_everything_except_origins() {
+        // Pin: lean and eager R1CS compilers produce byte-identical
+        // constraint systems on a representative mixed circuit — same
+        // count, same per-constraint LC terms, same witness ops, same
+        // variable allocations — and differ only in `constraint_origins`
+        // (lean leaves it empty; eager populates it).
+        let build_prog = || {
+            let mut prog: IrProgram = IrProgram::new();
+            let v0 = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: v0,
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let v1 = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: v1,
+                name: "y".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let v2 = prog.fresh_var();
+            prog.push(Instruction::Mul {
+                result: v2,
+                lhs: v0,
+                rhs: v1,
+            });
+            let v3 = prog.fresh_var();
+            prog.push(Instruction::PoseidonHash {
+                result: v3,
+                left: v0,
+                right: v1,
+            });
+            let v4 = prog.fresh_var();
+            prog.push(Instruction::AssertEq {
+                result: v4,
+                lhs: v2,
+                rhs: v3,
+                message: None,
+            });
+            prog
+        };
+
+        let mut eager = R1CSCompiler::new();
+        eager.compile_ir(&build_prog()).unwrap();
+
+        let mut lean = R1CSCompiler::new_lean();
+        lean.compile_ir(&build_prog()).unwrap();
+
+        assert_eq!(eager.cs.num_constraints(), lean.cs.num_constraints());
+        assert_eq!(eager.cs.num_variables(), lean.cs.num_variables());
+        assert_eq!(eager.cs.num_pub_inputs(), lean.cs.num_pub_inputs());
+        assert_eq!(eager.witness_ops.len(), lean.witness_ops.len());
+
+        for (e, l) in eager
+            .cs
+            .constraints()
+            .iter()
+            .zip(lean.cs.constraints().iter())
+        {
+            assert_eq!(e.a.terms(), l.a.terms(), "constraint.a terms diverged");
+            assert_eq!(e.b.terms(), l.b.terms(), "constraint.b terms diverged");
+            assert_eq!(e.c.terms(), l.c.terms(), "constraint.c terms diverged");
+        }
+
+        assert!(
+            !eager.constraint_origins.is_empty(),
+            "eager compiler must populate origins"
+        );
+        assert!(
+            lean.constraint_origins.is_empty(),
+            "lean compiler must leave origins empty"
+        );
     }
 
     #[test]
