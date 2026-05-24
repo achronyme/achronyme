@@ -166,6 +166,17 @@ pub(crate) struct ExtendedSink<'a, F: FieldBackend> {
     /// stack entry, or `body` if the stack is now empty).
     loop_stack: Vec<Vec<ExtendedInstruction<F>>>,
     metadata: &'a mut IrProgram<F>,
+    /// When `false`, [`set_name`], [`set_input_span`], and the span
+    /// side-channel write inside [`push_inst`] are no-ops. These three
+    /// channels are write-only during emission — nothing inside
+    /// `instantiate/{scaffold,exprs,stmts,bits}.rs` ever reads them
+    /// back — so a caller that intends to discard them downstream
+    /// (chunk-drain + streaming-sink paths) saves the HashMap growth
+    /// outright. `set_type` / `get_type` are unaffected because the
+    /// ternary type-propagation in `exprs.rs` reads `get_type` during
+    /// emission, so `var_types` is load-bearing inside the walk
+    /// regardless of whether the caller will keep the map afterwards.
+    keep_metadata: bool,
 }
 
 impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
@@ -177,6 +188,24 @@ impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
             body,
             loop_stack: Vec::new(),
             metadata,
+            keep_metadata: true,
+        }
+    }
+
+    /// Same as [`Self::new`] but the name / input-span / per-var-span
+    /// side-channels are dropped at the sink boundary. The downstream
+    /// callers (chunk-drain + streaming-sink) free the maps the
+    /// instant they take ownership of the `ExtendedIrProgram`, so
+    /// building them in the first place is pure peak-RSS waste.
+    pub(crate) fn new_lean(
+        body: &'a mut Vec<ExtendedInstruction<F>>,
+        metadata: &'a mut IrProgram<F>,
+    ) -> Self {
+        Self {
+            body,
+            loop_stack: Vec::new(),
+            metadata,
+            keep_metadata: false,
         }
     }
 
@@ -198,15 +227,19 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
 
     fn push_inst(&mut self, inst: Instruction<F>, span: Option<&SpanRange>) -> SsaVar {
         let var = inst.result_var();
-        if let Some(s) = span {
-            self.metadata.set_span(var, s.clone());
+        if self.keep_metadata {
+            if let Some(s) = span {
+                self.metadata.set_span(var, s.clone());
+            }
         }
         self.push_into_active(ExtendedInstruction::Plain(inst));
         var
     }
 
     fn set_name(&mut self, var: SsaVar, name: String) {
-        self.metadata.set_name(var, name);
+        if self.keep_metadata {
+            self.metadata.set_name(var, name);
+        }
     }
 
     fn set_type(&mut self, var: SsaVar, ty: IrType) {
@@ -218,7 +251,9 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
     }
 
     fn set_input_span(&mut self, name: String, span: SpanRange) {
-        self.metadata.set_input_span(name, span);
+        if self.keep_metadata {
+            self.metadata.set_input_span(name, span);
+        }
     }
 
     fn next_var(&self) -> u64 {

@@ -86,6 +86,53 @@ impl ProveIR {
         Ok(assemble_extended(body, metadata))
     }
 
+    /// Lean counterpart of [`Self::instantiate_extended`] for callers
+    /// that will immediately discard the name / input-span / per-var-
+    /// span side-channels. The chunk-drain and streaming-sink paths
+    /// drop the maps the moment they take ownership of the returned
+    /// `ExtendedIrProgram`; this variant skips building them in the
+    /// first place, sparing the peak-RSS cost of three multi-million-
+    /// entry HashMaps that exist only to be freed. The returned
+    /// program's `var_names`, `var_spans`, and `input_spans` are empty;
+    /// `var_types` is populated normally because the ternary type-
+    /// propagation in `instantiate::exprs` reads it during emission.
+    pub(crate) fn instantiate_extended_lean<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+    ) -> Result<ExtendedIrProgram<F>, ProveIrError> {
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        run_walk(
+            self,
+            captures,
+            Box::new(ExtendedSink::new_lean(&mut body, &mut metadata)),
+            None,
+        )?;
+        Ok(assemble_extended(body, metadata))
+    }
+
+    /// Lean counterpart of [`Self::instantiate_with_outputs_extended`].
+    /// See [`Self::instantiate_extended_lean`] for the side-channel
+    /// contract; the only difference is the public-output projection.
+    pub(crate) fn instantiate_with_outputs_extended_lean<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+        output_names: &HashSet<String>,
+    ) -> Result<ExtendedIrProgram<F>, ProveIrError> {
+        if output_names.is_empty() {
+            return self.instantiate_extended_lean(captures);
+        }
+        let mut body: Vec<ExtendedInstruction<F>> = Vec::new();
+        let mut metadata = IrProgram::<F>::new();
+        run_walk(
+            self,
+            captures,
+            Box::new(ExtendedSink::new_lean(&mut body, &mut metadata)),
+            Some(output_names),
+        )?;
+        Ok(assemble_extended(body, metadata))
+    }
+
     /// **Lysis path** — production entry point. Instantiate this
     /// template through the `ExtendedInstruction` schema, then lower
     /// through Lysis (Walker → InterningSink → materialize) to
@@ -126,7 +173,7 @@ impl ProveIR {
         captures: &HashMap<String, FieldElement<F>>,
         output_names: &HashSet<String>,
     ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
-        let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
+        let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
         lower_extended_to_sink(extended, false)
     }
 
@@ -137,7 +184,7 @@ impl ProveIR {
         &self,
         captures: &HashMap<String, FieldElement<F>>,
     ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
-        let extended = self.instantiate_extended::<F>(captures)?;
+        let extended = self.instantiate_extended_lean::<F>(captures)?;
         lower_extended_to_sink(extended, false)
     }
 
@@ -166,7 +213,7 @@ impl ProveIR {
         output_names: &HashSet<String>,
         chunk_consumer: &mut dyn FnMut(Vec<InstructionKind<F>>),
     ) -> Result<LysisDrainBundle<F>, LysisInstantiateError> {
-        let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
+        let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
         lower_extended_with_chunk_drain(extended, chunk_consumer)
     }
 }
@@ -665,6 +712,61 @@ mod tests {
         assert!(
             !extended.var_types.is_empty(),
             "var_types should track Inputs/RangeChecks"
+        );
+    }
+
+    #[test]
+    fn lean_instantiate_extended_skips_name_and_span_maps() {
+        // Contract pin: the lean variant emits the same body as the
+        // non-lean entry point but skips populating the three write-
+        // only metadata channels at the sink boundary. `var_types`
+        // stays populated because the ternary type-propagation in
+        // `instantiate::exprs` reads it back during emission, so the
+        // sink cannot no-op that channel without breaking type-prop
+        // inside the walk.
+        let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+        let prove_ir = compile_circuit(source).expect("compile_circuit");
+        let lean = prove_ir
+            .instantiate_extended_lean::<F>(&HashMap::new())
+            .expect("instantiate_extended_lean");
+        assert!(lean.var_names.is_empty(), "lean must skip var_names");
+        assert!(lean.var_spans.is_empty(), "lean must skip var_spans");
+        assert!(lean.input_spans.is_empty(), "lean must skip input_spans");
+        assert!(
+            !lean.var_types.is_empty(),
+            "lean must keep var_types (read by ternary type-prop during emission)"
+        );
+
+        // Same body shape as the non-lean entry point.
+        let full = prove_ir
+            .instantiate_extended::<F>(&HashMap::new())
+            .expect("instantiate_extended");
+        assert_eq!(
+            lean.body.len(),
+            full.body.len(),
+            "lean and full variants emit the same body"
+        );
+        assert_eq!(lean.next_var, full.next_var, "next_var watermark matches");
+    }
+
+    #[test]
+    fn lean_instantiate_with_outputs_extended_skips_name_and_span_maps() {
+        // Sibling pin for the public-output variant — the two share
+        // dispatch through the lean sink constructor but pinning both
+        // heads keeps the contract enforced if they ever diverge.
+        let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+        let prove_ir = compile_circuit(source).expect("compile_circuit");
+        let outputs: std::collections::HashSet<String> =
+            std::iter::once("out".to_string()).collect();
+        let lean = prove_ir
+            .instantiate_with_outputs_extended_lean::<F>(&HashMap::new(), &outputs)
+            .expect("instantiate_with_outputs_extended_lean");
+        assert!(lean.var_names.is_empty(), "lean must skip var_names");
+        assert!(lean.var_spans.is_empty(), "lean must skip var_spans");
+        assert!(lean.input_spans.is_empty(), "lean must skip input_spans");
+        assert!(
+            !lean.var_types.is_empty(),
+            "lean must keep var_types (read by ternary type-prop during emission)"
         );
     }
 
