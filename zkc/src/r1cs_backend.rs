@@ -1,3 +1,4 @@
+use crate::segmented_vec::SegmentedVec;
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
 use constraints::r1cs_optimize::{R1CSOptimizeResult, SubstitutionMap};
@@ -103,7 +104,15 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// Cached Poseidon parameters. Initialized on first `poseidon()` call.
     pub(crate) poseidon_params: Option<PoseidonParams<F>>,
     /// Witness generation trace: records each intermediate variable allocation.
-    pub witness_ops: Vec<WitnessOp<F>>,
+    ///
+    /// Stored in a [`SegmentedVec`] rather than a flat `Vec` so the
+    /// container never issues a single allocation larger than
+    /// `SegmentedVec::DEFAULT_SEGMENT_MAX * size_of::<WitnessOp<F>>()`
+    /// (~64 MB at the current op layout). Boss-fight-class circuits
+    /// emitting millions of witness ops would otherwise trigger a 1+ GiB
+    /// `Vec::push` doubling request mid-stream that constrained sandboxes
+    /// reject.
+    pub witness_ops: SegmentedVec<WitnessOp<F>>,
     /// Prime field for this compilation.
     /// Determines the default bit width for range checks and comparisons.
     pub prime_id: PrimeId,
@@ -170,7 +179,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             witnesses: Vec::new(),
             prime_id: PrimeId::Bn254,
             poseidon_params: None,
-            witness_ops: Vec::new(),
+            witness_ops: SegmentedVec::new(),
             proven_boolean: std::collections::HashSet::new(),
             bool_enforced: std::collections::HashSet::new(),
             constraint_origins: Vec::new(),

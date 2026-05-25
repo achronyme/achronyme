@@ -23,6 +23,7 @@ pub mod plonkish_backend;
 pub mod r1cs_backend;
 pub mod r1cs_gadgets;
 pub mod r1cs_witness;
+pub mod segmented_vec;
 pub mod witness;
 
 #[cfg(any(test, feature = "test-support"))]
