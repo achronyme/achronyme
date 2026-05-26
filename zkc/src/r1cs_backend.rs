@@ -86,6 +86,53 @@ pub struct ConstraintOrigin {
 /// Materializing keeps each LC bounded and prevents OOM on large circuits.
 const LC_AUTO_MATERIALIZE_THRESHOLD: usize = 8;
 
+/// Direct-indexed map from `SsaVar` to its cached `LinearCombination`.
+///
+/// The lysis chunk-drain pipeline issues `SsaVar.0` as a contiguous
+/// monotonic counter starting at 0 (the dedup-canonical emission
+/// order), so the address space has zero waste on the streaming path
+/// where the boss-fight-class workloads land. A
+/// `Vec<Option<LinearCombination<F>>>` indexed by `var.0` is a
+/// strictly smaller container than a `HashMap<SsaVar,
+/// LinearCombination<F>>`: 24 B per slot (`Option<LC>` benefits from
+/// `Vec`'s `NonNull` niche) instead of ~33 B per slot for hashbrown
+/// (1 control byte + 32 B entry) at load factors below 1.0. There is
+/// also no rehash transient — the only growth event is `Vec` doubling,
+/// which doubles 24 B/slot rather than 33 B/slot.
+///
+/// The non-streaming `compile_ir` / `compile_instructions` paths may
+/// leave small `None` slack when an upstream DCE pass drops
+/// instructions without renumbering the SSA ids, but the absolute
+/// per-slot cost (24 B) is bounded by max(SsaVar.0) + 1, which on
+/// those paths is small enough that the slack is not measurable.
+#[derive(Debug, Clone)]
+struct LcMap<F: FieldBackend> {
+    slots: Vec<Option<LinearCombination<F>>>,
+}
+
+impl<F: FieldBackend> LcMap<F> {
+    fn new() -> Self {
+        Self { slots: Vec::new() }
+    }
+
+    fn insert(&mut self, var: SsaVar, lc: LinearCombination<F>) {
+        let idx = var.0 as usize;
+        if idx >= self.slots.len() {
+            self.slots.resize_with(idx + 1, || None);
+        }
+        self.slots[idx] = Some(lc);
+    }
+
+    fn get(&self, var: &SsaVar) -> Option<&LinearCombination<F>> {
+        let idx = var.0 as usize;
+        self.slots.get(idx).and_then(|opt| opt.as_ref())
+    }
+
+    fn clear(&mut self) {
+        self.slots.clear();
+    }
+}
+
 /// Compiles an Achronyme SSA IR program into an R1CS constraint system.
 ///
 /// The R1CSCompiler walks IR instructions and emits R1CS constraints.
@@ -140,7 +187,7 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// Lookup cache: SSA variable → its `LinearCombination`. Populated as the
     /// compiler walks the IR instruction stream. Reset at the start of
     /// every `compile_ir` call.
-    lc_map: HashMap<SsaVar, LinearCombination<F>>,
+    lc_map: LcMap<F>,
     /// Proven bit-width bounds from `RangeCheck`, used by `IsLt`/`IsLe`.
     range_bounds: HashMap<SsaVar, u32>,
     /// Cached divmod gadgets: `(lhs, rhs, max_bits) → (q_lc, r_lc)`.
@@ -185,7 +232,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             constraint_origins: Vec::new(),
             track_constraint_origins: true,
             substitution_map: None,
-            lc_map: HashMap::new(),
+            lc_map: LcMap::new(),
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
             artik_program_intern: Vec::new(),
@@ -1640,5 +1687,116 @@ mod tests {
         );
         assert_eq!(a.as_ref(), &[0xAA, 0xBB][..]);
         assert_eq!(b.as_ref(), &[0xAA, 0xCC][..]);
+    }
+
+    #[test]
+    fn lc_map_get_returns_none_for_unknown_var() {
+        let map: LcMap<Bn254Fr> = LcMap::new();
+        assert!(map.get(&SsaVar(0)).is_none());
+        assert!(map.get(&SsaVar(42)).is_none());
+    }
+
+    #[test]
+    fn lc_map_insert_at_contiguous_indices_round_trips() {
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        for i in 0..16u64 {
+            let mut lc = LinearCombination::<Bn254Fr>::zero();
+            lc.add_term(Variable(i as usize + 1), FieldElement::<Bn254Fr>::one());
+            map.insert(SsaVar(i), lc);
+        }
+        for i in 0..16u64 {
+            let got = map.get(&SsaVar(i)).expect("var was just inserted");
+            assert_eq!(got.terms().len(), 1);
+            assert_eq!(got.terms()[0].0, Variable(i as usize + 1));
+        }
+    }
+
+    #[test]
+    fn lc_map_clear_drops_all_entries_and_keeps_get_safe() {
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        map.insert(SsaVar(0), LinearCombination::<Bn254Fr>::zero());
+        map.insert(SsaVar(1), LinearCombination::<Bn254Fr>::zero());
+        map.clear();
+        assert!(map.get(&SsaVar(0)).is_none());
+        assert!(map.get(&SsaVar(1)).is_none());
+        // After clear, density-1.0 invariant restarts from idx 0.
+        map.insert(SsaVar(0), LinearCombination::<Bn254Fr>::zero());
+        assert!(map.get(&SsaVar(0)).is_some());
+    }
+
+    #[test]
+    fn lc_map_insert_overwrites_existing_idx() {
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        let mut first = LinearCombination::<Bn254Fr>::zero();
+        first.add_term(Variable(7), FieldElement::<Bn254Fr>::one());
+        map.insert(SsaVar(0), first);
+        let mut second = LinearCombination::<Bn254Fr>::zero();
+        second.add_term(Variable(99), FieldElement::<Bn254Fr>::one());
+        map.insert(SsaVar(0), second);
+        let got = map.get(&SsaVar(0)).expect("just overwrote");
+        assert_eq!(got.terms()[0].0, Variable(99));
+    }
+
+    #[test]
+    fn lc_map_insert_at_high_idx_fills_intermediate_with_none() {
+        // Sparse insertion is permitted (the compile_ir path may hit
+        // small holes when an upstream DCE pass drops instructions
+        // without renumbering SSA ids). The cost is 24 B per `None`
+        // slot, bounded by max(SsaVar.0) + 1.
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        map.insert(SsaVar(5), LinearCombination::<Bn254Fr>::zero());
+        assert!(map.get(&SsaVar(5)).is_some());
+        for i in 0..5u64 {
+            assert!(map.get(&SsaVar(i)).is_none());
+        }
+        assert_eq!(map.slots.len(), 6);
+    }
+
+    #[test]
+    fn streaming_path_emits_contiguous_ssavar_ids_pin() {
+        // Density-1.0 codification on the streaming path used by the
+        // chunk-drain boss-fight wiring. Feed a small IR program
+        // through `compile_instructions_streaming` and check every
+        // result SsaVar landed in lc_map at the expected contiguous
+        // index — same insert path that the chunk-drain consumer
+        // exercises at million-instruction scale.
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+        let v3 = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: v3,
+            lhs: v2,
+            rhs: v0,
+        });
+
+        let mut compiler: R1CSCompiler<Bn254Fr> = R1CSCompiler::new();
+        compiler
+            .compile_instructions_streaming(prog.iter().cloned())
+            .unwrap();
+        for i in 0..=3u64 {
+            assert!(
+                compiler.lc_map.get(&SsaVar(i)).is_some(),
+                "SsaVar({i}) must be populated"
+            );
+        }
+        assert_eq!(compiler.lc_map.slots.len(), 4);
+        assert!(compiler.lc_map.slots.iter().all(|s| s.is_some()));
     }
 }
