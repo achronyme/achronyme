@@ -115,7 +115,19 @@ impl<F: FieldBackend> LcMap<F> {
         Self { slots: Vec::new() }
     }
 
-    fn insert(&mut self, var: SsaVar, lc: LinearCombination<F>) {
+    fn insert(&mut self, var: SsaVar, mut lc: LinearCombination<F>) {
+        // LCs reach this cache after incremental `add_term` calls,
+        // which leave the term vec at the next power-of-two doubling
+        // step. The shape histogram on boss-fight-class workloads
+        // shows ~49% capacity slack steady-state because the dominant
+        // case is a 1-term LC sitting in a cap-2 vec. Trim before
+        // storing so the long-lived heap footprint matches the active
+        // term count. Gated on `capacity > len` to skip the allocator
+        // round-trip on already-tight LCs (empty `Vec::new` plus any
+        // LC built via `vec![..]` macros).
+        if lc.terms().len() < lc.terms_capacity() {
+            lc.shrink_to_fit();
+        }
         let idx = var.0 as usize;
         if idx >= self.slots.len() {
             self.slots.resize_with(idx + 1, || None);
@@ -1798,5 +1810,150 @@ mod tests {
         }
         assert_eq!(compiler.lc_map.slots.len(), 4);
         assert!(compiler.lc_map.slots.iter().all(|s| s.is_some()));
+    }
+
+    #[test]
+    fn lc_map_insert_compacts_grown_lc_capacity_to_terms_len() {
+        // Pin the post-insert invariant `capacity == len` on a
+        // worst-case LC: built via incremental `add_term` calls, which
+        // double the term vec's capacity past the active term count.
+        // The compiler emission paths construct LCs this way, so the
+        // doubling tail would persist into the long-lived lc_map cache
+        // without the in-insert compaction.
+        let mut lc = LinearCombination::<Bn254Fr>::zero();
+        for i in 0..5u64 {
+            lc.add_term(Variable(i as usize + 1), FieldElement::<Bn254Fr>::one());
+        }
+        assert!(
+            lc.terms_capacity() > lc.terms().len(),
+            "precondition: incremental add_term leaves doubling slack"
+        );
+
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        map.insert(SsaVar(0), lc);
+
+        let stored = map.get(&SsaVar(0)).expect("just inserted");
+        assert_eq!(stored.terms().len(), 5);
+        assert_eq!(
+            stored.terms_capacity(),
+            stored.terms().len(),
+            "stored LC must have capacity trimmed to its term count"
+        );
+    }
+
+    #[test]
+    fn lc_map_insert_handles_empty_lc_without_regression() {
+        // Empty `Vec::new()` has capacity 0; the conditional shrink
+        // gate must skip the allocator round-trip and the slot must
+        // still be populated.
+        let lc = LinearCombination::<Bn254Fr>::zero();
+        assert_eq!(lc.terms_capacity(), 0);
+        assert_eq!(lc.terms().len(), 0);
+
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        map.insert(SsaVar(0), lc);
+        let stored = map.get(&SsaVar(0)).expect("just inserted");
+        assert_eq!(stored.terms_capacity(), 0);
+        assert_eq!(stored.terms().len(), 0);
+    }
+
+    #[test]
+    fn lc_map_streaming_path_pins_cap_eq_len_on_every_populated_slot() {
+        // End-to-end version of the shrink pin: feed a small IR
+        // program through the same `compile_instructions_streaming`
+        // entry that the boss-fight chunk-drain consumer hits, then
+        // iterate every populated slot in lc_map and assert the
+        // post-insert capacity invariant. Skips `None` holes so the
+        // pin also holds on the non-streaming path which may leave
+        // sparse slots when upstream DCE drops instructions.
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let v0 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v0,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v1 = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: v1,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let v2 = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: v2,
+            lhs: v0,
+            rhs: v1,
+        });
+        let v3 = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: v3,
+            lhs: v2,
+            rhs: v0,
+        });
+        let v4 = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: v4,
+            lhs: v3,
+            rhs: v1,
+        });
+
+        let mut compiler: R1CSCompiler<Bn254Fr> = R1CSCompiler::new();
+        compiler
+            .compile_instructions_streaming(prog.iter().cloned())
+            .unwrap();
+        for (idx, slot) in compiler.lc_map.slots.iter().enumerate() {
+            if let Some(lc) = slot {
+                assert_eq!(
+                    lc.terms_capacity(),
+                    lc.terms().len(),
+                    "lc_map slot {idx}: terms vec must be tight after insert"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn lc_map_compile_ir_path_pins_cap_eq_len_on_every_populated_slot() {
+        // Cross-path coverage: same invariant, eager (non-streaming)
+        // `compile_ir` entry. This is the legacy path that downstream
+        // tooling (inspector, CLI provenance readers) still exercises.
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: a,
+            name: "a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: b,
+            name: "b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let s = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: s,
+            lhs: a,
+            rhs: b,
+        });
+        let p = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: p,
+            lhs: s,
+            rhs: a,
+        });
+
+        let mut compiler: R1CSCompiler<Bn254Fr> = R1CSCompiler::new();
+        compiler.compile_ir(&prog).unwrap();
+        for (idx, slot) in compiler.lc_map.slots.iter().enumerate() {
+            if let Some(lc) = slot {
+                assert_eq!(
+                    lc.terms_capacity(),
+                    lc.terms().len(),
+                    "lc_map slot {idx}: terms vec must be tight after insert"
+                );
+            }
+        }
     }
 }

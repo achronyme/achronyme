@@ -162,6 +162,29 @@ impl<F: FieldBackend> LinearCombination<F> {
         self.terms
     }
 
+    /// Trim the term vec's capacity to its length.
+    ///
+    /// Incremental `add_term` calls leave the underlying `Vec`'s
+    /// capacity at the next power-of-two doubling step, which can be
+    /// up to ~2x the active term count. For LCs that are stored
+    /// long-lived after construction (most notably the per-SSA-var
+    /// cache held by the R1CS compiler), the doubling tail dominates
+    /// the heap footprint because the active term count is small
+    /// (typically 1) while capacity rounds up. Callers should invoke
+    /// this once the LC is final and will no longer be appended to.
+    pub fn shrink_to_fit(&mut self) {
+        self.terms.shrink_to_fit();
+    }
+
+    /// Current allocated capacity of the term vec, in element slots.
+    /// Hidden because production code branching on capacity is a
+    /// representation leak; the pin tests use it to assert the
+    /// post-shrink invariant `capacity == len`.
+    #[doc(hidden)]
+    pub fn terms_capacity(&self) -> usize {
+        self.terms.capacity()
+    }
+
     /// Merge duplicate variable terms and remove zero coefficients.
     ///
     /// E.g. `x - x` simplifies to the empty LC (constant zero),
