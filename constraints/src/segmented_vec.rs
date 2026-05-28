@@ -22,12 +22,10 @@
 //! doubling so small consumers don't pay a 64 MB up-front cost for a
 //! handful of items.
 //!
-//! API surface is intentionally minimal — `push`, `len`, `iter`,
-//! `iter_mut`, `retain`, `clear`, `Clone` — matching exactly the
-//! operations the `witness_ops` consumers actually use. No indexed
-//! access is exposed; callers that need `IndexMut` (e.g. R1CS
-//! constraint-vector mutation) want a different wrapper with uniform
-//! segment sizes for the `i >> log2_seg, i & mask` math.
+//! API surface covers the operations both `witness_ops` (append-only
+//! with `retain` for substitution-pass compaction) and the R1CS
+//! `ConstraintSystem.constraints` (full `Index`/`IndexMut` for the
+//! linear-elimination + DEDUCE rewrites) need.
 
 /// An append-only sequence whose backing storage is sliced into
 /// bounded segments to avoid large single-allocation requests.
@@ -100,6 +98,32 @@ impl<T> SegmentedVec<T> {
         self.len = 0;
     }
 
+    /// Shorten the container to `new_len`, dropping any elements past
+    /// the new boundary. If `new_len >= len()` this is a no-op (matches
+    /// `Vec::truncate` semantics). Empty trailing segments are dropped
+    /// so iteration doesn't pay for them.
+    pub fn truncate(&mut self, new_len: usize) {
+        if new_len >= self.len {
+            return;
+        }
+        // Walk segments in order, dropping elements until cumulative
+        // length matches `new_len`.
+        let mut remaining = new_len;
+        let mut last_kept = 0usize;
+        for (i, seg) in self.segments.iter_mut().enumerate() {
+            if remaining >= seg.len() {
+                remaining -= seg.len();
+                last_kept = i + 1;
+            } else {
+                seg.truncate(remaining);
+                last_kept = if remaining == 0 { i } else { i + 1 };
+                break;
+            }
+        }
+        self.segments.truncate(last_kept);
+        self.len = new_len;
+    }
+
     /// Iterate elements in insertion order across all segments.
     pub fn iter(&self) -> impl Iterator<Item = &T> + '_ {
         self.segments.iter().flat_map(|s| s.iter())
@@ -130,6 +154,60 @@ impl<T> SegmentedVec<T> {
     pub fn segment_count(&self) -> usize {
         self.segments.len()
     }
+
+    /// Map a flat index into `(segment_index, slot_index)`. The first
+    /// segment grows naturally via `Vec` doubling so its length is
+    /// runtime-dependent; segments 1.. are uniform at `segment_max`.
+    /// O(1) — only segment 0 is irregular.
+    #[inline]
+    fn locate(&self, idx: usize) -> (usize, usize) {
+        let first_len = self.segments.first().map(|s| s.len()).unwrap_or(0);
+        if idx < first_len {
+            return (0, idx);
+        }
+        let rest = idx - first_len;
+        (1 + rest / self.segment_max, rest % self.segment_max)
+    }
+
+    /// Swap the elements at indices `i` and `j`. Like `Vec::swap`,
+    /// panics if either index is out of bounds. Handles cross-segment
+    /// swaps by routing through disjoint borrows of the two segments.
+    pub fn swap(&mut self, i: usize, j: usize) {
+        assert!(i < self.len, "index out of bounds: i={i}, len={}", self.len);
+        assert!(j < self.len, "index out of bounds: j={j}, len={}", self.len);
+        if i == j {
+            return;
+        }
+        let (si, oi) = self.locate(i);
+        let (sj, oj) = self.locate(j);
+        if si == sj {
+            self.segments[si].swap(oi, oj);
+            return;
+        }
+        let (lo, hi) = if si < sj { (si, sj) } else { (sj, si) };
+        let (lo_slot, hi_slot) = if si < sj { (oi, oj) } else { (oj, oi) };
+        let (left, right) = self.segments.split_at_mut(hi);
+        std::mem::swap(&mut left[lo][lo_slot], &mut right[0][hi_slot]);
+    }
+}
+
+impl<T> std::ops::Index<usize> for SegmentedVec<T> {
+    type Output = T;
+    #[inline]
+    fn index(&self, idx: usize) -> &T {
+        assert!(idx < self.len, "index out of bounds: {idx} >= {}", self.len);
+        let (seg, slot) = self.locate(idx);
+        &self.segments[seg][slot]
+    }
+}
+
+impl<T> std::ops::IndexMut<usize> for SegmentedVec<T> {
+    #[inline]
+    fn index_mut(&mut self, idx: usize) -> &mut T {
+        assert!(idx < self.len, "index out of bounds: {idx} >= {}", self.len);
+        let (seg, slot) = self.locate(idx);
+        &mut self.segments[seg][slot]
+    }
 }
 
 impl<T> Default for SegmentedVec<T> {
@@ -157,6 +235,36 @@ impl<'a, T> IntoIterator for &'a SegmentedVec<T> {
     >;
     fn into_iter(self) -> Self::IntoIter {
         self.segments.iter().flat_map(|s| s.iter())
+    }
+}
+
+impl<T> Extend<T> for SegmentedVec<T> {
+    fn extend<I: IntoIterator<Item = T>>(&mut self, iter: I) {
+        for item in iter {
+            self.push(item);
+        }
+    }
+}
+
+impl<T> FromIterator<T> for SegmentedVec<T> {
+    fn from_iter<I: IntoIterator<Item = T>>(iter: I) -> Self {
+        let mut v = SegmentedVec::new();
+        v.extend(iter);
+        v
+    }
+}
+
+impl<T> IntoIterator for SegmentedVec<T> {
+    type Item = T;
+    type IntoIter = std::iter::FlatMap<
+        std::vec::IntoIter<Vec<T>>,
+        std::vec::IntoIter<T>,
+        fn(Vec<T>) -> std::vec::IntoIter<T>,
+    >;
+    fn into_iter(self) -> Self::IntoIter {
+        self.segments
+            .into_iter()
+            .flat_map(|s: Vec<T>| -> std::vec::IntoIter<T> { s.into_iter() })
     }
 }
 
@@ -338,5 +446,124 @@ mod tests {
         // pushes inside it don't trigger Vec doubling beyond the cap.
         let second_seg_cap = v.segments[1].capacity();
         assert_eq!(second_seg_cap, 4);
+    }
+
+    #[test]
+    fn index_returns_correct_element_across_segment_boundary() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(8);
+        for i in 0..25 {
+            v.push(i);
+        }
+        assert_eq!(v[0], 0);
+        assert_eq!(v[7], 7);
+        assert_eq!(v[8], 8);
+        assert_eq!(v[15], 15);
+        assert_eq!(v[16], 16);
+        assert_eq!(v[24], 24);
+    }
+
+    #[test]
+    fn index_mut_writes_propagate() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..10 {
+            v.push(i);
+        }
+        v[7] = 999;
+        v[2] = 111;
+        assert_eq!(v[7], 999);
+        assert_eq!(v[2], 111);
+        let collected: Vec<u32> = v.iter().copied().collect();
+        assert_eq!(collected, vec![0, 1, 111, 3, 4, 5, 6, 999, 8, 9]);
+    }
+
+    #[test]
+    fn swap_across_segments_exchanges_values() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..12 {
+            v.push(i);
+        }
+        // First seg grows naturally to 4 (it filled and overflow opened
+        // segment 1), so segment 0 holds [0,1,2,3] and segment 1 holds
+        // [4,5,6,7]; swap across that boundary.
+        v.swap(2, 9);
+        assert_eq!(v[2], 9);
+        assert_eq!(v[9], 2);
+    }
+
+    #[test]
+    fn swap_within_segment_exchanges_values() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..8 {
+            v.push(i);
+        }
+        v.swap(0, 3);
+        assert_eq!(v[0], 3);
+        assert_eq!(v[3], 0);
+        v.swap(5, 6);
+        assert_eq!(v[5], 6);
+        assert_eq!(v[6], 5);
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn index_out_of_bounds_panics() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..5 {
+            v.push(i);
+        }
+        let _ = v[100];
+    }
+
+    #[test]
+    #[should_panic(expected = "index out of bounds")]
+    fn swap_out_of_bounds_panics() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..5 {
+            v.push(i);
+        }
+        v.swap(2, 100);
+    }
+
+    #[test]
+    fn truncate_within_a_segment_keeps_outer_segments_intact() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..10 {
+            v.push(i);
+        }
+        // Segments: [0,1,2,3] [4,5,6,7] [8,9]; truncate to 6 should
+        // leave [0,1,2,3] [4,5] in two segments.
+        v.truncate(6);
+        assert_eq!(v.len(), 6);
+        assert_eq!(v.segment_count(), 2);
+        assert_eq!(
+            v.iter().copied().collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5]
+        );
+    }
+
+    #[test]
+    fn truncate_drops_whole_trailing_segments() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        for i in 0..10 {
+            v.push(i);
+        }
+        v.truncate(4);
+        assert_eq!(v.len(), 4);
+        assert_eq!(v.segment_count(), 1);
+        assert_eq!(v.iter().copied().collect::<Vec<_>>(), vec![0, 1, 2, 3]);
+    }
+
+    #[test]
+    fn extend_appends_iterator_items() {
+        let mut v: SegmentedVec<u32> = SegmentedVec::with_segment_max(4);
+        v.push(0);
+        v.extend(vec![1, 2, 3, 4, 5]);
+        assert_eq!(v.len(), 6);
+        assert_eq!(
+            v.iter().copied().collect::<Vec<_>>(),
+            vec![0, 1, 2, 3, 4, 5]
+        );
+        // Confirms segment cap routing: 6 items at cap=4 → 2 segments.
+        assert_eq!(v.segment_count(), 2);
     }
 }

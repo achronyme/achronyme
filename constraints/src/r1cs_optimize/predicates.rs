@@ -72,9 +72,11 @@ pub(super) fn is_linear<F: FieldBackend>(
 /// per-term in `solve_for_variable`. The default `RandomState`/SipHash
 /// hasher accounted for ~18 % of SMTVerifier(10) pipeline wall before
 /// the switch.
-pub(super) fn compute_variable_frequency<F: FieldBackend>(
-    constraints: &[Constraint<F>],
-) -> FxHashMap<usize, usize> {
+pub(super) fn compute_variable_frequency<'a, F, I>(constraints: I) -> FxHashMap<usize, usize>
+where
+    F: FieldBackend + 'a,
+    I: IntoIterator<Item = &'a Constraint<F>>,
+{
     let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
     for constraint in constraints {
         let mut vars_in_constraint: HashSet<usize> = HashSet::new();

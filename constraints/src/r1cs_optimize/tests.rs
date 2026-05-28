@@ -1,6 +1,7 @@
 use super::predicates::is_trivially_satisfied;
 use super::*;
 use crate::r1cs::{Constraint, ConstraintSystem, LinearCombination, Variable};
+use crate::SegmentedVec;
 use memory::{FieldBackend, FieldElement};
 
 /// Helper: build a constraint system, optimize it, and verify.
@@ -29,7 +30,11 @@ fn test_single_linear_elimination() {
     // 1 * w = z  (i.e. w = z)
     cs.enforce_equal(make_lc_var(w), make_lc_var(z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 2);
@@ -73,7 +78,11 @@ fn test_constant_propagation() {
     // x * y = z
     cs.enforce(make_lc_var(x), make_lc_var(y), make_lc_var(_z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // x=5 makes the second constraint linear (5*y = z), so z is also eliminated
@@ -100,7 +109,11 @@ fn test_public_variable_not_substituted() {
     // w * w = z
     cs.enforce(make_lc_var(w), make_lc_var(w), make_lc_var(z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // w (idx 2) should be substituted, NOT pub_out (idx 1)
@@ -131,7 +144,11 @@ fn test_chain_substitution() {
     cs.enforce_equal(make_lc_var(b), make_lc_var(c));
     cs.enforce(make_lc_var(c), make_lc_var(c), make_lc_var(d));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Both linear constraints eliminated
@@ -175,7 +192,11 @@ fn test_mixed_linear_nonlinear() {
     cs.enforce(make_lc_var(c), make_lc_var(d), make_lc_var(e));
     cs.enforce_equal(make_lc_var(f), make_lc_var(e));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 3);
@@ -188,7 +209,7 @@ fn test_mixed_linear_nonlinear() {
 // ========================================================================
 #[test]
 fn test_empty_system() {
-    let mut constraints: Vec<Constraint> = vec![];
+    let mut constraints: SegmentedVec<Constraint> = SegmentedVec::new();
     let (subs, stats) = optimize_linear(&mut constraints, 0);
 
     assert_eq!(stats.constraints_before, 0);
@@ -214,7 +235,11 @@ fn test_already_optimal() {
     cs.enforce(make_lc_var(a), make_lc_var(b), make_lc_var(c));
     cs.enforce(make_lc_var(c), make_lc_var(d), make_lc_var(e));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 2);
@@ -249,7 +274,11 @@ fn test_materialize_pattern() {
     // actual mul: m * d = e
     cs.enforce(make_lc_var(m), make_lc_var(d), make_lc_var(e));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Materialization constraint should be eliminated
@@ -291,7 +320,11 @@ fn test_scaled_linear() {
     // y * y = z
     cs.enforce(make_lc_var(y), make_lc_var(y), make_lc_var(z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 2);
@@ -328,7 +361,11 @@ fn test_boolean_enforcement_kept() {
         LinearCombination::from_variable(Variable::ONE) - LinearCombination::from_variable(v);
     cs.enforce(make_lc_var(v), one_minus_v, LinearCombination::zero());
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Should NOT be eliminated — both A and B have variables
@@ -363,7 +400,11 @@ fn test_multiple_materializations() {
     // m2 * d = e
     cs.enforce(make_lc_var(m2), make_lc_var(d), make_lc_var(e));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Both materializations eliminated (may take 2 rounds for chain)
@@ -434,7 +475,11 @@ fn test_optimization_preserves_satisfaction() {
     assert!(cs.verify(&witness).is_ok());
 
     // Optimize
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Should eliminate the 2 linear constraints (m1 materialization + m2=c assert)
@@ -504,7 +549,11 @@ fn test_tautological_linear_removed() {
     cs.enforce_equal(make_lc_var(x_var), make_lc_var(pub_out));
     cs.enforce(make_lc_var(x_var), make_lc_var(x_var), make_lc_var(z_var));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // First constraint: x substituted -> pub
@@ -545,7 +594,11 @@ fn test_zero_product_constraint() {
     cs.enforce(LinearCombination::zero(), make_lc_var(w), make_lc_var(v));
     cs.enforce(make_lc_var(v), make_lc_var(v), make_lc_var(out));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // v should be substituted to 0 (from zero-product constraint)
@@ -600,7 +653,11 @@ fn test_frequency_heuristic() {
     cs.enforce(make_lc_var(a), make_lc_var(d), make_lc_var(e));
     cs.enforce(make_lc_var(a), make_lc_var(f), make_lc_var(g));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 3);
@@ -651,8 +708,16 @@ fn sparse_cluster_isolation_matches_dense() {
         cs
     }
 
-    let mut dense = build_two_disjoint_systems().constraints().to_vec();
-    let mut sparse = build_two_disjoint_systems().constraints().to_vec();
+    let mut dense = build_two_disjoint_systems()
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
+    let mut sparse = build_two_disjoint_systems()
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
 
     let (_, dense_stats) = optimize_o2(&mut dense, 0);
     let (_, sparse_stats) = optimize_o2_sparse(&mut sparse, 0);
@@ -692,8 +757,16 @@ fn sparse_matches_dense_on_boolean_decomposition() {
     }
 
     for n_bits in [4usize, 8, 12] {
-        let mut dense = build_bool_decomp(n_bits).constraints().to_vec();
-        let mut sparse = build_bool_decomp(n_bits).constraints().to_vec();
+        let mut dense = build_bool_decomp(n_bits)
+            .constraints()
+            .iter()
+            .cloned()
+            .collect::<SegmentedVec<_>>();
+        let mut sparse = build_bool_decomp(n_bits)
+            .constraints()
+            .iter()
+            .cloned()
+            .collect::<SegmentedVec<_>>();
 
         let (_, dense_stats) = optimize_o2(&mut dense, 0);
         let (_, sparse_stats) = optimize_o2_sparse(&mut sparse, 0);
@@ -722,7 +795,11 @@ fn sparse_o2_no_op_on_linear_system() {
         make_lc_var(c),
     );
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_o2_sparse(&mut constraints, cs.num_pub_inputs());
 
     // O1 alone substitutes c (or one of a,b) and removes the constraint.
@@ -758,7 +835,11 @@ fn sparse_skips_oversized_cluster() {
     }
 
     let constraints_before = cs.constraints().len();
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_subs, stats) = optimize_o2_sparse(&mut constraints, cs.num_pub_inputs());
 
     // Sanity: optimize_o2_sparse did not crash and did not blow up the
@@ -813,7 +894,7 @@ fn cluster_isolation_disjoint_subsystems() {
     let d = cs.alloc_witness();
     cs.enforce_equal(make_lc_var(c), make_lc_var(d));
 
-    let constraints = cs.constraints().to_vec();
+    let constraints = cs.constraints().iter().cloned().collect::<Vec<_>>();
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let clusters = build_clusters_by_signal(&constraints, &protected);
 
@@ -838,7 +919,7 @@ fn cluster_transitive_merge() {
     cs.enforce_equal(make_lc_var(b), make_lc_var(c)); // shares c with next
     cs.enforce_equal(make_lc_var(c), make_lc_var(d));
 
-    let constraints = cs.constraints().to_vec();
+    let constraints = cs.constraints().iter().cloned().collect::<Vec<_>>();
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let clusters = build_clusters_by_signal(&constraints, &protected);
 
@@ -863,7 +944,7 @@ fn cluster_all_protected_returns_singletons() {
     cs.enforce_equal(make_lc_var(pub_a), make_lc_var(pub_b));
     cs.enforce_equal(make_lc_var(pub_a), make_lc_var(pub_b)); // duplicate
 
-    let constraints = cs.constraints().to_vec();
+    let constraints = cs.constraints().iter().cloned().collect::<Vec<_>>();
     // Public inputs are protected: indices 0..=2 (ONE + 2 pub inputs).
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let clusters = build_clusters_by_signal(&constraints, &protected);
@@ -893,7 +974,7 @@ fn cluster_gauss_singleton_no_substitution() {
     // x * y = z -- genuinely quadratic, NOT linear.
     cs.enforce(make_lc_var(x), make_lc_var(y), make_lc_var(z));
 
-    let constraints = cs.constraints().to_vec();
+    let constraints = cs.constraints().iter().cloned().collect::<Vec<_>>();
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let var_freq = compute_variable_frequency(&constraints);
 
@@ -930,7 +1011,7 @@ fn cluster_gauss_chain_match_greedy() {
     cs.enforce_equal(make_lc_var(b), make_lc_var(c));
     cs.enforce(make_lc_var(c), make_lc_var(c), make_lc_var(d));
 
-    let constraints: Vec<_> = cs.constraints().to_vec();
+    let constraints: Vec<_> = cs.constraints().iter().cloned().collect();
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let var_freq = compute_variable_frequency(&constraints);
     let clusters = build_clusters_by_signal(&constraints, &protected);
@@ -1000,7 +1081,11 @@ fn cluster_gauss_multi_cluster_correctness() {
     // 1 * w = z  (linear: w = z)
     cs.enforce_equal(make_lc_var(w), make_lc_var(z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.constraints_before, 2);
@@ -1043,7 +1128,11 @@ fn cluster_gauss_aux_wire_protection() {
     // 1 * aux = other -- linear, picker chooses one of {aux, other}.
     cs.enforce_equal(make_lc_var(aux), make_lc_var(other));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let mut extra: HashSet<usize> = HashSet::new();
     extra.insert(aux.index());
     let (subs, _stats) =
@@ -1073,7 +1162,11 @@ fn cluster_gauss_does_not_substitute_protected() {
     cs.enforce_equal(make_lc_var(pub_out), make_lc_var(w));
     cs.enforce(make_lc_var(w), make_lc_var(w), make_lc_var(z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.variables_eliminated, 1);
@@ -1115,7 +1208,11 @@ fn cluster_gauss_soundness_witness_roundtrip() {
         FieldElement::from_u64(21), // c = m2
     ];
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
     assert_eq!(stats.constraints_before, 4);
     assert_eq!(stats.constraints_after, 2);
@@ -1153,7 +1250,11 @@ fn cluster_gauss_tautology_after_pivot() {
     cs.enforce_equal(make_lc_var(x), make_lc_var(pub_out));
     cs.enforce(make_lc_var(x), make_lc_var(x), make_lc_var(z));
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (_, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     // Cluster-Gauss absorbs the tautology inside solve_cluster_linear
@@ -1201,7 +1302,11 @@ fn cluster_gauss_min_occurrence_picker_above_threshold() {
         cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
     }
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.variables_eliminated, 360);
@@ -1240,7 +1345,11 @@ fn cluster_gauss_max_frequency_picker_below_threshold() {
         cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
     }
 
-    let mut constraints = cs.constraints().to_vec();
+    let mut constraints = cs
+        .constraints()
+        .iter()
+        .cloned()
+        .collect::<SegmentedVec<_>>();
     let (subs, stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
 
     assert_eq!(stats.variables_eliminated, 340);
@@ -1269,7 +1378,11 @@ fn cluster_gauss_picker_threshold_exact() {
         for &b in &bots {
             cs.enforce_equal(make_lc_var(hot), make_lc_var(b));
         }
-        let mut constraints = cs.constraints().to_vec();
+        let mut constraints = cs
+            .constraints()
+            .iter()
+            .cloned()
+            .collect::<SegmentedVec<_>>();
         let (subs, _stats) = optimize_linear(&mut constraints, cs.num_pub_inputs());
         // Returns true iff hot was substituted (max-frequency picker).
         subs.contains_key(&hot.index())
@@ -1307,7 +1420,7 @@ fn cluster_gauss_high_degree_variable() {
         cs.enforce_equal(make_lc_var(a), make_lc_var(b));
     }
 
-    let constraints: Vec<_> = cs.constraints().to_vec();
+    let constraints: Vec<_> = cs.constraints().iter().cloned().collect();
     let protected: HashSet<usize> = (0..=cs.num_pub_inputs()).collect();
     let var_freq = compute_variable_frequency(&constraints);
     let clusters = build_clusters_by_signal(&constraints, &protected);

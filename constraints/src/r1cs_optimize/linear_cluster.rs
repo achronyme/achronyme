@@ -31,6 +31,7 @@ use super::substitution::{
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
+use crate::SegmentedVec;
 
 /// Clusters above this size fall back to the greedy iterative
 /// eliminator (`optimize_linear_with_protected`) instead of running
@@ -361,7 +362,7 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
 /// Protected variables (ONE + public inputs, indices
 /// `0..=num_pub_inputs`) are never substituted.
 pub fn optimize_linear_clustered<F: FieldBackend>(
-    constraints: &mut Vec<Constraint<F>>,
+    constraints: &mut SegmentedVec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
     optimize_linear_clustered_with_protected(constraints, num_pub_inputs, &HashSet::new())
@@ -371,7 +372,7 @@ pub fn optimize_linear_clustered<F: FieldBackend>(
 /// indices from substitution. Used by O2's outer loop to shield
 /// decompose aux wires.
 pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
-    constraints: &mut Vec<Constraint<F>>,
+    constraints: &mut SegmentedVec<Constraint<F>>,
     num_pub_inputs: usize,
     extra_protected: &HashSet<usize>,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
@@ -396,7 +397,7 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     loop {
         rounds += 1;
 
-        let var_freq = compute_variable_frequency(constraints);
+        let var_freq = compute_variable_frequency(constraints.iter());
 
         // Round-protected: original protected + everything substituted
         // in earlier rounds. Once a variable has been substituted it
@@ -446,7 +447,10 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
                 // We pass `0` for num_pub_inputs because round_protected
                 // already contains the public-input indices (plus aux
                 // wires + previously-substituted vars).
-                let mut subset = cluster_cons;
+                let mut subset: SegmentedVec<Constraint<F>> = SegmentedVec::new();
+                for c in cluster_cons {
+                    subset.push(c);
+                }
                 let (greedy_subs, _greedy_stats) =
                     optimize_linear_with_protected(&mut subset, 0, &round_protected);
                 for (k, v) in greedy_subs {

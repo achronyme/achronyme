@@ -273,8 +273,8 @@ fn r1cs_optimization_benchmark() {
 
         // Snapshot the unoptimised constraint set for the sparse path so
         // we can measure it independently of the live R1CSCompiler.
-        let pre_opt_constraints: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
-            compiler.cs.constraints().to_vec();
+        let pre_opt_constraints: constraints::SegmentedVec<constraints::r1cs::Constraint<Bn254Fr>> =
+            compiler.cs.constraints().iter().cloned().collect();
         let num_pub_inputs = compiler.cs.num_pub_inputs();
 
         let tp = std::time::Instant::now();
@@ -365,8 +365,8 @@ fn r1cs_optimization_benchmark() {
 
         let before = compiler.cs.num_constraints();
 
-        let pre_opt_constraints: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
-            compiler.cs.constraints().to_vec();
+        let pre_opt_constraints: constraints::SegmentedVec<constraints::r1cs::Constraint<Bn254Fr>> =
+            compiler.cs.constraints().iter().cloned().collect();
         let num_pub_inputs = compiler.cs.num_pub_inputs();
 
         let tp = std::time::Instant::now();

@@ -23,8 +23,9 @@ pub mod plonkish_backend;
 pub mod r1cs_backend;
 pub mod r1cs_gadgets;
 pub mod r1cs_witness;
-pub mod segmented_vec;
 pub mod witness;
+
+pub use constraints::SegmentedVec;
 
 #[cfg(any(test, feature = "test-support"))]
 pub mod lysis_oracle;

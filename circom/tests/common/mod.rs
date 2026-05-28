@@ -576,9 +576,11 @@ pub fn run_sha256_lysis_hard_gate(
 ///   - **(|A|,|B|,|C|)** -- fine-grained term-count distribution; surfaces
 ///     things like the bool-check shape `(1,2,0)` or bit-decomposition
 ///     shape `(1,N,0)` directly.
-pub fn print_constraint_histogram<F: memory::FieldBackend>(
-    constraints: &[constraints::r1cs::Constraint<F>],
-) {
+pub fn print_constraint_histogram<'a, F, I>(constraints: I)
+where
+    F: memory::FieldBackend + 'a,
+    I: IntoIterator<Item = &'a constraints::r1cs::Constraint<F>>,
+{
     use std::collections::BTreeMap;
 
     let mut by_category: BTreeMap<&'static str, usize> = BTreeMap::new();
