@@ -37,7 +37,6 @@ use super::predicates::lc_fingerprint;
 use super::substitution::apply_substitution_in_place;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::{Constraint, LinearCombination, Variable};
-use crate::SegmentedVec;
 
 /// Canonical quadratic monomial: (i, j) with i <= j, both > 0.
 pub(super) type Monomial = (usize, usize);
@@ -105,7 +104,7 @@ pub(super) fn expand_constraint_product<F: FieldBackend>(
 /// Returns a list of `LinearCombination`s, each representing `lc = 0`.
 /// Only returns non-trivial constraints (at least one variable term).
 fn deduce_linear_from_quadratic<F: FieldBackend>(
-    constraints: &SegmentedVec<Constraint<F>>,
+    constraints: &[Constraint<F>],
 ) -> Vec<LinearCombination<F>> {
     if constraints.is_empty() {
         return vec![];
@@ -237,7 +236,7 @@ fn deduce_linear_from_quadratic<F: FieldBackend>(
 /// DEDUCE can then find algebraic dependencies between the simplified
 /// monomials more effectively.
 pub(super) fn decompose_for_deduce_tracked<F: FieldBackend>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
+    constraints: &mut Vec<Constraint<F>>,
     aux_wire_indices: &mut HashSet<usize>,
 ) {
     // Find max variable index to allocate beyond it
@@ -342,7 +341,7 @@ pub(super) fn decompose_for_deduce_tracked<F: FieldBackend>(
 ///
 /// Repeats steps 2-4 until convergence. Rolls back if no improvement.
 pub fn optimize_o2<F: FieldBackend>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
+    constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
     optimize_o2_with_deducer(constraints, num_pub_inputs, deduce_linear_from_quadratic)
@@ -357,13 +356,13 @@ pub fn optimize_o2<F: FieldBackend>(
 /// O1, cleanup O1, aux-wire bookkeeping, rollback, and stats accumulation
 /// are identical across both paths and live here.
 pub(super) fn optimize_o2_with_deducer<F, D>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
+    constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
     deducer: D,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult)
 where
     F: FieldBackend,
-    D: Fn(&SegmentedVec<Constraint<F>>) -> Vec<LinearCombination<F>>,
+    D: Fn(&[Constraint<F>]) -> Vec<LinearCombination<F>>,
 {
     let constraints_before = constraints.len();
 
@@ -396,7 +395,7 @@ where
             let pre_count = constraints.len();
             decompose_for_deduce_tracked(constraints, &mut aux_wire_indices);
             // Extract definitions from new linear constraints: 1 x (LC - w) = 0 -> w = LC
-            for c in constraints.iter().skip(pre_count) {
+            for c in &constraints[pre_count..] {
                 let b = c.b.simplify();
                 // Find the aux wire term (negative coefficient, index in aux_wire_indices)
                 for (var, coeff) in &b.terms {

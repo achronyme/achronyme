@@ -35,7 +35,6 @@ use super::deduce::{expand_constraint_product, optimize_o2_with_deducer, Monomia
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination};
-use crate::SegmentedVec;
 
 /// Largest cluster (in number of constraints) we run full Gaussian
 /// elimination on. Beyond this, the cluster is skipped: full-rank
@@ -238,7 +237,7 @@ fn solve_cluster_sparse<F: FieldBackend>(
 /// Returns one `LinearCombination` per deduction; each is interpreted
 /// as `lc = 0`.
 pub(super) fn deduce_linear_from_quadratic_sparse<F: FieldBackend>(
-    constraints: &SegmentedVec<Constraint<F>>,
+    constraints: &[Constraint<F>],
 ) -> Vec<LinearCombination<F>> {
     if constraints.is_empty() {
         return vec![];
@@ -261,7 +260,7 @@ pub(super) fn deduce_linear_from_quadratic_sparse<F: FieldBackend>(
 /// Sparse-clustered O2 optimization. Same outer-loop structure as the
 /// dense `optimize_o2`; differs only in the DEDUCE inner step.
 pub fn optimize_o2_sparse<F: FieldBackend>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
+    constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
     optimize_o2_with_deducer(

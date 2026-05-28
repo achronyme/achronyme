@@ -34,7 +34,6 @@ use super::substitution::{
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::Constraint;
-use crate::SegmentedVec;
 
 /// Run greedy iterative linear constraint elimination to fixpoint.
 ///
@@ -53,7 +52,7 @@ use crate::SegmentedVec;
 ///      heuristic explicitly (e.g. `test_frequency_heuristic_greedy`).
 #[allow(dead_code)] // wrapper retained for tests exercising greedy directly
 pub(super) fn optimize_linear_greedy<F: FieldBackend>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
+    constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
     optimize_linear_with_protected(constraints, num_pub_inputs, &HashSet::new())
@@ -67,7 +66,7 @@ pub(super) fn optimize_linear_greedy<F: FieldBackend>(
 /// - `deduce::optimize_o2_with_deducer` historically; the current
 ///   call sites use the clustered variant.
 pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
+    constraints: &mut Vec<Constraint<F>>,
     num_pub_inputs: usize,
     extra_protected: &HashSet<usize>,
 ) -> (SubstitutionMap<F>, R1CSOptimizeResult) {
@@ -91,7 +90,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         rounds += 1;
 
         // Compute variable frequency for this round's heuristic
-        let var_freq = compute_variable_frequency(constraints.iter());
+        let var_freq = compute_variable_frequency(constraints);
 
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut to_remove: HashSet<usize> = HashSet::new();
@@ -206,9 +205,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
 
 /// Remove duplicate constraints (same A, B, C after simplification).
 /// Also removes commuted duplicates (A*B=C == B*A=C).
-pub(super) fn deduplicate_constraints<F: FieldBackend>(
-    constraints: &mut SegmentedVec<Constraint<F>>,
-) {
+pub(super) fn deduplicate_constraints<F: FieldBackend>(constraints: &mut Vec<Constraint<F>>) {
     let mut seen: HashSet<Vec<u8>> = HashSet::with_capacity(constraints.len());
 
     constraints.retain(|c| {

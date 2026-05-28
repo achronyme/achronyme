@@ -154,7 +154,7 @@ impl<F: FieldBackend> WitnessOp<F> {
 /// Remove witness ops whose targets have been substituted away, and apply
 /// substitutions to LCs in the remaining ops.
 pub fn apply_substitutions_to_witness_ops<F: FieldBackend>(
-    ops: &mut constraints::SegmentedVec<WitnessOp<F>>,
+    ops: &mut crate::segmented_vec::SegmentedVec<WitnessOp<F>>,
     subs: &SubstitutionMap<F>,
 ) {
     // Remove ops that produce only substituted variables
@@ -277,7 +277,7 @@ pub(crate) fn dispatch_artik_call<F: FieldBackend>(
 /// to capture the compilation trace. Then call `generate()` with concrete input
 /// values to produce a witness that satisfies `cs.verify()`.
 pub struct WitnessGenerator<F: FieldBackend = Bn254Fr> {
-    ops: constraints::SegmentedVec<WitnessOp<F>>,
+    ops: crate::segmented_vec::SegmentedVec<WitnessOp<F>>,
     num_variables: usize,
     public_inputs: Vec<(String, Variable)>,
     witnesses: Vec<(String, Variable)>,

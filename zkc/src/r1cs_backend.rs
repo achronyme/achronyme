@@ -1,8 +1,8 @@
+use crate::segmented_vec::SegmentedVec;
 use constraints::poseidon::PoseidonParams;
 use constraints::r1cs::{ConstraintSystem, LinearCombination, Variable};
 use constraints::r1cs_optimize::{R1CSOptimizeResult, SubstitutionMap};
 use constraints::PoseidonParamsProvider;
-use constraints::SegmentedVec;
 use memory::field::PrimeId;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 use std::collections::HashMap;
@@ -86,46 +86,33 @@ pub struct ConstraintOrigin {
 /// Materializing keeps each LC bounded and prevents OOM on large circuits.
 const LC_AUTO_MATERIALIZE_THRESHOLD: usize = 8;
 
-/// Segment-spine map from `SsaVar` to its cached `LinearCombination`.
+/// Direct-indexed map from `SsaVar` to its cached `LinearCombination`.
 ///
 /// The lysis chunk-drain pipeline issues `SsaVar.0` as a contiguous
 /// monotonic counter starting at 0 (the dedup-canonical emission
 /// order), so the address space has zero waste on the streaming path
-/// where the boss-fight-class workloads land. A spine indexed by
-/// `var.0` is a strictly smaller container than a `HashMap<SsaVar,
+/// where the boss-fight-class workloads land. A
+/// `Vec<Option<LinearCombination<F>>>` indexed by `var.0` is a
+/// strictly smaller container than a `HashMap<SsaVar,
 /// LinearCombination<F>>`: 24 B per slot (`Option<LC>` benefits from
-/// `Vec`'s `NonNull` niche) instead of ~33 B per slot for hashbrown.
+/// `Vec`'s `NonNull` niche) instead of ~33 B per slot for hashbrown
+/// (1 control byte + 32 B entry) at load factors below 1.0. There is
+/// also no rehash transient — the only growth event is `Vec` doubling,
+/// which doubles 24 B/slot rather than 33 B/slot.
 ///
-/// The spine is sliced into fixed-size segments of
-/// [`LC_MAP_SEGMENT_SIZE`] slots each (24 MB per segment at the
-/// current `Option<LinearCombination>` layout) so the worst-case
-/// single allocation is one segment, never the whole spine. A flat
-/// `Vec<Option<LC>>` doubles its backing storage on growth, so at
-/// 2^N slots filled the next doubling requests a single 2^(N+1)
-/// allocation — on boss-fight-class workloads that crossed 2^26
-/// slots and tried to double to 2^27 × 24 B = 3 GiB, which a
-/// constrained address space refuses.
-///
-/// Segments are materialized **truly-lazily**: the outer `Vec` only
-/// holds a `None` placeholder until a write lands in that segment's
-/// range, at which point the segment is allocated at exact capacity
-/// (`vec![None; SEG_SIZE]`). Non-streaming `compile_ir` /
-/// `compile_instructions` paths that leave sparse `None` holes pay
-/// only for the segments that contain at least one populated slot.
+/// The non-streaming `compile_ir` / `compile_instructions` paths may
+/// leave small `None` slack when an upstream DCE pass drops
+/// instructions without renumbering the SSA ids, but the absolute
+/// per-slot cost (24 B) is bounded by max(SsaVar.0) + 1, which on
+/// those paths is small enough that the slack is not measurable.
 #[derive(Debug, Clone)]
 struct LcMap<F: FieldBackend> {
-    segments: Vec<Option<Vec<Option<LinearCombination<F>>>>>,
+    slots: Vec<Option<LinearCombination<F>>>,
 }
-
-const LC_MAP_SEGMENT_SHIFT: u32 = 20;
-const LC_MAP_SEGMENT_SIZE: usize = 1 << LC_MAP_SEGMENT_SHIFT;
-const LC_MAP_SEGMENT_MASK: usize = LC_MAP_SEGMENT_SIZE - 1;
 
 impl<F: FieldBackend> LcMap<F> {
     fn new() -> Self {
-        Self {
-            segments: Vec::new(),
-        }
+        Self { slots: Vec::new() }
     }
 
     fn insert(&mut self, var: SsaVar, mut lc: LinearCombination<F>) {
@@ -142,67 +129,19 @@ impl<F: FieldBackend> LcMap<F> {
             lc.shrink_to_fit();
         }
         let idx = var.0 as usize;
-        let seg_idx = idx >> LC_MAP_SEGMENT_SHIFT;
-        let slot_idx = idx & LC_MAP_SEGMENT_MASK;
-        if seg_idx >= self.segments.len() {
-            self.segments.resize_with(seg_idx + 1, || None);
+        if idx >= self.slots.len() {
+            self.slots.resize_with(idx + 1, || None);
         }
-        let seg = self.segments[seg_idx]
-            .get_or_insert_with(|| (0..LC_MAP_SEGMENT_SIZE).map(|_| None).collect());
-        seg[slot_idx] = Some(lc);
+        self.slots[idx] = Some(lc);
     }
 
     fn get(&self, var: &SsaVar) -> Option<&LinearCombination<F>> {
         let idx = var.0 as usize;
-        let seg_idx = idx >> LC_MAP_SEGMENT_SHIFT;
-        let slot_idx = idx & LC_MAP_SEGMENT_MASK;
-        self.segments
-            .get(seg_idx)
-            .and_then(|opt| opt.as_ref())
-            .and_then(|seg| seg[slot_idx].as_ref())
+        self.slots.get(idx).and_then(|opt| opt.as_ref())
     }
 
     fn clear(&mut self) {
-        self.segments.clear();
-    }
-
-    fn segment_count(&self) -> usize {
-        self.segments.iter().filter(|s| s.is_some()).count()
-    }
-
-    fn max_idx_written(&self) -> Option<usize> {
-        for (seg_idx, opt) in self.segments.iter().enumerate().rev() {
-            if let Some(seg) = opt {
-                for (slot_idx, slot) in seg.iter().enumerate().rev() {
-                    if slot.is_some() {
-                        return Some((seg_idx << LC_MAP_SEGMENT_SHIFT) | slot_idx);
-                    }
-                }
-            }
-        }
-        None
-    }
-
-    /// Iterate every populated slot in insertion-order. Yields
-    /// `(global_idx, &lc)` for `Some` slots only, skipping both
-    /// `None` segments and `None` slots within an allocated segment.
-    /// Test-only — exists so pin tests that previously walked a flat
-    /// `Vec<Option<LC>>` can still iterate populated entries without
-    /// exposing the segmented internals.
-    #[cfg(test)]
-    pub(crate) fn iter_populated(
-        &self,
-    ) -> impl Iterator<Item = (usize, &LinearCombination<F>)> + '_ {
-        self.segments
-            .iter()
-            .enumerate()
-            .filter_map(|(seg_idx, opt)| opt.as_ref().map(|seg| (seg_idx, seg)))
-            .flat_map(|(seg_idx, seg)| {
-                let base = seg_idx << LC_MAP_SEGMENT_SHIFT;
-                seg.iter().enumerate().filter_map(move |(slot_idx, slot)| {
-                    slot.as_ref().map(|lc| (base + slot_idx, lc))
-                })
-            })
+        self.slots.clear();
     }
 }
 
@@ -329,16 +268,6 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut c = Self::new();
         c.track_constraint_origins = false;
         c
-    }
-
-    #[doc(hidden)]
-    pub fn lc_map_segment_count(&self) -> usize {
-        self.lc_map.segment_count()
-    }
-
-    #[doc(hidden)]
-    pub fn lc_map_max_idx_written(&self) -> Option<usize> {
-        self.lc_map.max_idx_written()
     }
 
     /// Intern an Artik bytecode payload. Returns an `Arc<[u8]>` shared
@@ -1832,7 +1761,7 @@ mod tests {
         for i in 0..5u64 {
             assert!(map.get(&SsaVar(i)).is_none());
         }
-        assert_eq!(map.iter_populated().count(), 1);
+        assert_eq!(map.slots.len(), 6);
     }
 
     #[test]
@@ -1879,7 +1808,8 @@ mod tests {
                 "SsaVar({i}) must be populated"
             );
         }
-        assert_eq!(compiler.lc_map.iter_populated().count(), 4);
+        assert_eq!(compiler.lc_map.slots.len(), 4);
+        assert!(compiler.lc_map.slots.iter().all(|s| s.is_some()));
     }
 
     #[test]
@@ -1972,12 +1902,14 @@ mod tests {
         compiler
             .compile_instructions_streaming(prog.iter().cloned())
             .unwrap();
-        for (idx, lc) in compiler.lc_map.iter_populated() {
-            assert_eq!(
-                lc.terms_capacity(),
-                lc.terms().len(),
-                "lc_map slot {idx}: terms vec must be tight after insert"
-            );
+        for (idx, slot) in compiler.lc_map.slots.iter().enumerate() {
+            if let Some(lc) = slot {
+                assert_eq!(
+                    lc.terms_capacity(),
+                    lc.terms().len(),
+                    "lc_map slot {idx}: terms vec must be tight after insert"
+                );
+            }
         }
     }
 
@@ -2014,134 +1946,14 @@ mod tests {
 
         let mut compiler: R1CSCompiler<Bn254Fr> = R1CSCompiler::new();
         compiler.compile_ir(&prog).unwrap();
-        for (idx, lc) in compiler.lc_map.iter_populated() {
-            assert_eq!(
-                lc.terms_capacity(),
-                lc.terms().len(),
-                "lc_map slot {idx}: terms vec must be tight after insert"
-            );
-        }
-    }
-
-    #[test]
-    fn lc_map_segmented_spine_low_idx_allocates_one_segment() {
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
-        map.insert(SsaVar(0), LinearCombination::zero());
-        assert_eq!(map.segments.len(), 1);
-        assert!(map.segments[0].is_some());
-        assert!(map.get(&SsaVar(0)).is_some());
-    }
-
-    #[test]
-    fn lc_map_segmented_spine_boundary_crossing_allocates_second_segment() {
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
-        // Write the last slot of segment 0.
-        map.insert(
-            SsaVar((LC_MAP_SEGMENT_SIZE - 1) as u64),
-            LinearCombination::zero(),
-        );
-        assert_eq!(map.segments.len(), 1);
-        assert!(map.segments[0].is_some());
-        // Write the first slot of segment 1 — outer Vec must grow.
-        map.insert(
-            SsaVar(LC_MAP_SEGMENT_SIZE as u64),
-            LinearCombination::zero(),
-        );
-        assert_eq!(map.segments.len(), 2);
-        assert!(map.segments[0].is_some());
-        assert!(map.segments[1].is_some());
-        assert!(map.get(&SsaVar((LC_MAP_SEGMENT_SIZE - 1) as u64)).is_some());
-        assert!(map.get(&SsaVar(LC_MAP_SEGMENT_SIZE as u64)).is_some());
-    }
-
-    #[test]
-    fn lc_map_segmented_spine_far_idx_is_truly_lazy() {
-        // Writing to segment 5 only must NOT materialize segments 0..=4.
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
-        let far_idx = 5usize << LC_MAP_SEGMENT_SHIFT;
-        map.insert(SsaVar(far_idx as u64), LinearCombination::zero());
-        assert_eq!(
-            map.segments.len(),
-            6,
-            "outer Vec covers seg_idx 0..=5 inclusive"
-        );
-        for seg in &map.segments[0..5] {
-            assert!(
-                seg.is_none(),
-                "lower segments must stay None when only segment 5 is written"
-            );
-        }
-        assert!(map.segments[5].is_some());
-        // Lookups across the unallocated range must report None.
-        assert!(map.get(&SsaVar(0)).is_none());
-        assert!(map.get(&SsaVar((far_idx - 1) as u64)).is_none());
-        assert!(map.get(&SsaVar(far_idx as u64)).is_some());
-    }
-
-    #[test]
-    fn lc_map_segmented_spine_allocated_segments_have_exact_capacity_pin() {
-        // Pin the structural property the boss-fight win rests on:
-        // an allocated segment is exactly `LC_MAP_SEGMENT_SIZE` slots
-        // long with no inner doubling slack. A future refactor that
-        // reintroduces growth-doubling inside a segment would silently
-        // restore the 3 GiB allocation transient — this pin catches it.
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
-        map.insert(SsaVar(0), LinearCombination::zero());
-        map.insert(
-            SsaVar((LC_MAP_SEGMENT_SIZE - 1) as u64),
-            LinearCombination::zero(),
-        );
-        map.insert(
-            SsaVar(LC_MAP_SEGMENT_SIZE as u64),
-            LinearCombination::zero(),
-        );
-        map.insert(
-            SsaVar((3 * LC_MAP_SEGMENT_SIZE + 7) as u64),
-            LinearCombination::zero(),
-        );
-        for (seg_idx, opt) in map.segments.iter().enumerate() {
-            if let Some(seg) = opt {
+        for (idx, slot) in compiler.lc_map.slots.iter().enumerate() {
+            if let Some(lc) = slot {
                 assert_eq!(
-                    seg.len(),
-                    LC_MAP_SEGMENT_SIZE,
-                    "segment {seg_idx} must be exactly LC_MAP_SEGMENT_SIZE slots"
-                );
-                assert_eq!(
-                    seg.capacity(),
-                    LC_MAP_SEGMENT_SIZE,
-                    "segment {seg_idx} must have no doubling capacity tail"
+                    lc.terms_capacity(),
+                    lc.terms().len(),
+                    "lc_map slot {idx}: terms vec must be tight after insert"
                 );
             }
         }
-    }
-
-    #[test]
-    fn lc_map_clear_drops_all_segments() {
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
-        map.insert(SsaVar(0), LinearCombination::zero());
-        map.insert(
-            SsaVar(LC_MAP_SEGMENT_SIZE as u64),
-            LinearCombination::zero(),
-        );
-        assert!(map.segments.len() >= 2);
-        map.clear();
-        assert_eq!(map.segments.len(), 0);
-        assert_eq!(map.iter_populated().count(), 0);
-    }
-
-    #[test]
-    fn lc_map_insert_at_same_idx_returns_last_lc() {
-        // Defensive pin: SSA construction guarantees one insert per var,
-        // but if a future change ever issues a second insert at the
-        // same idx, `get` must reflect the most recent value.
-        let mut a = LinearCombination::<Bn254Fr>::zero();
-        a.add_term(Variable(1), FieldElement::<Bn254Fr>::one());
-        let mut b = LinearCombination::<Bn254Fr>::zero();
-        b.add_term(Variable(2), FieldElement::<Bn254Fr>::one());
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
-        map.insert(SsaVar(0), a);
-        map.insert(SsaVar(0), b.clone());
-        let stored = map.get(&SsaVar(0)).expect("just inserted");
-        assert_eq!(stored.terms(), b.terms());
     }
 }

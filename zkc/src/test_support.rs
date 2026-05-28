@@ -130,15 +130,11 @@ pub fn lc_to_terms<F: FieldBackend>(lc: &LinearCombination<F>) -> Vec<(usize, [u
 /// stable across runs regardless of HashMap iteration leaks in wire
 /// allocation — this is the load-bearing invariant for frozen-baseline
 /// pins.
-pub fn constraint_multiset<'a, F, I>(constraints: I) -> Vec<CanonicalConstraint>
-where
-    F: FieldBackend + 'a,
-    I: IntoIterator<Item = &'a Constraint<F>>,
-{
-    let mut out: Vec<CanonicalConstraint> = constraints
-        .into_iter()
-        .map(canonicalize_constraint)
-        .collect();
+pub fn constraint_multiset<F: FieldBackend>(
+    constraints: &[Constraint<F>],
+) -> Vec<CanonicalConstraint> {
+    let mut out: Vec<CanonicalConstraint> =
+        constraints.iter().map(canonicalize_constraint).collect();
     out.sort();
     out
 }
@@ -179,11 +175,7 @@ pub fn extract_public_inputs<F: FieldBackend>(program: &IrProgram<F>) -> Vec<Str
 /// Only available with `feature = "test-support"` — the helper pulls
 /// in `sha2`, which we don't want in a production build of zkc.
 #[cfg(feature = "test-support")]
-pub fn canonical_multiset_hash<'a, F, I>(constraints: I) -> [u8; 32]
-where
-    F: FieldBackend + 'a,
-    I: IntoIterator<Item = &'a Constraint<F>>,
-{
+pub fn canonical_multiset_hash<F: FieldBackend>(constraints: &[Constraint<F>]) -> [u8; 32] {
     let multiset = constraint_multiset(constraints);
     let mut hasher = Sha256::new();
     for c in &multiset {
@@ -247,8 +239,9 @@ pub fn compute_frozen_baseline<F: PoseidonParamsProvider>(
         .compile_ir(program)
         .expect("R1CS compilation must succeed for frozen baseline fixture");
 
-    let pre_o1_hash = canonical_multiset_hash(compiler.cs.constraints());
-    let pre_o1_count = compiler.cs.constraints().len();
+    let pre_o1_constraints: Vec<Constraint<F>> = compiler.cs.constraints().to_vec();
+    let pre_o1_hash = canonical_multiset_hash(&pre_o1_constraints);
+    let pre_o1_count = pre_o1_constraints.len();
 
     compiler.optimize_r1cs();
 

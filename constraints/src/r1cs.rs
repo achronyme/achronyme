@@ -12,8 +12,6 @@ use std::fmt;
 
 use memory::{Bn254Fr, FieldBackend, FieldElement};
 
-use crate::SegmentedVec;
-
 // ============================================================================
 // Error types
 // ============================================================================
@@ -417,13 +415,8 @@ pub struct ConstraintSystem<F: FieldBackend = Bn254Fr> {
     num_variables: usize,
     /// Number of public input variables (indices 1..=num_pub_inputs).
     num_pub_inputs: usize,
-    /// All constraints: each is (A, B, C) with A * B = C. Stored
-    /// segmented so the worst-case single allocation during emission
-    /// is bounded by `SegmentedVec::DEFAULT_SEGMENT_MAX *
-    /// sizeof::<Constraint<F>>()` (~75 MB at the current layout),
-    /// rather than the `Vec`-doubling `2 * len * sizeof::<Constraint<F>>()`
-    /// that crossed multi-gigabyte requests on heavy circuits.
-    constraints: SegmentedVec<Constraint<F>>,
+    /// All constraints: each is (A, B, C) with A * B = C.
+    constraints: Vec<Constraint<F>>,
 }
 
 impl<F: FieldBackend> Default for ConstraintSystem<F> {
@@ -438,7 +431,7 @@ impl<F: FieldBackend> ConstraintSystem<F> {
             // Variable 0 = ONE (constant wire)
             num_variables: 1,
             num_pub_inputs: 0,
-            constraints: SegmentedVec::new(),
+            constraints: Vec::new(),
         }
     }
 
@@ -495,16 +488,8 @@ impl<F: FieldBackend> ConstraintSystem<F> {
     }
 
     /// Access constraints for serialization or verification.
-    pub fn constraints(&self) -> &SegmentedVec<Constraint<F>> {
+    pub fn constraints(&self) -> &[Constraint<F>] {
         &self.constraints
-    }
-
-    /// Number of segments the constraint store currently spans.
-    /// Visible to keep the boss-fight RSS probe honest about the
-    /// segmented spine; not part of the supported API.
-    #[doc(hidden)]
-    pub fn constraints_segment_count(&self) -> usize {
-        self.constraints.segment_count()
     }
 
     /// Run linear constraint elimination on this constraint system.

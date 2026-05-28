@@ -476,8 +476,8 @@ fn sha256_64_o2_sparse_probe() {
     // reruns O1 (no-op on already-O1 input) then enters its
     // decompose + DEDUCE outer loop. Any extra reductions surface as
     // a delta vs post_o1.
-    let post_o1_snapshot: constraints::SegmentedVec<constraints::r1cs::Constraint<Bn254Fr>> =
-        rc.cs.constraints().iter().cloned().collect();
+    let post_o1_snapshot: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
+        rc.cs.constraints().to_vec();
 
     let t5 = Instant::now();
     let mut sparse_constraints = post_o1_snapshot;
