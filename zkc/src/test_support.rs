@@ -53,12 +53,47 @@ pub fn compile_and_solve(
     public: &[(&str, FieldElement)],
     witness_inputs: &[(&str, FieldElement)],
 ) -> (R1CSCompiler, Vec<FieldElement>) {
+    compile_and_solve_with(false, source, public, witness_inputs)
+}
+
+/// Like [`compile_and_solve`] but drives the incremental-collapse
+/// compiler (`new_incremental`): linear elimination is folded into
+/// constraint emission. The returned `cs` is the collapse-survivor
+/// system (before any finalize pass); the witness is generated on the
+/// full op trace (collapse does not prune ops) and verified against the
+/// survivors. Call `optimize_r1cs()` to finalize, then
+/// [`apply_substitutions`] — the stored map is then the composed
+/// collapse∘finalize map, and re-deriving from the full witness is a
+/// consistent no-op.
+///
+/// This is the Flow-A witness path (full witness first, optimize second,
+/// re-fill third), the only flow any production caller uses. A
+/// regenerate-after-optimize flow would replay pruned ops and is *not*
+/// what this exercises.
+pub fn compile_and_solve_incremental(
+    source: &str,
+    public: &[(&str, FieldElement)],
+    witness_inputs: &[(&str, FieldElement)],
+) -> (R1CSCompiler, Vec<FieldElement>) {
+    compile_and_solve_with(true, source, public, witness_inputs)
+}
+
+fn compile_and_solve_with(
+    incremental: bool,
+    source: &str,
+    public: &[(&str, FieldElement)],
+    witness_inputs: &[(&str, FieldElement)],
+) -> (R1CSCompiler, Vec<FieldElement>) {
     let pub_names: Vec<&str> = public.iter().map(|(n, _)| *n).collect();
     let wit_names: Vec<&str> = witness_inputs.iter().map(|(n, _)| *n).collect();
     let mut program = IrLowering::lower_circuit(source, &pub_names, &wit_names).unwrap();
     ir::passes::optimize(&mut program);
 
-    let mut compiler = R1CSCompiler::new();
+    let mut compiler = if incremental {
+        R1CSCompiler::new_incremental()
+    } else {
+        R1CSCompiler::new()
+    };
     compiler.compile_ir(&program).unwrap();
 
     let wg = WitnessGenerator::from_compiler(&compiler);
@@ -70,7 +105,7 @@ pub fn compile_and_solve(
     compiler
         .cs
         .verify(&w)
-        .expect("pre-O1 R1CS must verify on solved witness");
+        .expect("emitted R1CS must verify on solved witness");
 
     (compiler, w)
 }

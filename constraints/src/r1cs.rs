@@ -417,6 +417,16 @@ pub struct ConstraintSystem<F: FieldBackend = Bn254Fr> {
     num_pub_inputs: usize,
     /// All constraints: each is (A, B, C) with A * B = C.
     constraints: Vec<Constraint<F>>,
+    /// Incremental linear-collapse state. `None` (default) means
+    /// constraints are stored verbatim. `Some` routes every [`enforce`]
+    /// through the collapser, which folds linear constraints into a
+    /// substitution map at emission time so `constraints` holds only the
+    /// post-elimination survivors. Opt-in via
+    /// [`enable_incremental_collapse`]; the default path is unchanged.
+    ///
+    /// [`enforce`]: ConstraintSystem::enforce
+    /// [`enable_incremental_collapse`]: ConstraintSystem::enable_incremental_collapse
+    collapse: Option<crate::r1cs_optimize::IncrementalCollapse<F>>,
 }
 
 impl<F: FieldBackend> Default for ConstraintSystem<F> {
@@ -432,7 +442,41 @@ impl<F: FieldBackend> ConstraintSystem<F> {
             num_variables: 1,
             num_pub_inputs: 0,
             constraints: Vec::new(),
+            collapse: None,
         }
+    }
+
+    /// Enable incremental linear collapse: subsequent [`enforce`] calls fold
+    /// linear constraints into a substitution map at emission time instead of
+    /// storing them, so `constraints` only ever holds post-elimination
+    /// survivors. Off by default. Must be enabled BEFORE emission begins and
+    /// AFTER public inputs are allocated (the protected set snapshots
+    /// `num_pub_inputs`). Eliminated wires are recovered from the
+    /// substitution map at witness time — see
+    /// [`take_collapse_substitution_map`].
+    ///
+    /// [`enforce`]: ConstraintSystem::enforce
+    /// [`take_collapse_substitution_map`]: ConstraintSystem::take_collapse_substitution_map
+    pub fn enable_incremental_collapse(&mut self) {
+        self.collapse = Some(crate::r1cs_optimize::IncrementalCollapse::new(
+            self.num_pub_inputs,
+        ));
+    }
+
+    /// Whether incremental collapse is active.
+    pub fn incremental_collapse_enabled(&self) -> bool {
+        self.collapse.is_some()
+    }
+
+    /// Take the substitution map accumulated by incremental collapse,
+    /// disabling further collapse. Returns `None` if collapse was never
+    /// enabled. The map (eliminated `Variable.index()` → replacement
+    /// `LinearCombination`) is consumed by witness generation to reconstruct
+    /// eliminated wires, exactly as the batch optimizer's map is.
+    pub fn take_collapse_substitution_map(
+        &mut self,
+    ) -> Option<crate::r1cs_optimize::SubstitutionMap<F>> {
+        self.collapse.take().map(|c| c.into_substitution_map())
     }
 
     // --- Variable allocation ---
@@ -443,6 +487,11 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         let idx = self.num_variables;
         self.num_variables += 1;
         self.num_pub_inputs += 1;
+        // Keep the collapser's protected set tracking the full public range
+        // even when inputs are allocated after collapse is enabled.
+        if let Some(collapse) = self.collapse.as_mut() {
+            collapse.protect(idx);
+        }
         Variable(idx)
     }
 
@@ -462,7 +511,20 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         b: LinearCombination<F>,
         c: LinearCombination<F>,
     ) {
-        self.constraints.push(Constraint { a, b, c });
+        let constraint = Constraint { a, b, c };
+        match self.collapse.take() {
+            // Default path: store verbatim, byte-identical to before.
+            None => self.constraints.push(constraint),
+            // Collapse path: fold the constraint, store only survivors.
+            // Take/restore avoids borrowing `collapse` and `constraints`
+            // simultaneously.
+            Some(mut collapse) => {
+                if let Some(survivor) = collapse.fold(constraint) {
+                    self.constraints.push(survivor);
+                }
+                self.collapse = Some(collapse);
+            }
+        }
     }
 
     /// Convenience: constrain x = y via x * 1 = y.

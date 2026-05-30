@@ -70,9 +70,11 @@
 //! the wrong elimination, off-by-one in linear extraction) and is what
 //! this test catches today.
 
-use memory::FieldElement;
+use constraints::poseidon::native::poseidon_hash;
+use constraints::PoseidonParamsProvider;
+use memory::{Bn254Fr, FieldElement};
 use proptest::prelude::*;
-use zkc::test_support::{apply_substitutions, compile_and_solve};
+use zkc::test_support::{apply_substitutions, compile_and_solve, compile_and_solve_incremental};
 
 // ============================================================================
 // Forward simulation: same witness verifies before and after optimize
@@ -167,6 +169,197 @@ proptest! {
 }
 
 // ============================================================================
+// Incremental collapse: the same simulation through collapse + finalize
+// ============================================================================
+//
+// The incremental compiler folds linear elimination into emission, then
+// `optimize_r1cs` finalizes over the survivors and composes the two
+// substitution maps. These pin that the composed-map reconstruction
+// preserves satisfaction (forward) and stays consistent — i.e. landing
+// the collapse path does not weaken the property the batch path holds.
+//
+// Flow A is mandatory here: `compile_and_solve_incremental` builds the
+// full witness on the collapse-survivor system *before* `optimize_r1cs`,
+// so every wire (including direct-`Variable` op inputs) is computed by an
+// intact op; the post-finalize `apply_substitutions` is then a consistent
+// re-derive over the composed map. A regenerate-after-optimize flow would
+// replay pruned ops and spuriously fail on materialized op inputs.
+
+proptest! {
+    #![proptest_config(ProptestConfig::with_cases(150))]
+
+    /// Forward simulation through collapse + finalize for an arithmetic
+    /// circuit.
+    #[test]
+    fn incremental_preserves_satisfaction_arith(
+        a in 0u64..1_000_000,
+        b in 1u64..10_000,
+    ) {
+        let a_fe = FieldElement::from_u64(a);
+        let b_fe = FieldElement::from_u64(b);
+        let out_fe = a_fe.mul(&b_fe).add(&a_fe);
+        let (mut compiler, w_pre) = compile_and_solve_incremental(
+            "assert_eq(a * b + a, out)",
+            &[("out", out_fe)],
+            &[("a", a_fe), ("b", b_fe)],
+        );
+
+        compiler.optimize_r1cs();
+        let w_post = apply_substitutions(&compiler, &w_pre);
+        prop_assert!(
+            compiler.cs.verify(&w_post).is_ok(),
+            "collapse + finalize rejected witness that satisfied the survivors",
+        );
+    }
+
+    /// Forward simulation through collapse + finalize with division
+    /// (exercises a witness hint op).
+    #[test]
+    fn incremental_preserves_satisfaction_div(
+        a in 0u64..1_000_000,
+        b in 1u64..10_000,
+    ) {
+        let a_fe = FieldElement::from_u64(a);
+        let b_fe = FieldElement::from_u64(b);
+        let prod = a_fe.mul(&b_fe);
+        let (mut compiler, w_pre) = compile_and_solve_incremental(
+            "assert_eq(ab / b, out)",
+            &[("out", a_fe)],
+            &[("ab", prod), ("b", b_fe)],
+        );
+
+        compiler.optimize_r1cs();
+        let w_post = apply_substitutions(&compiler, &w_pre);
+        prop_assert!(
+            compiler.cs.verify(&w_post).is_ok(),
+            "collapse + finalize rejected witness that satisfied the survivors (div)",
+        );
+    }
+
+    /// Forward simulation through collapse + an **O2** finalize.
+    /// `optimize_r1cs_o2` routes through the same composed-map install as
+    /// O1, so this pins that DEDUCE-on-survivors composes soundly with the
+    /// collapse map (DEDUCE cannot re-eliminate a collapse wire — same
+    /// disjoint-domain invariant the composition asserts).
+    #[test]
+    fn incremental_preserves_satisfaction_o2_finalize(
+        a in 0u64..1_000_000,
+        b in 1u64..10_000,
+    ) {
+        let a_fe = FieldElement::from_u64(a);
+        let b_fe = FieldElement::from_u64(b);
+        let out_fe = a_fe.mul(&b_fe).add(&a_fe);
+        let (mut compiler, w_pre) = compile_and_solve_incremental(
+            "assert_eq(a * b + a, out)",
+            &[("out", out_fe)],
+            &[("a", a_fe), ("b", b_fe)],
+        );
+
+        compiler.optimize_r1cs_o2();
+        let w_post = apply_substitutions(&compiler, &w_pre);
+        prop_assert!(
+            compiler.cs.verify(&w_post).is_ok(),
+            "collapse + O2 finalize rejected witness that satisfied the survivors",
+        );
+    }
+
+    /// Composed-map consistency *and canonicity*. Consistency (every
+    /// `(var, lc)` reconstructs the wire's true value) catches a
+    /// value-corrupting compose bug. Canonicity (no replacement
+    /// references an eliminated wire) is the invariant the Flow-A
+    /// forward-simulation cannot see — on a full witness, a single-pass
+    /// re-derive yields correct values even from a non-canonical map, so
+    /// "forgot to fold the finalize map into a collapse replacement"
+    /// would pass forward-sim silently. This assertion catches it
+    /// directly, which is what makes the composition itself a tested
+    /// invariant rather than an argued one.
+    #[test]
+    fn incremental_composed_map_is_consistent_and_canonical(
+        a in 0u64..1_000_000,
+        b in 1u64..10_000,
+    ) {
+        let a_fe = FieldElement::from_u64(a);
+        let b_fe = FieldElement::from_u64(b);
+        let out_fe = a_fe.mul(&b_fe).add(&a_fe);
+        let (mut compiler, w_pre) = compile_and_solve_incremental(
+            "assert_eq(a * b + a, out)",
+            &[("out", out_fe)],
+            &[("a", a_fe), ("b", b_fe)],
+        );
+
+        compiler.optimize_r1cs();
+        let subs = compiler
+            .substitution_map
+            .as_ref()
+            .expect("collapse + finalize must produce a substitution map");
+        // Non-vacuity: this circuit must actually eliminate a wire, else
+        // the canonicity sweep below would pass on an empty map.
+        prop_assert!(!subs.is_empty(), "composed map is empty — collapse made no progress");
+        for (var, lc) in subs {
+            let computed = lc
+                .evaluate(&w_pre)
+                .expect("composed substitution LC must evaluate");
+            prop_assert_eq!(
+                w_pre[*var],
+                computed,
+                "composed_map[{}] reconstructs {:?} but witness has {:?}",
+                var,
+                computed,
+                w_pre[*var],
+            );
+            for (v, _) in lc.terms() {
+                prop_assert!(
+                    !subs.contains_key(&v.index()),
+                    "composed_map[{}] references eliminated wire {} — \
+                     non-canonical map (a single-pass witness fixup would \
+                     be order-dependent)",
+                    var,
+                    v.index(),
+                );
+            }
+        }
+    }
+}
+
+proptest! {
+    // Poseidon is ~360 constraints per hash; fewer cases keep this brisk
+    // while still sweeping inputs. This is the hash-op shape whose inputs
+    // are materialized into fresh wires — the case a pure-arithmetic
+    // generator would never reach.
+    #![proptest_config(ProptestConfig::with_cases(32))]
+
+    /// Forward simulation through collapse + finalize for a native
+    /// poseidon whose first argument (`a + b`) is materialized into a
+    /// fresh wire fed as a direct-`Variable` op input.
+    #[test]
+    fn incremental_preserves_satisfaction_poseidon(
+        a in 0u64..1_000_000,
+        b in 0u64..1_000_000,
+        c in 1u64..1_000_000,
+        d in 1u64..1_000_000,
+    ) {
+        let params = <Bn254Fr as PoseidonParamsProvider>::default_poseidon_t3();
+        let a_fe = FieldElement::from_u64(a);
+        let b_fe = FieldElement::from_u64(b);
+        let c_fe = FieldElement::from_u64(c);
+        let d_fe = FieldElement::from_u64(d);
+        let out_fe = poseidon_hash(&params, a_fe.add(&b_fe), c_fe.mul(&d_fe));
+        let (mut compiler, w_pre) = compile_and_solve_incremental(
+            "assert_eq(poseidon(a + b, c * d), out)",
+            &[("out", out_fe)],
+            &[("a", a_fe), ("b", b_fe), ("c", c_fe), ("d", d_fe)],
+        );
+
+        compiler.optimize_r1cs();
+        let w_post = apply_substitutions(&compiler, &w_pre);
+        prop_assert!(
+            compiler.cs.verify(&w_post).is_ok(),
+            "collapse + finalize rejected a valid poseidon witness",
+        );
+    }
+}
+
+// ============================================================================
 // Backward direction (hand-built): perturbed witness rejected by both
 // pre-O1 and post-O1
 // ============================================================================
@@ -224,5 +417,49 @@ fn optimize_does_not_admit_perturbed_witness() {
         "post-O1 admitted a witness with a perturbed public input wire — \
          backward simulation broken: an adversary could forge `out` post-O1 \
          while the pre-O1 system would reject it."
+    );
+}
+
+/// Backward-simulation pin for the incremental path: a perturbed public
+/// input wire is rejected after collapse + finalize. Public inputs are
+/// barred from collapse and protected by the finalize pass, so their
+/// constraint chain survives both — an adversary cannot forge `out`.
+#[test]
+fn incremental_does_not_admit_perturbed_witness() {
+    let a = FieldElement::from_u64(7);
+    let b = FieldElement::from_u64(11);
+    let out = a.mul(&b).add(&a);
+    let (mut compiler, w_pre) = compile_and_solve_incremental(
+        "assert_eq(a * b + a, out)",
+        &[("out", out)],
+        &[("a", a), ("b", b)],
+    );
+
+    let out_wire = compiler.bindings.get("out").copied().expect("out wire");
+
+    assert!(
+        compiler.cs.verify(&w_pre).is_ok(),
+        "honest collapse-survivor system must verify"
+    );
+
+    compiler.optimize_r1cs();
+    let mut w_post = apply_substitutions(&compiler, &w_pre);
+    assert!(
+        compiler.cs.verify(&w_post).is_ok(),
+        "honest collapse + finalize must verify (forward simulation)"
+    );
+
+    let wrong = FieldElement::from_u64(99999);
+    assert_ne!(
+        w_post[out_wire.index()],
+        wrong,
+        "test setup: perturbation must differ from honest"
+    );
+    w_post[out_wire.index()] = wrong;
+
+    assert!(
+        compiler.cs.verify(&w_post).is_err(),
+        "collapse + finalize admitted a witness with a perturbed public input wire — \
+         backward simulation broken: an adversary could forge `out`."
     );
 }

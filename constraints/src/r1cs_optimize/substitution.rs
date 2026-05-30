@@ -153,3 +153,43 @@ pub(super) fn solve_for_variable<F: FieldBackend>(
 
     Some((target_var, result))
 }
+
+/// Compose two substitution maps that were applied in sequence: `earlier`
+/// first (the incremental-collapse pass folded during constraint
+/// emission), then `later` (the batch finalize pass over the collapse
+/// survivors). Returns a single map equivalent to applying `earlier` then
+/// `later`, so one forward pass over the result reconstructs every
+/// eliminated wire.
+///
+/// A wire eliminated by `earlier` is replaced by an LC over the collapse
+/// survivors; some of those survivors may themselves be eliminated by
+/// `later`, so `later` is substituted into each `earlier` replacement.
+/// Wires eliminated by `later` keep their replacement verbatim.
+///
+/// Preconditions, both of which hold for collapse∘finalize:
+/// - **Disjoint domains.** `later` runs on the survivors `earlier` kept,
+///   and no survivor references an `earlier`-eliminated wire, so `later`
+///   cannot re-eliminate a wire `earlier` already removed. Asserted (not
+///   `debug_assert`): a silent overwrite here would drop a wire's
+///   reconstruction and yield a witness that satisfies a forged proof.
+/// - **Each input map is canonical** (no replacement references a wire
+///   the same map eliminates). The result is then canonical too — every
+///   replacement references only wires eliminated by neither map — so a
+///   single-pass witness fixup over it is order-independent.
+pub fn compose_substitution_maps<F: FieldBackend>(
+    mut earlier: SubstitutionMap<F>,
+    later: &SubstitutionMap<F>,
+) -> SubstitutionMap<F> {
+    for lc in earlier.values_mut() {
+        apply_substitution_in_place(lc, later);
+    }
+    for (var_idx, lc) in later {
+        let prev = earlier.insert(*var_idx, lc.clone());
+        assert!(
+            prev.is_none(),
+            "compose_substitution_maps: overlapping domains at wire {var_idx} \
+             (the finalize pass re-eliminated a wire the collapse pass already removed)"
+        );
+    }
+    earlier
+}

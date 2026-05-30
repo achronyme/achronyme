@@ -54,6 +54,7 @@
 
 mod deduce;
 mod deduce_sparse;
+mod incremental;
 mod linear;
 mod linear_cluster;
 mod predicates;
@@ -67,7 +68,9 @@ pub use deduce_sparse::optimize_o2_sparse;
 // implementation is preserved as a private helper
 // (`linear::optimize_linear_with_protected`) and called as the
 // per-cluster fallback for clusters above CLUSTER_FALLBACK_THRESHOLD.
+pub use incremental::IncrementalCollapse;
 pub use linear_cluster::optimize_linear_clustered as optimize_linear;
+pub use substitution::compose_substitution_maps;
 pub use types::{R1CSOptimizeResult, SubstitutionMap};
 
 #[cfg(test)]

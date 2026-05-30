@@ -270,6 +270,21 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         c
     }
 
+    /// Create a compiler that folds linear-constraint elimination into
+    /// emission (incremental collapse). The underlying constraint system
+    /// never materializes the unoptimized set: each linear constraint is
+    /// absorbed into a substitution map at `enforce` time, so
+    /// `cs.num_constraints()` tracks the post-elimination survivor count
+    /// rather than the pre-optimization total. Builds on `new_lean`
+    /// (origin tracking is meaningless once constraints are folded at
+    /// emission). After compilation, recover the substitution map for
+    /// witness fixup via `cs.take_collapse_substitution_map()`.
+    pub fn new_incremental() -> Self {
+        let mut c = Self::new_lean();
+        c.cs.enable_incremental_collapse();
+        c
+    }
+
     /// Intern an Artik bytecode payload. Returns an `Arc<[u8]>` shared
     /// with prior emissions whose `program_bytes` are byte-identical;
     /// otherwise allocates a fresh `Arc` and registers it.
@@ -330,25 +345,46 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// The substitution map is stored for witness post-fixup.
     pub fn optimize_r1cs(&mut self) -> R1CSOptimizeResult {
         let (subs, stats) = self.cs.optimize_linear();
+        self.install_finalize_substitutions(subs);
+        stats
+    }
+
+    /// Install a finalize pass's substitution map: compose it with the
+    /// incremental-collapse map (when collapse was enabled during
+    /// emission), apply the result to `witness_ops`, and store it for
+    /// witness reconstruction.
+    ///
+    /// When collapse is disabled (`take_collapse_substitution_map` →
+    /// `None`) this is exactly the legacy path: store `finalize_subs`
+    /// verbatim. When collapse ran, the finalize pass operated on the
+    /// collapse survivors, so its map alone reconstructs only the wires
+    /// *it* eliminated; the collapse map must be composed in (collapse
+    /// applied first, finalize second) so a single witness fixup
+    /// reconstructs every eliminated wire. Routing every finalize entry
+    /// through here closes the trap where collapse + an O2 finalize would
+    /// otherwise silently drop the collapse map.
+    fn install_finalize_substitutions(&mut self, finalize_subs: SubstitutionMap<F>) {
+        let subs = match self.cs.take_collapse_substitution_map() {
+            Some(collapse_subs) => {
+                constraints::r1cs_optimize::compose_substitution_maps(collapse_subs, &finalize_subs)
+            }
+            None => finalize_subs,
+        };
 
         if !subs.is_empty() {
-            // Update witness ops
+            // Drop ops that produce only eliminated wires and rewrite the
+            // source LCs of the survivors. The composed map is canonical,
+            // so this single pass is equivalent to applying collapse then
+            // finalize in sequence.
             crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
 
-            // Filter constraint_origins to match the new constraint list.
-            // We need to rebuild it: the optimization removed some constraints
-            // and the remaining ones shifted indices. Since optimize_linear
-            // operates on the Vec<Constraint> directly, we rebuild origins
-            // by keeping only entries whose constraint index survived.
-            // However, optimize_linear replaces the constraint vec entirely,
-            // so the old indices are gone. We clear origins for now —
-            // the inspector can still work without them.
+            // optimize_linear replaces the constraint vec wholesale, so the
+            // old per-constraint origin indices no longer map to anything;
+            // clear them (the inspector degrades gracefully without origins).
             self.constraint_origins.clear();
 
             self.substitution_map = Some(subs);
         }
-
-        stats
     }
 
     /// Run O2 constraint simplification on the compiled R1CS.
@@ -358,13 +394,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// on the monomial matrix. Matches circom `--O2`.
     pub fn optimize_r1cs_o2(&mut self) -> R1CSOptimizeResult {
         let (subs, stats) = self.cs.optimize_o2();
-
-        if !subs.is_empty() {
-            crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
-            self.constraint_origins.clear();
-            self.substitution_map = Some(subs);
-        }
-
+        self.install_finalize_substitutions(subs);
         stats
     }
 
@@ -384,13 +414,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// cluster's quadratic constraints stay in the system unchanged.
     pub fn optimize_r1cs_o2_sparse(&mut self) -> R1CSOptimizeResult {
         let (subs, stats) = self.cs.optimize_o2_sparse();
-
-        if !subs.is_empty() {
-            crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
-            self.constraint_origins.clear();
-            self.substitution_map = Some(subs);
-        }
-
+        self.install_finalize_substitutions(subs);
         stats
     }
 
