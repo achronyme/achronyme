@@ -79,6 +79,7 @@ use lysis::lower::{AllocError, RegAllocator, RegId};
 use lysis::program::Program;
 use lysis::ProgramBuilder;
 use memory::{FieldBackend, FieldElement, FieldFamily};
+use std::time::Instant;
 
 use super::extract::{lift_uniform_loops, ExtractError, TemplateRegistry, MAX_FRAME_SIZE};
 use crate::extended::{IndexedEffectKind, ShiftDirection};
@@ -423,7 +424,13 @@ impl<F: FieldBackend> Walker<F> {
     /// place via owned `Vec`, and the lifted form fully replaces the
     /// caller's body before any per-instruction work begins.
     pub fn lower(mut self, body: Vec<ExtendedInstruction<F>>) -> Result<Program<F>, WalkError> {
+        let lower_trace =
+            std::env::var("ACH_LYSIS_TRACE").is_ok() || std::env::var("LYSIS_WALKER_TRACE").is_ok();
+        let lower_start = lower_trace.then(Instant::now);
+        let input_len = body.len();
+
         let mut registry = TemplateRegistry::<F>::new();
+        let lift_start = lower_trace.then(Instant::now);
         let lifted = lift_uniform_loops(body, &mut registry, &FixedBitSet::new()).map_err(|e| {
             // The lift's frame/template-space errors are walker-relevant
             // — surface them through the existing error channel rather
@@ -441,6 +448,14 @@ impl<F: FieldBackend> Walker<F> {
                 },
             }
         })?;
+        if let Some(start) = lift_start {
+            eprintln!(
+                "[walker.lower] lift_uniform_loops_ms={:.3} input_len={} lifted_len={}",
+                start.elapsed().as_secs_f64() * 1000.0,
+                input_len,
+                lifted.len(),
+            );
+        }
 
         // Lazy `one` loading: deferred to first desugaring that needs
         // it, so wide single-instruction templates (Decompose, Or)
@@ -451,7 +466,19 @@ impl<F: FieldBackend> Walker<F> {
         // referenced-SsaVar HashSet from `body[next_idx..]` on every
         // split (148 M visits across 1,288 SHA-256(64) splits in the
         // pre-fix profile, 99 % of `walker.lower`'s wall time).
+        let last_use_start = lower_trace.then(Instant::now);
         let last_use_idx = compute_last_use_idx(&body);
+        if let Some(start) = last_use_start {
+            eprintln!(
+                "[walker.lower] compute_last_use_idx_ms={:.3} entries={}",
+                start.elapsed().as_secs_f64() * 1000.0,
+                last_use_idx.len(),
+            );
+        }
+
+        let emit_start = lower_trace.then(Instant::now);
+        let mut split_count = 0usize;
+        let mut split_nanos = 0u128;
         for (i, inst) in body.iter().enumerate() {
             // Pre-emit split decision. Skip the check at i == 0 —
             // the allocator is at most at 1 (just the `one` const)
@@ -465,7 +492,12 @@ impl<F: FieldBackend> Walker<F> {
                     .saturating_add(cost)
                     .saturating_add(cold_loads);
                 if projected.saturating_add(FRAME_MARGIN) >= FRAME_CAP {
+                    let split_start = lower_trace.then(Instant::now);
                     self.do_split(&body, i, &last_use_idx)?;
+                    split_count += 1;
+                    if let Some(start) = split_start {
+                        split_nanos += start.elapsed().as_nanos();
+                    }
                 }
             }
             self.emit(inst).map_err(|e| match e {
@@ -487,7 +519,30 @@ impl<F: FieldBackend> Walker<F> {
                 other => other,
             })?;
         }
-        self.finalize()
+        if let Some(start) = emit_start {
+            eprintln!(
+                "[walker.lower] emit_loop_ms={:.3} split_count={} split_ms={:.3}",
+                start.elapsed().as_secs_f64() * 1000.0,
+                split_count,
+                split_nanos as f64 / 1_000_000.0,
+            );
+        }
+
+        let finalize_start = lower_trace.then(Instant::now);
+        let program = self.finalize()?;
+        if let Some(start) = finalize_start {
+            eprintln!(
+                "[walker.lower] finalize_ms={:.3}",
+                start.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
+        if let Some(start) = lower_start {
+            eprintln!(
+                "[walker.lower] total_ms={:.3}",
+                start.elapsed().as_secs_f64() * 1000.0,
+            );
+        }
+        Ok(program)
     }
 
     /// Lazy accessor: returns the current frame's `one` register,
