@@ -134,6 +134,22 @@ pub struct LcMapShapeCounts {
     pub stored_terms: usize,
 }
 
+#[derive(Debug, Default, Clone, Copy)]
+pub struct R1CSRetainedStats {
+    pub lc_empty_slots: usize,
+    pub lc_zero_entries: usize,
+    pub lc_unit_variable_entries: usize,
+    pub lc_single_term_entries: usize,
+    pub lc_multi_term_entries: usize,
+    pub lc_stored_terms: usize,
+    pub used_ssa_words: usize,
+    pub proven_boolean_len: usize,
+    pub bool_enforced_len: usize,
+    pub range_bounds_len: usize,
+    pub divmod_cache_len: usize,
+    pub artik_program_intern_len: usize,
+}
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 #[repr(u8)]
 enum LcTag {
@@ -143,70 +159,95 @@ enum LcTag {
     Terms = 3,
 }
 
+impl LcTag {
+    fn from_slot(slot: u32) -> Self {
+        match slot & 0b11 {
+            0 => Self::Empty,
+            1 => Self::Zero,
+            2 => Self::Variable,
+            3 => Self::Terms,
+            _ => unreachable!("masked LC slot tag is always <= 3"),
+        }
+    }
+}
+
 #[derive(Debug, Clone)]
 struct LcMapSegment<F: FieldBackend> {
-    tags: Vec<LcTag>,
-    payloads: Vec<usize>,
-    lens: Vec<u16>,
+    slots: Vec<u32>,
+    term_starts: Vec<u32>,
+    term_lens: Vec<u16>,
     terms: Vec<(Variable, FieldElement<F>)>,
 }
 
 impl<F: FieldBackend> LcMapSegment<F> {
+    const TAG_BITS: u32 = 2;
+    const MAX_PAYLOAD: usize = (1usize << (u32::BITS - Self::TAG_BITS)) - 1;
+
     fn new(segment_len: usize) -> Self {
         Self {
-            tags: vec![LcTag::Empty; segment_len],
-            payloads: vec![0; segment_len],
-            lens: vec![0; segment_len],
+            slots: vec![0; segment_len],
+            term_starts: Vec::new(),
+            term_lens: Vec::new(),
             terms: Vec::new(),
         }
+    }
+
+    fn slot(tag: LcTag, payload: usize) -> u32 {
+        assert!(
+            payload <= Self::MAX_PAYLOAD,
+            "R1CS LC map packed payload exceeded 30 bits"
+        );
+        ((payload as u32) << Self::TAG_BITS) | tag as u32
     }
 
     fn insert(&mut self, offset: usize, lc: LinearCombination<F>) {
         let terms = lc.into_terms();
         match terms.as_slice() {
             [] => {
-                self.tags[offset] = LcTag::Zero;
-                self.payloads[offset] = 0;
-                self.lens[offset] = 0;
+                self.slots[offset] = Self::slot(LcTag::Zero, 0);
             }
             [(var, coeff)] if *coeff == FieldElement::<F>::one() => {
-                self.tags[offset] = LcTag::Variable;
-                self.payloads[offset] = var.0;
-                self.lens[offset] = 0;
+                self.slots[offset] = Self::slot(LcTag::Variable, var.0);
             }
             _ => {
                 let len =
                     u16::try_from(terms.len()).expect("R1CS LC map entry exceeded u16 term length");
                 let start = self.terms.len();
+                let entry_idx = self.term_starts.len();
                 self.terms.extend(terms);
-                self.tags[offset] = LcTag::Terms;
-                self.payloads[offset] = start;
-                self.lens[offset] = len;
+                self.term_starts.push(
+                    u32::try_from(start).expect("R1CS LC map term arena exceeded u32 payload"),
+                );
+                self.term_lens.push(len);
+                self.slots[offset] = Self::slot(LcTag::Terms, entry_idx);
             }
         }
     }
 
     fn get(&self, offset: usize) -> Option<LcMapEntry<F>> {
-        match self.tags.get(offset).copied()? {
+        let slot = self.slots.get(offset).copied()?;
+        let payload = (slot >> Self::TAG_BITS) as usize;
+        match LcTag::from_slot(slot) {
             LcTag::Empty => None,
             LcTag::Zero => Some(LcMapEntry::Zero),
-            LcTag::Variable => Some(LcMapEntry::Variable(Variable(self.payloads[offset]))),
+            LcTag::Variable => Some(LcMapEntry::Variable(Variable(payload))),
             LcTag::Terms => {
-                let start = self.payloads[offset];
-                let len = self.lens[offset] as usize;
+                let start = self.term_starts[payload] as usize;
+                let len = self.term_lens[payload] as usize;
                 Some(LcMapEntry::Terms(self.terms[start..start + len].to_vec()))
             }
         }
     }
 
     fn shape_counts(&self, counts: &mut LcMapShapeCounts) {
-        for (offset, tag) in self.tags.iter().enumerate() {
-            match tag {
+        for slot in &self.slots {
+            let payload = (*slot >> Self::TAG_BITS) as usize;
+            match LcTag::from_slot(*slot) {
                 LcTag::Empty => counts.empty_slots += 1,
                 LcTag::Zero => counts.zero_entries += 1,
                 LcTag::Variable => counts.unit_variable_entries += 1,
                 LcTag::Terms => {
-                    let len = self.lens[offset] as usize;
+                    let len = self.term_lens[payload] as usize;
                     if len == 1 {
                         counts.single_term_entries += 1;
                     } else {
@@ -223,6 +264,10 @@ impl<F: FieldBackend> LcMapSegment<F> {
 struct LcMap<F: FieldBackend> {
     segments: Vec<Option<LcMapSegment<F>>>,
     segment_len: usize,
+    keep_last_vars: Option<usize>,
+    keep_prefix_vars: usize,
+    min_retained_idx: usize,
+    pruned_segment_count: usize,
 }
 
 impl<F: FieldBackend> LcMap<F> {
@@ -237,7 +282,19 @@ impl<F: FieldBackend> LcMap<F> {
         Self {
             segments: Vec::new(),
             segment_len,
+            keep_last_vars: None,
+            keep_prefix_vars: 0,
+            min_retained_idx: 0,
+            pruned_segment_count: 0,
         }
+    }
+
+    fn set_keep_last_vars(&mut self, keep_last_vars: Option<usize>) {
+        self.keep_last_vars = keep_last_vars;
+    }
+
+    fn set_keep_prefix_vars(&mut self, keep_prefix_vars: usize) {
+        self.keep_prefix_vars = keep_prefix_vars;
     }
 
     fn insert(&mut self, var: SsaVar, mut lc: LinearCombination<F>) {
@@ -262,10 +319,14 @@ impl<F: FieldBackend> LcMap<F> {
         let segment =
             self.segments[segment_idx].get_or_insert_with(|| LcMapSegment::new(self.segment_len));
         segment.insert(offset, lc);
+        self.prune_old_segments(idx);
     }
 
     fn get(&self, var: &SsaVar) -> Option<LinearCombination<F>> {
         let idx = var.0 as usize;
+        if idx >= self.keep_prefix_vars && idx < self.min_retained_idx {
+            return None;
+        }
         let segment_idx = idx / self.segment_len;
         let offset = idx % self.segment_len;
         self.segments
@@ -278,6 +339,9 @@ impl<F: FieldBackend> LcMap<F> {
     #[cfg(test)]
     fn get_entry(&self, var: &SsaVar) -> Option<LcMapEntry<F>> {
         let idx = var.0 as usize;
+        if idx >= self.keep_prefix_vars && idx < self.min_retained_idx {
+            return None;
+        }
         let segment_idx = idx / self.segment_len;
         let offset = idx % self.segment_len;
         self.segments
@@ -288,6 +352,8 @@ impl<F: FieldBackend> LcMap<F> {
 
     fn clear(&mut self) {
         self.segments.clear();
+        self.min_retained_idx = 0;
+        self.pruned_segment_count = 0;
     }
 
     fn shape_counts(&self) -> LcMapShapeCounts {
@@ -305,7 +371,7 @@ impl<F: FieldBackend> LcMap<F> {
         self.segments
             .iter()
             .filter_map(Option::as_ref)
-            .map(|segment| segment.tags.len())
+            .map(|segment| segment.slots.len())
             .sum()
     }
 
@@ -315,6 +381,154 @@ impl<F: FieldBackend> LcMap<F> {
             .iter()
             .filter(|segment| segment.is_some())
             .count()
+    }
+
+    fn prune_old_segments(&mut self, newest_idx: usize) {
+        let Some(keep_last_vars) = self.keep_last_vars else {
+            return;
+        };
+        let min_retained_idx = newest_idx
+            .saturating_add(1)
+            .saturating_sub(keep_last_vars)
+            .max(self.keep_prefix_vars);
+        if min_retained_idx <= self.min_retained_idx {
+            return;
+        }
+        self.min_retained_idx = min_retained_idx;
+
+        let drop_before_segment = min_retained_idx / self.segment_len;
+        let protected_segment_count = self.keep_prefix_vars.div_ceil(self.segment_len);
+        let first_segment_to_drop = self.pruned_segment_count.max(protected_segment_count);
+        if drop_before_segment <= first_segment_to_drop {
+            return;
+        }
+        for segment in self
+            .segments
+            .iter_mut()
+            .take(drop_before_segment)
+            .skip(first_segment_to_drop)
+        {
+            *segment = None;
+        }
+        self.pruned_segment_count = drop_before_segment;
+    }
+}
+
+#[derive(Debug, Clone)]
+struct UsedSsaSet {
+    segments: Vec<Option<Vec<usize>>>,
+    segment_bits: usize,
+    keep_last_vars: Option<usize>,
+    keep_prefix_vars: usize,
+    min_retained_idx: usize,
+    pruned_segment_count: usize,
+}
+
+impl UsedSsaSet {
+    const DEFAULT_SEGMENT_BITS: usize = 1 << 20;
+
+    fn new() -> Self {
+        Self::with_segment_bits(Self::DEFAULT_SEGMENT_BITS)
+    }
+
+    fn with_segment_bits(segment_bits: usize) -> Self {
+        assert!(segment_bits > 0, "used SSA segment bits must be positive");
+        assert!(
+            segment_bits % usize::BITS as usize == 0,
+            "used SSA segment bits must align to word size"
+        );
+        Self {
+            segments: Vec::new(),
+            segment_bits,
+            keep_last_vars: None,
+            keep_prefix_vars: 0,
+            min_retained_idx: 0,
+            pruned_segment_count: 0,
+        }
+    }
+
+    fn set_keep_last_vars(&mut self, keep_last_vars: Option<usize>) {
+        self.keep_last_vars = keep_last_vars;
+    }
+
+    fn set_keep_prefix_vars(&mut self, keep_prefix_vars: usize) {
+        self.keep_prefix_vars = keep_prefix_vars;
+    }
+
+    fn mark(&mut self, var: SsaVar) {
+        let idx = var.0 as usize;
+        let segment_idx = idx / self.segment_bits;
+        let offset = idx % self.segment_bits;
+        let word = offset / usize::BITS as usize;
+        let bit = offset % usize::BITS as usize;
+        while segment_idx >= self.segments.len() {
+            self.segments.push(None);
+        }
+        let words_per_segment = self.segment_bits / usize::BITS as usize;
+        let segment = self.segments[segment_idx].get_or_insert_with(|| vec![0; words_per_segment]);
+        segment[word] |= 1usize << bit;
+        self.prune_old_segments(idx);
+    }
+
+    fn contains(&self, var: SsaVar) -> bool {
+        let idx = var.0 as usize;
+        if idx >= self.keep_prefix_vars && idx < self.min_retained_idx {
+            return false;
+        }
+        let segment_idx = idx / self.segment_bits;
+        let offset = idx % self.segment_bits;
+        let word = offset / usize::BITS as usize;
+        let bit = offset % usize::BITS as usize;
+        self.segments
+            .get(segment_idx)
+            .and_then(Option::as_ref)
+            .and_then(|segment| segment.get(word))
+            .map(|bits| (bits & (1usize << bit)) != 0)
+            .unwrap_or(false)
+    }
+
+    fn clear(&mut self) {
+        self.segments.clear();
+        self.min_retained_idx = 0;
+        self.pruned_segment_count = 0;
+    }
+
+    fn word_count(&self) -> usize {
+        self.segments
+            .iter()
+            .filter_map(Option::as_ref)
+            .map(Vec::len)
+            .sum()
+    }
+
+    fn prune_old_segments(&mut self, newest_idx: usize) {
+        let Some(keep_last) = self.keep_last_vars else {
+            return;
+        };
+        if newest_idx + 1 <= keep_last {
+            return;
+        }
+        let min_retained_idx = (newest_idx + 1 - keep_last).max(self.keep_prefix_vars);
+        if min_retained_idx <= self.min_retained_idx {
+            return;
+        }
+        self.min_retained_idx = min_retained_idx;
+
+        let drop_before_segment = min_retained_idx / self.segment_bits;
+        let protected_segment_count = self.keep_prefix_vars.div_ceil(self.segment_bits);
+        let first_segment_to_drop = self.pruned_segment_count.max(protected_segment_count);
+        if drop_before_segment <= first_segment_to_drop {
+            return;
+        }
+        for segment in self
+            .segments
+            .iter_mut()
+            .take(drop_before_segment)
+            .skip(first_segment_to_drop)
+        {
+            *segment = None;
+        }
+        self.pruned_segment_count = drop_before_segment;
     }
 }
 
@@ -413,7 +627,7 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// by any later instruction. Used by the forward `AssertEq` collapse to
     /// substitute fresh private assignment targets without keeping a global
     /// substitution map.
-    used_ssa: Vec<usize>,
+    used_ssa: UsedSsaSet,
     /// Proven bit-width bounds from `RangeCheck`, used by `IsLt`/`IsLe`.
     range_bounds: HashMap<SsaVar, u32>,
     /// Cached divmod gadgets: `(lhs, rhs, max_bits) → (q_lc, r_lc)`.
@@ -464,7 +678,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             substitution_map: None,
             lc_map: LcMap::new(),
             lc_cache_term_limit: None,
-            used_ssa: Vec::new(),
+            used_ssa: UsedSsaSet::new(),
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
             artik_program_intern: Vec::new(),
@@ -542,11 +756,45 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         {
             c.lc_cache_term_limit = Some(limit);
         }
+        if let Some(keep_last) = std::env::var("ACH_R1CS_LC_MAP_KEEP_LAST")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+        {
+            c.lc_map.set_keep_last_vars(Some(keep_last));
+            c.used_ssa.set_keep_last_vars(Some(keep_last));
+        }
+        if let Some(keep_prefix) = std::env::var("ACH_R1CS_LC_MAP_KEEP_PREFIX")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .filter(|v| *v > 0)
+        {
+            c.lc_map.set_keep_prefix_vars(keep_prefix);
+            c.used_ssa.set_keep_prefix_vars(keep_prefix);
+        }
         c
     }
 
     pub fn lc_map_shape_counts(&self) -> LcMapShapeCounts {
         self.lc_map.shape_counts()
+    }
+
+    pub fn retained_stats(&self) -> R1CSRetainedStats {
+        let shapes = self.lc_map.shape_counts();
+        R1CSRetainedStats {
+            lc_empty_slots: shapes.empty_slots,
+            lc_zero_entries: shapes.zero_entries,
+            lc_unit_variable_entries: shapes.unit_variable_entries,
+            lc_single_term_entries: shapes.single_term_entries,
+            lc_multi_term_entries: shapes.multi_term_entries,
+            lc_stored_terms: shapes.stored_terms,
+            used_ssa_words: self.used_ssa.word_count(),
+            proven_boolean_len: self.proven_boolean.len(),
+            bool_enforced_len: self.bool_enforced.len(),
+            range_bounds_len: self.range_bounds.len(),
+            divmod_cache_len: self.divmod_cache.len(),
+            artik_program_intern_len: self.artik_program_intern.len(),
+        }
     }
 
     fn cache_lc(&mut self, result: SsaVar, lc: LinearCombination<F>) {
@@ -616,23 +864,11 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     }
 
     fn mark_ssa_used(&mut self, var: SsaVar) {
-        let idx = var.0 as usize;
-        let word = idx / usize::BITS as usize;
-        let bit = idx % usize::BITS as usize;
-        if word >= self.used_ssa.len() {
-            self.used_ssa.resize(word + 1, 0);
-        }
-        self.used_ssa[word] |= 1usize << bit;
+        self.used_ssa.mark(var);
     }
 
     fn is_ssa_used(&self, var: SsaVar) -> bool {
-        let idx = var.0 as usize;
-        let word = idx / usize::BITS as usize;
-        let bit = idx % usize::BITS as usize;
-        self.used_ssa
-            .get(word)
-            .map(|bits| (bits & (1usize << bit)) != 0)
-            .unwrap_or(false)
+        self.used_ssa.contains(var)
     }
 
     /// Set the proven-boolean set from bool_prop analysis.
@@ -2511,6 +2747,123 @@ mod tests {
     }
 
     #[test]
+    fn lc_map_keep_last_hides_old_entries_and_drops_segments() {
+        let mut map: LcMap<Bn254Fr> = LcMap::with_segment_len(4);
+        map.set_keep_last_vars(Some(5));
+
+        for i in 0..10 {
+            map.insert(
+                SsaVar(i),
+                LinearCombination::from_variable(Variable(i as usize + 1)),
+            );
+        }
+
+        assert!(
+            map.get(&SsaVar(4)).is_none(),
+            "entries outside the configured sliding window must not be readable"
+        );
+        assert!(map.get(&SsaVar(5)).is_some());
+        assert!(map.get(&SsaVar(9)).is_some());
+        assert_eq!(
+            map.allocated_segment_count(),
+            2,
+            "segments wholly below the sliding window should be released"
+        );
+    }
+
+    #[test]
+    fn lc_map_keep_prefix_survives_sliding_window() {
+        let mut map: LcMap<Bn254Fr> = LcMap::with_segment_len(4);
+        map.set_keep_prefix_vars(2);
+        map.set_keep_last_vars(Some(3));
+
+        for i in 0..12 {
+            map.insert(
+                SsaVar(i),
+                LinearCombination::from_variable(Variable(i as usize + 1)),
+            );
+        }
+
+        assert!(map.get(&SsaVar(0)).is_some());
+        assert!(map.get(&SsaVar(1)).is_some());
+        assert!(
+            map.get(&SsaVar(4)).is_none(),
+            "non-prefix entries outside the sliding window should be hidden"
+        );
+        assert!(map.get(&SsaVar(9)).is_some());
+        assert_eq!(
+            map.allocated_segment_count(),
+            2,
+            "prefix segment plus current sliding segment should remain"
+        );
+    }
+
+    #[test]
+    fn lc_map_keep_last_reports_undefined_for_evicted_operand() {
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let x = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: x,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        for i in 0..4 {
+            let v = prog.fresh_var();
+            prog.push(Instruction::Const {
+                result: v,
+                value: FieldElement::<Bn254Fr>::from_u64(i),
+            });
+        }
+        let y = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: y,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let out = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: out,
+            lhs: x,
+            rhs: y,
+        });
+
+        let mut compiler = R1CSCompiler::new_direct_linear_mul();
+        compiler.lc_map.set_keep_last_vars(Some(3));
+        let err = compiler.compile_ir(&prog).unwrap_err();
+        assert!(
+            matches!(err, R1CSError::UnsupportedOperation(_, _)),
+            "a too-small sliding LC map should fail loudly on old operand reuse"
+        );
+    }
+
+    #[test]
+    fn used_ssa_keep_last_hides_old_marks_and_drops_segments() {
+        let mut used = UsedSsaSet::with_segment_bits(64);
+        used.set_keep_last_vars(Some(64));
+
+        used.mark(SsaVar(1));
+        used.mark(SsaVar(130));
+
+        assert!(!used.contains(SsaVar(1)));
+        assert!(used.contains(SsaVar(130)));
+        assert_eq!(used.word_count(), 1);
+    }
+
+    #[test]
+    fn used_ssa_keep_prefix_survives_sliding_window() {
+        let mut used = UsedSsaSet::with_segment_bits(64);
+        used.set_keep_prefix_vars(64);
+        used.set_keep_last_vars(Some(64));
+
+        used.mark(SsaVar(1));
+        used.mark(SsaVar(130));
+
+        assert!(used.contains(SsaVar(1)));
+        assert!(used.contains(SsaVar(130)));
+        assert_eq!(used.word_count(), 2);
+    }
+
+    #[test]
     fn lc_map_insert_at_contiguous_indices_round_trips() {
         let mut map: LcMap<Bn254Fr> = LcMap::new();
         for i in 0..16u64 {
@@ -2650,9 +3003,9 @@ mod tests {
         let stored = map.get(&SsaVar(0)).expect("just inserted");
         assert_eq!(stored.terms().len(), 5);
         let segment = map.segments[0].as_ref().expect("segment allocated");
-        assert_eq!(segment.tags[0], LcTag::Terms);
-        assert_eq!(segment.payloads[0], 0);
-        assert_eq!(segment.lens[0], 5);
+        assert_eq!(LcTag::from_slot(segment.slots[0]), LcTag::Terms);
+        assert_eq!(segment.term_starts[0], 0);
+        assert_eq!(segment.term_lens[0], 5);
         assert_eq!(segment.terms.len(), 5);
     }
 
@@ -2738,11 +3091,12 @@ mod tests {
             .unwrap();
         for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
             if let Some(segment) = segment {
-                for (offset, tag) in segment.tags.iter().enumerate() {
-                    if *tag == LcTag::Terms {
+                for (offset, slot) in segment.slots.iter().enumerate() {
+                    if LcTag::from_slot(*slot) == LcTag::Terms {
                         let idx = segment_idx * compiler.lc_map.segment_len + offset;
-                        let start = segment.payloads[offset];
-                        let len = segment.lens[offset] as usize;
+                        let payload = (*slot >> LcMapSegment::<Bn254Fr>::TAG_BITS) as usize;
+                        let start = segment.term_starts[payload] as usize;
+                        let len = segment.term_lens[payload] as usize;
                         assert!(len > 0, "lc_map slot {idx}: term range must be non-empty");
                         assert!(
                             start + len <= segment.terms.len(),
@@ -2789,11 +3143,12 @@ mod tests {
         compiler.compile_ir(&prog).unwrap();
         for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
             if let Some(segment) = segment {
-                for (offset, tag) in segment.tags.iter().enumerate() {
-                    if *tag == LcTag::Terms {
+                for (offset, slot) in segment.slots.iter().enumerate() {
+                    if LcTag::from_slot(*slot) == LcTag::Terms {
                         let idx = segment_idx * compiler.lc_map.segment_len + offset;
-                        let start = segment.payloads[offset];
-                        let len = segment.lens[offset] as usize;
+                        let payload = (*slot >> LcMapSegment::<Bn254Fr>::TAG_BITS) as usize;
+                        let start = segment.term_starts[payload] as usize;
+                        let len = segment.term_lens[payload] as usize;
                         assert!(len > 0, "lc_map slot {idx}: term range must be non-empty");
                         assert!(
                             start + len <= segment.terms.len(),
