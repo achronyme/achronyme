@@ -109,15 +109,6 @@ enum LcMapEntry<F: FieldBackend> {
 }
 
 impl<F: FieldBackend> LcMapEntry<F> {
-    fn from_lc(lc: LinearCombination<F>) -> Self {
-        let terms = lc.into_terms();
-        match terms.as_slice() {
-            [] => Self::Zero,
-            [(var, coeff)] if *coeff == FieldElement::<F>::one() => Self::Variable(*var),
-            _ => Self::Terms(terms),
-        }
-    }
-
     fn to_lc(&self) -> LinearCombination<F> {
         match self {
             Self::Zero => LinearCombination::zero(),
@@ -131,19 +122,106 @@ impl<F: FieldBackend> LcMapEntry<F> {
             }
         }
     }
+}
 
-    #[cfg(test)]
-    fn stored_terms_capacity(&self) -> Option<usize> {
-        match self {
-            Self::Terms(terms) => Some(terms.capacity()),
-            Self::Zero | Self::Variable(_) => None,
+#[derive(Debug, Default, Clone, Copy)]
+pub struct LcMapShapeCounts {
+    pub empty_slots: usize,
+    pub zero_entries: usize,
+    pub unit_variable_entries: usize,
+    pub single_term_entries: usize,
+    pub multi_term_entries: usize,
+    pub stored_terms: usize,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[repr(u8)]
+enum LcTag {
+    Empty = 0,
+    Zero = 1,
+    Variable = 2,
+    Terms = 3,
+}
+
+#[derive(Debug, Clone)]
+struct LcMapSegment<F: FieldBackend> {
+    tags: Vec<LcTag>,
+    payloads: Vec<usize>,
+    lens: Vec<u16>,
+    terms: Vec<(Variable, FieldElement<F>)>,
+}
+
+impl<F: FieldBackend> LcMapSegment<F> {
+    fn new(segment_len: usize) -> Self {
+        Self {
+            tags: vec![LcTag::Empty; segment_len],
+            payloads: vec![0; segment_len],
+            lens: vec![0; segment_len],
+            terms: Vec::new(),
+        }
+    }
+
+    fn insert(&mut self, offset: usize, lc: LinearCombination<F>) {
+        let terms = lc.into_terms();
+        match terms.as_slice() {
+            [] => {
+                self.tags[offset] = LcTag::Zero;
+                self.payloads[offset] = 0;
+                self.lens[offset] = 0;
+            }
+            [(var, coeff)] if *coeff == FieldElement::<F>::one() => {
+                self.tags[offset] = LcTag::Variable;
+                self.payloads[offset] = var.0;
+                self.lens[offset] = 0;
+            }
+            _ => {
+                let len =
+                    u16::try_from(terms.len()).expect("R1CS LC map entry exceeded u16 term length");
+                let start = self.terms.len();
+                self.terms.extend(terms);
+                self.tags[offset] = LcTag::Terms;
+                self.payloads[offset] = start;
+                self.lens[offset] = len;
+            }
+        }
+    }
+
+    fn get(&self, offset: usize) -> Option<LcMapEntry<F>> {
+        match self.tags.get(offset).copied()? {
+            LcTag::Empty => None,
+            LcTag::Zero => Some(LcMapEntry::Zero),
+            LcTag::Variable => Some(LcMapEntry::Variable(Variable(self.payloads[offset]))),
+            LcTag::Terms => {
+                let start = self.payloads[offset];
+                let len = self.lens[offset] as usize;
+                Some(LcMapEntry::Terms(self.terms[start..start + len].to_vec()))
+            }
+        }
+    }
+
+    fn shape_counts(&self, counts: &mut LcMapShapeCounts) {
+        for (offset, tag) in self.tags.iter().enumerate() {
+            match tag {
+                LcTag::Empty => counts.empty_slots += 1,
+                LcTag::Zero => counts.zero_entries += 1,
+                LcTag::Variable => counts.unit_variable_entries += 1,
+                LcTag::Terms => {
+                    let len = self.lens[offset] as usize;
+                    if len == 1 {
+                        counts.single_term_entries += 1;
+                    } else {
+                        counts.multi_term_entries += 1;
+                    }
+                    counts.stored_terms += len;
+                }
+            }
         }
     }
 }
 
 #[derive(Debug, Clone)]
 struct LcMap<F: FieldBackend> {
-    segments: Vec<Vec<Option<LcMapEntry<F>>>>,
+    segments: Vec<Option<LcMapSegment<F>>>,
     segment_len: usize,
 }
 
@@ -179,13 +257,11 @@ impl<F: FieldBackend> LcMap<F> {
         let segment_idx = idx / self.segment_len;
         let offset = idx % self.segment_len;
         while segment_idx >= self.segments.len() {
-            self.segments.push(Vec::new());
+            self.segments.push(None);
         }
-        let segment = &mut self.segments[segment_idx];
-        if segment.is_empty() {
-            segment.resize_with(self.segment_len, || None);
-        }
-        segment[offset] = Some(LcMapEntry::from_lc(lc));
+        let segment =
+            self.segments[segment_idx].get_or_insert_with(|| LcMapSegment::new(self.segment_len));
+        segment.insert(offset, lc);
     }
 
     fn get(&self, var: &SsaVar) -> Option<LinearCombination<F>> {
@@ -194,36 +270,50 @@ impl<F: FieldBackend> LcMap<F> {
         let offset = idx % self.segment_len;
         self.segments
             .get(segment_idx)
+            .and_then(Option::as_ref)
             .and_then(|segment| segment.get(offset))
-            .and_then(|opt| opt.as_ref())
-            .map(LcMapEntry::to_lc)
+            .map(|entry| entry.to_lc())
     }
 
     #[cfg(test)]
-    fn get_entry(&self, var: &SsaVar) -> Option<&LcMapEntry<F>> {
+    fn get_entry(&self, var: &SsaVar) -> Option<LcMapEntry<F>> {
         let idx = var.0 as usize;
         let segment_idx = idx / self.segment_len;
         let offset = idx % self.segment_len;
         self.segments
             .get(segment_idx)
+            .and_then(Option::as_ref)
             .and_then(|segment| segment.get(offset))
-            .and_then(|opt| opt.as_ref())
     }
 
     fn clear(&mut self) {
         self.segments.clear();
     }
 
+    fn shape_counts(&self) -> LcMapShapeCounts {
+        let mut counts = LcMapShapeCounts::default();
+        for segment in &self.segments {
+            if let Some(segment) = segment {
+                segment.shape_counts(&mut counts);
+            }
+        }
+        counts
+    }
+
     #[cfg(test)]
     fn slot_count(&self) -> usize {
-        self.segments.iter().map(Vec::len).sum()
+        self.segments
+            .iter()
+            .filter_map(Option::as_ref)
+            .map(|segment| segment.tags.len())
+            .sum()
     }
 
     #[cfg(test)]
     fn allocated_segment_count(&self) -> usize {
         self.segments
             .iter()
-            .filter(|segment| !segment.is_empty())
+            .filter(|segment| segment.is_some())
             .count()
     }
 }
@@ -430,6 +520,10 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         c.record_witness_ops = false;
         c.cs.disable_constraint_retention();
         c
+    }
+
+    pub fn lc_map_shape_counts(&self) -> LcMapShapeCounts {
+        self.lc_map.shape_counts()
     }
 
     pub(crate) fn push_witness_op(&mut self, op: WitnessOp<F>) {
@@ -2316,13 +2410,10 @@ mod tests {
     }
 
     #[test]
-    fn lc_map_insert_compacts_grown_lc_capacity_to_terms_len() {
-        // Pin the post-insert invariant `capacity == len` on a
-        // worst-case LC: built via incremental `add_term` calls, which
-        // double the term vec's capacity past the active term count.
-        // The compiler emission paths construct LCs this way, so the
-        // doubling tail would persist into the long-lived lc_map cache
-        // without the in-insert compaction.
+    fn lc_map_insert_stores_terms_in_segment_arena() {
+        // Pin the arena-backed storage path on a worst-case LC: built
+        // via incremental `add_term` calls, which used to leave one
+        // owned Vec allocation per lc_map entry.
         let mut lc = LinearCombination::<Bn254Fr>::zero();
         for i in 0..5u64 {
             lc.add_term(Variable(i as usize + 1), FieldElement::<Bn254Fr>::one());
@@ -2337,12 +2428,11 @@ mod tests {
 
         let stored = map.get(&SsaVar(0)).expect("just inserted");
         assert_eq!(stored.terms().len(), 5);
-        assert_eq!(
-            map.get_entry(&SsaVar(0))
-                .and_then(LcMapEntry::stored_terms_capacity),
-            Some(5),
-            "stored LC must have capacity trimmed to its term count"
-        );
+        let segment = map.segments[0].as_ref().expect("segment allocated");
+        assert_eq!(segment.tags[0], LcTag::Terms);
+        assert_eq!(segment.payloads[0], 0);
+        assert_eq!(segment.lens[0], 5);
+        assert_eq!(segment.terms.len(), 5);
     }
 
     #[test]
@@ -2382,11 +2472,11 @@ mod tests {
 
     #[test]
     fn lc_map_streaming_path_pins_cap_eq_len_on_every_populated_slot() {
-        // End-to-end version of the shrink pin: feed a small IR
+        // End-to-end version of the arena pin: feed a small IR
         // program through the same `compile_instructions_streaming`
         // entry that the boss-fight chunk-drain consumer hits, then
-        // iterate every populated slot in lc_map and assert the
-        // post-insert capacity invariant. Skips `None` holes so the
+        // iterate every term slot in lc_map and assert the stored range
+        // points into the owning segment's arena. Skips empty holes so the
         // pin also holds on the non-streaming path which may leave
         // sparse slots when upstream DCE drops instructions.
         let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
@@ -2426,14 +2516,16 @@ mod tests {
             .compile_instructions_streaming(prog.iter().cloned())
             .unwrap();
         for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
-            for (offset, slot) in segment.iter().enumerate() {
-                if let Some(entry) = slot {
-                    let idx = segment_idx * compiler.lc_map.segment_len + offset;
-                    if let Some(capacity) = entry.stored_terms_capacity() {
-                        let len = entry.to_lc().terms().len();
-                        assert_eq!(
-                            capacity, len,
-                            "lc_map slot {idx}: terms vec must be tight after insert"
+            if let Some(segment) = segment {
+                for (offset, tag) in segment.tags.iter().enumerate() {
+                    if *tag == LcTag::Terms {
+                        let idx = segment_idx * compiler.lc_map.segment_len + offset;
+                        let start = segment.payloads[offset];
+                        let len = segment.lens[offset] as usize;
+                        assert!(len > 0, "lc_map slot {idx}: term range must be non-empty");
+                        assert!(
+                            start + len <= segment.terms.len(),
+                            "lc_map slot {idx}: term range must stay inside segment arena"
                         );
                     }
                 }
@@ -2475,14 +2567,16 @@ mod tests {
         let mut compiler: R1CSCompiler<Bn254Fr> = R1CSCompiler::new();
         compiler.compile_ir(&prog).unwrap();
         for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
-            for (offset, slot) in segment.iter().enumerate() {
-                if let Some(entry) = slot {
-                    let idx = segment_idx * compiler.lc_map.segment_len + offset;
-                    if let Some(capacity) = entry.stored_terms_capacity() {
-                        let len = entry.to_lc().terms().len();
-                        assert_eq!(
-                            capacity, len,
-                            "lc_map slot {idx}: terms vec must be tight after insert"
+            if let Some(segment) = segment {
+                for (offset, tag) in segment.tags.iter().enumerate() {
+                    if *tag == LcTag::Terms {
+                        let idx = segment_idx * compiler.lc_map.segment_len + offset;
+                        let start = segment.payloads[offset];
+                        let len = segment.lens[offset] as usize;
+                        assert!(len > 0, "lc_map slot {idx}: term range must be non-empty");
+                        assert!(
+                            start + len <= segment.terms.len(),
+                            "lc_map slot {idx}: term range must stay inside segment arena"
                         );
                     }
                 }
