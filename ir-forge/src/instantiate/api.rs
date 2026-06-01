@@ -615,6 +615,7 @@ struct LysisOpcodeProfile {
     emit_div: usize,
     store_heap: usize,
     load_heap: usize,
+    instantiate_targets: Vec<usize>,
 }
 
 fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Program<F>) {
@@ -646,7 +647,14 @@ fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Program<F>) {
             Opcode::LoopRolled { .. } => p.loop_rolled += 1,
             Opcode::LoopRange { .. } => p.loop_range += 1,
             Opcode::DefineTemplate { .. } => p.define_template += 1,
-            Opcode::InstantiateTemplate { .. } => p.instantiate_template += 1,
+            Opcode::InstantiateTemplate { template_id, .. } => {
+                p.instantiate_template += 1;
+                let target = *template_id as usize;
+                if target >= p.instantiate_targets.len() {
+                    p.instantiate_targets.resize(target + 1, 0);
+                }
+                p.instantiate_targets[target] += 1;
+            }
             Opcode::TemplateOutput { .. } => p.template_output += 1,
             Opcode::EmitConst { .. } => p.emit_const += 1,
             Opcode::EmitAdd { .. } => p.emit_add += 1,
@@ -728,6 +736,14 @@ fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Program<F>) {
         p.store_heap,
         p.load_heap,
     );
+    let top_targets = top_usize(&p.instantiate_targets, 8)
+        .into_iter()
+        .map(|(id, count)| format!("{id}:{count}"))
+        .collect::<Vec<_>>()
+        .join(",");
+    eprintln!("[lysis-profile] instantiate_targets={top_targets}");
+    let small_target_sites = small_instantiate_target_sites(program, 8, 24).join(",");
+    eprintln!("[lysis-profile] small_instantiate_target_sites={small_target_sites}");
     eprintln!(
         "[lysis-profile] emit const={} add={} sub={} mul={} neg={} mux={} decompose={} decompose_bits={} asserteq={} asserteq_msg={} range={} witness_call={} witness_inputs={} witness_outputs={} witness_call_heap={} witness_heap_inputs={} witness_heap_outputs={} poseidon={} iseq={} islt={} intdiv={} intmod={} div={}",
         p.emit_const,
@@ -754,6 +770,51 @@ fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Program<F>) {
         p.emit_int_mod,
         p.emit_div,
     );
+}
+
+fn small_instantiate_target_sites<F: FieldBackend>(
+    program: &lysis::Program<F>,
+    target_limit: u16,
+    site_limit: usize,
+) -> Vec<String> {
+    use lysis::Opcode;
+
+    let mut sites = Vec::new();
+    for instr in &program.body {
+        let Opcode::InstantiateTemplate { template_id, .. } = &instr.opcode else {
+            continue;
+        };
+        if *template_id >= target_limit {
+            continue;
+        }
+        let owner = program
+            .templates
+            .iter()
+            .find(|template| {
+                let start = template.body_offset;
+                let end = start.saturating_add(template.body_len);
+                instr.offset >= start && instr.offset < end
+            })
+            .map(|template| template.id.to_string())
+            .unwrap_or_else(|| "root".to_string());
+        sites.push(format!("{template_id}@{owner}:{}", instr.offset));
+        if sites.len() >= site_limit {
+            break;
+        }
+    }
+    sites
+}
+
+fn top_usize(values: &[usize], limit: usize) -> Vec<(usize, usize)> {
+    let mut pairs = values
+        .iter()
+        .copied()
+        .enumerate()
+        .filter(|(_, count)| *count > 0)
+        .collect::<Vec<_>>();
+    pairs.sort_unstable_by(|a, b| b.1.cmp(&a.1).then_with(|| a.0.cmp(&b.0)));
+    pairs.truncate(limit);
+    pairs
 }
 
 fn lysis_drain_trace_enabled() -> bool {
