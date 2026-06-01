@@ -25,6 +25,7 @@
 //! public R1CS boundary.
 
 use std::collections::{HashMap, HashSet};
+use std::time::Instant;
 
 use lysis::{
     execute, expected_family, ChunkDrainingSink, InstructionKind, InterningSink, LysisConfig,
@@ -215,7 +216,20 @@ impl ProveIR {
         output_names: &HashSet<String>,
         chunk_consumer: &mut dyn FnMut(Vec<InstructionKind<F>>),
     ) -> Result<LysisDrainBundle<F>, LysisInstantiateError> {
+        let trace = lysis_drain_trace_enabled();
+        let start = trace.then(Instant::now);
         let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
+        if let Some(start) = start {
+            lysis_drain_trace(
+                "after_instantiate_extended",
+                &format!(
+                    "elapsed_ms={:.3} body_len={} body_cap={}",
+                    start.elapsed().as_secs_f64() * 1000.0,
+                    extended.body.len(),
+                    extended.body.capacity()
+                ),
+            );
+        }
         lower_extended_with_chunk_drain(extended, chunk_consumer)
     }
 }
@@ -486,12 +500,16 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
     drop(input_spans);
 
     let walker = Walker::<F>::new(expected_family::<F>());
+    let lower_start = trace.then(Instant::now);
     let decoded = walker.lower(body).map_err(RoundTripError::Walk)?;
     if trace {
+        let elapsed_ms = lower_start
+            .map(|start| start.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or_default();
         lysis_drain_trace(
             "after_lower",
             &format!(
-                "decoded_body_len={} decoded_body_cap={} instr_size={} templates_len={} templates_cap={} const_pool_len={} heap_size_hint={}",
+                "elapsed_ms={elapsed_ms:.3} decoded_body_len={} decoded_body_cap={} instr_size={} templates_len={} templates_cap={} const_pool_len={} heap_size_hint={}",
                 decoded.body.len(),
                 decoded.body.capacity(),
                 std::mem::size_of::<lysis::program::Instr>(),
@@ -537,6 +555,7 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
         chunk_capacity,
         chunk_consumer,
     );
+    let execute_start = trace.then(Instant::now);
     execute(
         &decoded,
         &[],
@@ -545,21 +564,28 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
     )
     .map_err(RoundTripError::Lysis)?;
     if trace {
+        let elapsed_ms = execute_start
+            .map(|start| start.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or_default();
         lysis_drain_trace(
             "after_execute",
             &format!(
-                "pure_len={} effect_len={}",
+                "elapsed_ms={elapsed_ms:.3} pure_len={} effect_len={}",
                 sink.inner().pure_len(),
                 sink.inner().effect_len()
             ),
         );
     }
+    let finalize_start = trace.then(Instant::now);
     let residual_sink = sink.finalize();
     if trace {
+        let elapsed_ms = finalize_start
+            .map(|start| start.elapsed().as_secs_f64() * 1000.0)
+            .unwrap_or_default();
         lysis_drain_trace(
             "after_finalize",
             &format!(
-                "pure_len={} effect_len={}",
+                "elapsed_ms={elapsed_ms:.3} pure_len={} effect_len={}",
                 residual_sink.pure_len(),
                 residual_sink.effect_len()
             ),
