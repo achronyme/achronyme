@@ -2755,11 +2755,33 @@ fn cold_load_cost<F: FieldBackend>(
             return 0;
         }
     }
+    if let ExtendedInstruction::Plain(inst) = inst {
+        return cold_load_cost_instruction(inst, ssa_to_heap, ssa_to_reg);
+    }
     let mut refs = HashSet::default();
     collect_in_extinst(inst, &mut refs);
     refs.iter()
         .filter(|v| ssa_to_heap.contains_key(v) && !ssa_to_reg.contains_key(v))
         .count() as u32
+}
+
+fn cold_load_cost_instruction<F: FieldBackend>(
+    inst: &Instruction<F>,
+    ssa_to_heap: &HashMap<SsaVar, u32>,
+    ssa_to_reg: &HashMap<SsaVar, RegId>,
+) -> u32 {
+    let mut seen = Vec::with_capacity(4);
+    let mut count = 0u32;
+    collect_operands_instruction(inst, &mut |v| {
+        if seen.contains(&v) {
+            return;
+        }
+        seen.push(v);
+        if ssa_to_heap.contains_key(&v) && !ssa_to_reg.contains_key(&v) {
+            count += 1;
+        }
+    });
+    count
 }
 
 fn reg_cost_of_instruction<F: FieldBackend>(inst: &Instruction<F>) -> u32 {
