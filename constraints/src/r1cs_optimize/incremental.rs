@@ -57,6 +57,7 @@ use crate::r1cs::Constraint;
 pub struct IncrementalCollapse<F: FieldBackend> {
     subs: SubstitutionMap<F>,
     barred: HashSet<usize>,
+    track_barred: bool,
     retain_substitutions: bool,
     /// Always empty: passed to `solve_for_variable` so its max-frequency
     /// pick degenerates to "highest index" (the forward / freshest-wire
@@ -72,6 +73,7 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
         Self {
             subs: FxHashMap::default(),
             barred: (0..=num_pub_inputs).collect(),
+            track_barred: true,
             retain_substitutions: true,
             empty_freq: FxHashMap::default(),
             inv_cache: FxHashMap::default(),
@@ -84,6 +86,7 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
     /// eliminated witness wires.
     pub fn new_count_only(num_pub_inputs: usize) -> Self {
         let mut collapse = Self::new(num_pub_inputs);
+        collapse.track_barred = false;
         collapse.retain_substitutions = false;
         collapse
     }
@@ -115,9 +118,11 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
                 // canonical (replacements never reference an eliminated
                 // wire), so a single-pass apply never leaves a dangling
                 // reference and no composition pass is needed.
-                self.barred.insert(var.index());
-                for (v, _) in replacement.terms() {
-                    self.barred.insert(v.index());
+                if self.track_barred {
+                    self.barred.insert(var.index());
+                    for (v, _) in replacement.terms() {
+                        self.barred.insert(v.index());
+                    }
                 }
                 if self.retain_substitutions {
                     self.subs.insert(var.index(), replacement);
@@ -128,7 +133,9 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
 
         // Survivor: bar every variable it references so none is eliminated
         // out from under it by a later constraint.
-        self.bar_constraint(&constraint);
+        if self.track_barred {
+            self.bar_constraint(&constraint);
+        }
         Some(constraint)
     }
 
@@ -147,6 +154,11 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
         self.barred.insert(var_index);
     }
 
+    #[cfg(test)]
+    pub(crate) fn barred_len(&self) -> usize {
+        self.barred.len()
+    }
+
     /// Borrow the accumulated substitution map (for witness reconstruction
     /// of eliminated wires).
     pub fn substitution_map(&self) -> &SubstitutionMap<F> {
@@ -156,5 +168,46 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
     /// Consume the collapser, returning the substitution map.
     pub fn into_substitution_map(self) -> SubstitutionMap<F> {
         self.subs
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use memory::{Bn254Fr, FieldElement};
+
+    use super::*;
+    use crate::r1cs::{LinearCombination, Variable};
+
+    fn lc_var(var: Variable) -> LinearCombination<Bn254Fr> {
+        LinearCombination::from_variable(var)
+    }
+
+    #[test]
+    fn count_only_collapse_does_not_grow_barred_set() {
+        let mut collapse = IncrementalCollapse::<Bn254Fr>::new_count_only(0);
+        let initial_barred = collapse.barred_len();
+
+        let x = Variable(1);
+        let y = Variable(2);
+        let z = Variable(3);
+        let materialize = Constraint {
+            a: lc_var(x) + lc_var(y),
+            b: LinearCombination::from_constant(FieldElement::one()),
+            c: lc_var(z),
+        };
+        assert!(collapse.fold(materialize).is_none());
+
+        let survivor = Constraint {
+            a: lc_var(z),
+            b: lc_var(y),
+            c: lc_var(x),
+        };
+        assert!(collapse.fold(survivor).is_some());
+        assert_eq!(
+            collapse.barred_len(),
+            initial_barred,
+            "count-only collapse must not retain per-variable barred state"
+        );
+        assert!(collapse.into_substitution_map().is_empty());
     }
 }
