@@ -429,31 +429,37 @@ impl<F: FieldBackend> Walker<F> {
         let lower_start = lower_trace.then(Instant::now);
         let input_len = body.len();
 
-        let mut registry = TemplateRegistry::<F>::new();
         let lift_start = lower_trace.then(Instant::now);
-        let lifted = lift_uniform_loops(body, &mut registry, &FixedBitSet::new()).map_err(|e| {
-            // The lift's frame/template-space errors are walker-relevant
-            // — surface them through the existing error channel rather
-            // than silently dropping the lift.
-            match e {
-                ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
-                    kind: "lift_uniform_loops.frame_size",
-                    limit: MAX_FRAME_SIZE,
-                    got: requested,
-                },
-                ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
-                    kind: "lift_uniform_loops.template_id",
-                    limit: u32::from(u16::MAX),
-                    got: u32::from(u16::MAX) + 1,
-                },
-            }
-        })?;
+        let body_is_plain = body.iter().all(ExtendedInstruction::is_plain);
+        let lifted = if body_is_plain {
+            body
+        } else {
+            let mut registry = TemplateRegistry::<F>::new();
+            lift_uniform_loops(body, &mut registry, &FixedBitSet::new()).map_err(|e| {
+                // The lift's frame/template-space errors are walker-relevant
+                // — surface them through the existing error channel rather
+                // than silently dropping the lift.
+                match e {
+                    ExtractError::FrameOverflow { requested } => WalkError::OperandOutOfRange {
+                        kind: "lift_uniform_loops.frame_size",
+                        limit: MAX_FRAME_SIZE,
+                        got: requested,
+                    },
+                    ExtractError::TemplateSpaceExhausted => WalkError::OperandOutOfRange {
+                        kind: "lift_uniform_loops.template_id",
+                        limit: u32::from(u16::MAX),
+                        got: u32::from(u16::MAX) + 1,
+                    },
+                }
+            })?
+        };
         if let Some(start) = lift_start {
             eprintln!(
-                "[walker.lower] lift_uniform_loops_ms={:.3} input_len={} lifted_len={}",
+                "[walker.lower] lift_uniform_loops_ms={:.3} input_len={} lifted_len={} skipped={}",
                 start.elapsed().as_secs_f64() * 1000.0,
                 input_len,
                 lifted.len(),
+                body_is_plain,
             );
         }
 
