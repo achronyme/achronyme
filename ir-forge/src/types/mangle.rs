@@ -392,7 +392,11 @@ pub fn mangle_range(
 /// `comp.field`. The `.` character cannot appear in Circom
 /// identifiers, making collisions impossible.
 pub fn mangle_name(prefix: &str, name: &str) -> String {
-    format!("{prefix}.{name}")
+    let mut mangled = String::with_capacity(prefix.len() + 1 + name.len());
+    mangled.push_str(prefix);
+    mangled.push('.');
+    mangled.push_str(name);
+    mangled
 }
 
 #[cfg(test)]
