@@ -200,6 +200,11 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// one `String` plus one hash entry for every synthetic lysis witness slot
     /// is pure retention overhead there.
     track_input_metadata: bool,
+    /// Lean-only forward collapse for `AssertEq` assignments whose lhs is a
+    /// fresh private wire. The default compiler keeps the historical one
+    /// constraint per assert surface; the boss-fight lean path uses this to
+    /// avoid retaining eliminate-before-use linear constraints.
+    forward_assert_eq_collapse: bool,
     /// Emit multi-term LC products directly instead of first materializing each
     /// operand into a fresh wire.
     ///
@@ -222,6 +227,11 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// compiler walks the IR instruction stream. Reset at the start of
     /// every `compile_ir` call.
     lc_map: LcMap<F>,
+    /// Dense bitset over `SsaVar.0`: set once an SSA value has been consumed
+    /// by any later instruction. Used by the forward `AssertEq` collapse to
+    /// substitute fresh private assignment targets without keeping a global
+    /// substitution map.
+    used_ssa: Vec<usize>,
     /// Proven bit-width bounds from `RangeCheck`, used by `IsLt`/`IsLe`.
     range_bounds: HashMap<SsaVar, u32>,
     /// Cached divmod gadgets: `(lhs, rhs, max_bits) → (q_lc, r_lc)`.
@@ -266,10 +276,12 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             constraint_origins: Vec::new(),
             track_constraint_origins: true,
             track_input_metadata: true,
+            forward_assert_eq_collapse: false,
             direct_linear_mul: false,
             record_witness_ops: true,
             substitution_map: None,
             lc_map: LcMap::new(),
+            used_ssa: Vec::new(),
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
             artik_program_intern: Vec::new(),
@@ -293,6 +305,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut c = Self::new();
         c.track_constraint_origins = false;
         c.track_input_metadata = false;
+        c.forward_assert_eq_collapse = true;
         c
     }
 
@@ -373,10 +386,35 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// Look up the cached `LinearCombination` for `var`. Returns an error if
     /// the variable was referenced before it was defined — a structural
     /// invariant of SSA form that the walker relies on.
-    fn lookup_lc(&self, var: &SsaVar) -> Result<LinearCombination<F>, R1CSError> {
+    fn lookup_lc(&mut self, var: &SsaVar) -> Result<LinearCombination<F>, R1CSError> {
+        self.mark_ssa_used(*var);
+        self.lookup_lc_untracked(var)
+    }
+
+    fn lookup_lc_untracked(&self, var: &SsaVar) -> Result<LinearCombination<F>, R1CSError> {
         self.lc_map.get(var).cloned().ok_or_else(|| {
             R1CSError::UnsupportedOperation(format!("undefined SSA variable {:?}", var), None)
         })
+    }
+
+    fn mark_ssa_used(&mut self, var: SsaVar) {
+        let idx = var.0 as usize;
+        let word = idx / usize::BITS as usize;
+        let bit = idx % usize::BITS as usize;
+        if word >= self.used_ssa.len() {
+            self.used_ssa.resize(word + 1, 0);
+        }
+        self.used_ssa[word] |= 1usize << bit;
+    }
+
+    fn is_ssa_used(&self, var: SsaVar) -> bool {
+        let idx = var.0 as usize;
+        let word = idx / usize::BITS as usize;
+        let bit = idx % usize::BITS as usize;
+        self.used_ssa
+            .get(word)
+            .map(|bits| (bits & (1usize << bit)) != 0)
+            .unwrap_or(false)
     }
 
     /// Set the proven-boolean set from bool_prop analysis.
@@ -528,6 +566,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         F: PoseidonParamsProvider,
     {
         self.lc_map.clear();
+        self.used_ssa.clear();
         self.range_bounds.clear();
         self.divmod_cache.clear();
         <Self as constraints::ConstraintBackend<F>>::compile_ir(self, program)
@@ -547,6 +586,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         I: IntoIterator<Item = IrInstruction<F>>,
     {
         self.lc_map.clear();
+        self.used_ssa.clear();
         self.range_bounds.clear();
         self.divmod_cache.clear();
         <Self as constraints::ConstraintBackend<F>>::compile_instructions(self, instructions)
@@ -689,9 +729,20 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
             IrInstruction::AssertEq {
                 result, lhs, rhs, ..
             } => {
-                let a = self.lookup_lc(lhs)?;
+                let lhs_was_used = self.is_ssa_used(*lhs);
+                let a = self.lookup_lc_untracked(lhs)?;
                 let b = self.lookup_lc(rhs)?;
-                self.cs.enforce_equal(a, b.clone());
+                if self.forward_assert_eq_collapse
+                    && !lhs_was_used
+                    && a.as_single_variable()
+                        .map(|var| var.index() > self.cs.num_pub_inputs())
+                        .unwrap_or(false)
+                {
+                    self.lc_map.insert(*lhs, b.clone());
+                } else {
+                    self.mark_ssa_used(*lhs);
+                    self.cs.enforce_equal(a, b.clone());
+                }
                 self.lc_map.insert(*result, b);
             }
             IrInstruction::RangeCheck {
@@ -1325,8 +1376,8 @@ mod tests {
             let v4 = prog.fresh_var();
             prog.push(Instruction::AssertEq {
                 result: v4,
-                lhs: v2,
-                rhs: v3,
+                lhs: v0,
+                rhs: v1,
                 message: None,
             });
             prog
@@ -1470,8 +1521,8 @@ mod tests {
             let v4 = prog.fresh_var();
             prog.push(Instruction::AssertEq {
                 result: v4,
-                lhs: v2,
-                rhs: v3,
+                lhs: v0,
+                rhs: v1,
                 message: None,
             });
             prog
@@ -1510,6 +1561,115 @@ mod tests {
         assert!(
             lean.bindings.is_empty() && lean.public_inputs.is_empty() && lean.witnesses.is_empty(),
             "lean compiler must leave input metadata empty"
+        );
+    }
+
+    #[test]
+    fn assert_eq_rebinds_fresh_private_lhs_without_linear_constraint() {
+        let mut prog: IrProgram = IrProgram::new();
+        let x = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: x,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let y = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: y,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let eq = prog.fresh_var();
+        prog.push(Instruction::AssertEq {
+            result: eq,
+            lhs: x,
+            rhs: y,
+            message: None,
+        });
+        let product = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: product,
+            lhs: x,
+            rhs: y,
+        });
+
+        let mut compiler = R1CSCompiler::<Bn254Fr>::new_lean();
+        compiler.compile_ir(&prog).unwrap();
+
+        assert_eq!(
+            compiler.cs.num_constraints(),
+            1,
+            "fresh private AssertEq lhs should become a forward alias, not a stored linear constraint"
+        );
+        let constraint = &compiler.cs.constraints()[0];
+        assert_eq!(constraint.a.terms(), &[(Variable(2), FieldElement::ONE)]);
+        assert_eq!(constraint.b.terms(), &[(Variable(2), FieldElement::ONE)]);
+    }
+
+    #[test]
+    fn assert_eq_keeps_constraint_for_used_or_public_lhs() {
+        let mut used_prog: IrProgram = IrProgram::new();
+        let x = used_prog.fresh_var();
+        used_prog.push(Instruction::Input {
+            result: x,
+            name: "x".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let y = used_prog.fresh_var();
+        used_prog.push(Instruction::Input {
+            result: y,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let first_product = used_prog.fresh_var();
+        used_prog.push(Instruction::Mul {
+            result: first_product,
+            lhs: x,
+            rhs: y,
+        });
+        let eq = used_prog.fresh_var();
+        used_prog.push(Instruction::AssertEq {
+            result: eq,
+            lhs: x,
+            rhs: y,
+            message: None,
+        });
+
+        let mut used_compiler = R1CSCompiler::<Bn254Fr>::new_lean();
+        used_compiler.compile_ir(&used_prog).unwrap();
+        assert_eq!(
+            used_compiler.cs.num_constraints(),
+            2,
+            "lhs already used by a prior expression must keep its equality constraint"
+        );
+
+        let mut public_prog: IrProgram = IrProgram::new();
+        let out = public_prog.fresh_var();
+        public_prog.push(Instruction::Input {
+            result: out,
+            name: "out".into(),
+            visibility: IrVisibility::Public,
+        });
+        let y = public_prog.fresh_var();
+        public_prog.push(Instruction::Input {
+            result: y,
+            name: "y".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let eq = public_prog.fresh_var();
+        public_prog.push(Instruction::AssertEq {
+            result: eq,
+            lhs: out,
+            rhs: y,
+            message: None,
+        });
+
+        let mut public_compiler = R1CSCompiler::<Bn254Fr>::new_lean();
+        public_compiler.compile_ir(&public_prog).unwrap();
+        assert_eq!(
+            public_compiler.cs.num_constraints(),
+            1,
+            "public lhs must stay constrained to preserve the public interface"
         );
     }
 
