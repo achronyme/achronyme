@@ -200,6 +200,20 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// one `String` plus one hash entry for every synthetic lysis witness slot
     /// is pure retention overhead there.
     track_input_metadata: bool,
+    /// Emit multi-term LC products directly instead of first materializing each
+    /// operand into a fresh wire.
+    ///
+    /// The default path materializes `LC_a` and `LC_b`, emits linear
+    /// constraints for those fresh wires, then relies on O1 to substitute them
+    /// away. This mode emits the post-substitution quadratic shape directly:
+    /// `LC_a * LC_b = out`.
+    pub(crate) direct_linear_mul: bool,
+    /// Whether to retain witness-generation operations.
+    ///
+    /// Compile-only benchmarks and exporters that only need the constraint
+    /// shape can disable this log to avoid retaining one witness operation per
+    /// intermediate wire. Normal proving paths leave it enabled.
+    pub(crate) record_witness_ops: bool,
     /// Variable substitution map from R1CS linear constraint elimination.
     /// Set by `optimize_r1cs()`. Used by witness generation to compute
     /// values for substituted-away wires.
@@ -252,6 +266,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             constraint_origins: Vec::new(),
             track_constraint_origins: true,
             track_input_metadata: true,
+            direct_linear_mul: false,
+            record_witness_ops: true,
             substitution_map: None,
             lc_map: LcMap::new(),
             range_bounds: HashMap::new(),
@@ -293,6 +309,33 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut c = Self::new_lean();
         c.cs.enable_incremental_collapse();
         c
+    }
+
+    /// Create a lean compiler that emits multi-term LC products directly.
+    ///
+    /// This avoids building the linear materialization constraints that O1
+    /// would later eliminate, so the resident constraint set tracks a shape
+    /// closer to post-O1 during emission.
+    pub fn new_direct_linear_mul() -> Self {
+        let mut c = Self::new_lean();
+        c.direct_linear_mul = true;
+        c
+    }
+
+    /// Create a lean compile-only compiler that skips witness-op retention.
+    ///
+    /// The emitted R1CS constraints and wire allocation are still produced;
+    /// only the auxiliary replay log used for witness generation is omitted.
+    pub fn new_compile_only_direct_linear_mul() -> Self {
+        let mut c = Self::new_direct_linear_mul();
+        c.record_witness_ops = false;
+        c
+    }
+
+    pub(crate) fn push_witness_op(&mut self, op: WitnessOp<F>) {
+        if self.record_witness_ops {
+            self.witness_ops.push(op);
+        }
     }
 
     /// Intern an Artik bytecode payload. Returns an `Arc<[u8]>` shared
@@ -672,7 +715,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     );
                     let coeff = power_of_two_generic::<F>(i);
                     sum = sum + LinearCombination::from_variable(bit_var) * coeff;
-                    self.witness_ops.push(WitnessOp::BitExtract {
+                    self.push_witness_op(WitnessOp::BitExtract {
                         target: bit_var,
                         source: lc.clone(),
                         bit_index: i,
@@ -749,7 +792,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 // enforce: diff * eq_result = 0
                 let inv_var = self.cs.alloc_witness();
                 let eq_var = self.cs.alloc_witness();
-                self.witness_ops.push(WitnessOp::IsZero {
+                self.push_witness_op(WitnessOp::IsZero {
                     diff: diff.clone(),
                     target_inv: inv_var,
                     target_result: eq_var,
@@ -769,7 +812,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 // IsZero gadget then negate
                 let inv_var = self.cs.alloc_witness();
                 let eq_var = self.cs.alloc_witness();
-                self.witness_ops.push(WitnessOp::IsZero {
+                self.push_witness_op(WitnessOp::IsZero {
                     diff: diff.clone(),
                     target_inv: inv_var,
                     target_result: eq_var,
@@ -908,7 +951,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 );
                 let internal_count = self.cs.num_variables() - internal_start;
 
-                self.witness_ops.push(WitnessOp::PoseidonHash {
+                self.push_witness_op(WitnessOp::PoseidonHash {
                     left: left_var,
                     right: right_var,
                     output: hash_var,
@@ -949,7 +992,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     self.bool_enforced.insert(*bit_ssa);
                     let coeff = power_of_two_generic::<F>(i as u32);
                     sum = sum + LinearCombination::from_variable(bit_var) * coeff;
-                    self.witness_ops.push(WitnessOp::BitExtract {
+                    self.push_witness_op(WitnessOp::BitExtract {
                         target: bit_var,
                         source: src_lc.clone(),
                         bit_index: i as u32,
@@ -981,7 +1024,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
 
                     let lhs_var = self.materialize_lc(&a_lc);
                     let rhs_var = self.materialize_lc(&b_lc);
-                    self.witness_ops.push(WitnessOp::IntDivMod {
+                    self.push_witness_op(WitnessOp::IntDivMod {
                         q: q_var,
                         r: r_var,
                         lhs: lhs_var,
@@ -1024,7 +1067,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
 
                     let lhs_var = self.materialize_lc(&a_lc);
                     let rhs_var = self.materialize_lc(&b_lc);
-                    self.witness_ops.push(WitnessOp::IntDivMod {
+                    self.push_witness_op(WitnessOp::IntDivMod {
                         q: q_var,
                         r: r_var,
                         lhs: lhs_var,
@@ -1067,7 +1110,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                         .insert(*out_ssa, LinearCombination::from_variable(out_var));
                 }
                 let interned = self.intern_artik_program(&call.program_bytes);
-                self.witness_ops.push(WitnessOp::ArtikCall {
+                self.push_witness_op(WitnessOp::ArtikCall {
                     outputs: output_vars,
                     inputs: input_vars,
                     program_bytes: interned,
@@ -1783,6 +1826,117 @@ mod tests {
         );
         assert_eq!(a.as_ref(), &[0xAA, 0xBB][..]);
         assert_eq!(b.as_ref(), &[0xAA, 0xCC][..]);
+    }
+
+    #[test]
+    fn direct_linear_mul_emits_post_o1_shape_for_multi_term_operands() {
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: a,
+            name: "a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: b,
+            name: "b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let c = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: c,
+            name: "c".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let ab = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: ab,
+            lhs: a,
+            rhs: b,
+        });
+        let bc = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: bc,
+            lhs: b,
+            rhs: c,
+        });
+        let product = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: product,
+            lhs: ab,
+            rhs: bc,
+        });
+
+        let mut baseline = R1CSCompiler::<Bn254Fr>::new_lean();
+        baseline.compile_ir(&prog).unwrap();
+        assert_eq!(
+            baseline.cs.num_constraints(),
+            3,
+            "baseline emits two materialization constraints plus the product"
+        );
+
+        let mut direct = R1CSCompiler::<Bn254Fr>::new_direct_linear_mul();
+        direct.compile_ir(&prog).unwrap();
+        assert_eq!(
+            direct.cs.num_constraints(),
+            1,
+            "direct mode emits the product constraint without O1-only materializations"
+        );
+        assert_eq!(
+            direct.witness_ops.len(),
+            1,
+            "direct mode records only the product witness op"
+        );
+        assert!(matches!(
+            direct.witness_ops.iter().next(),
+            Some(WitnessOp::Multiply { a, b, .. }) if a.terms().len() == 2 && b.terms().len() == 2
+        ));
+    }
+
+    #[test]
+    fn compile_only_direct_linear_mul_keeps_constraints_without_witness_ops() {
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: a,
+            name: "a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: b,
+            name: "b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let sum = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: sum,
+            lhs: a,
+            rhs: b,
+        });
+        let product = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: product,
+            lhs: sum,
+            rhs: a,
+        });
+
+        let mut direct = R1CSCompiler::<Bn254Fr>::new_direct_linear_mul();
+        direct.compile_ir(&prog).unwrap();
+
+        let mut compile_only = R1CSCompiler::<Bn254Fr>::new_compile_only_direct_linear_mul();
+        compile_only.compile_ir(&prog).unwrap();
+
+        assert_eq!(
+            compile_only.cs.num_constraints(),
+            direct.cs.num_constraints()
+        );
+        assert_eq!(compile_only.cs.num_variables(), direct.cs.num_variables());
+        assert!(
+            compile_only.witness_ops.is_empty(),
+            "compile-only mode must not retain witness replay ops"
+        );
     }
 
     #[test]

@@ -30,7 +30,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             return var;
         }
         let var = self.cs.alloc_witness();
-        self.witness_ops.push(WitnessOp::AssignLC {
+        self.push_witness_op(WitnessOp::AssignLC {
             target: var,
             lc: lc.clone(),
         });
@@ -58,6 +58,16 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         if let Some(scalar) = b.constant_value() {
             return a.clone() * scalar;
         }
+        if self.direct_linear_mul {
+            let out = self.cs.mul_lc(a, b);
+            self.push_witness_op(WitnessOp::Multiply {
+                target: out,
+                a: a.clone(),
+                b: b.clone(),
+            });
+            return LinearCombination::from_variable(out);
+        }
+
         // Materialize multi-term operands before multiplying.
         //
         // Without this, (n-term LC) × (m-term LC) produces n×m quadratic
@@ -85,7 +95,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
 
         // General case: allocate witness for product (1 constraint)
         let out = self.cs.mul_lc(&a_mat, &b_mat);
-        self.witness_ops.push(WitnessOp::Multiply {
+        self.push_witness_op(WitnessOp::Multiply {
             target: out,
             a: a_mat,
             b: b_mat,
@@ -110,13 +120,13 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         }
         // General case: inv_lc (1 constraint) + mul_lc (1 constraint) = 2 constraints
         let den_inv = self.cs.inv_lc(den);
-        self.witness_ops.push(WitnessOp::Inverse {
+        self.push_witness_op(WitnessOp::Inverse {
             target: den_inv,
             operand: den.clone(),
         });
         let den_inv_lc = LinearCombination::from_variable(den_inv);
         let out = self.cs.mul_lc(num, &den_inv_lc);
-        self.witness_ops.push(WitnessOp::Multiply {
+        self.push_witness_op(WitnessOp::Multiply {
             target: out,
             a: num.clone(),
             b: den_inv_lc,
@@ -148,7 +158,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             );
             let coeff = power_of_two_generic::<F>(i);
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
-            self.witness_ops.push(WitnessOp::BitExtract {
+            self.push_witness_op(WitnessOp::BitExtract {
                 target: bit_var,
                 source: src_lc.clone(),
                 bit_index: i,
@@ -199,7 +209,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             );
             let coeff = power_of_two_generic::<F>(i);
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
-            self.witness_ops.push(WitnessOp::BitExtract {
+            self.push_witness_op(WitnessOp::BitExtract {
                 target: bit_var,
                 source: src_lc.clone(),
                 bit_index: i,
