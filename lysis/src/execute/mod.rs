@@ -495,7 +495,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                 body_end_idx: body_end,
                 template_id: Some(*template_id),
                 output_slots: vec![None; output_regs.len()],
-                caller_output_regs: output_regs.clone(),
+                caller_output_regs: output_regs.as_ref().clone(),
                 caller_frame_idx: Some(frame_idx),
                 loop_stack: Vec::new(),
             };
@@ -1687,8 +1687,8 @@ mod tests {
         emit(
             Opcode::InstantiateTemplate {
                 template_id: 1,
-                capture_regs: vec![0],
-                output_regs: vec![1],
+                capture_regs: Box::new(vec![0]),
+                output_regs: Box::new(vec![1]),
             },
             &mut buf,
             &mut body,
@@ -1818,8 +1818,8 @@ mod tests {
         emit(
             Opcode::InstantiateTemplate {
                 template_id: 0,
-                capture_regs: vec![],
-                output_regs: vec![],
+                capture_regs: Box::new(vec![]),
+                output_regs: Box::new(vec![]),
             },
             &mut buf,
             &mut body,
@@ -1834,8 +1834,8 @@ mod tests {
                 emit(
                     Opcode::InstantiateTemplate {
                         template_id: id + 1,
-                        capture_regs: vec![],
-                        output_regs: vec![],
+                        capture_regs: Box::new(vec![]),
+                        output_regs: Box::new(vec![]),
                     },
                     &mut buf,
                     &mut body,

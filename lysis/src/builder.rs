@@ -234,8 +234,8 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     ) -> &mut Self {
         self.push(Opcode::InstantiateTemplate {
             template_id,
-            capture_regs,
-            output_regs,
+            capture_regs: Box::new(capture_regs),
+            output_regs: Box::new(output_regs),
         })
     }
 
@@ -307,13 +307,16 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     ) -> &mut Self {
         self.push(Opcode::EmitWitnessCall {
             bytecode_const_idx,
-            in_regs,
-            out_regs,
+            in_regs: Box::new(in_regs),
+            out_regs: Box::new(out_regs),
         })
     }
 
     pub fn emit_poseidon_hash(&mut self, dst: u8, in_regs: Vec<u8>) -> &mut Self {
-        self.push(Opcode::EmitPoseidonHash { dst, in_regs })
+        self.push(Opcode::EmitPoseidonHash {
+            dst,
+            in_regs: Box::new(in_regs),
+        })
     }
 
     pub fn emit_is_eq(&mut self, dst: u8, lhs: u8, rhs: u8) -> &mut Self {
@@ -361,8 +364,8 @@ impl<F: FieldBackend> ProgramBuilder<F> {
     ) -> &mut Self {
         self.push(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx,
-            inputs,
-            out_slots,
+            inputs: Box::new(inputs),
+            out_slots: Box::new(out_slots),
         })
     }
 

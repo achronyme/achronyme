@@ -200,7 +200,7 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
             output_regs,
             ..
         } => {
-            let mut v = capture_regs.clone();
+            let mut v = capture_regs.as_ref().clone();
             v.extend_from_slice(output_regs);
             v
         }
@@ -226,7 +226,7 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         Opcode::EmitWitnessCall {
             in_regs, out_regs, ..
         } => {
-            let mut v = in_regs.clone();
+            let mut v = in_regs.as_ref().clone();
             v.extend_from_slice(out_regs);
             v
         }
@@ -424,7 +424,7 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
     match op {
         Opcode::JumpIf { cond, .. } => vec![*cond],
         Opcode::LoopRange { end_reg, .. } => vec![*end_reg],
-        Opcode::InstantiateTemplate { capture_regs, .. } => capture_regs.clone(),
+        Opcode::InstantiateTemplate { capture_regs, .. } => capture_regs.as_ref().clone(),
         Opcode::TemplateOutput { src_reg, .. } => vec![*src_reg],
         Opcode::EmitConst { src_reg, .. } => vec![*src_reg],
         Opcode::EmitAdd { lhs, rhs, .. }
@@ -444,7 +444,7 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
         Opcode::EmitAssertEq { lhs, rhs } => vec![*lhs, *rhs],
         Opcode::EmitAssertEqMsg { lhs, rhs, .. } => vec![*lhs, *rhs],
         Opcode::EmitRangeCheck { var, .. } => vec![*var],
-        Opcode::EmitWitnessCall { in_regs, .. } => in_regs.clone(),
+        Opcode::EmitWitnessCall { in_regs, .. } => in_regs.as_ref().clone(),
         Opcode::EmitWitnessCallHeap { inputs, .. } => inputs
             .iter()
             .filter_map(|src| match src {
@@ -452,7 +452,7 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
                 crate::bytecode::opcode::InputSrc::Slot(_) => None,
             })
             .collect(),
-        Opcode::EmitPoseidonHash { in_regs, .. } => in_regs.clone(),
+        Opcode::EmitPoseidonHash { in_regs, .. } => in_regs.as_ref().clone(),
         // StoreHeap reads its src_reg before writing it to the heap;
         // LoadHeap reads from the heap, not from regs (its read-side
         // is governed by Rules 12+13, not Rule 9).
@@ -484,11 +484,11 @@ fn writes_of(op: &Opcode) -> Vec<u8> {
         Opcode::LoopUnroll { iter_var, .. }
         | Opcode::LoopRolled { iter_var, .. }
         | Opcode::LoopRange { iter_var, .. } => vec![*iter_var],
-        Opcode::InstantiateTemplate { output_regs, .. } => output_regs.clone(),
+        Opcode::InstantiateTemplate { output_regs, .. } => output_regs.as_ref().clone(),
         Opcode::EmitDecompose {
             dst_arr, n_bits, ..
         } => (*dst_arr..dst_arr.saturating_add(*n_bits)).collect(),
-        Opcode::EmitWitnessCall { out_regs, .. } => out_regs.clone(),
+        Opcode::EmitWitnessCall { out_regs, .. } => out_regs.as_ref().clone(),
         // LoadHeap materialises a heap entry into dst_reg — that's a
         // write from Rule 9's perspective. Without this, downstream
         // reads of the loaded reg fire false `UninitializedRegister`
@@ -682,7 +682,7 @@ fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), L
             Opcode::EmitWitnessCallHeap {
                 inputs, out_slots, ..
             } => {
-                for src in inputs {
+                for src in inputs.iter() {
                     if let crate::bytecode::opcode::InputSrc::Slot(slot) = src {
                         if *slot >= cap {
                             return Err(LysisError::ValidationFailed {
@@ -694,7 +694,7 @@ fn check_heap_slot_bounds<F: FieldBackend>(program: &Program<F>) -> Result<(), L
                         }
                     }
                 }
-                for slot in out_slots {
+                for slot in out_slots.iter() {
                     if *slot >= cap {
                         return Err(LysisError::ValidationFailed {
                             rule: 12,
@@ -792,7 +792,7 @@ fn check_heap_single_static_store<F: FieldBackend>(program: &Program<F>) -> Resu
             } => {
                 // Read-side inputs (Slot variant): each slot must be
                 // Written. Same contract as LoadHeap.
-                for src in inputs {
+                for src in inputs.iter() {
                     if let crate::bytecode::opcode::InputSrc::Slot(slot) = src {
                         let s = *slot as usize;
                         if s >= state.len() {
@@ -809,7 +809,7 @@ fn check_heap_single_static_store<F: FieldBackend>(program: &Program<F>) -> Resu
                 }
                 // Write-side outputs: each slot must be Unwritten,
                 // transitions to Written.
-                for slot in out_slots {
+                for slot in out_slots.iter() {
                     let s = *slot as usize;
                     if s >= state.len() {
                         continue;
@@ -1122,8 +1122,8 @@ mod tests {
             push(
                 Opcode::InstantiateTemplate {
                     template_id: 0,
-                    capture_regs: vec![],
-                    output_regs: vec![],
+                    capture_regs: Box::new(vec![]),
+                    output_regs: Box::new(vec![]),
                 },
                 &mut body,
             );
@@ -1135,8 +1135,8 @@ mod tests {
                     push(
                         Opcode::InstantiateTemplate {
                             template_id: id + 1,
-                            capture_regs: vec![],
-                            output_regs: vec![],
+                            capture_regs: Box::new(vec![]),
+                            output_regs: Box::new(vec![]),
                         },
                         &mut body,
                     );

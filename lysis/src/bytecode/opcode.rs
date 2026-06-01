@@ -97,8 +97,8 @@ pub enum Opcode {
     },
     InstantiateTemplate {
         template_id: u16,
-        capture_regs: Vec<u8>,
-        output_regs: Vec<u8>,
+        capture_regs: Box<Vec<u8>>,
+        output_regs: Box<Vec<u8>>,
     },
     TemplateOutput {
         output_idx: u8,
@@ -170,12 +170,12 @@ pub enum Opcode {
     },
     EmitWitnessCall {
         bytecode_const_idx: u32,
-        in_regs: Vec<u8>,
-        out_regs: Vec<u8>,
+        in_regs: Box<Vec<u8>>,
+        out_regs: Box<Vec<u8>>,
     },
     EmitPoseidonHash {
         dst: u8,
-        in_regs: Vec<u8>,
+        in_regs: Box<Vec<u8>>,
     },
     EmitIsEq {
         dst: u8,
@@ -254,8 +254,8 @@ pub enum Opcode {
     // -----------------------------------------------------------------
     EmitWitnessCallHeap {
         bytecode_const_idx: u32,
-        inputs: Vec<InputSrc>,
-        out_slots: Vec<u32>,
+        inputs: Box<Vec<InputSrc>>,
+        out_slots: Box<Vec<u32>>,
     },
 }
 
@@ -475,11 +475,17 @@ mod tests {
         assert_eq!(
             Opcode::EmitPoseidonHash {
                 dst: 0,
-                in_regs: vec![]
+                in_regs: Box::new(vec![])
             }
             .code(),
             code::EMIT_POSEIDON_HASH
         );
+    }
+
+    #[test]
+    fn opcode_and_instr_layout_stays_compact() {
+        assert_eq!(std::mem::size_of::<Opcode>(), 24);
+        assert_eq!(std::mem::size_of::<crate::program::Instr>(), 32);
     }
 
     #[test]
@@ -570,8 +576,8 @@ mod tests {
         // not consider any register written by this instruction.
         assert!(!Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0,
-            inputs: vec![],
-            out_slots: vec![],
+            inputs: Box::new(vec![]),
+            out_slots: Box::new(vec![]),
         }
         .writes_register());
     }
@@ -580,8 +586,8 @@ mod tests {
     fn emit_witness_call_heap_falls_through() {
         assert!(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0,
-            inputs: vec![],
-            out_slots: vec![],
+            inputs: Box::new(vec![]),
+            out_slots: Box::new(vec![]),
         }
         .falls_through());
     }
@@ -631,8 +637,8 @@ mod tests {
         assert_eq!(
             Opcode::InstantiateTemplate {
                 template_id: 0,
-                capture_regs: vec![],
-                output_regs: vec![]
+                capture_regs: Box::new(vec![]),
+                output_regs: Box::new(vec![])
             }
             .mnemonic(),
             "InstantiateTemplate"

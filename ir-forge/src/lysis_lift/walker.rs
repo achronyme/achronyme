@@ -673,8 +673,8 @@ impl<F: FieldBackend> Walker<F> {
         // appends `Return`.
         self.push_op(Opcode::InstantiateTemplate {
             template_id: next_template_id,
-            capture_regs,
-            output_regs: Vec::new(),
+            capture_regs: Box::new(capture_regs),
+            output_regs: Box::new(Vec::new()),
         });
         self.close_current_template();
 
@@ -803,8 +803,8 @@ impl<F: FieldBackend> Walker<F> {
             encode_opcode(
                 &Opcode::InstantiateTemplate {
                     template_id: 0,
-                    capture_regs: Vec::new(),
-                    output_regs: Vec::new(),
+                    capture_regs: Box::new(Vec::new()),
+                    output_regs: Box::new(Vec::new()),
                 },
                 &mut buf,
             );
@@ -1134,8 +1134,8 @@ impl<F: FieldBackend> Walker<F> {
         }
         self.push_op(Opcode::InstantiateTemplate {
             template_id: walker_idx,
-            capture_regs,
-            output_regs: Vec::new(),
+            capture_regs: Box::new(capture_regs),
+            output_regs: Box::new(Vec::new()),
         });
         Ok(())
     }
@@ -1595,7 +1595,7 @@ impl<F: FieldBackend> Walker<F> {
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::EmitPoseidonHash {
                     dst,
-                    in_regs: vec![l, r],
+                    in_regs: Box::new(vec![l, r]),
                 });
                 self.bind(*result, dst);
             }
@@ -1865,8 +1865,8 @@ impl<F: FieldBackend> Walker<F> {
                     }
                     self.push_op(Opcode::EmitWitnessCallHeap {
                         bytecode_const_idx: blob_idx,
-                        inputs: classified_inputs,
-                        out_slots,
+                        inputs: Box::new(classified_inputs),
+                        out_slots: Box::new(out_slots),
                     });
                 } else {
                     // Classic register-output path: resolve every
@@ -1884,8 +1884,8 @@ impl<F: FieldBackend> Walker<F> {
                     }
                     self.push_op(Opcode::EmitWitnessCall {
                         bytecode_const_idx: blob_idx,
-                        in_regs,
-                        out_regs,
+                        in_regs: Box::new(in_regs),
+                        out_regs: Box::new(out_regs),
                     });
                 }
             }
@@ -2201,8 +2201,8 @@ fn extinst_byte_size<F: FieldBackend>(inst: &ExtendedInstruction<F>) -> Result<u
         ExtendedInstruction::TemplateCall { captures, .. } => {
             let placeholder = Opcode::InstantiateTemplate {
                 template_id: 0,
-                capture_regs: vec![0u8; captures.len()],
-                output_regs: Vec::new(),
+                capture_regs: Box::new(vec![0u8; captures.len()]),
+                output_regs: Box::new(Vec::new()),
             };
             let mut buf = Vec::new();
             encode_opcode(&placeholder, &mut buf);
@@ -2294,7 +2294,7 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
         }),
         Instruction::PoseidonHash { .. } => bin(Opcode::EmitPoseidonHash {
             dst: 0,
-            in_regs: vec![0, 0],
+            in_regs: Box::new(vec![0, 0]),
         }),
         Instruction::AssertEq { message, .. } => bin(if message.is_some() {
             Opcode::EmitAssertEqMsg {
@@ -2383,8 +2383,8 @@ fn placeholder_opcodes<F: FieldBackend>(inst: &Instruction<F>) -> Result<Vec<Opc
 
         Instruction::WitnessCall(call) => bin(Opcode::EmitWitnessCall {
             bytecode_const_idx: 0,
-            in_regs: vec![0u8; call.inputs.len()],
-            out_regs: vec![0u8; call.outputs.len()],
+            in_regs: Box::new(vec![0u8; call.inputs.len()]),
+            out_regs: Box::new(vec![0u8; call.outputs.len()]),
         }),
 
         // Field Div: one 3-byte EmitDiv opcode, same shape as

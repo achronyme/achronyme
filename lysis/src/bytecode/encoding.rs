@@ -246,7 +246,7 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
         } => {
             buf.extend_from_slice(&bytecode_const_idx.to_le_bytes());
             buf.extend_from_slice(&(inputs.len() as u16).to_le_bytes());
-            for input in inputs {
+            for input in inputs.iter() {
                 match input {
                     InputSrc::Reg(reg) => {
                         buf.push(INPUT_SRC_REG);
@@ -259,7 +259,7 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
                 }
             }
             buf.extend_from_slice(&(out_slots.len() as u16).to_le_bytes());
-            for slot in out_slots {
+            for slot in out_slots.iter() {
                 buf.extend_from_slice(&slot.to_le_bytes());
             }
         }
@@ -492,8 +492,8 @@ fn decode_opcode_at(
             let output_regs = read_length_prefixed_regs(bytes, pos)?;
             Ok(Opcode::InstantiateTemplate {
                 template_id,
-                capture_regs,
-                output_regs,
+                capture_regs: Box::new(capture_regs),
+                output_regs: Box::new(output_regs),
             })
         }
         code::TEMPLATE_OUTPUT => {
@@ -577,14 +577,17 @@ fn decode_opcode_at(
             let out_regs = read_length_prefixed_regs(bytes, pos)?;
             Ok(Opcode::EmitWitnessCall {
                 bytecode_const_idx,
-                in_regs,
-                out_regs,
+                in_regs: Box::new(in_regs),
+                out_regs: Box::new(out_regs),
             })
         }
         code::EMIT_POSEIDON_HASH => {
             let dst = read_u8(bytes, pos)?;
             let in_regs = read_length_prefixed_regs(bytes, pos)?;
-            Ok(Opcode::EmitPoseidonHash { dst, in_regs })
+            Ok(Opcode::EmitPoseidonHash {
+                dst,
+                in_regs: Box::new(in_regs),
+            })
         }
         c @ (code::EMIT_INT_DIV | code::EMIT_INT_MOD) => {
             let dst = read_u8(bytes, pos)?;
@@ -643,8 +646,8 @@ fn decode_opcode_at(
             }
             Ok(Opcode::EmitWitnessCallHeap {
                 bytecode_const_idx,
-                inputs,
-                out_slots,
+                inputs: Box::new(inputs),
+                out_slots: Box::new(out_slots),
             })
         }
         other => Err(LysisError::UnknownOpcode {
@@ -739,8 +742,8 @@ mod tests {
         });
         roundtrip_opcode(Opcode::InstantiateTemplate {
             template_id: 2,
-            capture_regs: vec![3, 4, 5],
-            output_regs: vec![6, 7],
+            capture_regs: Box::new(vec![3, 4, 5]),
+            output_regs: Box::new(vec![6, 7]),
         });
         roundtrip_opcode(Opcode::TemplateOutput {
             output_idx: 1,
@@ -786,12 +789,12 @@ mod tests {
     fn roundtrip_emit_variable_length() {
         roundtrip_opcode(Opcode::EmitPoseidonHash {
             dst: 1,
-            in_regs: vec![2, 3, 4, 5],
+            in_regs: Box::new(vec![2, 3, 4, 5]),
         });
         roundtrip_opcode(Opcode::EmitWitnessCall {
             bytecode_const_idx: 7,
-            in_regs: vec![1, 2],
-            out_regs: vec![3, 4, 5],
+            in_regs: Box::new(vec![1, 2]),
+            out_regs: Box::new(vec![3, 4, 5]),
         });
     }
 
@@ -802,19 +805,19 @@ mod tests {
         // WitnessCallHeap).
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0,
-            inputs: vec![],
-            out_slots: vec![],
+            inputs: Box::new(vec![]),
+            out_slots: Box::new(vec![]),
         });
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 42,
-            inputs: vec![InputSrc::Reg(1), InputSrc::Slot(2), InputSrc::Reg(3)],
-            out_slots: vec![100, 101, 102],
+            inputs: Box::new(vec![InputSrc::Reg(1), InputSrc::Slot(2), InputSrc::Reg(3)]),
+            out_slots: Box::new(vec![100, 101, 102]),
         });
         let big_outputs: Vec<u32> = (0u32..256).collect();
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 0xCAFE,
-            inputs: vec![InputSrc::Reg(1), InputSrc::Reg(2)],
-            out_slots: big_outputs,
+            inputs: Box::new(vec![InputSrc::Reg(1), InputSrc::Reg(2)]),
+            out_slots: Box::new(big_outputs),
         });
     }
 
@@ -827,8 +830,8 @@ mod tests {
         let big_outputs: Vec<u32> = (0u32..1024).collect();
         roundtrip_opcode(Opcode::EmitWitnessCallHeap {
             bytecode_const_idx: 1,
-            inputs: big_inputs,
-            out_slots: big_outputs,
+            inputs: Box::new(big_inputs),
+            out_slots: Box::new(big_outputs),
         });
     }
 
