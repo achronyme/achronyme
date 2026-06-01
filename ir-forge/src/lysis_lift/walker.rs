@@ -2816,13 +2816,10 @@ fn partition_live_set<F: FieldBackend>(
     // Build first-use index. usize::MAX = "never seen in window".
     let mut first_use: HashMap<SsaVar, usize> =
         HashMap::with_capacity_and_hasher(live.len(), FxBuildHasher);
-    let mut referenced_in_inst = HashSet::default();
     for (i, inst) in scan.iter().enumerate() {
-        referenced_in_inst.clear();
-        collect_in_extinst(inst, &mut referenced_in_inst);
-        for v in &referenced_in_inst {
-            first_use.entry(*v).or_insert(i);
-        }
+        collect_operands_extinst(inst, &mut |v| {
+            first_use.entry(v).or_insert(i);
+        });
     }
 
     // Sort the live set by (force_hot first, then first_use, then SsaVar.0).
@@ -3095,11 +3092,20 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
     inst: &ExtendedInstruction<F>,
     out: &mut HashSet<SsaVar>,
 ) {
+    collect_operands_extinst(inst, &mut |v| {
+        out.insert(v);
+    });
+}
+
+fn collect_operands_extinst<F: FieldBackend>(
+    inst: &ExtendedInstruction<F>,
+    visit: &mut impl FnMut(SsaVar),
+) {
     match inst {
-        ExtendedInstruction::Plain(i) => collect_in_instruction(i, out),
+        ExtendedInstruction::Plain(i) => collect_operands_instruction(i, visit),
         ExtendedInstruction::LoopUnroll { body, .. } => {
             for nested in body {
-                collect_in_extinst(nested, out);
+                collect_operands_extinst(nested, visit);
             }
         }
         // TemplateCall.captures are uses in the parent scope — must
@@ -3107,7 +3113,7 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
         // surrounding template.
         ExtendedInstruction::TemplateCall { captures, .. } => {
             for v in captures {
-                out.insert(*v);
+                visit(*v);
             }
         }
         // TemplateBody emits sideways into its own template frame
@@ -3141,11 +3147,11 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
             ..
         } => {
             for slot in array_slots {
-                out.insert(*slot);
+                visit(*slot);
             }
-            out.insert(*index_var);
+            visit(*index_var);
             if let Some(v) = value_var {
-                out.insert(*v);
+                visit(*v);
             }
         }
         // Read-side mirrors the write-side rationale; see above.
@@ -3155,9 +3161,9 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
             ..
         } => {
             for slot in array_slots {
-                out.insert(*slot);
+                visit(*slot);
             }
-            out.insert(*index_var);
+            visit(*index_var);
         }
         // Both `operand_var` and `shift_var` are enclosing-scope uses
         // that must cross any top-level split between the LoopUnroll's
@@ -3169,13 +3175,16 @@ pub(crate) fn collect_in_extinst<F: FieldBackend>(
             shift_var,
             ..
         } => {
-            out.insert(*operand_var);
-            out.insert(*shift_var);
+            visit(*operand_var);
+            visit(*shift_var);
         }
     }
 }
 
-fn collect_in_instruction<F: FieldBackend>(inst: &Instruction<F>, out: &mut HashSet<SsaVar>) {
+fn collect_operands_instruction<F: FieldBackend>(
+    inst: &Instruction<F>,
+    visit: &mut impl FnMut(SsaVar),
+) {
     match inst {
         Instruction::Const { .. } | Instruction::Input { .. } => {}
         Instruction::Add { lhs, rhs, .. }
@@ -3193,15 +3202,15 @@ fn collect_in_instruction<F: FieldBackend>(inst: &Instruction<F>, out: &mut Hash
         | Instruction::AssertEq { lhs, rhs, .. }
         | Instruction::IntDiv { lhs, rhs, .. }
         | Instruction::IntMod { lhs, rhs, .. } => {
-            out.insert(*lhs);
-            out.insert(*rhs);
+            visit(*lhs);
+            visit(*rhs);
         }
         Instruction::Neg { operand, .. }
         | Instruction::Not { operand, .. }
         | Instruction::Assert { operand, .. }
         | Instruction::RangeCheck { operand, .. }
         | Instruction::Decompose { operand, .. } => {
-            out.insert(*operand);
+            visit(*operand);
         }
         Instruction::Mux {
             cond,
@@ -3209,17 +3218,17 @@ fn collect_in_instruction<F: FieldBackend>(inst: &Instruction<F>, out: &mut Hash
             if_false,
             ..
         } => {
-            out.insert(*cond);
-            out.insert(*if_true);
-            out.insert(*if_false);
+            visit(*cond);
+            visit(*if_true);
+            visit(*if_false);
         }
         Instruction::PoseidonHash { left, right, .. } => {
-            out.insert(*left);
-            out.insert(*right);
+            visit(*left);
+            visit(*right);
         }
         Instruction::WitnessCall(call) => {
             for v in &call.inputs {
-                out.insert(*v);
+                visit(*v);
             }
         }
     }
