@@ -102,8 +102,48 @@ const LC_AUTO_MATERIALIZE_THRESHOLD: usize = 8;
 /// per-slot cost (24 B) is bounded by max(SsaVar.0) + 1, which on
 /// those paths is small enough that the slack is not measurable.
 #[derive(Debug, Clone)]
+enum LcMapEntry<F: FieldBackend> {
+    Zero,
+    Variable(Variable),
+    Terms(Vec<(Variable, FieldElement<F>)>),
+}
+
+impl<F: FieldBackend> LcMapEntry<F> {
+    fn from_lc(lc: LinearCombination<F>) -> Self {
+        let terms = lc.into_terms();
+        match terms.as_slice() {
+            [] => Self::Zero,
+            [(var, coeff)] if *coeff == FieldElement::<F>::one() => Self::Variable(*var),
+            _ => Self::Terms(terms),
+        }
+    }
+
+    fn to_lc(&self) -> LinearCombination<F> {
+        match self {
+            Self::Zero => LinearCombination::zero(),
+            Self::Variable(var) => LinearCombination::from_variable(*var),
+            Self::Terms(terms) => {
+                let mut lc = LinearCombination::zero();
+                for (var, coeff) in terms {
+                    lc.add_term(*var, *coeff);
+                }
+                lc
+            }
+        }
+    }
+
+    #[cfg(test)]
+    fn stored_terms_capacity(&self) -> Option<usize> {
+        match self {
+            Self::Terms(terms) => Some(terms.capacity()),
+            Self::Zero | Self::Variable(_) => None,
+        }
+    }
+}
+
+#[derive(Debug, Clone)]
 struct LcMap<F: FieldBackend> {
-    segments: Vec<Vec<Option<LinearCombination<F>>>>,
+    segments: Vec<Vec<Option<LcMapEntry<F>>>>,
     segment_len: usize,
 }
 
@@ -145,10 +185,22 @@ impl<F: FieldBackend> LcMap<F> {
         if segment.is_empty() {
             segment.resize_with(self.segment_len, || None);
         }
-        segment[offset] = Some(lc);
+        segment[offset] = Some(LcMapEntry::from_lc(lc));
     }
 
-    fn get(&self, var: &SsaVar) -> Option<&LinearCombination<F>> {
+    fn get(&self, var: &SsaVar) -> Option<LinearCombination<F>> {
+        let idx = var.0 as usize;
+        let segment_idx = idx / self.segment_len;
+        let offset = idx % self.segment_len;
+        self.segments
+            .get(segment_idx)
+            .and_then(|segment| segment.get(offset))
+            .and_then(|opt| opt.as_ref())
+            .map(LcMapEntry::to_lc)
+    }
+
+    #[cfg(test)]
+    fn get_entry(&self, var: &SsaVar) -> Option<&LcMapEntry<F>> {
         let idx = var.0 as usize;
         let segment_idx = idx / self.segment_len;
         let offset = idx % self.segment_len;
@@ -427,7 +479,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     }
 
     fn lookup_lc_untracked(&self, var: &SsaVar) -> Result<LinearCombination<F>, R1CSError> {
-        self.lc_map.get(var).cloned().ok_or_else(|| {
+        self.lc_map.get(var).ok_or_else(|| {
             R1CSError::UnsupportedOperation(format!("undefined SSA variable {:?}", var), None)
         })
     }
@@ -2286,10 +2338,27 @@ mod tests {
         let stored = map.get(&SsaVar(0)).expect("just inserted");
         assert_eq!(stored.terms().len(), 5);
         assert_eq!(
-            stored.terms_capacity(),
-            stored.terms().len(),
+            map.get_entry(&SsaVar(0))
+                .and_then(LcMapEntry::stored_terms_capacity),
+            Some(5),
             "stored LC must have capacity trimmed to its term count"
         );
+    }
+
+    #[test]
+    fn lc_map_stores_unit_variable_lcs_inline() {
+        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        map.insert(
+            SsaVar(0),
+            LinearCombination::<Bn254Fr>::from_variable(Variable(7)),
+        );
+
+        assert!(matches!(
+            map.get_entry(&SsaVar(0)),
+            Some(LcMapEntry::Variable(Variable(7)))
+        ));
+        let restored = map.get(&SsaVar(0)).expect("just inserted");
+        assert_eq!(restored.terms(), &[(Variable(7), FieldElement::ONE)]);
     }
 
     #[test]
@@ -2303,9 +2372,12 @@ mod tests {
 
         let mut map: LcMap<Bn254Fr> = LcMap::new();
         map.insert(SsaVar(0), lc);
-        let stored = map.get(&SsaVar(0)).expect("just inserted");
-        assert_eq!(stored.terms_capacity(), 0);
-        assert_eq!(stored.terms().len(), 0);
+        assert!(matches!(map.get_entry(&SsaVar(0)), Some(LcMapEntry::Zero)));
+        assert!(map
+            .get(&SsaVar(0))
+            .expect("just inserted")
+            .terms()
+            .is_empty());
     }
 
     #[test]
@@ -2355,13 +2427,15 @@ mod tests {
             .unwrap();
         for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
             for (offset, slot) in segment.iter().enumerate() {
-                if let Some(lc) = slot {
+                if let Some(entry) = slot {
                     let idx = segment_idx * compiler.lc_map.segment_len + offset;
-                    assert_eq!(
-                        lc.terms_capacity(),
-                        lc.terms().len(),
-                        "lc_map slot {idx}: terms vec must be tight after insert"
-                    );
+                    if let Some(capacity) = entry.stored_terms_capacity() {
+                        let len = entry.to_lc().terms().len();
+                        assert_eq!(
+                            capacity, len,
+                            "lc_map slot {idx}: terms vec must be tight after insert"
+                        );
+                    }
                 }
             }
         }
@@ -2402,13 +2476,15 @@ mod tests {
         compiler.compile_ir(&prog).unwrap();
         for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
             for (offset, slot) in segment.iter().enumerate() {
-                if let Some(lc) = slot {
+                if let Some(entry) = slot {
                     let idx = segment_idx * compiler.lc_map.segment_len + offset;
-                    assert_eq!(
-                        lc.terms_capacity(),
-                        lc.terms().len(),
-                        "lc_map slot {idx}: terms vec must be tight after insert"
-                    );
+                    if let Some(capacity) = entry.stored_terms_capacity() {
+                        let len = entry.to_lc().terms().len();
+                        assert_eq!(
+                            capacity, len,
+                            "lc_map slot {idx}: terms vec must be tight after insert"
+                        );
+                    }
                 }
             }
         }
