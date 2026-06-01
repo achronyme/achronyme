@@ -30,6 +30,7 @@ use lysis::{
     execute, expected_family, ChunkDrainingSink, InstructionKind, InterningSink, LysisConfig,
 };
 use memory::{FieldBackend, FieldElement};
+use rustc_hash::FxHashMap;
 
 use super::{ExtendedSink, InstEnvValue, Instantiator, InstrSink};
 use crate::error::ProveIrError;
@@ -923,13 +924,20 @@ fn run_walk<'a, F: FieldBackend>(
 ) -> Result<(), ProveIrError> {
     let mut inst = Instantiator {
         sink,
-        env: HashMap::new(),
-        captures: captures.clone(),
+        env: FxHashMap::default(),
+        captures: captures
+            .iter()
+            .map(|(name, value)| (name.clone(), *value))
+            .collect(),
         current_span: None,
-        output_pub_vars: HashMap::new(),
-        const_cache: HashMap::new(),
-        const_values: HashMap::new(),
-        component_bodies: prove_ir.component_bodies.clone(),
+        output_pub_vars: FxHashMap::default(),
+        const_cache: FxHashMap::default(),
+        const_values: FxHashMap::default(),
+        component_bodies: prove_ir
+            .component_bodies
+            .iter()
+            .map(|(key, body)| (key.clone(), body.clone()))
+            .collect(),
     };
 
     // 1. Validate all required captures are provided

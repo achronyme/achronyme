@@ -34,10 +34,9 @@ mod sink;
 mod stmts;
 mod utils;
 
-use std::collections::HashMap;
-
 use diagnostics::SpanRange;
 use memory::{FieldBackend, FieldElement};
+use rustc_hash::FxHashMap;
 
 use ir_core::{IrType, SsaVar};
 
@@ -90,9 +89,9 @@ pub(super) struct Instantiator<'a, F: FieldBackend> {
     /// borrowed for the whole instantiation. Sink-internal state
     /// lives behind the `&mut`.
     pub(super) sink: Box<dyn InstrSink<F> + 'a>,
-    pub(super) env: HashMap<String, InstEnvValue>,
+    pub(super) env: FxHashMap<String, InstEnvValue>,
     /// Concrete capture values (provided by caller).
-    pub(super) captures: HashMap<String, FieldElement<F>>,
+    pub(super) captures: FxHashMap<String, FieldElement<F>>,
     /// Current source span context — set when entering a CircuitNode,
     /// propagated to all IR instructions emitted within that node.
     pub(super) current_span: Option<SpanRange>,
@@ -100,7 +99,7 @@ pub(super) struct Instantiator<'a, F: FieldBackend> {
     /// Non-empty only when instantiating Circom circuits with `signal output`.
     /// Used to intercept body nodes (WitnessHint, Let) that would create
     /// duplicate wires for output signals.
-    pub(super) output_pub_vars: HashMap<String, SsaVar>,
+    pub(super) output_pub_vars: FxHashMap<String, SsaVar>,
     /// Dedup cache for `Instruction::Const`. Maps the field value's
     /// canonical 32-byte representation to the SSA var of a previously
     /// emitted Const with that value. Repeated emissions of the same
@@ -111,20 +110,20 @@ pub(super) struct Instantiator<'a, F: FieldBackend> {
     /// const-fold in `emit_expr` reads it synchronously between
     /// operand resolution and the next push — moving it onto the
     /// sink would force re-entrant `&mut self` borrow patterns.
-    pub(super) const_cache: HashMap<[u8; 32], SsaVar>,
+    pub(super) const_cache: FxHashMap<[u8; 32], SsaVar>,
     /// Reverse lookup: SSA var → field value, for every var known to
     /// be a compile-time constant. Enables peephole const-fold in
     /// `emit_expr` for `BinOp`/`UnaryOp` (e.g., `Add(x, Const(0)) → x`,
     /// `Mul(Const, Const) → Const(fold)`). Populated alongside
     /// [`const_cache`] in [`emit_const`].
-    pub(super) const_values: HashMap<SsaVar, FieldElement<F>>,
+    pub(super) const_values: FxHashMap<SsaVar, FieldElement<F>>,
     /// Shared, unmangled template bodies (from `ProveIR`), cloned once
     /// at construction. A [`CircuitNode::ComponentCall`] resolves its
     /// `body_key` here, mangles the body with the instance prefix, and
     /// emits it transiently — so peak memory is one mangled body, not
     /// one inlined copy per instance. Keyed by body key; only bodies
     /// actually referenced by a `ComponentCall` are present.
-    pub(super) component_bodies: HashMap<String, Vec<CircuitNode>>,
+    pub(super) component_bodies: FxHashMap<String, Vec<CircuitNode>>,
 }
 
 // ---------------------------------------------------------------------------
