@@ -162,7 +162,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         array_slots: Vec<SsaVar>,
         index_var: SsaVar,
         value_var: Option<SsaVar>,
-        span: Option<SpanRange>,
+        span: Option<Box<SpanRange>>,
     },
 
     /// A read from an array slot at an SSA-symbolic index — the
@@ -201,7 +201,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         result_var: SsaVar,
         array_slots: Vec<SsaVar>,
         index_var: SsaVar,
-        span: Option<SpanRange>,
+        span: Option<Box<SpanRange>>,
     },
 
     /// A `>>` or `<<` shift whose amount is an SSA-symbolic
@@ -254,7 +254,7 @@ pub enum ExtendedInstruction<F: FieldBackend = Bn254Fr> {
         shift_var: SsaVar,
         num_bits: u32,
         direction: ShiftDirection,
-        span: Option<SpanRange>,
+        span: Option<Box<SpanRange>>,
     },
 }
 
@@ -345,6 +345,12 @@ mod tests {
         let ext = ExtendedInstruction::Plain(inst.clone());
         assert!(ext.is_plain());
         assert!(matches!(ext.as_plain(), Some(Instruction::Add { .. })));
+    }
+
+    #[test]
+    fn extended_instruction_size_stays_plain_sized() {
+        assert_eq!(std::mem::size_of::<Instruction<Bn254Fr>>(), 56);
+        assert_eq!(std::mem::size_of::<ExtendedInstruction<Bn254Fr>>(), 64);
     }
 
     #[test]

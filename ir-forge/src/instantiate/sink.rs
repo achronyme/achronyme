@@ -290,7 +290,7 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
             array_slots,
             index_var,
             value_var,
-            span,
+            span: span.map(Box::new),
         });
     }
 
@@ -305,7 +305,7 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
             result_var,
             array_slots,
             index_var,
-            span,
+            span: span.map(Box::new),
         });
     }
 
@@ -324,7 +324,7 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
             shift_var,
             num_bits,
             direction,
-            span,
+            span: span.map(Box::new),
         });
     }
 }
