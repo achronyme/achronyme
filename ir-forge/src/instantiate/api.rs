@@ -466,6 +466,18 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
         var_spans,
         input_spans,
     } = extended;
+    let trace = lysis_drain_trace_enabled();
+    if trace {
+        lysis_drain_trace(
+            "before_lower",
+            &format!(
+                "extended_body_len={} extended_body_cap={} extended_inst_size={}",
+                body.len(),
+                body.capacity(),
+                std::mem::size_of::<ExtendedInstruction<F>>()
+            ),
+        );
+    }
     drop(var_names);
     drop(var_types);
     drop(var_spans);
@@ -473,6 +485,27 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
 
     let walker = Walker::<F>::new(expected_family::<F>());
     let decoded = walker.lower(body).map_err(RoundTripError::Walk)?;
+    if trace {
+        lysis_drain_trace(
+            "after_lower",
+            &format!(
+                "decoded_body_len={} decoded_body_cap={} instr_size={} templates_len={} templates_cap={} const_pool_len={} heap_size_hint={}",
+                decoded.body.len(),
+                decoded.body.capacity(),
+                std::mem::size_of::<lysis::program::Instr>(),
+                decoded.templates.len(),
+                decoded.templates.capacity(),
+                decoded.const_pool.len(),
+                decoded.header.heap_size_hint,
+            ),
+        );
+    }
+    if lysis_malloc_trim_enabled() {
+        let trimmed = trim_process_allocator();
+        if trace {
+            lysis_drain_trace("after_malloc_trim", &format!("trimmed={trimmed}"));
+        }
+    }
     if cfg!(debug_assertions) {
         lysis::bytecode::validate(&decoded, &LysisConfig::default())
             .map_err(RoundTripError::Lysis)?;
@@ -483,6 +516,9 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
         .and_then(|v| v.parse::<usize>().ok())
         .filter(|&n| n > 0)
         .unwrap_or(131_072);
+    if trace {
+        lysis_drain_trace("before_execute", &format!("window={window}"));
+    }
     let mut sink = ChunkDrainingSink::<F>::with_streaming_window_chunked(window, chunk_consumer);
     execute(
         &decoded,
@@ -491,12 +527,75 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
         &mut sink,
     )
     .map_err(RoundTripError::Lysis)?;
+    if trace {
+        lysis_drain_trace(
+            "after_execute",
+            &format!(
+                "pure_len={} effect_len={}",
+                sink.inner().pure_len(),
+                sink.inner().effect_len()
+            ),
+        );
+    }
     let residual_sink = sink.finalize();
+    if trace {
+        lysis_drain_trace(
+            "after_finalize",
+            &format!(
+                "pure_len={} effect_len={}",
+                residual_sink.pure_len(),
+                residual_sink.effect_len()
+            ),
+        );
+    }
 
     Ok(LysisDrainBundle {
         residual_sink,
         next_var,
     })
+}
+
+fn lysis_drain_trace_enabled() -> bool {
+    std::env::var("ACH_LYSIS_TRACE").is_ok()
+}
+
+fn lysis_malloc_trim_enabled() -> bool {
+    std::env::var("ACH_LYSIS_MALLOC_TRIM").as_deref() == Ok("1")
+}
+
+#[cfg(all(target_os = "linux", target_env = "gnu"))]
+fn trim_process_allocator() -> bool {
+    unsafe extern "C" {
+        fn malloc_trim(pad: usize) -> i32;
+    }
+    unsafe { malloc_trim(0) != 0 }
+}
+
+#[cfg(not(all(target_os = "linux", target_env = "gnu")))]
+fn trim_process_allocator() -> bool {
+    false
+}
+
+fn lysis_drain_trace(stage: &str, fields: &str) {
+    let (rss_kib, vmsize_kib) = lysis_process_mem_kib().unwrap_or((0, 0));
+    eprintln!("[lysis-drain] {stage} rss_kib={rss_kib} vmsize_kib={vmsize_kib} {fields}");
+}
+
+fn lysis_process_mem_kib() -> Option<(u64, u64)> {
+    let status = std::fs::read_to_string("/proc/self/status").ok()?;
+    let mut rss = None;
+    let mut vmsize = None;
+    for line in status.lines() {
+        if let Some(rest) = line.strip_prefix("VmRSS:") {
+            rss = rest.split_whitespace().next()?.parse::<u64>().ok();
+        } else if let Some(rest) = line.strip_prefix("VmSize:") {
+            vmsize = rest.split_whitespace().next()?.parse::<u64>().ok();
+        }
+        if rss.is_some() && vmsize.is_some() {
+            break;
+        }
+    }
+    Some((rss.unwrap_or(0), vmsize.unwrap_or(0)))
 }
 
 fn lower_extended_through_lysis<F: FieldBackend>(
