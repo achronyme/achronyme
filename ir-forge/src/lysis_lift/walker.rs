@@ -5212,8 +5212,8 @@ mod tests {
 
         for t in &program.templates {
             assert!(
-                t.frame_size <= 251,
-                "template {} frame_size {} should stay near cap",
+                u32::from(t.frame_size) <= FRAME_CAP,
+                "template {} frame_size {} should stay within cap",
                 t.id,
                 t.frame_size
             );
