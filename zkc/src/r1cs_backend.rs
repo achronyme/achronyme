@@ -1205,6 +1205,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 // Boolean decomposition: x = sum(b_i * 2^i), each b_i boolean
                 // Cost: bits boolean constraints + 1 sum equality = bits+1 total
                 let mut sum = LinearCombination::zero();
+                let two = FieldElement::<F>::from_u64(2);
+                let mut coeff = FieldElement::<F>::one();
                 for i in 0..*bits {
                     let bit_var = self.cs.alloc_witness();
                     // b_i * (1 - b_i) = 0  (enforces b_i ∈ {0, 1})
@@ -1215,8 +1217,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                             - LinearCombination::from_variable(bit_var),
                         LinearCombination::zero(),
                     );
-                    let coeff = power_of_two_generic::<F>(i);
                     sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+                    coeff = coeff.mul(&two);
                     self.push_witness_op(WitnessOp::BitExtract {
                         target: bit_var,
                         source: lc.clone(),
@@ -1476,6 +1478,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
 
                 // Same as RangeCheck but also registers each bit in self.lc_map.
                 let mut sum = LinearCombination::zero();
+                let two = FieldElement::<F>::from_u64(2);
+                let mut coeff = FieldElement::<F>::one();
                 for (i, bit_ssa) in bit_results.iter().enumerate() {
                     let bit_var = self.cs.alloc_witness();
                     // b_i * (1 - b_i) = 0
@@ -1491,8 +1495,8 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     );
                     // Track as bool-enforced so Mux/And/Or won't emit duplicate enforcement
                     self.bool_enforced.insert(*bit_ssa);
-                    let coeff = power_of_two_generic::<F>(i as u32);
                     sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+                    coeff = coeff.mul(&two);
                     self.push_witness_op(WitnessOp::BitExtract {
                         target: bit_var,
                         source: src_lc.clone(),

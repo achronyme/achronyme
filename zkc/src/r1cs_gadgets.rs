@@ -146,6 +146,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let src_lc = LinearCombination::from_variable(src_var);
 
         let mut sum = LinearCombination::zero();
+        let two = FieldElement::<F>::from_u64(2);
+        let mut coeff = FieldElement::<F>::one();
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
             crate::r1cs_backend::BC_ENFORCE_N_RANGE
@@ -156,8 +158,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     - LinearCombination::from_variable(bit_var),
                 LinearCombination::zero(),
             );
-            let coeff = power_of_two_generic::<F>(i);
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+            coeff = coeff.mul(&two);
             self.push_witness_op(WitnessOp::BitExtract {
                 target: bit_var,
                 source: src_lc.clone(),
@@ -195,6 +197,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut sum = LinearCombination::zero();
         let mut top_bit_lc = LinearCombination::zero();
         let top_index = num_bits - 1;
+        let two = FieldElement::<F>::from_u64(2);
+        let mut coeff = FieldElement::<F>::one();
 
         for i in 0..num_bits {
             let bit_var = self.cs.alloc_witness();
@@ -207,8 +211,8 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                     - LinearCombination::from_variable(bit_var),
                 LinearCombination::zero(),
             );
-            let coeff = power_of_two_generic::<F>(i);
             sum = sum + LinearCombination::from_variable(bit_var) * coeff;
+            coeff = coeff.mul(&two);
             self.push_witness_op(WitnessOp::BitExtract {
                 target: bit_var,
                 source: src_lc.clone(),
