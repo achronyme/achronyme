@@ -59,6 +59,11 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             return a.clone() * scalar;
         }
         if self.direct_linear_mul {
+            if !self.record_witness_ops {
+                if let Some(out) = self.cs.try_count_only_non_linear_mul() {
+                    return LinearCombination::from_variable(out);
+                }
+            }
             let out = self.cs.mul_lc(a, b);
             self.push_witness_op(WitnessOp::Multiply {
                 target: out,

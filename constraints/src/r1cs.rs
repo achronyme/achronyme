@@ -541,6 +541,28 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         self.retain_constraints
     }
 
+    /// Count a known non-linear multiplication row in compile-only,
+    /// count-only-collapse mode without allocating a transient
+    /// [`Constraint`]. Returns `None` outside that exact mode.
+    ///
+    /// This is valid only when the caller has already established that
+    /// both multiplicands are non-constant, so the row cannot be
+    /// absorbed by linear collapse and would be retained only as a
+    /// counted survivor.
+    pub fn try_count_only_non_linear_mul(&mut self) -> Option<Variable> {
+        if self.retain_constraints
+            || !self
+                .collapse
+                .as_ref()
+                .is_some_and(|collapse| collapse.is_count_only())
+        {
+            return None;
+        }
+        let out = self.alloc_witness();
+        self.constraint_count += 1;
+        Some(out)
+    }
+
     // --- Variable allocation ---
 
     /// Allocate a public input variable.
@@ -971,6 +993,22 @@ mod tests {
         assert!(cs.constraints().is_empty());
         assert!(!cs.constraint_retention_enabled());
         assert_eq!(cs.num_variables(), 4);
+    }
+
+    #[test]
+    fn count_only_non_linear_mul_fast_path_counts_one_row() {
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
+        cs.disable_constraint_retention();
+        cs.enable_incremental_collapse_count_only();
+
+        let out = cs
+            .try_count_only_non_linear_mul()
+            .expect("count-only non-linear fast path active");
+
+        assert_eq!(out, Variable(1));
+        assert_eq!(cs.num_variables(), 2);
+        assert_eq!(cs.num_constraints(), 1);
+        assert!(cs.constraints().is_empty());
     }
 
     #[test]

@@ -91,6 +91,12 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
         collapse
     }
 
+    /// True for the compile-only mode that folds eligible linear rows
+    /// but intentionally keeps no substitution or barred-state history.
+    pub fn is_count_only(&self) -> bool {
+        !self.track_barred && !self.retain_substitutions
+    }
+
     /// Fold one emitted constraint. Applies the running substitution map,
     /// then returns `Some(survivor)` for the caller to store, or `None` when
     /// the constraint is absorbed — either trivially satisfied after
