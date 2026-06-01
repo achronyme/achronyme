@@ -94,7 +94,7 @@ const FRAME_CAP: u32 = 255;
 /// allocate up to 255 slots in one go; a runaway single emit surfaces
 /// as a clean `FrameOverflow` error rather than a corrupt constraint
 /// stream).
-const FRAME_MARGIN: u32 = 4;
+const FRAME_MARGIN: u32 = 0;
 
 /// Hard cap on the total live-set size handled by a single
 /// `compute_live_set` call, including spilled cold vars. Anything
@@ -666,7 +666,12 @@ impl<F: FieldBackend> Walker<F> {
 
         // Step 2: build capture_regs for the hot partition only.
         let capture_regs: Vec<u8> = hot.iter().map(|v| self.ssa_to_reg[v]).collect();
-        let next_template_id = self.templates.len() as u16;
+        let next_template_id =
+            u16::try_from(self.templates.len()).map_err(|_| WalkError::OperandOutOfRange {
+                kind: "templates",
+                limit: u32::from(u16::MAX),
+                got: self.templates.len() as u32,
+            })?;
 
         // Tail of the outgoing template: chain the next one and
         // close. `close_current_template` stamps frame_size and
@@ -768,6 +773,13 @@ impl<F: FieldBackend> Walker<F> {
     /// resolve `body_offset` → instruction index.
     fn finalize(mut self) -> Result<Program<F>, WalkError> {
         self.close_current_template();
+        if self.templates.len() > usize::from(u16::MAX) + 1 {
+            return Err(WalkError::OperandOutOfRange {
+                kind: "templates",
+                limit: u32::from(u16::MAX),
+                got: self.templates.len() as u32,
+            });
+        }
 
         // Compute encoded byte sizes for each template body so we can
         // stamp body_offset/body_len on the matching DefineTemplate.
@@ -4980,11 +4992,10 @@ mod tests {
             program.templates.len()
         );
         // The split machinery never overflows the frame cap. Pre-emit
-        // cost prediction can land a body right at FRAME_CAP -
-        // FRAME_MARGIN, which for an Add (cost = 1) is slot 250.
+        // cost prediction can land a body right at FRAME_CAP.
         for t in &program.templates {
             assert!(
-                t.frame_size <= 251,
+                u32::from(t.frame_size) <= FRAME_CAP,
                 "template {} frame_size {} should stay near cap",
                 t.id,
                 t.frame_size
@@ -5007,6 +5018,25 @@ mod tests {
             .filter(|i| matches!(i, lysis::InstructionKind::Input { .. }))
             .count();
         assert_eq!(inputs, 2, "Inputs preserved across split");
+    }
+
+    #[test]
+    fn split_rejects_template_id_overflow_instead_of_wrapping() {
+        let mut walker = Walker::<Bn254Fr>::new(FieldFamily::BnLike256);
+        walker.templates = (0..=usize::from(u16::MAX))
+            .map(|_| TemplateBuf::new(0))
+            .collect();
+        walker.current = usize::from(u16::MAX);
+
+        let err = walker.perform_split(&[], &[]).unwrap_err();
+        assert_eq!(
+            err,
+            WalkError::OperandOutOfRange {
+                kind: "templates",
+                limit: u32::from(u16::MAX),
+                got: u32::from(u16::MAX) + 1,
+            }
+        );
     }
 
     /// Gap 4: a per-iter unrolled body whose single iteration would

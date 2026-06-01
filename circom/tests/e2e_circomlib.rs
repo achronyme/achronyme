@@ -1444,6 +1444,10 @@ fn ecdsa_verify_boss_fight() {
             ""
         }
     );
+    if compile_only_on {
+        eprintln!("[ECDSAVerify] [total]        {:?}", total.elapsed());
+        return;
+    }
 
     let t4 = Instant::now();
     let stats = rc.optimize_r1cs();
