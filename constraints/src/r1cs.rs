@@ -253,6 +253,11 @@ impl<F: FieldBackend> LinearCombination<F> {
 
     /// Returns true if this LC only references `Variable::ONE` (i.e., it's a pure constant).
     pub fn is_constant(&self) -> bool {
+        match self.terms.as_slice() {
+            [] => return true,
+            [(var, _)] => return *var == Variable::ONE,
+            _ => {}
+        }
         self.simplify()
             .terms
             .iter()
@@ -262,6 +267,17 @@ impl<F: FieldBackend> LinearCombination<F> {
     /// If this LC is a pure constant (only `Variable::ONE` terms), return the scalar value.
     /// Returns `None` if any non-ONE variable is present.
     pub fn constant_value(&self) -> Option<FieldElement<F>> {
+        match self.terms.as_slice() {
+            [] => return Some(FieldElement::<F>::zero()),
+            [(var, coeff)] => {
+                return if *var == Variable::ONE {
+                    Some(*coeff)
+                } else {
+                    None
+                };
+            }
+            _ => {}
+        }
         let simplified = self.simplify();
         if !simplified
             .terms
@@ -283,6 +299,12 @@ impl<F: FieldBackend> LinearCombination<F> {
     /// This enables zero-cost materialization when an LC already represents
     /// a single circuit variable.
     pub fn as_single_variable(&self) -> Option<Variable> {
+        if let [(var, coeff)] = self.terms.as_slice() {
+            if *var != Variable::ONE && *coeff == FieldElement::<F>::one() {
+                return Some(*var);
+            }
+            return None;
+        }
         let simplified = self.simplify();
         if simplified.terms.len() == 1 {
             let (var, coeff) = &simplified.terms[0];
@@ -857,6 +879,30 @@ mod tests {
 
         // 3*10 + 5*4 = 50
         assert_eq!(lc.evaluate(&witness).unwrap(), FieldElement::from_u64(50));
+    }
+
+    #[test]
+    fn linear_combination_fast_shape_queries_match_simplified_semantics() {
+        let zero: LinearCombination = LinearCombination::zero();
+        assert!(zero.is_constant());
+        assert_eq!(zero.constant_value(), Some(FieldElement::zero()));
+        assert_eq!(zero.as_single_variable(), None);
+
+        let one: LinearCombination = LinearCombination::from_constant(FieldElement::from_u64(7));
+        assert!(one.is_constant());
+        assert_eq!(one.constant_value(), Some(FieldElement::from_u64(7)));
+        assert_eq!(one.as_single_variable(), None);
+
+        let x: LinearCombination = LinearCombination::from_variable(Variable(3));
+        assert!(!x.is_constant());
+        assert_eq!(x.constant_value(), None);
+        assert_eq!(x.as_single_variable(), Some(Variable(3)));
+
+        let cancelled: LinearCombination = LinearCombination::from_variable(Variable(3))
+            - LinearCombination::from_variable(Variable(3));
+        assert!(cancelled.is_constant());
+        assert_eq!(cancelled.constant_value(), Some(FieldElement::zero()));
+        assert_eq!(cancelled.as_single_variable(), None);
     }
 
     #[test]
