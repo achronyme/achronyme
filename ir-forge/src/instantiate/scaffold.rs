@@ -138,7 +138,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             name: name.to_string(),
             visibility,
         });
-        self.set_name(v, name.to_string());
+        if self.keeps_metadata() {
+            self.set_name(v, name.to_string());
+        }
         self.set_type(v, ir_type);
 
         // Bool inputs must be constrained to {0, 1} via RangeCheck(1 bit).
@@ -178,7 +180,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     name: cap.name.clone(),
                     visibility: Visibility::Witness,
                 });
-                self.set_name(v, cap.name.clone());
+                if self.keeps_metadata() {
+                    self.set_name(v, cap.name.clone());
+                }
                 self.set_type(v, IrType::Field);
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
 
@@ -202,7 +206,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             CaptureUsage::StructureOnly => {
                 // Inlined as a constant — not a circuit wire.
                 let v = self.emit_const(value);
-                self.set_name(v, cap.name.clone());
+                if self.keeps_metadata() {
+                    self.set_name(v, cap.name.clone());
+                }
                 self.env.insert(cap.name.clone(), InstEnvValue::Scalar(v));
             }
         }

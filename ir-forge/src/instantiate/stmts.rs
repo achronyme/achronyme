@@ -51,7 +51,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     // env keeps pointing to pub_var (not shadowed)
                 } else {
                     let v = self.emit_expr(value)?;
-                    self.set_name(v, name.clone());
+                    if self.keeps_metadata() {
+                        self.set_name(v, name.clone());
+                    }
                     self.env.insert(name.clone(), InstEnvValue::Scalar(v));
                 }
             }
@@ -60,7 +62,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 for (i, elem) in elements.iter().enumerate() {
                     let v = self.emit_expr(elem)?;
                     let elem_name = format!("{name}_{i}");
-                    self.set_name(v, elem_name.clone());
+                    if self.keeps_metadata() {
+                        self.set_name(v, elem_name.clone());
+                    }
                     self.env.insert(elem_name, InstEnvValue::Scalar(v));
                     elem_vars.push(v);
                 }
@@ -144,7 +148,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                 for i in 0..*num_bits {
                     let bit_v = self.fresh_var();
                     let elem_name = format!("{name}_{i}");
-                    self.set_name(bit_v, elem_name.clone());
+                    if self.keeps_metadata() {
+                        self.set_name(bit_v, elem_name.clone());
+                    }
                     self.env.insert(elem_name, InstEnvValue::Scalar(bit_v));
                     bit_vars.push(bit_v);
                 }
@@ -168,7 +174,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                     // The actual value is provided externally by the prover
                     // (computed from the hint expression off-circuit).
                     let v = self.fresh_var();
-                    self.set_name(v, name.clone());
+                    if self.keeps_metadata() {
+                        self.set_name(v, name.clone());
+                    }
                     self.push_inst(Instruction::Input {
                         result: v,
                         name: name.clone(),
@@ -219,7 +227,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                         elem_vars.push(pub_var);
                     } else {
                         let v = self.fresh_var();
-                        self.set_name(v, elem_name.clone());
+                        if self.keeps_metadata() {
+                            self.set_name(v, elem_name.clone());
+                        }
                         self.push_inst(Instruction::Input {
                             result: v,
                             name: elem_name.clone(),
@@ -291,7 +301,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
                         existing
                     } else {
                         let fresh = self.fresh_var();
-                        self.set_name(fresh, name.clone());
+                        if self.keeps_metadata() {
+                            self.set_name(fresh, name.clone());
+                        }
                         self.env.insert(name.clone(), InstEnvValue::Scalar(fresh));
                         fresh
                     };
@@ -730,7 +742,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
         // declared in the parent's namespace (the executor's loop
         // machinery binds it per iteration there).
         let iter_var = self.fresh_var();
-        self.set_name(iter_var, var.to_string());
+        if self.keeps_metadata() {
+            self.set_name(iter_var, var.to_string());
+        }
         self.sink.begin_symbolic_loop();
         let result = self.with_saved_var(var, |this| {
             this.env
@@ -913,7 +927,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             });
         } else {
             let v = self.emit_expr(value)?;
-            self.set_name(v, elem_name.clone());
+            if self.keeps_metadata() {
+                self.set_name(v, elem_name.clone());
+            }
             self.env.insert(elem_name, InstEnvValue::Scalar(v));
             self.ensure_array_slot(array, idx, v);
         }
@@ -931,7 +947,9 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
             // env already has the public wire — nothing to do.
         } else {
             let v = self.fresh_var();
-            self.set_name(v, elem_name.clone());
+            if self.keeps_metadata() {
+                self.set_name(v, elem_name.clone());
+            }
             self.push_inst(Instruction::Input {
                 result: v,
                 name: elem_name.clone(),

@@ -149,6 +149,10 @@ impl<'a, F: FieldBackend> Instantiator<'a, F> {
         self.sink.set_name(var, name);
     }
 
+    pub(super) fn keeps_metadata(&self) -> bool {
+        self.sink.keeps_metadata()
+    }
+
     // `set_input_span` and `next_var` are exposed on `InstrSink` for
     // future call sites (input registration in 2.4, canonicaliser in
     // 2.6) but not used by the current instantiation walk.

@@ -58,6 +58,9 @@ pub(crate) trait InstrSink<F: FieldBackend> {
     /// the inspector).
     fn set_name(&mut self, var: SsaVar, name: String);
 
+    /// Whether this sink retains source-name/span side channels.
+    fn keeps_metadata(&self) -> bool;
+
     /// Bind an IR type to an SSA var. Read by downstream passes
     /// (`bool_prop`, R1CS) to reason about boolean vs field-typed
     /// wires.
@@ -243,6 +246,10 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
         if self.keep_metadata {
             self.metadata.set_name(var, name);
         }
+    }
+
+    fn keeps_metadata(&self) -> bool {
+        self.keep_metadata
     }
 
     fn set_type(&mut self, var: SsaVar, ty: IrType) {
