@@ -529,6 +529,13 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut c = Self::new_direct_linear_mul();
         c.record_witness_ops = false;
         c.cs.disable_constraint_retention();
+        match std::env::var("ACH_R1CS_COMPILE_ONLY_COLLAPSE").as_deref() {
+            Ok("1") | Ok("true") | Ok("full") => c.cs.enable_incremental_collapse(),
+            Ok("count") | Ok("count-only") | Ok("discard") => {
+                c.cs.enable_incremental_collapse_count_only();
+            }
+            _ => {}
+        }
         if let Some(limit) = std::env::var("ACH_R1CS_LC_CACHE_TERM_LIMIT")
             .ok()
             .and_then(|v| v.parse::<usize>().ok())
@@ -2365,6 +2372,134 @@ mod tests {
             bounded.cs.num_constraints(),
             2,
             "x+y and (x+y)+z each cross the one-term cache limit"
+        );
+    }
+
+    #[test]
+    fn lc_cache_term_limit_with_collapse_absorbs_materialization_rows() {
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: a,
+            name: "a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: b,
+            name: "b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let c = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: c,
+            name: "c".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let ab = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: ab,
+            lhs: a,
+            rhs: b,
+        });
+        let bc = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: bc,
+            lhs: b,
+            rhs: c,
+        });
+        let product = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: product,
+            lhs: ab,
+            rhs: bc,
+        });
+
+        let mut bounded = R1CSCompiler::new_direct_linear_mul();
+        bounded.lc_cache_term_limit = Some(1);
+        bounded.compile_ir(&prog).unwrap();
+        assert_eq!(
+            bounded.cs.num_constraints(),
+            3,
+            "without collapse, two cache materializations inflate the direct product"
+        );
+
+        let mut collapsed = R1CSCompiler::new_direct_linear_mul();
+        collapsed.lc_cache_term_limit = Some(1);
+        collapsed.cs.enable_incremental_collapse();
+        collapsed.compile_ir(&prog).unwrap();
+        assert_eq!(
+            collapsed.cs.num_constraints(),
+            1,
+            "collapse should absorb cache materialization rows before the product survivor"
+        );
+        assert_eq!(
+            collapsed.lookup_lc_untracked(&ab).unwrap().terms().len(),
+            1,
+            "bounded cache still retains only the materialized wire"
+        );
+    }
+
+    #[test]
+    fn count_only_collapse_absorbs_cache_rows_without_substitution_retention() {
+        let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+        let a = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: a,
+            name: "a".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let b = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: b,
+            name: "b".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let c = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: c,
+            name: "c".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let ab = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: ab,
+            lhs: a,
+            rhs: b,
+        });
+        let bc = prog.fresh_var();
+        prog.push(Instruction::Add {
+            result: bc,
+            lhs: b,
+            rhs: c,
+        });
+        let product = prog.fresh_var();
+        prog.push(Instruction::Mul {
+            result: product,
+            lhs: ab,
+            rhs: bc,
+        });
+
+        let mut compiler = R1CSCompiler::new_direct_linear_mul();
+        compiler.record_witness_ops = false;
+        compiler.lc_cache_term_limit = Some(1);
+        compiler.cs.disable_constraint_retention();
+        compiler.cs.enable_incremental_collapse_count_only();
+        compiler.compile_ir(&prog).unwrap();
+
+        assert_eq!(
+            compiler.cs.num_constraints(),
+            1,
+            "count-only collapse should absorb cache materialization rows"
+        );
+        assert!(compiler.cs.constraints().is_empty());
+        assert!(
+            compiler
+                .cs
+                .take_collapse_substitution_map()
+                .unwrap()
+                .is_empty(),
+            "compile-only count mode must not retain eliminated-wire replacements"
         );
     }
 

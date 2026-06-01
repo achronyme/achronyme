@@ -57,6 +57,7 @@ use crate::r1cs::Constraint;
 pub struct IncrementalCollapse<F: FieldBackend> {
     subs: SubstitutionMap<F>,
     barred: HashSet<usize>,
+    retain_substitutions: bool,
     /// Always empty: passed to `solve_for_variable` so its max-frequency
     /// pick degenerates to "highest index" (the forward / freshest-wire
     /// pivot). Kept as a field to avoid reallocating per constraint.
@@ -71,9 +72,20 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
         Self {
             subs: FxHashMap::default(),
             barred: (0..=num_pub_inputs).collect(),
+            retain_substitutions: true,
             empty_freq: FxHashMap::default(),
             inv_cache: FxHashMap::default(),
         }
+    }
+
+    /// Create a collapser that absorbs eligible linear constraints but does
+    /// not retain the substitution map. This is only valid for compile-only
+    /// count/sizing paths that do not store rows and cannot reconstruct
+    /// eliminated witness wires.
+    pub fn new_count_only(num_pub_inputs: usize) -> Self {
+        let mut collapse = Self::new(num_pub_inputs);
+        collapse.retain_substitutions = false;
+        collapse
     }
 
     /// Fold one emitted constraint. Applies the running substitution map,
@@ -107,7 +119,9 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
                 for (v, _) in replacement.terms() {
                     self.barred.insert(v.index());
                 }
-                self.subs.insert(var.index(), replacement);
+                if self.retain_substitutions {
+                    self.subs.insert(var.index(), replacement);
+                }
                 return None;
             }
         }

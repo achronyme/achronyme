@@ -471,6 +471,22 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         ));
     }
 
+    /// Enable count-only incremental linear collapse.
+    ///
+    /// This folds eligible linear rows during emission but intentionally
+    /// discards the substitution map. It is only valid after row retention is
+    /// disabled for compile-only sizing/counting; callers cannot serialize,
+    /// optimize, prove, verify, or reconstruct eliminated witnesses.
+    pub fn enable_incremental_collapse_count_only(&mut self) {
+        assert!(
+            !self.retain_constraints,
+            "count-only collapse requires disabled constraint retention"
+        );
+        self.collapse = Some(crate::r1cs_optimize::IncrementalCollapse::new_count_only(
+            self.num_pub_inputs,
+        ));
+    }
+
     /// Whether incremental collapse is active.
     pub fn incremental_collapse_enabled(&self) -> bool {
         self.collapse.is_some()
