@@ -93,9 +93,10 @@ impl ProveIR {
     /// `ExtendedIrProgram`; this variant skips building them in the
     /// first place, sparing the peak-RSS cost of three multi-million-
     /// entry HashMaps that exist only to be freed. The returned
-    /// program's `var_names`, `var_spans`, and `input_spans` are empty;
-    /// `var_types` is populated normally because the ternary type-
-    /// propagation in `instantiate::exprs` reads it during emission.
+    /// program's metadata maps are empty. Type propagation still works
+    /// during emission because the lean sink keeps a dense transient
+    /// type table behind `set_type` / `get_type` and drops it at the
+    /// boundary.
     pub(crate) fn instantiate_extended_lean<F: FieldBackend>(
         &self,
         captures: &HashMap<String, FieldElement<F>>,
@@ -1096,10 +1097,8 @@ mod tests {
         // Contract pin: the lean variant emits the same body as the
         // non-lean entry point but skips populating the three write-
         // only metadata channels at the sink boundary. `var_types`
-        // stays populated because the ternary type-propagation in
-        // `instantiate::exprs` reads it back during emission, so the
-        // sink cannot no-op that channel without breaking type-prop
-        // inside the walk.
+        // also stays empty in the returned program; the lean sink uses
+        // a transient dense table for type propagation during the walk.
         let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
         let prove_ir = compile_circuit(source).expect("compile_circuit");
         let lean = prove_ir
@@ -1108,10 +1107,7 @@ mod tests {
         assert!(lean.var_names.is_empty(), "lean must skip var_names");
         assert!(lean.var_spans.is_empty(), "lean must skip var_spans");
         assert!(lean.input_spans.is_empty(), "lean must skip input_spans");
-        assert!(
-            !lean.var_types.is_empty(),
-            "lean must keep var_types (read by ternary type-prop during emission)"
-        );
+        assert!(lean.var_types.is_empty(), "lean must skip var_types");
 
         // Same body shape as the non-lean entry point.
         let full = prove_ir
@@ -1140,10 +1136,7 @@ mod tests {
         assert!(lean.var_names.is_empty(), "lean must skip var_names");
         assert!(lean.var_spans.is_empty(), "lean must skip var_spans");
         assert!(lean.input_spans.is_empty(), "lean must skip input_spans");
-        assert!(
-            !lean.var_types.is_empty(),
-            "lean must keep var_types (read by ternary type-prop during emission)"
-        );
+        assert!(lean.var_types.is_empty(), "lean must skip var_types");
     }
 
     #[test]

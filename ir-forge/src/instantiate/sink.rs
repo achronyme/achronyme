@@ -172,11 +172,12 @@ pub(crate) struct ExtendedSink<'a, F: FieldBackend> {
     /// `instantiate/{scaffold,exprs,stmts,bits}.rs` ever reads them
     /// back — so a caller that intends to discard them downstream
     /// (chunk-drain + streaming-sink paths) saves the HashMap growth
-    /// outright. `set_type` / `get_type` are unaffected because the
-    /// ternary type-propagation in `exprs.rs` reads `get_type` during
-    /// emission, so `var_types` is load-bearing inside the walk
-    /// regardless of whether the caller will keep the map afterwards.
+    /// outright. In lean mode `set_type` / `get_type` use
+    /// `lean_types`: the ternary type-propagation in `exprs.rs` reads
+    /// `get_type` during emission, but downstream chunk-drain callers
+    /// discard `var_types`, so retaining the HashMap is avoidable.
     keep_metadata: bool,
+    lean_types: Vec<Option<IrType>>,
 }
 
 impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
@@ -189,6 +190,7 @@ impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
             loop_stack: Vec::new(),
             metadata,
             keep_metadata: true,
+            lean_types: Vec::new(),
         }
     }
 
@@ -206,6 +208,7 @@ impl<'a, F: FieldBackend> ExtendedSink<'a, F> {
             loop_stack: Vec::new(),
             metadata,
             keep_metadata: false,
+            lean_types: Vec::new(),
         }
     }
 
@@ -243,11 +246,23 @@ impl<'a, F: FieldBackend> InstrSink<F> for ExtendedSink<'a, F> {
     }
 
     fn set_type(&mut self, var: SsaVar, ty: IrType) {
-        self.metadata.set_type(var, ty);
+        if self.keep_metadata {
+            self.metadata.set_type(var, ty);
+        } else {
+            let idx = var.0 as usize;
+            if idx >= self.lean_types.len() {
+                self.lean_types.resize(idx + 1, None);
+            }
+            self.lean_types[idx] = Some(ty);
+        }
     }
 
     fn get_type(&self, var: SsaVar) -> Option<IrType> {
-        self.metadata.get_type(var)
+        if self.keep_metadata {
+            self.metadata.get_type(var)
+        } else {
+            self.lean_types.get(var.0 as usize).copied().flatten()
+        }
     }
 
     fn set_input_span(&mut self, name: String, span: SpanRange) {
