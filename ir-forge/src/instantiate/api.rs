@@ -511,15 +511,27 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
             .map_err(RoundTripError::Lysis)?;
     }
 
-    let window = std::env::var("LYSIS_STREAMING_WINDOW")
-        .ok()
-        .and_then(|v| v.parse::<usize>().ok())
-        .filter(|&n| n > 0)
-        .unwrap_or(131_072);
+    let window = positive_usize_or_default(
+        std::env::var("LYSIS_STREAMING_WINDOW").ok().as_deref(),
+        131_072,
+    );
+    let chunk_capacity = positive_usize_or_default(
+        std::env::var("LYSIS_STREAMING_CHUNK_CAPACITY")
+            .ok()
+            .as_deref(),
+        1_000_000,
+    );
     if trace {
-        lysis_drain_trace("before_execute", &format!("window={window}"));
+        lysis_drain_trace(
+            "before_execute",
+            &format!("window={window} chunk_capacity={chunk_capacity}"),
+        );
     }
-    let mut sink = ChunkDrainingSink::<F>::with_streaming_window_chunked(window, chunk_consumer);
+    let mut sink = ChunkDrainingSink::<F>::with_streaming_window_chunked_capacity(
+        window,
+        chunk_capacity,
+        chunk_consumer,
+    );
     execute(
         &decoded,
         &[],
@@ -557,6 +569,13 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
 
 fn lysis_drain_trace_enabled() -> bool {
     std::env::var("ACH_LYSIS_TRACE").is_ok()
+}
+
+fn positive_usize_or_default(value: Option<&str>, default: usize) -> usize {
+    value
+        .and_then(|v| v.parse::<usize>().ok())
+        .filter(|&n| n > 0)
+        .unwrap_or(default)
 }
 
 fn lysis_malloc_trim_enabled() -> bool {
@@ -763,6 +782,14 @@ mod tests {
     use crate::test_utils::compile_circuit;
 
     type F = Bn254Fr;
+
+    #[test]
+    fn positive_usize_or_default_rejects_missing_zero_and_invalid_values() {
+        assert_eq!(super::positive_usize_or_default(None, 17), 17);
+        assert_eq!(super::positive_usize_or_default(Some("0"), 17), 17);
+        assert_eq!(super::positive_usize_or_default(Some("nope"), 17), 17);
+        assert_eq!(super::positive_usize_or_default(Some("42"), 17), 42);
+    }
 
     #[test]
     fn extended_emits_loop_unroll_for_for_loops() {
