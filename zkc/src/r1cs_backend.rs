@@ -192,6 +192,14 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// emission path, freeing ~16 B per emitted constraint plus Vec capacity
     /// tail — material on circuits emitting tens of millions of constraints.
     track_constraint_origins: bool,
+    /// Toggle for retaining input-name metadata while compiling IR inputs.
+    ///
+    /// Normal compilers keep the `bindings`, `public_inputs`, and `witnesses`
+    /// name tables for witness lookup, inspectors, and CLI consumers. The
+    /// lean boss-fight path only needs wire allocation and constraints; keeping
+    /// one `String` plus one hash entry for every synthetic lysis witness slot
+    /// is pure retention overhead there.
+    track_input_metadata: bool,
     /// Variable substitution map from R1CS linear constraint elimination.
     /// Set by `optimize_r1cs()`. Used by witness generation to compute
     /// values for substituted-away wires.
@@ -243,6 +251,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             bool_enforced: std::collections::HashSet::new(),
             constraint_origins: Vec::new(),
             track_constraint_origins: true,
+            track_input_metadata: true,
             substitution_map: None,
             lc_map: LcMap::new(),
             range_bounds: HashMap::new(),
@@ -267,6 +276,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     pub fn new_lean() -> Self {
         let mut c = Self::new();
         c.track_constraint_origins = false;
+        c.track_input_metadata = false;
         c
     }
 
@@ -562,14 +572,18 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let var = match visibility {
                     IrVisibility::Public => {
                         let v = self.cs.alloc_input();
-                        self.bindings.insert(name.clone(), v);
-                        self.public_inputs.push(name.clone());
+                        if self.track_input_metadata {
+                            self.bindings.insert(name.clone(), v);
+                            self.public_inputs.push(name.clone());
+                        }
                         v
                     }
                     IrVisibility::Witness => {
                         let v = self.cs.alloc_witness();
-                        self.bindings.insert(name.clone(), v);
-                        self.witnesses.push(name.clone());
+                        if self.track_input_metadata {
+                            self.bindings.insert(name.clone(), v);
+                            self.witnesses.push(name.clone());
+                        }
                         v
                     }
                 };
@@ -1336,12 +1350,54 @@ mod tests {
     }
 
     #[test]
-    fn lean_compiler_matches_eager_on_everything_except_origins() {
+    fn lean_compiler_skips_input_metadata_but_preserves_wire_layout() {
+        // Pin: `new_lean` is allowed to drop name metadata, but it must still
+        // allocate public and witness wires exactly like the eager compiler.
+        let mut prog: IrProgram = IrProgram::new();
+        let pub_var = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: pub_var,
+            name: "public_out".into(),
+            visibility: IrVisibility::Public,
+        });
+        let witness_var = prog.fresh_var();
+        prog.push(Instruction::Input {
+            result: witness_var,
+            name: "__lysis_sym_slot_42".into(),
+            visibility: IrVisibility::Witness,
+        });
+        let assertion = prog.fresh_var();
+        prog.push(Instruction::AssertEq {
+            result: assertion,
+            lhs: pub_var,
+            rhs: witness_var,
+            message: None,
+        });
+
+        let mut eager = R1CSCompiler::new();
+        eager.compile_ir(&prog).unwrap();
+
+        let mut lean = R1CSCompiler::new_lean();
+        lean.compile_ir(&prog).unwrap();
+
+        assert_eq!(eager.cs.num_variables(), lean.cs.num_variables());
+        assert_eq!(eager.cs.num_pub_inputs(), lean.cs.num_pub_inputs());
+        assert_eq!(eager.cs.num_constraints(), lean.cs.num_constraints());
+        assert_eq!(eager.bindings.len(), 2);
+        assert_eq!(eager.public_inputs, vec!["public_out"]);
+        assert_eq!(eager.witnesses, vec!["__lysis_sym_slot_42"]);
+        assert!(lean.bindings.is_empty());
+        assert!(lean.public_inputs.is_empty());
+        assert!(lean.witnesses.is_empty());
+    }
+
+    #[test]
+    fn lean_compiler_matches_eager_on_constraint_surface() {
         // Pin: lean and eager R1CS compilers produce byte-identical
         // constraint systems on a representative mixed circuit — same
         // count, same per-constraint LC terms, same witness ops, same
-        // variable allocations — and differ only in `constraint_origins`
-        // (lean leaves it empty; eager populates it).
+        // variable allocations. Lean deliberately drops hot-path metadata:
+        // constraint origins and input name tables.
         let build_prog = || {
             let mut prog: IrProgram = IrProgram::new();
             let v0 = prog.fresh_var();
@@ -1407,6 +1463,10 @@ mod tests {
         assert!(
             lean.constraint_origins.is_empty(),
             "lean compiler must leave origins empty"
+        );
+        assert!(
+            lean.bindings.is_empty() && lean.public_inputs.is_empty() && lean.witnesses.is_empty(),
+            "lean compiler must leave input metadata empty"
         );
     }
 
