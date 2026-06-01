@@ -38,7 +38,7 @@ pub use interning_sink::InterningSink;
 pub use ir_sink::IrSink;
 pub use stub_sink::StubSink;
 
-use std::collections::HashMap;
+use std::collections::BTreeSet;
 
 use memory::field::{FieldBackend, FieldElement, PrimeId};
 use memory::FieldFamily;
@@ -91,35 +91,7 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
         });
     }
 
-    // Build offset → body index map once.
-    let mut offset_to_idx: HashMap<u32, usize> = HashMap::with_capacity(program.body.len());
-    for (idx, instr) in program.body.iter().enumerate() {
-        offset_to_idx.insert(instr.offset, idx);
-    }
-
-    // For every declared template, precompute the (body_start_idx,
-    // body_end_idx) into `program.body` it occupies. The straight
-    // alternative — recomputing `body_end` per `InstantiateTemplate`
-    // dispatch via a max over `offset_to_idx` — is O(program.body.len)
-    // per call, which dominates execution time on heavy circuits whose
-    // templates instantiate hundreds of sub-templates against a body
-    // stream of 100k+ instructions. The single up-front pass below is
-    // O(program.body.len * program.templates.len) but the templates
-    // factor is small in practice.
-    let mut template_body_ranges: HashMap<u16, (usize, usize)> =
-        HashMap::with_capacity(program.templates.len());
-    for (idx, instr) in program.body.iter().enumerate() {
-        for template in &program.templates {
-            let slice_end = template.body_offset.saturating_add(template.body_len);
-            if instr.offset >= template.body_offset && instr.offset < slice_end {
-                template_body_ranges
-                    .entry(template.id)
-                    .and_modify(|(_, end)| *end = idx + 1)
-                    .or_insert((idx, idx + 1));
-                break;
-            }
-        }
-    }
+    let (template_lookup, template_body_ranges) = build_template_tables(program);
 
     // Determine the instruction range of the top-level (root) body:
     // every instruction whose offset is not inside any template body.
@@ -185,7 +157,7 @@ pub fn execute<F: FieldBackend, S: IrSink<F>>(
             captures,
             config,
             sink,
-            &offset_to_idx,
+            &template_lookup,
             &template_body_ranges,
             &mut heap,
         )?;
@@ -251,23 +223,71 @@ fn root_body_range<F: FieldBackend>(program: &Program<F>) -> (usize, usize) {
     // `program.body` whose offsets are *not* inside any template
     // body. In practice the top-level body is everything up to the
     // first DefineTemplate-declared slice.
-    if program.templates.is_empty() {
+    let Some(first_template_offset) = program.templates.iter().map(|t| t.body_offset).min() else {
         return (0, program.body.len());
-    }
-    // Find the first instruction whose offset is inside some template body.
-    for (idx, instr) in program.body.iter().enumerate() {
-        if is_inside_any_template(program, instr.offset) {
-            return (0, idx);
-        }
-    }
-    (0, program.body.len())
+    };
+    (0, lower_bound_offset_idx(program, first_template_offset))
 }
 
-fn is_inside_any_template<F: FieldBackend>(program: &Program<F>, offset: u32) -> bool {
-    program.templates.iter().any(|t| {
-        let end = t.body_offset.saturating_add(t.body_len);
-        offset >= t.body_offset && offset < end
-    })
+fn build_template_tables<F: FieldBackend>(
+    program: &Program<F>,
+) -> (
+    Vec<Option<crate::program::Template>>,
+    Vec<Option<(usize, usize)>>,
+) {
+    let Some(max_id) = program.templates.iter().map(|t| t.id as usize).max() else {
+        return (Vec::new(), Vec::new());
+    };
+    let mut template_lookup = vec![None; max_id + 1];
+    let mut body_ranges = vec![None; max_id + 1];
+    let mut starts: Vec<(u32, usize)> = Vec::with_capacity(program.templates.len());
+    let mut ends: Vec<(u32, usize)> = Vec::with_capacity(program.templates.len());
+    for (decl_idx, template) in program.templates.iter().enumerate() {
+        let id = template.id as usize;
+        if template_lookup[id].is_none() {
+            template_lookup[id] = Some(*template);
+        }
+        starts.push((template.body_offset, decl_idx));
+        ends.push((
+            template.body_offset.saturating_add(template.body_len),
+            decl_idx,
+        ));
+    }
+    starts.sort_unstable_by_key(|&(offset, _)| offset);
+    ends.sort_unstable_by_key(|&(offset, _)| offset);
+
+    let mut active: BTreeSet<usize> = BTreeSet::new();
+    let mut next_start = 0usize;
+    let mut next_end = 0usize;
+    for (body_idx, instr) in program.body.iter().enumerate() {
+        while next_end < ends.len() && ends[next_end].0 <= instr.offset {
+            active.remove(&ends[next_end].1);
+            next_end += 1;
+        }
+        while next_start < starts.len() && starts[next_start].0 <= instr.offset {
+            active.insert(starts[next_start].1);
+            next_start += 1;
+        }
+        if let Some(&decl_idx) = active.iter().next() {
+            let id = program.templates[decl_idx].id as usize;
+            match &mut body_ranges[id] {
+                Some((_, end)) => *end = body_idx + 1,
+                slot @ None => *slot = Some((body_idx, body_idx + 1)),
+            }
+        }
+    }
+    (template_lookup, body_ranges)
+}
+
+fn exact_offset_idx<F: FieldBackend>(program: &Program<F>, offset: u32) -> Option<usize> {
+    program
+        .body
+        .binary_search_by_key(&offset, |instr| instr.offset)
+        .ok()
+}
+
+fn lower_bound_offset_idx<F: FieldBackend>(program: &Program<F>, offset: u32) -> usize {
+    program.body.partition_point(|instr| instr.offset < offset)
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -279,8 +299,8 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
     captures: &[FieldElement<F>],
     config: &LysisConfig,
     sink: &mut S,
-    offset_to_idx: &HashMap<u32, usize>,
-    template_body_ranges: &HashMap<u16, (usize, usize)>,
+    template_lookup: &[Option<crate::program::Template>],
+    template_body_ranges: &[Option<(usize, usize)>],
     heap: &mut [Option<NodeId>],
 ) -> Result<Step, LysisError> {
     use Opcode::*;
@@ -375,7 +395,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
         // -----------------------------------------------------------
         Jump { offset: rel } => {
             let target = (offset as i64) + (*rel as i64);
-            resolve_jump(target, offset_to_idx).map(Step::JumpToIndex)
+            resolve_jump(target, program).map(Step::JumpToIndex)
         }
         JumpIf { cond, offset: _rel } => {
             // Conservative semantics: the executor does not interpret
@@ -407,16 +427,7 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             end,
             body_len,
         } => enter_loop_unroll(
-            offset,
-            frame_idx,
-            frames,
-            *iter_var,
-            *start,
-            *end,
-            *body_len,
-            program,
-            sink,
-            offset_to_idx,
+            offset, frame_idx, frames, *iter_var, *start, *end, *body_len, program, sink,
         ),
         LoopRolled { .. } | LoopRange { .. } => {
             // Only LoopUnroll is wired today. LoopRolled / LoopRange
@@ -443,8 +454,9 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
             capture_regs,
             output_regs,
         } => {
-            let template = program
-                .template(*template_id)
+            let template = template_lookup
+                .get(*template_id as usize)
+                .and_then(|slot| *slot)
                 .ok_or(LysisError::UndefinedTemplate {
                     at_offset: offset,
                     template_id: *template_id,
@@ -456,14 +468,14 @@ fn dispatch<F: FieldBackend, S: IrSink<F>>(
                     max: config.max_call_depth,
                 });
             }
-            let &(body_start, body_end) =
-                template_body_ranges
-                    .get(template_id)
-                    .ok_or(LysisError::ValidationFailed {
-                        rule: 7,
-                        location: offset,
-                        detail: "template body_offset does not resolve to an instruction index",
-                    })?;
+            let (body_start, body_end) = template_body_ranges
+                .get(*template_id as usize)
+                .and_then(|slot| *slot)
+                .ok_or(LysisError::ValidationFailed {
+                    rule: 7,
+                    location: offset,
+                    detail: "template body_offset does not resolve to an instruction index",
+                })?;
 
             // Move captures from caller regs into new frame.
             let caller = &frames[frame_idx];
@@ -945,34 +957,21 @@ fn enter_loop_unroll<F: FieldBackend, S: IrSink<F>>(
     body_len: u16,
     program: &Program<F>,
     sink: &mut S,
-    offset_to_idx: &HashMap<u32, usize>,
 ) -> Result<Step, LysisError> {
     let body_byte_start = offset.saturating_add(LOOP_UNROLL_OPCODE_BYTES);
     let body_byte_end = body_byte_start.saturating_add(u32::from(body_len));
 
     let body_start_idx =
-        *offset_to_idx
-            .get(&body_byte_start)
-            .ok_or(LysisError::ValidationFailed {
-                rule: 0,
-                location: offset,
-                detail: "LoopUnroll body start does not align to an opcode boundary",
-            })?;
+        exact_offset_idx(program, body_byte_start).ok_or(LysisError::ValidationFailed {
+            rule: 0,
+            location: offset,
+            detail: "LoopUnroll body start does not align to an opcode boundary",
+        })?;
 
     // body_end_idx = smallest instruction index whose offset is
     // >= body_byte_end. If no such index exists we're at the end of
     // the program body.
-    let body_end_idx = offset_to_idx
-        .iter()
-        .filter_map(|(&off, &idx)| {
-            if off >= body_byte_end {
-                Some(idx)
-            } else {
-                None
-            }
-        })
-        .min()
-        .unwrap_or(program.body.len());
+    let body_end_idx = lower_bound_offset_idx(program, body_byte_end);
 
     if start >= end {
         // Empty loop — skip straight past the body.
@@ -1065,20 +1064,17 @@ fn read_binary(
     ))
 }
 
-fn resolve_jump(target: i64, offset_to_idx: &HashMap<u32, usize>) -> Result<usize, LysisError> {
+fn resolve_jump<F: FieldBackend>(target: i64, program: &Program<F>) -> Result<usize, LysisError> {
     if target < 0 || target > u32::MAX as i64 {
         return Err(LysisError::BadJumpTarget {
             at_offset: 0,
             target_offset: target,
         });
     }
-    offset_to_idx
-        .get(&(target as u32))
-        .copied()
-        .ok_or(LysisError::BadJumpTarget {
-            at_offset: 0,
-            target_offset: target,
-        })
+    exact_offset_idx(program, target as u32).ok_or(LysisError::BadJumpTarget {
+        at_offset: 0,
+        target_offset: target,
+    })
 }
 
 fn pop_frame(frames: &mut Vec<Frame>) -> Result<(), LysisError> {
@@ -1107,11 +1103,14 @@ fn pop_frame(frames: &mut Vec<Frame>) -> Result<(), LysisError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::bytecode::ConstPool;
     use memory::field::{Bn254Fr, FieldElement};
     use memory::FieldFamily;
 
     use crate::builder::ProgramBuilder;
+    use crate::header::LysisHeader;
     use crate::intern::Visibility;
+    use crate::program::{Instr, Template};
 
     fn run(program: &Program<Bn254Fr>, captures: &[FieldElement<Bn254Fr>]) -> StubSink<Bn254Fr> {
         let mut sink = StubSink::new();
@@ -1129,6 +1128,97 @@ mod tests {
 
     fn seven() -> FieldElement<Bn254Fr> {
         FieldElement::<Bn254Fr>::from_canonical([7, 0, 0, 0])
+    }
+
+    fn offset_program(offsets: &[u32], templates: Vec<Template>) -> Program<Bn254Fr> {
+        Program {
+            header: LysisHeader::new(FieldFamily::BnLike256, 0, 0, 0),
+            const_pool: ConstPool::new(FieldFamily::BnLike256),
+            templates,
+            body: offsets
+                .iter()
+                .copied()
+                .map(|offset| Instr {
+                    opcode: Opcode::Halt,
+                    offset,
+                })
+                .collect(),
+        }
+    }
+
+    #[test]
+    fn template_tables_are_indexed_by_id_with_binary_offset_ranges() {
+        let template = Template {
+            id: 7,
+            frame_size: 3,
+            n_params: 1,
+            body_offset: 10,
+            body_len: 25,
+        };
+        let program = offset_program(&[0, 10, 20, 30, 40], vec![template]);
+
+        let (templates, ranges) = build_template_tables(&program);
+
+        assert_eq!(templates[7], Some(template));
+        assert_eq!(ranges[7], Some((1, 4)));
+    }
+
+    #[test]
+    fn template_tables_preserve_first_declared_owner_for_overlaps() {
+        let outer = Template {
+            id: 1,
+            frame_size: 3,
+            n_params: 0,
+            body_offset: 10,
+            body_len: 30,
+        };
+        let inner = Template {
+            id: 2,
+            frame_size: 3,
+            n_params: 0,
+            body_offset: 20,
+            body_len: 10,
+        };
+        let program = offset_program(&[0, 10, 20, 30, 40], vec![outer, inner]);
+
+        let (_, ranges) = build_template_tables(&program);
+
+        assert_eq!(ranges[1], Some((1, 4)));
+        assert_eq!(ranges[2], None);
+    }
+
+    #[test]
+    fn template_lookup_keeps_first_declared_metadata_for_duplicate_ids() {
+        let first = Template {
+            id: 9,
+            frame_size: 3,
+            n_params: 0,
+            body_offset: 10,
+            body_len: 10,
+        };
+        let second = Template {
+            id: 9,
+            frame_size: 200,
+            n_params: 0,
+            body_offset: 30,
+            body_len: 10,
+        };
+        let program = offset_program(&[0, 10, 20, 30, 40], vec![first, second]);
+
+        let (templates, ranges) = build_template_tables(&program);
+
+        assert_eq!(templates[9], Some(first));
+        assert_eq!(ranges[9], Some((1, 4)));
+    }
+
+    #[test]
+    fn offset_index_helpers_match_exact_and_lower_bound_semantics() {
+        let program = offset_program(&[0, 10, 20, 30], Vec::new());
+
+        assert_eq!(exact_offset_idx(&program, 20), Some(2));
+        assert_eq!(exact_offset_idx(&program, 25), None);
+        assert_eq!(lower_bound_offset_idx(&program, 25), 3);
+        assert_eq!(lower_bound_offset_idx(&program, 99), program.body.len());
     }
 
     // -----------------------------------------------------------------
