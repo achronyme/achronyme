@@ -417,6 +417,12 @@ pub struct ConstraintSystem<F: FieldBackend = Bn254Fr> {
     num_pub_inputs: usize,
     /// All constraints: each is (A, B, C) with A * B = C.
     constraints: Vec<Constraint<F>>,
+    /// Logical number of emitted constraints. Normally this matches
+    /// `constraints.len()`. In compile-only count mode, rows are not retained
+    /// but this counter keeps progress and size reporting exact.
+    constraint_count: usize,
+    /// Whether emitted rows are retained in `constraints`.
+    retain_constraints: bool,
     /// Incremental linear-collapse state. `None` (default) means
     /// constraints are stored verbatim. `Some` routes every [`enforce`]
     /// through the collapser, which folds linear constraints into a
@@ -442,6 +448,8 @@ impl<F: FieldBackend> ConstraintSystem<F> {
             num_variables: 1,
             num_pub_inputs: 0,
             constraints: Vec::new(),
+            constraint_count: 0,
+            retain_constraints: true,
             collapse: None,
         }
     }
@@ -479,6 +487,22 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         self.collapse.take().map(|c| c.into_substitution_map())
     }
 
+    /// Disable row retention while preserving the emitted constraint count.
+    ///
+    /// This is intended for compile-only passes that need exact sizing and
+    /// allocator behavior for wires but do not serialize, optimize, verify, or
+    /// prove against the in-memory rows.
+    pub fn disable_constraint_retention(&mut self) {
+        self.retain_constraints = false;
+        self.constraints.clear();
+    }
+
+    /// Whether emitted rows are retained for serialization, optimization,
+    /// verification, and proving.
+    pub fn constraint_retention_enabled(&self) -> bool {
+        self.retain_constraints
+    }
+
     // --- Variable allocation ---
 
     /// Allocate a public input variable.
@@ -514,16 +538,23 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         let constraint = Constraint { a, b, c };
         match self.collapse.take() {
             // Default path: store verbatim, byte-identical to before.
-            None => self.constraints.push(constraint),
+            None => self.record_constraint(constraint),
             // Collapse path: fold the constraint, store only survivors.
             // Take/restore avoids borrowing `collapse` and `constraints`
             // simultaneously.
             Some(mut collapse) => {
                 if let Some(survivor) = collapse.fold(constraint) {
-                    self.constraints.push(survivor);
+                    self.record_constraint(survivor);
                 }
                 self.collapse = Some(collapse);
             }
+        }
+    }
+
+    fn record_constraint(&mut self, constraint: Constraint<F>) {
+        self.constraint_count += 1;
+        if self.retain_constraints {
+            self.constraints.push(constraint);
         }
     }
 
@@ -546,10 +577,13 @@ impl<F: FieldBackend> ConstraintSystem<F> {
 
     /// Number of constraints.
     pub fn num_constraints(&self) -> usize {
-        self.constraints.len()
+        self.constraint_count
     }
 
     /// Access constraints for serialization or verification.
+    ///
+    /// In compile-only count mode this slice is empty even though
+    /// [`Self::num_constraints`] keeps reporting the logical emitted count.
     pub fn constraints(&self) -> &[Constraint<F>] {
         &self.constraints
     }
@@ -568,7 +602,14 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         crate::r1cs_optimize::SubstitutionMap<F>,
         crate::r1cs_optimize::R1CSOptimizeResult,
     ) {
-        crate::r1cs_optimize::optimize_linear(&mut self.constraints, self.num_pub_inputs)
+        assert!(
+            self.retain_constraints,
+            "cannot optimize constraints after row retention has been disabled"
+        );
+        let result =
+            crate::r1cs_optimize::optimize_linear(&mut self.constraints, self.num_pub_inputs);
+        self.constraint_count = self.constraints.len();
+        result
     }
 
     /// Run O2 constraint simplification on this constraint system.
@@ -582,7 +623,13 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         crate::r1cs_optimize::SubstitutionMap<F>,
         crate::r1cs_optimize::R1CSOptimizeResult,
     ) {
-        crate::r1cs_optimize::optimize_o2(&mut self.constraints, self.num_pub_inputs)
+        assert!(
+            self.retain_constraints,
+            "cannot optimize constraints after row retention has been disabled"
+        );
+        let result = crate::r1cs_optimize::optimize_o2(&mut self.constraints, self.num_pub_inputs);
+        self.constraint_count = self.constraints.len();
+        result
     }
 
     /// Sparse-row variant of `optimize_o2`.
@@ -598,7 +645,14 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         crate::r1cs_optimize::SubstitutionMap<F>,
         crate::r1cs_optimize::R1CSOptimizeResult,
     ) {
-        crate::r1cs_optimize::optimize_o2_sparse(&mut self.constraints, self.num_pub_inputs)
+        assert!(
+            self.retain_constraints,
+            "cannot optimize constraints after row retention has been disabled"
+        );
+        let result =
+            crate::r1cs_optimize::optimize_o2_sparse(&mut self.constraints, self.num_pub_inputs);
+        self.constraint_count = self.constraints.len();
+        result
     }
 
     // --- Verification ---
@@ -711,7 +765,7 @@ mod tests {
     #[test]
     fn test_simple_multiplication_constraint() {
         // Circuit: prove knowledge of a, b such that a * b = c (public)
-        let mut cs = ConstraintSystem::new();
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
 
         // Public output
         let c = cs.alloc_input(); // index 1
@@ -831,6 +885,30 @@ mod tests {
             FieldElement::from_u64(8),
         ];
         assert!(cs.verify(&bad).is_err());
+    }
+
+    #[test]
+    fn count_mode_reports_constraints_without_retaining_rows() {
+        let mut cs: ConstraintSystem = ConstraintSystem::new();
+        let x = cs.alloc_witness();
+        let y = cs.alloc_witness();
+        let z = cs.alloc_witness();
+        cs.disable_constraint_retention();
+
+        cs.enforce(
+            LinearCombination::from_variable(x),
+            LinearCombination::from_variable(y),
+            LinearCombination::from_variable(z),
+        );
+        cs.enforce_equal(
+            LinearCombination::from_variable(x),
+            LinearCombination::from_variable(z),
+        );
+
+        assert_eq!(cs.num_constraints(), 2);
+        assert!(cs.constraints().is_empty());
+        assert!(!cs.constraint_retention_enabled());
+        assert_eq!(cs.num_variables(), 4);
     }
 
     #[test]

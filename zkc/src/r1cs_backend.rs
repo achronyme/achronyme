@@ -91,14 +91,10 @@ const LC_AUTO_MATERIALIZE_THRESHOLD: usize = 8;
 /// The lysis chunk-drain pipeline issues `SsaVar.0` as a contiguous
 /// monotonic counter starting at 0 (the dedup-canonical emission
 /// order), so the address space has zero waste on the streaming path
-/// where the boss-fight-class workloads land. A
-/// `Vec<Option<LinearCombination<F>>>` indexed by `var.0` is a
-/// strictly smaller container than a `HashMap<SsaVar,
-/// LinearCombination<F>>`: 24 B per slot (`Option<LC>` benefits from
-/// `Vec`'s `NonNull` niche) instead of ~33 B per slot for hashbrown
-/// (1 control byte + 32 B entry) at load factors below 1.0. There is
-/// also no rehash transient — the only growth event is `Vec` doubling,
-/// which doubles 24 B/slot rather than 33 B/slot.
+/// where the boss-fight-class workloads land. Segmented
+/// `Vec<Option<LinearCombination<F>>>` storage keeps that dense direct
+/// index while bounding individual allocation requests; a single flat
+/// Vec eventually has to double into multi-GiB reservations.
 ///
 /// The non-streaming `compile_ir` / `compile_instructions` paths may
 /// leave small `None` slack when an upstream DCE pass drops
@@ -107,12 +103,23 @@ const LC_AUTO_MATERIALIZE_THRESHOLD: usize = 8;
 /// those paths is small enough that the slack is not measurable.
 #[derive(Debug, Clone)]
 struct LcMap<F: FieldBackend> {
-    slots: Vec<Option<LinearCombination<F>>>,
+    segments: Vec<Vec<Option<LinearCombination<F>>>>,
+    segment_len: usize,
 }
 
 impl<F: FieldBackend> LcMap<F> {
+    const DEFAULT_SEGMENT_LEN: usize = 1 << 16;
+
     fn new() -> Self {
-        Self { slots: Vec::new() }
+        Self::with_segment_len(Self::DEFAULT_SEGMENT_LEN)
+    }
+
+    fn with_segment_len(segment_len: usize) -> Self {
+        assert!(segment_len > 0, "lc_map segment length must be positive");
+        Self {
+            segments: Vec::new(),
+            segment_len,
+        }
     }
 
     fn insert(&mut self, var: SsaVar, mut lc: LinearCombination<F>) {
@@ -129,19 +136,43 @@ impl<F: FieldBackend> LcMap<F> {
             lc.shrink_to_fit();
         }
         let idx = var.0 as usize;
-        if idx >= self.slots.len() {
-            self.slots.resize_with(idx + 1, || None);
+        let segment_idx = idx / self.segment_len;
+        let offset = idx % self.segment_len;
+        while segment_idx >= self.segments.len() {
+            self.segments.push(Vec::new());
         }
-        self.slots[idx] = Some(lc);
+        let segment = &mut self.segments[segment_idx];
+        if segment.is_empty() {
+            segment.resize_with(self.segment_len, || None);
+        }
+        segment[offset] = Some(lc);
     }
 
     fn get(&self, var: &SsaVar) -> Option<&LinearCombination<F>> {
         let idx = var.0 as usize;
-        self.slots.get(idx).and_then(|opt| opt.as_ref())
+        let segment_idx = idx / self.segment_len;
+        let offset = idx % self.segment_len;
+        self.segments
+            .get(segment_idx)
+            .and_then(|segment| segment.get(offset))
+            .and_then(|opt| opt.as_ref())
     }
 
     fn clear(&mut self) {
-        self.slots.clear();
+        self.segments.clear();
+    }
+
+    #[cfg(test)]
+    fn slot_count(&self) -> usize {
+        self.segments.iter().map(Vec::len).sum()
+    }
+
+    #[cfg(test)]
+    fn allocated_segment_count(&self) -> usize {
+        self.segments
+            .iter()
+            .filter(|segment| !segment.is_empty())
+            .count()
     }
 }
 
@@ -335,13 +366,17 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         c
     }
 
-    /// Create a lean compile-only compiler that skips witness-op retention.
+    /// Create a lean compile-only compiler that skips witness-op and
+    /// constraint-row retention.
     ///
-    /// The emitted R1CS constraints and wire allocation are still produced;
-    /// only the auxiliary replay log used for witness generation is omitted.
+    /// Constraint and wire counts remain exact, but callers cannot serialize,
+    /// optimize, prove, or verify from the returned in-memory rows. This mode
+    /// is for sizing and compile-through probes that only need to exercise the
+    /// emitter.
     pub fn new_compile_only_direct_linear_mul() -> Self {
         let mut c = Self::new_direct_linear_mul();
         c.record_witness_ops = false;
+        c.cs.disable_constraint_retention();
         c
     }
 
@@ -2055,7 +2090,7 @@ mod tests {
     }
 
     #[test]
-    fn compile_only_direct_linear_mul_keeps_constraints_without_witness_ops() {
+    fn compile_only_direct_linear_mul_counts_constraints_without_retaining_rows() {
         let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
         let a = prog.fresh_var();
         prog.push(Instruction::Input {
@@ -2093,6 +2128,8 @@ mod tests {
             direct.cs.num_constraints()
         );
         assert_eq!(compile_only.cs.num_variables(), direct.cs.num_variables());
+        assert!(compile_only.cs.constraints().is_empty());
+        assert!(!compile_only.cs.constraint_retention_enabled());
         assert!(
             compile_only.witness_ops.is_empty(),
             "compile-only mode must not retain witness replay ops"
@@ -2151,15 +2188,29 @@ mod tests {
     fn lc_map_insert_at_high_idx_fills_intermediate_with_none() {
         // Sparse insertion is permitted (the compile_ir path may hit
         // small holes when an upstream DCE pass drops instructions
-        // without renumbering SSA ids). The cost is 24 B per `None`
-        // slot, bounded by max(SsaVar.0) + 1.
-        let mut map: LcMap<Bn254Fr> = LcMap::new();
+        // without renumbering SSA ids). The segmented layout bounds
+        // individual allocation size while preserving direct indexing.
+        let mut map: LcMap<Bn254Fr> = LcMap::with_segment_len(4);
         map.insert(SsaVar(5), LinearCombination::<Bn254Fr>::zero());
         assert!(map.get(&SsaVar(5)).is_some());
         for i in 0..5u64 {
             assert!(map.get(&SsaVar(i)).is_none());
         }
-        assert_eq!(map.slots.len(), 6);
+        assert_eq!(map.allocated_segment_count(), 1);
+        assert_eq!(map.slot_count(), 4);
+    }
+
+    #[test]
+    fn lc_map_dense_growth_allocates_bounded_segments() {
+        let mut map: LcMap<Bn254Fr> = LcMap::with_segment_len(4);
+        for i in 0..9u64 {
+            map.insert(SsaVar(i), LinearCombination::<Bn254Fr>::zero());
+        }
+        assert_eq!(map.allocated_segment_count(), 3);
+        assert_eq!(map.slot_count(), 12);
+        for i in 0..9u64 {
+            assert!(map.get(&SsaVar(i)).is_some());
+        }
     }
 
     #[test]
@@ -2206,8 +2257,10 @@ mod tests {
                 "SsaVar({i}) must be populated"
             );
         }
-        assert_eq!(compiler.lc_map.slots.len(), 4);
-        assert!(compiler.lc_map.slots.iter().all(|s| s.is_some()));
+        assert_eq!(
+            compiler.lc_map.slot_count(),
+            LcMap::<Bn254Fr>::DEFAULT_SEGMENT_LEN
+        );
     }
 
     #[test]
@@ -2300,13 +2353,16 @@ mod tests {
         compiler
             .compile_instructions_streaming(prog.iter().cloned())
             .unwrap();
-        for (idx, slot) in compiler.lc_map.slots.iter().enumerate() {
-            if let Some(lc) = slot {
-                assert_eq!(
-                    lc.terms_capacity(),
-                    lc.terms().len(),
-                    "lc_map slot {idx}: terms vec must be tight after insert"
-                );
+        for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
+            for (offset, slot) in segment.iter().enumerate() {
+                if let Some(lc) = slot {
+                    let idx = segment_idx * compiler.lc_map.segment_len + offset;
+                    assert_eq!(
+                        lc.terms_capacity(),
+                        lc.terms().len(),
+                        "lc_map slot {idx}: terms vec must be tight after insert"
+                    );
+                }
             }
         }
     }
@@ -2344,13 +2400,16 @@ mod tests {
 
         let mut compiler: R1CSCompiler<Bn254Fr> = R1CSCompiler::new();
         compiler.compile_ir(&prog).unwrap();
-        for (idx, slot) in compiler.lc_map.slots.iter().enumerate() {
-            if let Some(lc) = slot {
-                assert_eq!(
-                    lc.terms_capacity(),
-                    lc.terms().len(),
-                    "lc_map slot {idx}: terms vec must be tight after insert"
-                );
+        for (segment_idx, segment) in compiler.lc_map.segments.iter().enumerate() {
+            for (offset, slot) in segment.iter().enumerate() {
+                if let Some(lc) = slot {
+                    let idx = segment_idx * compiler.lc_map.segment_len + offset;
+                    assert_eq!(
+                        lc.terms_capacity(),
+                        lc.terms().len(),
+                        "lc_map slot {idx}: terms vec must be tight after insert"
+                    );
+                }
             }
         }
     }
