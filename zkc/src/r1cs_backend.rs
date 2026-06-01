@@ -711,12 +711,14 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// never materializes the unoptimized set: each linear constraint is
     /// absorbed into a substitution map at `enforce` time, so
     /// `cs.num_constraints()` tracks the post-elimination survivor count
-    /// rather than the pre-optimization total. Builds on `new_lean`
-    /// (origin tracking is meaningless once constraints are folded at
-    /// emission). After compilation, recover the substitution map for
-    /// witness fixup via `cs.take_collapse_substitution_map()`.
+    /// rather than the pre-optimization total. Builds on `new_lean` for
+    /// origin tracking and fresh-private assert collapse, but restores input
+    /// metadata so normal witness generation by declared names keeps working.
+    /// After compilation, recover the substitution map for witness fixup via
+    /// `cs.take_collapse_substitution_map()`.
     pub fn new_incremental() -> Self {
         let mut c = Self::new_lean();
+        c.track_input_metadata = true;
         c.cs.enable_incremental_collapse();
         c
     }
