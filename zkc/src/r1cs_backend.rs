@@ -400,6 +400,15 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// compiler walks the IR instruction stream. Reset at the start of
     /// every `compile_ir` call.
     lc_map: LcMap<F>,
+    /// Optional upper bound for term count retained in `lc_map`.
+    ///
+    /// When set, cached non-constant LCs longer than this limit are
+    /// materialized into a fresh wire before insertion, so future lookups see
+    /// a one-variable LC instead of keeping the full term list alive. The
+    /// default compiler leaves this unset because materialization emits extra
+    /// linear constraints; compile-only sizing probes can enable it to trade
+    /// constraint count for bounded resident memory.
+    lc_cache_term_limit: Option<usize>,
     /// Dense bitset over `SsaVar.0`: set once an SSA value has been consumed
     /// by any later instruction. Used by the forward `AssertEq` collapse to
     /// substitute fresh private assignment targets without keeping a global
@@ -454,6 +463,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             record_witness_ops: true,
             substitution_map: None,
             lc_map: LcMap::new(),
+            lc_cache_term_limit: None,
             used_ssa: Vec::new(),
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
@@ -519,11 +529,31 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut c = Self::new_direct_linear_mul();
         c.record_witness_ops = false;
         c.cs.disable_constraint_retention();
+        if let Some(limit) = std::env::var("ACH_R1CS_LC_CACHE_TERM_LIMIT")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+        {
+            c.lc_cache_term_limit = Some(limit);
+        }
         c
     }
 
     pub fn lc_map_shape_counts(&self) -> LcMapShapeCounts {
         self.lc_map.shape_counts()
+    }
+
+    fn cache_lc(&mut self, result: SsaVar, lc: LinearCombination<F>) {
+        let lc = match self.lc_cache_term_limit {
+            Some(limit)
+                if lc.terms().len() > limit
+                    && lc.as_single_variable().is_none()
+                    && lc.constant_value().is_none() =>
+            {
+                LinearCombination::from_variable(self.materialize_lc(&lc))
+            }
+            _ => lc,
+        };
+        self.lc_map.insert(result, lc);
     }
 
     pub(crate) fn push_witness_op(&mut self, op: WitnessOp<F>) {
@@ -825,8 +855,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
 
         match inst {
             IrInstruction::Const { result, value } => {
-                self.lc_map
-                    .insert(*result, LinearCombination::from_constant(*value));
+                self.cache_lc(*result, LinearCombination::from_constant(*value));
             }
             IrInstruction::Input {
                 result,
@@ -851,37 +880,35 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                         v
                     }
                 };
-                self.lc_map
-                    .insert(*result, LinearCombination::from_variable(var));
+                self.cache_lc(*result, LinearCombination::from_variable(var));
             }
             IrInstruction::Add { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
                 let b = self.lookup_lc(rhs)?;
                 let out = self.auto_materialize(a + b);
-                self.lc_map.insert(*result, out);
+                self.cache_lc(*result, out);
             }
             IrInstruction::Sub { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
                 let b = self.lookup_lc(rhs)?;
                 let out = self.auto_materialize(a - b);
-                self.lc_map.insert(*result, out);
+                self.cache_lc(*result, out);
             }
             IrInstruction::Neg { result, operand } => {
                 let lc = self.lookup_lc(operand)?;
-                self.lc_map
-                    .insert(*result, lc * FieldElement::<F>::one().neg());
+                self.cache_lc(*result, lc * FieldElement::<F>::one().neg());
             }
             IrInstruction::Mul { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
                 let b = self.lookup_lc(rhs)?;
                 let out = self.multiply_lcs(&a, &b);
-                self.lc_map.insert(*result, out);
+                self.cache_lc(*result, out);
             }
             IrInstruction::Div { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
                 let b = self.lookup_lc(rhs)?;
                 let out = self.divide_lcs(&a, &b)?;
-                self.lc_map.insert(*result, out);
+                self.cache_lc(*result, out);
             }
             IrInstruction::Mux {
                 result,
@@ -905,7 +932,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 // MUX: result = cond * (then - else) + else
                 let diff = then_lc - else_lc.clone();
                 let selected = self.multiply_lcs(&cond_lc, &diff);
-                self.lc_map.insert(*result, selected + else_lc);
+                self.cache_lc(*result, selected + else_lc);
             }
             IrInstruction::AssertEq {
                 result, lhs, rhs, ..
@@ -919,12 +946,12 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                         .map(|var| var.index() > self.cs.num_pub_inputs())
                         .unwrap_or(false)
                 {
-                    self.lc_map.insert(*lhs, b.clone());
+                    self.cache_lc(*lhs, b.clone());
                 } else {
                     self.mark_ssa_used(*lhs);
                     self.cs.enforce_equal(a, b.clone());
                 }
-                self.lc_map.insert(*result, b);
+                self.cache_lc(*result, b);
             }
             IrInstruction::RangeCheck {
                 result,
@@ -956,7 +983,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 self.cs.enforce_equal(lc.clone(), sum);
                 // Record proven bound for IsLt/IsLe optimization
                 self.range_bounds.insert(*operand, *bits);
-                self.lc_map.insert(*result, lc);
+                self.cache_lc(*result, lc);
             }
             IrInstruction::Not { result, operand } => {
                 let op_lc = self.lookup_lc(operand)?;
@@ -971,7 +998,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     );
                 }
                 // result = 1 - op
-                self.lc_map.insert(*result, one - op_lc);
+                self.cache_lc(*result, one - op_lc);
             }
             IrInstruction::And { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -992,7 +1019,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 }
                 // result = a * b
                 let out = self.multiply_lcs(&a, &b);
-                self.lc_map.insert(*result, out);
+                self.cache_lc(*result, out);
             }
             IrInstruction::Or { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -1013,7 +1040,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 }
                 // result = a + b - a*b
                 let product = self.multiply_lcs(&a, &b);
-                self.lc_map.insert(*result, a + b - product);
+                self.cache_lc(*result, a + b - product);
             }
             IrInstruction::IsEq { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -1035,7 +1062,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 self.cs.enforce(diff.clone(), inv_lc, one - eq_lc.clone());
                 self.cs
                     .enforce(diff, eq_lc.clone(), LinearCombination::zero());
-                self.lc_map.insert(*result, eq_lc);
+                self.cache_lc(*result, eq_lc);
             }
             IrInstruction::IsNeq { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -1057,7 +1084,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 self.cs
                     .enforce(diff, eq_lc.clone(), LinearCombination::zero());
                 // neq = 1 - eq
-                self.lc_map.insert(*result, one - eq_lc);
+                self.cache_lc(*result, one - eq_lc);
             }
             IrInstruction::IsLt { result, lhs, rhs } => {
                 let a = self.lookup_lc(lhs)?;
@@ -1083,7 +1110,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     power_of_two_generic::<F>(effective_bits).sub(&FieldElement::<F>::one());
                 let diff = b - a + LinearCombination::from_constant(offset);
                 let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
-                self.lc_map.insert(*result, lt_lc);
+                self.cache_lc(*result, lt_lc);
             }
             IrInstruction::IsLe { result, lhs, rhs } => {
                 // a <= b  ≡  !(b < a)  ≡  1 - IsLt(b, a)
@@ -1111,7 +1138,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let diff = a - b + LinearCombination::from_constant(offset);
                 let lt_lc = self.compile_is_lt_via_bits(&diff, effective_bits + 1);
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
-                self.lc_map.insert(*result, one - lt_lc);
+                self.cache_lc(*result, one - lt_lc);
             }
             IrInstruction::IsLtBounded {
                 result,
@@ -1124,7 +1151,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let offset = power_of_two_generic::<F>(*bitwidth).sub(&FieldElement::<F>::one());
                 let diff = b - a + LinearCombination::from_constant(offset);
                 let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
-                self.lc_map.insert(*result, lt_lc);
+                self.cache_lc(*result, lt_lc);
             }
             IrInstruction::IsLeBounded {
                 result,
@@ -1138,7 +1165,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let diff = a - b + LinearCombination::from_constant(offset);
                 let lt_lc = self.compile_is_lt_via_bits(&diff, *bitwidth + 1);
                 let one = LinearCombination::from_constant(FieldElement::<F>::one());
-                self.lc_map.insert(*result, one - lt_lc);
+                self.cache_lc(*result, one - lt_lc);
             }
             IrInstruction::Assert {
                 result, operand, ..
@@ -1156,7 +1183,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 }
                 // Enforce op == 1
                 self.cs.enforce_equal(op_lc.clone(), one);
-                self.lc_map.insert(*result, op_lc);
+                self.cache_lc(*result, op_lc);
             }
             IrInstruction::PoseidonHash {
                 result,
@@ -1191,8 +1218,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     internal_count,
                 });
 
-                self.lc_map
-                    .insert(*result, LinearCombination::from_variable(hash_var));
+                self.cache_lc(*result, LinearCombination::from_variable(hash_var));
             }
             IrInstruction::Decompose {
                 result,
@@ -1230,12 +1256,11 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                         bit_index: i as u32,
                     });
                     // Register each bit in lc_map so subsequent instructions can use it
-                    self.lc_map
-                        .insert(*bit_ssa, LinearCombination::from_variable(bit_var));
+                    self.cache_lc(*bit_ssa, LinearCombination::from_variable(bit_var));
                 }
                 self.cs.enforce_equal(src_lc, sum);
                 self.range_bounds.insert(*operand, *num_bits);
-                self.lc_map.insert(*result, lc);
+                self.cache_lc(*result, lc);
             }
             IrInstruction::IntDiv {
                 result,
@@ -1246,7 +1271,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let cache_key = (*lhs, *rhs, *max_bits);
                 if let Some((cached_q, _)) = self.divmod_cache.get(&cache_key) {
                     // Reuse cached quotient from a previous divmod on same operands
-                    self.lc_map.insert(*result, cached_q.clone());
+                    self.cache_lc(*result, cached_q.clone());
                 } else {
                     let a_lc = self.lookup_lc(lhs)?;
                     let b_lc = self.lookup_lc(rhs)?;
@@ -1277,7 +1302,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
                     self.divmod_cache.insert(cache_key, (q_lc.clone(), r_lc));
-                    self.lc_map.insert(*result, q_lc);
+                    self.cache_lc(*result, q_lc);
                 }
             }
             IrInstruction::IntMod {
@@ -1289,7 +1314,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 let cache_key = (*lhs, *rhs, *max_bits);
                 if let Some((_, cached_r)) = self.divmod_cache.get(&cache_key) {
                     // Reuse cached remainder from a previous divmod on same operands
-                    self.lc_map.insert(*result, cached_r.clone());
+                    self.cache_lc(*result, cached_r.clone());
                 } else {
                     let a_lc = self.lookup_lc(lhs)?;
                     let b_lc = self.lookup_lc(rhs)?;
@@ -1320,7 +1345,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                     self.enforce_n_range(&b_minus_r_minus_1, *max_bits);
 
                     self.divmod_cache.insert(cache_key, (q_lc, r_lc.clone()));
-                    self.lc_map.insert(*result, r_lc);
+                    self.cache_lc(*result, r_lc);
                 }
             }
             IrInstruction::WitnessCall(call) => {
@@ -1338,8 +1363,7 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
                 for out_ssa in &call.outputs {
                     let out_var = self.cs.alloc_witness();
                     output_vars.push(out_var);
-                    self.lc_map
-                        .insert(*out_ssa, LinearCombination::from_variable(out_var));
+                    self.cache_lc(*out_ssa, LinearCombination::from_variable(out_var));
                 }
                 let interned = self.intern_artik_program(&call.program_bytes);
                 self.push_witness_op(WitnessOp::ArtikCall {
@@ -2279,6 +2303,68 @@ mod tests {
         assert!(
             compile_only.witness_ops.is_empty(),
             "compile-only mode must not retain witness replay ops"
+        );
+    }
+
+    #[test]
+    fn lc_cache_term_limit_materializes_long_cached_lcs() {
+        let build_prog = || {
+            let mut prog: IrProgram<Bn254Fr> = IrProgram::new();
+            let x = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: x,
+                name: "x".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let y = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: y,
+                name: "y".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let z = prog.fresh_var();
+            prog.push(Instruction::Input {
+                result: z,
+                name: "z".into(),
+                visibility: IrVisibility::Witness,
+            });
+            let xy = prog.fresh_var();
+            prog.push(Instruction::Add {
+                result: xy,
+                lhs: x,
+                rhs: y,
+            });
+            let xyz = prog.fresh_var();
+            prog.push(Instruction::Add {
+                result: xyz,
+                lhs: xy,
+                rhs: z,
+            });
+            (prog, xyz)
+        };
+
+        let (prog, xyz) = build_prog();
+        let mut unbounded = R1CSCompiler::new_lean();
+        unbounded.compile_ir(&prog).unwrap();
+        assert_eq!(unbounded.cs.num_constraints(), 0);
+        assert_eq!(
+            unbounded.lookup_lc_untracked(&xyz).unwrap().terms().len(),
+            3
+        );
+
+        let (prog, xyz) = build_prog();
+        let mut bounded = R1CSCompiler::new_lean();
+        bounded.lc_cache_term_limit = Some(1);
+        bounded.compile_ir(&prog).unwrap();
+        assert_eq!(
+            bounded.lookup_lc_untracked(&xyz).unwrap().terms().len(),
+            1,
+            "bounded cache should retain only the materialized wire"
+        );
+        assert_eq!(
+            bounded.cs.num_constraints(),
+            2,
+            "x+y and (x+y)+z each cross the one-term cache limit"
         );
     }
 
