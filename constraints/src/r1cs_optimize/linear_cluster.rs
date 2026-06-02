@@ -22,15 +22,17 @@ use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
+mod picker;
+
 use super::linear::{deduplicate_constraints, optimize_linear_with_protected};
 use super::predicates::{compute_variable_frequency, is_linear, is_trivially_satisfied};
 use super::substitution::{
-    apply_substitution_in_place, apply_substitution_to_constraint_in_place, cached_inv,
-    solve_for_variable, InvCache,
+    apply_substitution_in_place, apply_substitution_to_constraint_in_place, InvCache,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
+use picker::{solve_for_variable_with_picker, Picker};
 
 /// Clusters above this size fall back to the greedy iterative
 /// eliminator (`optimize_linear_with_protected`) instead of running
@@ -76,29 +78,6 @@ const MIN_OCCURRENCE_LOWER: usize = 350;
 /// practice -- by the time a cluster crosses 5000 we have already
 /// fallen back to greedy.
 const MIN_OCCURRENCE_UPPER: usize = 1_000_000;
-
-/// Pivot variable selection strategy used by the per-cluster Gaussian
-/// solver. Determined by cluster size: clusters in
-/// `[MIN_OCCURRENCE_LOWER, MIN_OCCURRENCE_UPPER)` use
-/// `MinOccurrence`, others use `MaxFrequency`. Mirrors circom 2.2.x
-/// (`circom_algebra/src/simplification_utils.rs`):
-/// `apply_less_ocurrences` switches to `take_signal_4` (min-occ)
-/// inside the same band.
-#[derive(Copy, Clone, Debug, PartialEq, Eq)]
-enum Picker {
-    MaxFrequency,
-    MinOccurrence,
-}
-
-impl Picker {
-    fn for_cluster_size(size: usize) -> Self {
-        if (MIN_OCCURRENCE_LOWER..MIN_OCCURRENCE_UPPER).contains(&size) {
-            Picker::MinOccurrence
-        } else {
-            Picker::MaxFrequency
-        }
-    }
-}
 
 /// Cluster the linear constraints in `linear_constraints` by shared
 /// variable index. Two constraints land in the same cluster iff they
@@ -170,63 +149,6 @@ pub(super) fn build_clusters_by_signal<F: FieldBackend>(
     let mut clusters: Vec<Vec<usize>> = by_root.into_values().collect();
     clusters.sort_by_key(|c| c[0]);
     clusters
-}
-
-/// Pick a substitution variable from `lc` according to `picker`.
-///
-/// `MaxFrequency`: delegates to the existing
-/// [`solve_for_variable`] -- pick the non-protected term with the
-/// highest occurrence count, tie-break by highest index. This is the
-/// achronyme-historical heuristic.
-///
-/// `MinOccurrence`: pick the non-protected term with the **lowest**
-/// occurrence count, tie-break by **highest** index. Mirrors circom
-/// 2.2.x's `take_signal_4`
-/// (`circom_algebra/src/simplification_utils.rs:380`); the rationale
-/// is that substituting a rarely-occurring variable propagates the
-/// fewest changes, keeping subsequent rows shorter and reducing
-/// overall fill-in.
-fn solve_for_variable_with_picker<F: FieldBackend>(
-    lc: LinearCombination<F>,
-    protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
-    picker: Picker,
-    inv_cache: &mut InvCache<F>,
-) -> Option<(Variable, LinearCombination<F>)> {
-    match picker {
-        Picker::MaxFrequency => solve_for_variable(lc, protected, var_freq, inv_cache),
-        Picker::MinOccurrence => {
-            let simplified = lc.simplify();
-            let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
-            for (var, coeff) in simplified.terms() {
-                if protected.contains(&var.index()) || var.index() == Variable::ONE.index() {
-                    continue;
-                }
-                let freq = var_freq.get(&var.index()).copied().unwrap_or(0);
-                match &best {
-                    None => best = Some((*var, *coeff, freq)),
-                    Some((prev_var, _, prev_freq)) => {
-                        // pick MIN freq; tie-break by MAX index
-                        if freq < *prev_freq
-                            || (freq == *prev_freq && var.index() > prev_var.index())
-                        {
-                            best = Some((*var, *coeff, freq));
-                        }
-                    }
-                }
-            }
-            let (target_var, target_coeff, _) = best?;
-            let neg_inv = cached_inv(inv_cache, target_coeff.neg())?;
-            let mut result = LinearCombination::<F>::zero();
-            for (var, coeff) in simplified.terms() {
-                if *var == target_var {
-                    continue;
-                }
-                result.add_term(*var, coeff.mul(&neg_inv));
-            }
-            Some((target_var, result))
-        }
-    }
 }
 
 /// Run reduced row-echelon Gaussian elimination on a single cluster of
