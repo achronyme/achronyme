@@ -11,7 +11,7 @@ use halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine};
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::plonk::{
     self, create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column as H2Column,
-    ConstraintSystem, Fixed, Instance, Selector, VerifyingKey,
+    ConstraintSystem, Fixed, Instance, Selector,
 };
 use halo2_proofs::poly::commitment::Params;
 use halo2_proofs::poly::kzg::commitment::{KZGCommitmentScheme, ParamsKZG};
@@ -21,10 +21,13 @@ use halo2_proofs::poly::Rotation;
 use halo2_proofs::transcript::{
     Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
 };
-use halo2_proofs::SerdeFormat;
 use memory::FieldElement;
 use rand::rngs::OsRng;
 use zkc::plonkish_backend::PlonkishCompiler;
+
+mod serialization;
+
+use serialization::{serialize_proof_json, serialize_public_json, serialize_vkey_json};
 
 // ============================================================================
 // Field conversion
@@ -36,16 +39,6 @@ fn fe_to_halo2(fe: &FieldElement) -> Result<Fr, String> {
     let mut repr = [0u8; 32];
     repr.copy_from_slice(&bytes);
     Option::from(Fr::from_repr(repr)).ok_or_else(|| "invalid BN254 field element".to_string())
-}
-
-/// Convert a halo2 `Fr` back to decimal string via `FieldElement`.
-fn fr_to_decimal(f: &Fr) -> String {
-    let repr = f.to_repr();
-    let bytes: &[u8] = repr.as_ref();
-    let mut le_bytes = [0u8; 32];
-    le_bytes[..bytes.len()].copy_from_slice(bytes);
-    let fe: FieldElement = FieldElement::from_le_bytes(&le_bytes).expect("valid Fr in range");
-    fe.to_decimal_string()
 }
 
 // ============================================================================
@@ -491,48 +484,4 @@ fn load_or_create_kzg_params(k: u32, path: &Path) -> Result<ParamsKZG<Bn256>, St
     std::fs::write(path, &buf).map_err(|e| format!("failed to write KZG params: {e}"))?;
 
     Ok(params)
-}
-
-// ============================================================================
-// JSON serialization
-// ============================================================================
-
-fn serialize_proof_json(
-    proof_bytes: &[u8],
-    public_inputs: &[Fr],
-    k: u32,
-) -> Result<String, String> {
-    let proof_hex = format!("0x{}", hex_encode(proof_bytes));
-    let public: Vec<String> = public_inputs.iter().map(fr_to_decimal).collect();
-    let obj = serde_json::json!({
-        "protocol": "plonk",
-        "curve": "bn128",
-        "proof": proof_hex,
-        "public_inputs": public,
-        "k": k
-    });
-    serde_json::to_string_pretty(&obj).map_err(|e| format!("proof JSON serialization failed: {e}"))
-}
-
-fn serialize_public_json(inputs: &[Fr]) -> Result<String, String> {
-    let arr: Vec<String> = inputs.iter().map(fr_to_decimal).collect();
-    serde_json::to_string_pretty(&arr).map_err(|e| format!("public JSON serialization failed: {e}"))
-}
-
-fn serialize_vkey_json(vk: &VerifyingKey<G1Affine>, k: u32) -> Result<String, String> {
-    let mut vk_bytes = Vec::new();
-    vk.write(&mut vk_bytes, SerdeFormat::RawBytes)
-        .map_err(|e| format!("vkey serialization failed: {e}"))?;
-    let vk_hex = format!("0x{}", hex_encode(&vk_bytes));
-    let obj = serde_json::json!({
-        "protocol": "plonk",
-        "curve": "bn128",
-        "k": k,
-        "vkey": vk_hex
-    });
-    serde_json::to_string_pretty(&obj).map_err(|e| format!("vkey JSON serialization failed: {e}"))
-}
-
-fn hex_encode(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
