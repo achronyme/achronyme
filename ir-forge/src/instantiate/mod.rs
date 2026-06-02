@@ -18,8 +18,8 @@
 //!   declaration, array-size resolution, span-aware emission).
 //! - [`stmts`] — `CircuitNode` walker (`emit_node` / `emit_for` / range
 //!   loops) plus the compile-time const evaluator (`eval_const_expr`).
-//! - [`exprs`] — `CircuitExpr` walker (`emit_expr` — the big match) +
-//!   `resolve_scalar` + `emit_pow`.
+//! - [`exprs`] — `CircuitExpr` walker (`emit_expr`) plus expression
+//!   family helpers (`resolve_scalar`, `emit_pow`, arrays, bitwise dispatch).
 //! - [`bits`] — bitwise expansion (decompose / recompose / shifts /
 //!   bitwise binops) and the indexing utilities `extract_const_index`
 //!   / `ensure_array_slot` / `extract_const_u32` / `resolve_const_u32`.
