@@ -1,5 +1,10 @@
+use std::collections::HashMap;
+
 use super::*;
+use crate::eval::int::fits_in_bits;
 use crate::types::{Instruction, IrProgram, Visibility};
+use constraints::poseidon::{poseidon_hash, PoseidonParams};
+use memory::FieldElement;
 
 fn empty_inputs() -> HashMap<String, FieldElement> {
     HashMap::new()
