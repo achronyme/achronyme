@@ -227,6 +227,22 @@ pub(in crate::lowering::statements) fn lower_for_loop<'a>(
             if is_mixed {
                 sync_post_emission(stmt, nodes, pre_len, &mut cte, env);
             }
+            // Splice any Artik `WitnessCall` (or other expression) side
+            // effects this statement queued in `ctx.pending_nodes` ahead
+            // of the statement's own node(s) — the same per-statement
+            // discipline `lower_stmts_with_pending` applies. Without it,
+            // an unrolled `var t = witness_fn(arr[i-1]); arr[i] = t;`
+            // body accumulates every iteration's WitnessCall and the
+            // outer drain splices them as one batch *before* the whole
+            // loop's `Let arr[i] = ...` bindings, so iteration i+1's call
+            // reads `arr[i]`'s loop-entry value instead of the value the
+            // previous iteration wrote. Drained per statement so the
+            // outer drain is a no-op for this loop. Spliced after
+            // `sync_post_emission`, which reads `nodes[pre_len..]`.
+            if !ctx.pending_nodes.is_empty() {
+                let pending_nodes: Vec<_> = ctx.pending_nodes.drain(..).collect();
+                nodes.splice(pre_len..pre_len, pending_nodes);
+            }
         }
     }
     env.known_constants.remove(&var_name);
