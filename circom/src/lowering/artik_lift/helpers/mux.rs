@@ -1,4 +1,4 @@
-use crate::ast::{ElseBranch, Expr, Stmt};
+use crate::ast::{BinOp, ElseBranch, Expr, Stmt};
 
 /// Are all of `stmts` safe to lift under the mux scheme (both arms
 /// executing unconditionally at runtime)?
@@ -53,23 +53,37 @@ pub(in super::super) fn stmt_is_mux_compatible(stmt: &Stmt) -> bool {
     }
 }
 
-/// Is `expr` side-effect-free enough to evaluate on both arms of a
-/// runtime mux? Calls bail out: a nested lift could still read
-/// signals or emit work that's fine in isolation, but we keep the
-/// MVP conservative and only admit pure register arithmetic.
+/// Is `expr` side-effect-free *and non-faulting* enough to evaluate on
+/// both arms of a runtime mux? The mux runs both arms unconditionally,
+/// so an operation whose validity depends on the surrounding guard must
+/// not be admitted — when the predicate cannot prove the operation
+/// cannot fault, it routes through the branching lift, which evaluates
+/// only the taken arm and honours the guard. Calls, array reads, and
+/// division/modulo all bail for this reason.
 pub(in super::super) fn expr_is_mux_compatible(expr: &Expr) -> bool {
     match expr {
         Expr::Number { .. } | Expr::HexNumber { .. } | Expr::Ident { .. } => true,
-        Expr::BinOp { lhs, rhs, .. } => expr_is_mux_compatible(lhs) && expr_is_mux_compatible(rhs),
+        Expr::BinOp { op, lhs, rhs, .. } => {
+            // Division and modulo fault on a zero divisor
+            // (`FieldDivByZero`). A guarded `if (x != 0) y = a \ x`
+            // would compute `a \ 0` in the dead arm under the mux, so
+            // route any div/mod through the branching lift. Every other
+            // binop is pure arithmetic.
+            !matches!(op, BinOp::Div | BinOp::IntDiv | BinOp::Mod)
+                && expr_is_mux_compatible(lhs)
+                && expr_is_mux_compatible(rhs)
+        }
         Expr::UnaryOp { operand, .. } => expr_is_mux_compatible(operand),
         Expr::PostfixOp { operand, .. } | Expr::PrefixOp { operand, .. } => {
             expr_is_mux_compatible(operand)
         }
-        Expr::Index { object, index, .. } => {
-            // `arr[i]` reads from a pre-allocated array; both arms do
-            // the read but only one result is selected.
-            expr_is_mux_compatible(object) && expr_is_mux_compatible(index)
-        }
+        // An array read `arr[i]` faults (`ArrayIndexOutOfBounds`) when
+        // `i` is out of range. The predicate has no array-length info,
+        // so it cannot prove the index in-range; a guarded
+        // `if (i != 0) y = arr[i - 1]` would read `arr[-1]` in the dead
+        // arm under the mux. Route reads through the branching lift,
+        // which evaluates only the taken arm.
+        Expr::Index { .. } => false,
         Expr::Ternary {
             condition,
             if_true,
