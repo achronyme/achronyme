@@ -287,6 +287,96 @@ fn var_array_expr_bound_loop_read_standalone() {
         .unwrap_or_else(|e| panic!("R1CS verify failed: {e}"));
 }
 
+/// Regression: a multi-dimensional **signal** array declared in the
+/// *main* template (`signal input m[2][C]`) must have its `[R][C]`
+/// strides registered, so `m[1][i]` linearises to the flat slot
+/// `1*C + i` and not the stride-1 default `1 + i`. The main-template
+/// lowering entry seeds these the same way component inlining does;
+/// before that seeding existed, every non-leading-row read on a
+/// main-template signal array fingered the wrong flat slot. This is
+/// the exact shape of the secp256k1 `ECDSAVerifyNoPubkeyCheck`
+/// `signal input pubkey[2][k]` read at the heart of the boss-fight:
+/// the witness asserts `o[i] = m[1][i]`, so a stride-1 read pulls
+/// row-0 cells and fails here at R1CS verification rather than
+/// slipping through a compile-only check.
+#[test]
+fn signal_array_2d_main_template_seeds_strides() {
+    // Literal element indices (manual unroll) keep the read off the
+    // memoized-loop path, isolating the stride linearisation; the
+    // `[2][C]` shape still resolves its column count through the
+    // parameter `C` exactly as the real `pubkey[2][k]` does.
+    let src = r#"
+        pragma circom 2.0.0;
+        template T(C) {
+            signal input m[2][C];
+            signal output o0;
+            signal output o1;
+            signal output o2;
+            signal output o3;
+            o0 <== m[1][0];
+            o1 <== m[1][1];
+            o2 <== m[1][2];
+            o3 <== m[1][3];
+        }
+        component main {public [m]} = T(4);
+    "#;
+    let tmp = std::env::temp_dir().join("ach_signal_2d_main_strides.circom");
+    std::fs::write(&tmp, src).unwrap();
+
+    let result = circom::compile_file(&tmp, &[]).unwrap_or_else(|e| panic!("compile failed: {e}"));
+    let fe_captures: HashMap<String, FieldElement<Bn254Fr>> = result
+        .capture_values
+        .iter()
+        .map(|(k, v)| (k.clone(), FieldElement::<Bn254Fr>::from_u64(*v)))
+        .collect();
+    let mut program = result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&fe_captures, &result.output_names)
+        .unwrap_or_else(|e| panic!("instantiate failed: {e}"));
+    ir::passes::optimize(&mut program);
+
+    // Flat layout of `m[2][4]`: row 0 = m_0..m_3, row 1 = m_4..m_7.
+    // Make the rows clearly distinct so a stride-1 read of `m[1][i]`
+    // (= m_{1+i}, i.e. row-0 cells) yields detectably wrong values.
+    let mut inputs: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    for (i, v) in [(0u32, 10u64), (1, 20), (2, 30), (3, 40)] {
+        inputs.insert(format!("m_{i}"), FieldElement::<Bn254Fr>::from_u64(v));
+    }
+    for (i, v) in [(4u32, 1u64), (5, 2), (6, 3), (7, 4)] {
+        inputs.insert(format!("m_{i}"), FieldElement::<Bn254Fr>::from_u64(v));
+    }
+
+    let all_signals = circom::witness::compute_witness_hints_with_captures(
+        &result.prove_ir,
+        &inputs,
+        &result.capture_values,
+    )
+    .unwrap_or_else(|e| panic!("witness computation failed: {e}"));
+
+    // Correct strides read row 1: o{i} = m[1][i] = m_{4+i} = [1,2,3,4].
+    // Stride-1 would read m_{1+i} = [20,30,40,1] and fail here.
+    for (name, want) in [("o0", 1u64), ("o1", 2), ("o2", 3), ("o3", 4)] {
+        let got = all_signals
+            .get(name)
+            .unwrap_or_else(|| panic!("witness missing signal `{name}`"));
+        assert_eq!(
+            *got,
+            FieldElement::<Bn254Fr>::from_u64(want),
+            "main-template 2D signal slot `{name}`: expected {want}, got {got:?}"
+        );
+    }
+
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.set_proven_boolean(proven);
+    let witness = rc
+        .compile_ir_with_witness(&program, &all_signals)
+        .unwrap_or_else(|e| panic!("R1CS compile-with-witness failed: {e}"));
+    rc.cs
+        .verify(&witness)
+        .unwrap_or_else(|e| panic!("R1CS verify failed: {e}"));
+}
+
 /// Adversarial: declared multi-dim shape whose cell count disagrees
 /// with the initializer's flat length surfaces a clean error, not a
 /// silently mis-strided array.

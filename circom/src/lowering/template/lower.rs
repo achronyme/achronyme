@@ -174,6 +174,18 @@ pub(crate) fn lower_template_with_ctx<'a>(
             .or_insert_with(|| val.clone());
     }
 
+    // Register multi-dimensional signal-array strides so that indexed
+    // accesses like `pubkey[1][idx]` linearise as `row * cols + idx`.
+    // Without this the body lowering falls back to stride 1 and reads
+    // the wrong flat slot for every non-leading dimension. Component
+    // inlining seeds these the same way; the top-level template needs
+    // it too, since its own `signal input m[2][k]` declarations are
+    // only visible here.
+    let stride_map = signals::extract_signal_strides(template, &ctx.param_values);
+    for (name, strides) in stride_map {
+        env.strides.insert(name, strides);
+    }
+
     // 3. Lower body statements
     let body = lower_stmts(&template.body.stmts, &mut env, ctx)?;
 
