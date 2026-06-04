@@ -94,6 +94,13 @@ pub(super) fn cached_inv<F: FieldBackend>(
     cache: &mut InvCache<F>,
     value: FieldElement<F>,
 ) -> Option<FieldElement<F>> {
+    if value == FieldElement::<F>::one() {
+        return Some(value);
+    }
+    let neg_one = FieldElement::<F>::one().neg();
+    if value == neg_one {
+        return Some(neg_one);
+    }
     if let Some(inv) = cache.get(&value) {
         return Some(*inv);
     }

@@ -22,16 +22,24 @@ use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
+mod parallel;
 mod picker;
 
 use super::linear::{deduplicate_constraints, optimize_linear_with_protected};
-use super::predicates::{compute_variable_frequency, is_linear, is_trivially_satisfied};
+use super::predicates::{
+    compute_variable_frequency, count_nonlinear_constraints, is_linear,
+    retain_nontrivial_constraints,
+};
 use super::substitution::{
     apply_substitution_in_place, apply_substitution_to_constraint_in_place, InvCache,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
+use parallel::{
+    apply_substitutions_to_unmasked_constraints, linear_signal_entries_ordered,
+    solve_clusters_ordered,
+};
 use picker::{solve_for_variable_with_picker, Picker};
 
 /// Clusters above this size fall back to the greedy iterative
@@ -109,26 +117,12 @@ pub(super) fn build_clusters_by_signal<F: FieldBackend>(
     let mut uf = UnionFind::new(n);
 
     // For each signal index, remember the first constraint that owns
-    // it; subsequent owners union with that first. The first-owner
-    // table is keyed on signal index up to the maximum referenced
-    // (sized lazily via HashMap, since the wire-index space is sparse
-    // here -- we only see indices appearing in the linear subset).
+    // it; subsequent owners union with that first. Signal extraction
+    // may run in parallel, but this merge stays in original constraint
+    // index order so Union-Find shape and output order are fixed.
     let mut first_owner: FxHashMap<usize, usize> = FxHashMap::default();
-
-    for (idx, constraint) in linear_constraints.iter().enumerate() {
-        // Walk only constraints that ARE linear. Non-linear ones
-        // contribute no signals to the Union-Find -- they end up as
-        // their own singleton cluster, which the caller can ignore
-        // (the Gauss step has nothing to do with them).
-        let Some((_k, other_lc, c_lc)) = is_linear(constraint) else {
-            continue;
-        };
-
-        for (var, _coeff) in other_lc.terms().iter().chain(c_lc.terms().iter()) {
-            let sig = var.index();
-            if sig == Variable::ONE.index() || protected.contains(&sig) {
-                continue;
-            }
+    for (idx, signals) in linear_signal_entries_ordered(linear_constraints, protected) {
+        for sig in signals {
             match first_owner.get(&sig) {
                 Some(&owner) => uf.union(idx, owner),
                 None => {
@@ -307,14 +301,6 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     let mut rounds = 0usize;
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
-    // Pivot-inversion memo, shared across rounds *and* clusters within this
-    // call. Pivot denominators repeat heavily across the linear constraints
-    // of a single circuit (≈ten distinct values across tens of thousands
-    // of inversions on SHA-256), so a cache scoped to the whole pass is the
-    // right granularity — per-cluster scoping would re-pay the Fermat-LT
-    // `pow(p-2)` cost on every cluster.
-    let mut inv_cache: InvCache<F> = FxHashMap::default();
-
     loop {
         rounds += 1;
 
@@ -346,46 +332,16 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         // Cluster the linear constraints by shared signal.
         let clusters = build_clusters_by_signal(&linear_constraints, &round_protected);
 
-        // Solve each cluster and merge results.
+        // Solve clusters independently, then merge in cluster-index order.
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut residuals: Vec<Constraint<F>> = Vec::new();
-        for cluster in &clusters {
-            let cluster_cons: Vec<Constraint<F>> = cluster
-                .iter()
-                .map(|&i| linear_constraints[i].clone())
-                .collect();
-            if cluster.len() > CLUSTER_FALLBACK_THRESHOLD {
-                // Giant cluster -- delegate to the greedy iterative
-                // eliminator. Greedy reaches the same linear fixpoint
-                // as Gauss (modulo substitution-key choice) but
-                // applies substitutions in batched rounds, which
-                // scales linearly per round in cluster size instead
-                // of O(n^2) per round. Soundness is preserved; the
-                // resulting substitution map keys may differ from
-                // what Gauss would have picked, but both are valid
-                // closures of the same equivalence relation.
-                //
-                // We pass `0` for num_pub_inputs because round_protected
-                // already contains the public-input indices (plus aux
-                // wires + previously-substituted vars).
-                let mut subset = cluster_cons;
-                let (greedy_subs, _greedy_stats) =
-                    optimize_linear_with_protected(&mut subset, 0, &round_protected);
-                for (k, v) in greedy_subs {
-                    round_subs.insert(k, v);
-                }
-                residuals.extend(subset);
-                continue;
-            }
-            let (subs, residual) =
-                solve_cluster_linear(cluster_cons, &round_protected, &var_freq, &mut inv_cache);
-            // Clusters are disjoint over non-protected signals, so
-            // their substitution-map keys are disjoint by
-            // construction. Inserting unconditionally is safe.
-            for (k, v) in subs {
+        let solved_clusters =
+            solve_clusters_ordered(&clusters, &linear_constraints, &round_protected, &var_freq);
+        for solved in solved_clusters {
+            for (k, v) in solved.subs {
                 round_subs.insert(k, v);
             }
-            residuals.extend(residual);
+            residuals.extend(solved.residual);
         }
 
         if round_subs.is_empty() {
@@ -402,17 +358,21 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         // signals fold in).
         // Compact non-linear constraints in place + apply round_subs to
         // each. Two-cursor sweep avoids allocating a fresh `Vec`.
-        let linear_index_set: HashSet<usize> = linear_indices.iter().copied().collect();
         let n = constraints.len();
+        let mut linear_index_mask = vec![false; n];
+        for idx in linear_indices {
+            linear_index_mask[idx] = true;
+        }
+        apply_substitutions_to_unmasked_constraints(constraints, &linear_index_mask, &round_subs);
+
         let mut write = 0usize;
-        for read in 0..n {
-            if linear_index_set.contains(&read) {
+        for (read, skip) in linear_index_mask.iter().enumerate().take(n) {
+            if *skip {
                 continue;
             }
             if write != read {
                 constraints.swap(write, read);
             }
-            apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
             write += 1;
         }
         constraints.truncate(write);
@@ -422,17 +382,12 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         }
 
         // Sweep trivially-satisfied constraints (0*B=0, k*LC=k*LC, etc.).
-        let before_trivial = constraints.len();
-        constraints.retain(|c| !is_trivially_satisfied(c));
-        let trivial_this_round = before_trivial - constraints.len();
+        let trivial_this_round = retain_nontrivial_constraints(constraints);
         total_trivial_removed += trivial_this_round;
 
         // Count newly-linear constraints exposed by the substitutions
         // applied to non-linears.
-        let nonlinear_after = constraints
-            .iter()
-            .filter(|c| is_linear(c).is_none())
-            .count();
+        let nonlinear_after = count_nonlinear_constraints(constraints);
         let newly_linear = nonlinear_before.saturating_sub(nonlinear_after);
 
         round_details.push((linear_eliminated, newly_linear));
@@ -452,9 +407,7 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     deduplicate_constraints(constraints);
     let duplicates_removed = before_dedup - constraints.len();
 
-    let before_final_trivial = constraints.len();
-    constraints.retain(|c| !is_trivially_satisfied(c));
-    total_trivial_removed += before_final_trivial - constraints.len();
+    total_trivial_removed += retain_nontrivial_constraints(constraints);
 
     let result = R1CSOptimizeResult {
         constraints_before,

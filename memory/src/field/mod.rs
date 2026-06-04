@@ -12,6 +12,7 @@ mod element;
 mod family;
 pub mod goldilocks;
 mod prime_id;
+mod simd;
 
 pub use arithmetic::MODULUS;
 pub use backend::FieldBackend;

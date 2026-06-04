@@ -199,6 +199,14 @@ pub(crate) fn montgomery4_neg(a: &[u64; 4]) -> [u64; 4] {
 
 /// Constant-time conditional select for 4-limb values.
 pub(crate) fn montgomery4_ct_select(a: &[u64; 4], b: &[u64; 4], flag: u64) -> [u64; 4] {
+    if let Some(selected) = super::simd::ct_select_u64x4(a, b, flag) {
+        return selected;
+    }
+    montgomery4_ct_select_scalar(a, b, flag)
+}
+
+#[inline]
+pub(crate) fn montgomery4_ct_select_scalar(a: &[u64; 4], b: &[u64; 4], flag: u64) -> [u64; 4] {
     let mask = 0u64.wrapping_sub(flag);
     [
         (a[0] & !mask) | (b[0] & mask),

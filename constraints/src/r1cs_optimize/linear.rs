@@ -21,12 +21,14 @@
 
 use std::collections::HashSet;
 
+use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
 use memory::FieldBackend;
 
 use super::predicates::{
-    compute_variable_frequency, is_linear, is_trivially_satisfied, lc_fingerprint,
+    compute_variable_frequency, count_nonlinear_constraints, is_linear, lc_fingerprint,
+    retain_nontrivial_constraints,
 };
 use super::substitution::{
     apply_substitution_in_place, apply_substitution_to_constraint_in_place, solve_for_variable,
@@ -34,6 +36,9 @@ use super::substitution::{
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::Constraint;
+
+const PARALLEL_DEDUP_THRESHOLD: usize = 512;
+const PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD: usize = 512;
 
 /// Run greedy iterative linear constraint elimination to fixpoint.
 ///
@@ -102,10 +107,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         }
 
         // Count non-linear constraints before this round (for instrumentation)
-        let nonlinear_before = constraints
-            .iter()
-            .filter(|c| is_linear(c).is_none())
-            .count();
+        let nonlinear_before = count_nonlinear_constraints(constraints);
 
         // `round_protected` is mutated in place as new substitutions are
         // claimed: once a variable is chosen this round, no later constraint
@@ -141,30 +143,39 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // the survivors. Two-cursor compaction over the existing Vec so
         // we avoid allocating a fresh Vec<Constraint> per round.
         let n = constraints.len();
+        let remove_mask: Vec<bool> = (0..n).map(|idx| to_remove.contains(&idx)).collect();
+        if n >= PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD {
+            constraints
+                .par_iter_mut()
+                .zip(remove_mask.par_iter())
+                .for_each(|(constraint, remove)| {
+                    if !*remove {
+                        apply_substitution_to_constraint_in_place(constraint, &round_subs);
+                    }
+                });
+        }
+
         let mut write = 0usize;
-        for read in 0..n {
-            if to_remove.contains(&read) {
+        for (read, remove) in remove_mask.into_iter().enumerate() {
+            if remove {
                 continue;
             }
             if write != read {
                 constraints.swap(write, read);
             }
-            apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
+            if n < PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD {
+                apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
+            }
             write += 1;
         }
         constraints.truncate(write);
 
         // Remove trivially-satisfied constraints (0*B=0, k1*k2=k3)
-        let before_trivial = constraints.len();
-        constraints.retain(|c| !is_trivially_satisfied(c));
-        let trivial_this_round = before_trivial - constraints.len();
+        let trivial_this_round = retain_nontrivial_constraints(constraints);
         total_trivial_removed += trivial_this_round;
 
         // Count how many non-linear constraints became linear after substitution
-        let nonlinear_after = constraints
-            .iter()
-            .filter(|c| is_linear(c).is_none())
-            .count();
+        let nonlinear_after = count_nonlinear_constraints(constraints);
         let newly_linear = nonlinear_before.saturating_sub(nonlinear_after + linear_eliminated);
 
         round_details.push((linear_eliminated, newly_linear));
@@ -186,9 +197,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
     let duplicates_removed = before_dedup - constraints.len();
 
     // Step 3: Final trivial constraint removal (post-dedup may expose more).
-    let before_final_trivial = constraints.len();
-    constraints.retain(|c| !is_trivially_satisfied(c));
-    total_trivial_removed += before_final_trivial - constraints.len();
+    total_trivial_removed += retain_nontrivial_constraints(constraints);
 
     let result = R1CSOptimizeResult {
         constraints_before,
@@ -207,22 +216,38 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
 /// Also removes commuted duplicates (A*B=C == B*A=C).
 pub(super) fn deduplicate_constraints<F: FieldBackend>(constraints: &mut Vec<Constraint<F>>) {
     let mut seen: HashSet<Vec<u8>> = HashSet::with_capacity(constraints.len());
+    if constraints.len() >= PARALLEL_DEDUP_THRESHOLD {
+        let keys: Vec<Vec<u8>> = constraints.par_iter().map(constraint_fingerprint).collect();
+        let mut write = 0usize;
+        for (read, key) in keys.into_iter().enumerate() {
+            if !seen.insert(key) {
+                continue;
+            }
+            if write != read {
+                constraints.swap(write, read);
+            }
+            write += 1;
+        }
+        constraints.truncate(write);
+        return;
+    }
 
-    constraints.retain(|c| {
-        let fa = lc_fingerprint(&c.a);
-        let fb = lc_fingerprint(&c.b);
-        let fc = lc_fingerprint(&c.c);
+    constraints.retain(|c| seen.insert(constraint_fingerprint(c)));
+}
 
-        // Canonical key: sort A,B to handle commutativity (A*B=C ≡ B*A=C)
-        let (fa, fb) = if fa <= fb { (fa, fb) } else { (fb, fa) };
+fn constraint_fingerprint<F: FieldBackend>(constraint: &Constraint<F>) -> Vec<u8> {
+    let fa = lc_fingerprint(&constraint.a);
+    let fb = lc_fingerprint(&constraint.b);
+    let fc = lc_fingerprint(&constraint.c);
 
-        let mut key = Vec::with_capacity(fa.len() + fb.len() + fc.len() + 2);
-        key.extend_from_slice(&fa);
-        key.push(0xFF); // separator
-        key.extend_from_slice(&fb);
-        key.push(0xFF);
-        key.extend_from_slice(&fc);
+    // Canonical key: sort A,B to handle commutativity (A*B=C == B*A=C).
+    let (fa, fb) = if fa <= fb { (fa, fb) } else { (fb, fa) };
 
-        seen.insert(key)
-    });
+    let mut key = Vec::with_capacity(fa.len() + fb.len() + fc.len() + 2);
+    key.extend_from_slice(&fa);
+    key.push(0xFF);
+    key.extend_from_slice(&fb);
+    key.push(0xFF);
+    key.extend_from_slice(&fc);
+    key
 }

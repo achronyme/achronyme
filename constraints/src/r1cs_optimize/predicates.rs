@@ -18,13 +18,14 @@
 //! sibling submodule (`linear`, `deduce`, `substitution`) and
 //! from `tests.rs`.
 
-use std::collections::HashSet;
-
-use rustc_hash::FxHashMap;
+use rayon::prelude::*;
+use rustc_hash::{FxHashMap, FxHashSet};
 
 use memory::{FieldBackend, FieldElement};
 
 use crate::r1cs::{Constraint, LinearCombination};
+
+const PARALLEL_ANALYSIS_THRESHOLD: usize = 512;
 
 /// Check if a constraint is linear (one side is a constant).
 ///
@@ -75,9 +76,29 @@ pub(super) fn is_linear<F: FieldBackend>(
 pub(super) fn compute_variable_frequency<F: FieldBackend>(
     constraints: &[Constraint<F>],
 ) -> FxHashMap<usize, usize> {
+    if constraints.len() >= PARALLEL_ANALYSIS_THRESHOLD {
+        let partials: Vec<FxHashMap<usize, usize>> = constraints
+            .par_chunks(PARALLEL_ANALYSIS_THRESHOLD)
+            .map(compute_variable_frequency_sequential)
+            .collect();
+        let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
+        for partial in partials {
+            for (var_idx, count) in partial {
+                *freq.entry(var_idx).or_insert(0) += count;
+            }
+        }
+        return freq;
+    }
+
+    compute_variable_frequency_sequential(constraints)
+}
+
+fn compute_variable_frequency_sequential<F: FieldBackend>(
+    constraints: &[Constraint<F>],
+) -> FxHashMap<usize, usize> {
     let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
     for constraint in constraints {
-        let mut vars_in_constraint: HashSet<usize> = HashSet::new();
+        let mut vars_in_constraint: FxHashSet<usize> = FxHashSet::default();
         for (var, _) in &constraint.a.terms {
             vars_in_constraint.insert(var.index());
         }
@@ -137,6 +158,47 @@ pub(super) fn is_trivially_satisfied<F: FieldBackend>(constraint: &Constraint<F>
     }
 
     false
+}
+
+pub(super) fn retain_nontrivial_constraints<F: FieldBackend>(
+    constraints: &mut Vec<Constraint<F>>,
+) -> usize {
+    let before = constraints.len();
+    if before < PARALLEL_ANALYSIS_THRESHOLD {
+        constraints.retain(|c| !is_trivially_satisfied(c));
+        return before - constraints.len();
+    }
+
+    let keep: Vec<bool> = constraints
+        .par_iter()
+        .map(|c| !is_trivially_satisfied(c))
+        .collect();
+    let mut write = 0usize;
+    for (read, keep_constraint) in keep.into_iter().enumerate() {
+        if !keep_constraint {
+            continue;
+        }
+        if write != read {
+            constraints.swap(write, read);
+        }
+        write += 1;
+    }
+    constraints.truncate(write);
+    before - constraints.len()
+}
+
+pub(super) fn count_nonlinear_constraints<F: FieldBackend>(constraints: &[Constraint<F>]) -> usize {
+    if constraints.len() < PARALLEL_ANALYSIS_THRESHOLD {
+        return constraints
+            .iter()
+            .filter(|constraint| is_linear(constraint).is_none())
+            .count();
+    }
+
+    constraints
+        .par_iter()
+        .filter(|constraint| is_linear(constraint).is_none())
+        .count()
 }
 
 /// Hash a simplified linear combination into a deterministic byte vector.
