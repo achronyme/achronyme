@@ -5,9 +5,10 @@ use rustc_hash::{FxHashMap, FxHashSet};
 
 use memory::FieldBackend;
 
-use super::{optimize_linear_with_protected, solve_cluster_linear, CLUSTER_FALLBACK_THRESHOLD};
+use super::{solve_cluster_linear, CLUSTER_FALLBACK_THRESHOLD};
 use crate::r1cs::Constraint;
 use crate::r1cs::Variable;
+use crate::r1cs_optimize::linear::optimize_linear_with_protected;
 use crate::r1cs_optimize::predicates::is_linear;
 use crate::r1cs_optimize::substitution::{apply_substitution_to_constraint_in_place, InvCache};
 use crate::r1cs_optimize::types::SubstitutionMap;
@@ -18,6 +19,8 @@ const PARALLEL_SUBSTITUTION_THRESHOLD: usize = 512;
 pub(super) struct SolvedCluster<F: FieldBackend> {
     pub(super) subs: SubstitutionMap<F>,
     pub(super) residual: Vec<Constraint<F>>,
+    pub(super) fallback_len: usize,
+    pub(super) fallback_rounds: usize,
 }
 
 pub(super) fn apply_substitutions_to_unmasked_constraints<F: FieldBackend>(
@@ -126,17 +129,25 @@ fn solve_one_cluster<F: FieldBackend>(
 
     if cluster.len() > CLUSTER_FALLBACK_THRESHOLD {
         let mut subset = cluster_cons;
-        let (subs, _stats) = optimize_linear_with_protected(&mut subset, 0, round_protected);
+        let input_len = subset.len();
+        let (subs, stats) = optimize_linear_with_protected(&mut subset, 0, round_protected);
         return SolvedCluster {
             subs,
             residual: subset,
+            fallback_len: input_len,
+            fallback_rounds: stats.rounds,
         };
     }
 
     let mut inv_cache: InvCache<F> = FxHashMap::default();
     let (subs, residual) =
         solve_cluster_linear(cluster_cons, round_protected, var_freq, &mut inv_cache);
-    SolvedCluster { subs, residual }
+    SolvedCluster {
+        subs,
+        residual,
+        fallback_len: 0,
+        fallback_rounds: 0,
+    }
 }
 
 #[cfg(test)]

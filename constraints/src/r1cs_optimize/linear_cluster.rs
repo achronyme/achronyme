@@ -25,14 +25,16 @@ use memory::{FieldBackend, FieldElement};
 mod parallel;
 mod picker;
 
-use super::linear::{deduplicate_constraints, optimize_linear_with_protected};
+use super::linear::deduplicate_constraints;
 use super::predicates::{
     compute_variable_frequency, count_nonlinear_constraints, is_linear,
     retain_nontrivial_constraints,
 };
 use super::substitution::{
-    apply_substitution_in_place, apply_substitution_to_constraint_in_place, InvCache,
+    apply_single_substitution_in_place, apply_substitution_in_place,
+    apply_substitution_to_constraint_in_place, InvCache,
 };
+use super::timing::O1Timings;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use super::union_find::UnionFind;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
@@ -202,24 +204,16 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
     }
 
     let mut subs: SubstitutionMap<F> = FxHashMap::default();
+    let mut local_protected = HashSet::new();
 
     loop {
-        // Build the "effective protected" set: original protected
-        // variables plus everything we have already substituted. Once
-        // a variable is substituted it must never be picked again --
-        // doing so would create a chain in the substitution map and
-        // break the acyclic invariant the witness fixup relies on.
-        let mut effective_protected = protected.clone();
-        for var_idx in subs.keys() {
-            effective_protected.insert(*var_idx);
-        }
-
         // Find the first row that admits a substitution.
         let mut found: Option<(usize, Variable, LinearCombination<F>)> = None;
         for (i, lc) in zero_lcs.iter().enumerate() {
             if let Some((var, expr)) = solve_for_variable_with_picker(
-                lc.clone(),
-                &effective_protected,
+                lc,
+                protected,
+                &local_protected,
                 var_freq,
                 picker,
                 inv_cache,
@@ -233,31 +227,32 @@ pub(super) fn solve_cluster_linear<F: FieldBackend>(
             break;
         };
         zero_lcs.swap_remove(row_idx);
+        local_protected.insert(var.index());
 
-        // Apply the new substitution to all remaining rows + compose
-        // it into previously-recorded substitutions so the final map
-        // is acyclic.
-        let mut single_sub: SubstitutionMap<F> = FxHashMap::default();
-        single_sub.insert(var.index(), expr.clone());
-
+        // Apply the new substitution to rows/substitutions that reference
+        // the pivot and compose it into previously-recorded substitutions
+        // so the final map is acyclic.
+        let var_idx = var.index();
         for lc in zero_lcs.iter_mut() {
-            apply_substitution_in_place(lc, &single_sub);
+            apply_single_substitution_in_place(lc, var_idx, &expr);
         }
         for prev_expr in subs.values_mut() {
-            apply_substitution_in_place(prev_expr, &single_sub);
+            apply_single_substitution_in_place(prev_expr, var_idx, &expr);
         }
-        subs.insert(var.index(), expr);
+        subs.insert(var_idx, expr);
+        if zero_lcs.is_empty() {
+            break;
+        }
     }
 
     // Convert any remaining non-empty rows back to constraint form
     // (`1 * lc = 0`) so the caller can keep them in the system.
     // Empty rows are tautologies after substitution; skip them.
     for lc in zero_lcs {
-        let lc_simp = lc.simplify();
-        if !lc_simp.terms().is_empty() {
+        if !lc.terms().is_empty() {
             residual.push(Constraint {
                 a: LinearCombination::from_constant(FieldElement::one()),
-                b: lc_simp,
+                b: lc,
                 c: LinearCombination::zero(),
             });
         }
@@ -301,10 +296,11 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
     let mut rounds = 0usize;
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
+    let mut timings = O1Timings::from_env();
     loop {
         rounds += 1;
 
-        let var_freq = compute_variable_frequency(constraints);
+        let var_freq = timings.time(0, || compute_variable_frequency(constraints));
 
         // Round-protected: original protected + everything substituted
         // in earlier rounds. Once a variable has been substituted it
@@ -318,25 +314,64 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
 
         // Partition constraints into linear (eligible for cluster
         // Gauss) and non-linear (passed through unchanged this round).
-        let mut linear_indices: Vec<usize> = Vec::new();
-        let mut linear_constraints: Vec<Constraint<F>> = Vec::new();
-        for (idx, c) in constraints.iter().enumerate() {
-            if is_linear(c).is_some() {
-                linear_indices.push(idx);
-                linear_constraints.push(c.clone());
+        let (linear_indices, linear_constraints) = timings.time(1, || {
+            let mut linear_indices: Vec<usize> = Vec::new();
+            let mut linear_constraints: Vec<Constraint<F>> = Vec::new();
+            for (idx, c) in constraints.iter().enumerate() {
+                if is_linear(c).is_some() {
+                    linear_indices.push(idx);
+                    linear_constraints.push(c.clone());
+                }
             }
-        }
+            (linear_indices, linear_constraints)
+        });
 
         let nonlinear_before = constraints.len() - linear_constraints.len();
 
         // Cluster the linear constraints by shared signal.
-        let clusters = build_clusters_by_signal(&linear_constraints, &round_protected);
+        let clusters = timings.time(2, || {
+            build_clusters_by_signal(&linear_constraints, &round_protected)
+        });
+        if timings.enabled() {
+            let max_cluster = clusters.iter().map(Vec::len).max().unwrap_or(0);
+            let fallback_clusters = clusters
+                .iter()
+                .filter(|cluster| cluster.len() > CLUSTER_FALLBACK_THRESHOLD)
+                .count();
+            let fallback_constraints: usize = clusters
+                .iter()
+                .filter(|cluster| cluster.len() > CLUSTER_FALLBACK_THRESHOLD)
+                .map(Vec::len)
+                .sum();
+            eprintln!(
+                "[O1] round {rounds} constraints={} linear={} clusters={} max_cluster={} \
+                 fallback_clusters={} fallback_constraints={}",
+                constraints.len(),
+                linear_constraints.len(),
+                clusters.len(),
+                max_cluster,
+                fallback_clusters,
+                fallback_constraints,
+            );
+        }
 
         // Solve clusters independently, then merge in cluster-index order.
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut residuals: Vec<Constraint<F>> = Vec::new();
-        let solved_clusters =
-            solve_clusters_ordered(&clusters, &linear_constraints, &round_protected, &var_freq);
+        let solved_clusters = timings.time(3, || {
+            solve_clusters_ordered(&clusters, &linear_constraints, &round_protected, &var_freq)
+        });
+        if timings.enabled() {
+            let fallback_rounds: usize = solved_clusters.iter().map(|s| s.fallback_rounds).sum();
+            let fallback_scans: usize = solved_clusters
+                .iter()
+                .map(|s| s.fallback_len * s.fallback_rounds)
+                .sum();
+            eprintln!(
+                "[O1] round {rounds} fallback_inner_rounds={fallback_rounds} \
+                 fallback_cluster_round_scans={fallback_scans}"
+            );
+        }
         for solved in solved_clusters {
             for (k, v) in solved.subs {
                 round_subs.insert(k, v);
@@ -363,51 +398,61 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         for idx in linear_indices {
             linear_index_mask[idx] = true;
         }
-        apply_substitutions_to_unmasked_constraints(constraints, &linear_index_mask, &round_subs);
+        timings.time(4, || {
+            apply_substitutions_to_unmasked_constraints(
+                constraints,
+                &linear_index_mask,
+                &round_subs,
+            );
+        });
 
-        let mut write = 0usize;
-        for (read, skip) in linear_index_mask.iter().enumerate().take(n) {
-            if *skip {
-                continue;
+        timings.time(5, || {
+            let mut write = 0usize;
+            for (read, skip) in linear_index_mask.iter().enumerate().take(n) {
+                if *skip {
+                    continue;
+                }
+                if write != read {
+                    constraints.swap(write, read);
+                }
+                write += 1;
             }
-            if write != read {
-                constraints.swap(write, read);
+            constraints.truncate(write);
+            for mut r in residuals {
+                apply_substitution_to_constraint_in_place(&mut r, &round_subs);
+                constraints.push(r);
             }
-            write += 1;
-        }
-        constraints.truncate(write);
-        for mut r in residuals {
-            apply_substitution_to_constraint_in_place(&mut r, &round_subs);
-            constraints.push(r);
-        }
+        });
 
         // Sweep trivially-satisfied constraints (0*B=0, k*LC=k*LC, etc.).
-        let trivial_this_round = retain_nontrivial_constraints(constraints);
+        let trivial_this_round = timings.time(6, || retain_nontrivial_constraints(constraints));
         total_trivial_removed += trivial_this_round;
 
         // Count newly-linear constraints exposed by the substitutions
         // applied to non-linears.
-        let nonlinear_after = count_nonlinear_constraints(constraints);
+        let nonlinear_after = timings.time(7, || count_nonlinear_constraints(constraints));
         let newly_linear = nonlinear_before.saturating_sub(nonlinear_after);
 
         round_details.push((linear_eliminated, newly_linear));
 
         // Compose with previous substitutions: apply new subs to old
         // expressions in place so the final map remains acyclic.
-        for expr in all_subs.values_mut() {
-            apply_substitution_in_place(expr, &round_subs);
-        }
-        all_subs.extend(round_subs);
+        timings.time(8, || {
+            for expr in all_subs.values_mut() {
+                apply_substitution_in_place(expr, &round_subs);
+            }
+            all_subs.extend(round_subs);
+        });
     }
 
     // Post-processing identical to optimize_linear: dedup non-linear
     // constraints (after substitution different template instances can
     // become identical) + final trivial sweep.
     let before_dedup = constraints.len();
-    deduplicate_constraints(constraints);
+    timings.time(9, || deduplicate_constraints(constraints));
     let duplicates_removed = before_dedup - constraints.len();
 
-    total_trivial_removed += retain_nontrivial_constraints(constraints);
+    total_trivial_removed += timings.time(10, || retain_nontrivial_constraints(constraints));
 
     let result = R1CSOptimizeResult {
         constraints_before,
@@ -418,6 +463,23 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         rounds,
         round_details,
     };
+
+    timings.print(
+        "O1",
+        &[
+            "frequency",
+            "classify",
+            "cluster",
+            "solve",
+            "substitute",
+            "compact",
+            "trivial",
+            "count nonlinear",
+            "compose subs",
+            "dedup",
+            "final trivial",
+        ],
+    );
 
     (all_subs, result)
 }

@@ -64,6 +64,36 @@ pub(super) fn apply_substitution_in_place<F: FieldBackend>(
     lc.simplify_in_place();
 }
 
+/// Apply one `var_idx -> replacement` substitution to an LC.
+///
+/// Returns `false` without mutating when `lc` does not reference `var_idx`.
+/// This avoids the `mem::take` + simplify path in cluster Gauss, where each
+/// pivot substitutes exactly one variable but most rows in the cluster often
+/// do not contain that pivot.
+pub(super) fn apply_single_substitution_in_place<F: FieldBackend>(
+    lc: &mut LinearCombination<F>,
+    var_idx: usize,
+    replacement: &LinearCombination<F>,
+) -> bool {
+    if !lc.terms.iter().any(|(var, _)| var.index() == var_idx) {
+        return false;
+    }
+
+    let old_terms = std::mem::take(&mut lc.terms);
+    lc.terms.reserve(old_terms.len());
+    for (var, coeff) in old_terms {
+        if var.index() == var_idx {
+            for (rep_var, rep_coeff) in replacement.terms() {
+                lc.terms.push((*rep_var, coeff.mul(rep_coeff)));
+            }
+        } else {
+            lc.terms.push((var, coeff));
+        }
+    }
+    lc.simplify_in_place();
+    true
+}
+
 /// In-place variant of substitution for an entire constraint:
 /// rewrites `constraint.{a,b,c}` against `subs` without allocating
 /// new constraint or LC shells. Hot-loop callers (greedy O1's
@@ -123,22 +153,42 @@ pub(super) fn solve_for_variable<F: FieldBackend>(
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     let simplified = lc.simplify();
+    solve_for_variable_simplified(&simplified, protected, var_freq, inv_cache)
+}
 
+/// Like [`solve_for_variable`], but the caller has already simplified `lc`.
+pub(super) fn solve_for_variable_simplified<F: FieldBackend>(
+    simplified: &LinearCombination<F>,
+    protected: &HashSet<usize>,
+    var_freq: &FxHashMap<usize, usize>,
+    inv_cache: &mut InvCache<F>,
+) -> Option<(Variable, LinearCombination<F>)> {
+    solve_for_variable_simplified_with_extra(simplified, protected, None, var_freq, inv_cache)
+}
+
+pub(super) fn solve_for_variable_simplified_with_extra<F: FieldBackend>(
+    simplified: &LinearCombination<F>,
+    protected: &HashSet<usize>,
+    extra_protected: Option<&HashSet<usize>>,
+    var_freq: &FxHashMap<usize, usize>,
+    inv_cache: &mut InvCache<F>,
+) -> Option<(Variable, LinearCombination<F>)> {
     // Find the best candidate: most-frequent non-protected variable,
     // breaking ties by highest index.
     let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
-    for (var, coeff) in &simplified.terms {
-        if protected.contains(&var.index()) {
-            continue;
-        }
-        if var.index() == 0 {
+    for (var, coeff) in simplified.terms() {
+        let var_idx = var.index();
+        if var_idx == 0
+            || protected.contains(&var_idx)
+            || extra_protected.is_some_and(|extra| extra.contains(&var_idx))
+        {
             continue; // Never substitute Variable::ONE
         }
-        let freq = var_freq.get(&var.index()).copied().unwrap_or(0);
+        let freq = var_freq.get(&var_idx).copied().unwrap_or(0);
         match &best {
             None => best = Some((*var, *coeff, freq)),
             Some((prev_var, _, prev_freq)) => {
-                if freq > *prev_freq || (freq == *prev_freq && var.index() > prev_var.index()) {
+                if freq > *prev_freq || (freq == *prev_freq && var_idx > prev_var.index()) {
                     best = Some((*var, *coeff, freq));
                 }
             }
@@ -151,7 +201,7 @@ pub(super) fn solve_for_variable<F: FieldBackend>(
     let neg_inv = cached_inv(inv_cache, target_coeff.neg())?;
 
     let mut result = LinearCombination::<F>::zero();
-    for (var, coeff) in &simplified.terms {
+    for (var, coeff) in simplified.terms() {
         if *var == target_var {
             continue;
         }

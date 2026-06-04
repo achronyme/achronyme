@@ -59,6 +59,7 @@ mod linear;
 mod linear_cluster;
 mod predicates;
 mod substitution;
+mod timing;
 mod types;
 mod union_find;
 

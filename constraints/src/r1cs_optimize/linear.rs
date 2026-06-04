@@ -31,8 +31,8 @@ use super::predicates::{
     retain_nontrivial_constraints,
 };
 use super::substitution::{
-    apply_substitution_in_place, apply_substitution_to_constraint_in_place, solve_for_variable,
-    InvCache,
+    apply_substitution_in_place, apply_substitution_to_constraint_in_place,
+    solve_for_variable_simplified, InvCache,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::Constraint;
@@ -120,11 +120,14 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             if let Some((k, other_lc, c_lc)) = is_linear(constraint) {
                 // Constraint encodes: k * other_lc = c_lc
                 // i.e., c_lc - k * other_lc = 0
-                let combined = c_lc - (other_lc * k);
+                let combined = (c_lc - (other_lc * k)).simplify();
 
-                if let Some((var, expr)) =
-                    solve_for_variable(combined, &round_protected, &var_freq, &mut inv_cache)
-                {
+                if let Some((var, expr)) = solve_for_variable_simplified(
+                    &combined,
+                    &round_protected,
+                    &var_freq,
+                    &mut inv_cache,
+                ) {
                     round_protected.insert(var.index());
                     round_subs.insert(var.index(), expr);
                     to_remove.insert(idx);

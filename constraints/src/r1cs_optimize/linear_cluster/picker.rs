@@ -7,7 +7,9 @@ use memory::{FieldBackend, FieldElement};
 use super::{MIN_OCCURRENCE_LOWER, MIN_OCCURRENCE_UPPER};
 use crate::r1cs::{LinearCombination, Variable};
 
-use crate::r1cs_optimize::substitution::{cached_inv, solve_for_variable, InvCache};
+use crate::r1cs_optimize::substitution::{
+    cached_inv, solve_for_variable_simplified_with_extra, InvCache,
+};
 
 /// Pivot variable selection strategy used by the per-cluster Gaussian
 /// solver. Determined by cluster size: clusters in
@@ -47,29 +49,37 @@ impl Picker {
 /// fewest changes, keeping subsequent rows shorter and reducing
 /// overall fill-in.
 pub(super) fn solve_for_variable_with_picker<F: FieldBackend>(
-    lc: LinearCombination<F>,
+    lc: &LinearCombination<F>,
     protected: &HashSet<usize>,
+    local_protected: &HashSet<usize>,
     var_freq: &FxHashMap<usize, usize>,
     picker: Picker,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     match picker {
-        Picker::MaxFrequency => solve_for_variable(lc, protected, var_freq, inv_cache),
+        Picker::MaxFrequency => solve_for_variable_simplified_with_extra(
+            lc,
+            protected,
+            Some(local_protected),
+            var_freq,
+            inv_cache,
+        ),
         Picker::MinOccurrence => {
-            let simplified = lc.simplify();
             let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
-            for (var, coeff) in simplified.terms() {
-                if protected.contains(&var.index()) || var.index() == Variable::ONE.index() {
+            for (var, coeff) in lc.terms() {
+                let var_idx = var.index();
+                if var_idx == Variable::ONE.index()
+                    || protected.contains(&var_idx)
+                    || local_protected.contains(&var_idx)
+                {
                     continue;
                 }
-                let freq = var_freq.get(&var.index()).copied().unwrap_or(0);
+                let freq = var_freq.get(&var_idx).copied().unwrap_or(0);
                 match &best {
                     None => best = Some((*var, *coeff, freq)),
                     Some((prev_var, _, prev_freq)) => {
                         // pick MIN freq; tie-break by MAX index
-                        if freq < *prev_freq
-                            || (freq == *prev_freq && var.index() > prev_var.index())
-                        {
+                        if freq < *prev_freq || (freq == *prev_freq && var_idx > prev_var.index()) {
                             best = Some((*var, *coeff, freq));
                         }
                     }
@@ -78,7 +88,7 @@ pub(super) fn solve_for_variable_with_picker<F: FieldBackend>(
             let (target_var, target_coeff, _) = best?;
             let neg_inv = cached_inv(inv_cache, target_coeff.neg())?;
             let mut result = LinearCombination::<F>::zero();
-            for (var, coeff) in simplified.terms() {
+            for (var, coeff) in lc.terms() {
                 if *var == target_var {
                     continue;
                 }
