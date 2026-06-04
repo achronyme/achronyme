@@ -270,10 +270,8 @@ impl<F: FieldBackend> LcMap<F> {
 
     pub(super) fn shape_counts(&self) -> LcMapShapeCounts {
         let mut counts = LcMapShapeCounts::default();
-        for segment in &self.segments {
-            if let Some(segment) = segment {
-                segment.shape_counts(&mut counts);
-            }
+        for segment in self.segments.iter().flatten() {
+            segment.shape_counts(&mut counts);
         }
         counts
     }
@@ -346,7 +344,7 @@ impl UsedSsaSet {
     pub(super) fn with_segment_bits(segment_bits: usize) -> Self {
         assert!(segment_bits > 0, "used SSA segment bits must be positive");
         assert!(
-            segment_bits % usize::BITS as usize == 0,
+            segment_bits.is_multiple_of(usize::BITS as usize),
             "used SSA segment bits must align to word size"
         );
         Self {
@@ -417,7 +415,7 @@ impl UsedSsaSet {
         let Some(keep_last) = self.keep_last_vars else {
             return;
         };
-        if newest_idx + 1 <= keep_last {
+        if newest_idx < keep_last {
             return;
         }
         let min_retained_idx = (newest_idx + 1 - keep_last).max(self.keep_prefix_vars);

@@ -15,12 +15,15 @@ pub(super) fn root_body_range<F: FieldBackend>(program: &Program<F>) -> (usize, 
     (0, lower_bound_offset_idx(program, first_template_offset))
 }
 
-pub(super) fn build_template_tables<F: FieldBackend>(
-    program: &Program<F>,
-) -> (
+/// Per-template-id lookup tables built from a program's `DefineTemplate`
+/// slices: template metadata indexed by id, and each template's
+/// `(start, end)` body-offset range indexed by id.
+type TemplateTables = (
     Vec<Option<crate::program::Template>>,
     Vec<Option<(usize, usize)>>,
-) {
+);
+
+pub(super) fn build_template_tables<F: FieldBackend>(program: &Program<F>) -> TemplateTables {
     let Some(max_id) = program.templates.iter().map(|t| t.id as usize).max() else {
         return (Vec::new(), Vec::new());
     };
