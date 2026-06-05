@@ -13,6 +13,9 @@ categories.workspace = true
 [dependencies]
 serde = { version = "1", features = ["derive"] }
 
+[features]
+field-op-profile = []
+
 [dev-dependencies]
 num-bigint = "0.4"
 num-traits = "0.2"

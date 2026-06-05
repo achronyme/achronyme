@@ -18,6 +18,30 @@ use memory::{Bn254Fr, FieldElement};
 use pprof::ProfilerGuardBuilder;
 use zkc::r1cs_backend::R1CSCompiler;
 
+fn reset_field_ops() {
+    if memory::field::profile::enabled() {
+        memory::field::profile::reset();
+    }
+}
+
+fn report_field_ops(label: &str) {
+    if !memory::field::profile::enabled() {
+        return;
+    }
+    let ops = memory::field::profile::snapshot();
+    eprintln!(
+        "field-op-profile {label:<14} total={} mul={} add={} sub={} neg={} inv={} reduce={} ct_select={}",
+        ops.total(),
+        ops.mul,
+        ops.add,
+        ops.sub,
+        ops.neg,
+        ops.inv,
+        ops.reduce,
+        ops.ct_select,
+    );
+}
+
 fn fixture(circuit: &str, manifest_dir: &Path) -> (PathBuf, Vec<PathBuf>, u64) {
     match circuit {
         "sha256" | "sha256_64" => (
@@ -113,10 +137,12 @@ fn main() {
 
     let t_total = Instant::now();
 
+    reset_field_ops();
     let t = Instant::now();
     let compile_result =
         circom::compile_file(&path, &lib_dirs).unwrap_or_else(|e| panic!("compile_file: {e}"));
     let lower_ms = t.elapsed().as_secs_f64() * 1000.0;
+    report_field_ops("compile_file");
 
     let mut captures: HashMap<String, FieldElement<Bn254Fr>> = compile_result
         .capture_values
@@ -131,18 +157,24 @@ fn main() {
     }
     let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
 
+    reset_field_ops();
     let t = Instant::now();
     let mut program = compile_result
         .prove_ir
         .instantiate_lysis_with_outputs(&captures, &output_names)
         .expect("instantiate");
     let inst_ms = t.elapsed().as_secs_f64() * 1000.0;
+    report_field_ops("instantiate");
 
+    reset_field_ops();
     let t = Instant::now();
     ir::passes::optimize(&mut program);
     let iropt_ms = t.elapsed().as_secs_f64() * 1000.0;
+    report_field_ops("ir_opt");
 
     // Witness hints (so the R1CS compile path matches what real users hit).
+    reset_field_ops();
+    let t = Instant::now();
     let mut all_signals = circom::witness::compute_witness_hints_with_captures(
         &compile_result.prove_ir,
         &inputs,
@@ -152,7 +184,10 @@ fn main() {
     for (cname, fe) in &captures {
         all_signals.entry(cname.clone()).or_insert(*fe);
     }
+    let hints_ms = t.elapsed().as_secs_f64() * 1000.0;
+    report_field_ops("witness_hints");
 
+    reset_field_ops();
     let t = Instant::now();
     let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
     let mut rc = R1CSCompiler::<Bn254Fr>::new();
@@ -162,7 +197,9 @@ fn main() {
         .expect("r1cs emit");
     let r1cs_ms = t.elapsed().as_secs_f64() * 1000.0;
     let pre_opt = rc.cs.num_constraints();
+    report_field_ops("r1cs_emit");
 
+    reset_field_ops();
     let t = Instant::now();
     let stats = rc.optimize_r1cs();
     if let Some(subs) = &rc.substitution_map {
@@ -172,6 +209,7 @@ fn main() {
     }
     let o1_ms = t.elapsed().as_secs_f64() * 1000.0;
     let post_opt = rc.cs.num_constraints();
+    report_field_ops("o1");
 
     let total_ms = t_total.elapsed().as_secs_f64() * 1000.0;
 
@@ -180,7 +218,7 @@ fn main() {
     eprintln!(
         "\nfull pipeline ({circuit}) — {total_ms:.2} ms wall \
          (lower={lower_ms:.1} inst={inst_ms:.1} iropt={iropt_ms:.1} \
-         r1cs={r1cs_ms:.1} o1={o1_ms:.1})  constraints={pre_opt} → {post_opt} \
+         hints={hints_ms:.1} r1cs={r1cs_ms:.1} o1={o1_ms:.1})  constraints={pre_opt} → {post_opt} \
          (rounds={}, eliminated={}, dedup={})",
         stats.rounds, stats.variables_eliminated, stats.duplicates_removed,
     );

@@ -124,6 +124,7 @@ impl<F: FieldBackend> FieldElement<F> {
 
     /// Modular inverse: self⁻¹ mod p. Returns `None` if zero.
     pub fn inv(&self) -> Option<Self> {
+        super::profile::record_inv();
         F::inv(&self.repr).map(Self::from_repr)
     }
 

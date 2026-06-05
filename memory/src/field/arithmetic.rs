@@ -1,5 +1,7 @@
 use crate::limb_ops::{adc, mac, sbb};
 
+use super::profile;
+
 // ============================================================================
 // BN254 Fr Constants (from arkworks/bellman, verified)
 // ============================================================================
@@ -91,6 +93,7 @@ pub(crate) fn subtract_modulus_if_needed(limbs: &mut [u64; 4]) {
 /// out one limb. After 4 iterations the lower 256 bits are zero and the upper
 /// 4 limbs hold the result, which is conditionally reduced mod p.
 pub(crate) fn montgomery_reduce(t: &[u64; 8]) -> [u64; 4] {
+    profile::record_reduce();
     let (r0, mut r1, mut r2, mut r3) = (t[0], t[1], t[2], t[3]);
     let (mut r4, mut r5, mut r6, mut r7) = (t[4], t[5], t[6], t[7]);
 
@@ -152,6 +155,7 @@ pub(crate) fn mul_wide(a: &[u64; 4], b: &[u64; 4]) -> [u64; 8] {
 /// Montgomery multiplication: a * b * R^{-1} mod p
 #[inline]
 pub(crate) fn montgomery_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    profile::record_mul();
     montgomery_reduce(&mul_wide(a, b))
 }
 
@@ -161,6 +165,7 @@ pub(crate) fn montgomery_mul(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 
 /// Modular addition for 4-limb Montgomery form: (a + b) mod p.
 pub(crate) fn montgomery4_add(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    profile::record_add();
     let (r0, carry) = adc(a[0], b[0], 0);
     let (r1, carry) = adc(a[1], b[1], carry);
     let (r2, carry) = adc(a[2], b[2], carry);
@@ -172,6 +177,7 @@ pub(crate) fn montgomery4_add(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 
 /// Modular subtraction for 4-limb Montgomery form: (a - b) mod p (constant-time).
 pub(crate) fn montgomery4_sub(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
+    profile::record_sub();
     let (r0, borrow) = sbb(a[0], b[0], 0);
     let (r1, borrow) = sbb(a[1], b[1], borrow);
     let (r2, borrow) = sbb(a[2], b[2], borrow);
@@ -187,6 +193,7 @@ pub(crate) fn montgomery4_sub(a: &[u64; 4], b: &[u64; 4]) -> [u64; 4] {
 
 /// Modular negation for 4-limb Montgomery form: (-a) mod p (constant-time).
 pub(crate) fn montgomery4_neg(a: &[u64; 4]) -> [u64; 4] {
+    profile::record_neg();
     let (r0, borrow) = sbb(MODULUS[0], a[0], 0);
     let (r1, borrow) = sbb(MODULUS[1], a[1], borrow);
     let (r2, borrow) = sbb(MODULUS[2], a[2], borrow);
@@ -199,6 +206,7 @@ pub(crate) fn montgomery4_neg(a: &[u64; 4]) -> [u64; 4] {
 
 /// Constant-time conditional select for 4-limb values.
 pub(crate) fn montgomery4_ct_select(a: &[u64; 4], b: &[u64; 4], flag: u64) -> [u64; 4] {
+    profile::record_ct_select();
     if let Some(selected) = super::simd::ct_select_u64x4(a, b, flag) {
         return selected;
     }
