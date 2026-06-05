@@ -22,7 +22,8 @@ mod int_divmod;
 mod lc_map;
 
 pub use counters::{
-    reset_boolcheck_counters, snapshot_boolcheck_counters, BC_AND_LHS, BC_AND_RHS, BC_ASSERT,
+    r1cs_kind_profile_enabled, reset_boolcheck_counters, reset_r1cs_kind_profile,
+    snapshot_boolcheck_counters, snapshot_r1cs_kind_profile, BC_AND_LHS, BC_AND_RHS, BC_ASSERT,
     BC_DECOMPOSE, BC_DECOMPOSE_1BIT, BC_ENFORCE_N_RANGE, BC_IS_LT_VIA_BITS, BC_MUX_COND, BC_NOT,
     BC_OR_LHS, BC_OR_RHS, BC_RANGE_CHECK,
 };

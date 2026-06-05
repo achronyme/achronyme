@@ -203,6 +203,12 @@ pub(super) fn placeholder_opcodes<F: FieldBackend>(
                     lhs: 0,
                     rhs: 0,
                 },
+                Instruction::IsLeBounded { .. } => Opcode::EmitIsLtBounded {
+                    dst: 0,
+                    lhs: 0,
+                    rhs: 0,
+                    max_bits: 0,
+                },
                 _ => Opcode::EmitIsLt {
                     dst: 0,
                     lhs: 0,
@@ -218,10 +224,11 @@ pub(super) fn placeholder_opcodes<F: FieldBackend>(
                 },
             ]
         }
-        Instruction::IsLtBounded { .. } => bin(Opcode::EmitIsLt {
+        Instruction::IsLtBounded { .. } => bin(Opcode::EmitIsLtBounded {
             dst: 0,
             lhs: 0,
             rhs: 0,
+            max_bits: 0,
         }),
 
         Instruction::WitnessCall(call) => bin(Opcode::EmitWitnessCall {

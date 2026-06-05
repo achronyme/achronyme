@@ -133,7 +133,7 @@ impl LysisExecProfile {
             }),
         );
         eprintln!(
-            "[lysis-exec-profile] emit add={} sub={} mul={} neg={} asserteq={} asserteq_msg={} witness_call={} witness_call_heap={} iseq={} islt={} div={}",
+            "[lysis-exec-profile] emit add={} sub={} mul={} neg={} asserteq={} asserteq_msg={} witness_call={} witness_call_heap={} iseq={} islt={} islt_bounded={} div={}",
             self.count(Opcode::EmitAdd {
                 dst: 0,
                 lhs: 0,
@@ -175,6 +175,12 @@ impl LysisExecProfile {
                 dst: 0,
                 lhs: 0,
                 rhs: 0,
+            }),
+            self.count(Opcode::EmitIsLtBounded {
+                dst: 0,
+                lhs: 0,
+                rhs: 0,
+                max_bits: 0,
             }),
             self.count(Opcode::EmitDiv {
                 dst: 0,

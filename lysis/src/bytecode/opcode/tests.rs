@@ -61,7 +61,7 @@ fn emit_ops_write_register() {
 }
 
 #[test]
-fn all_34_codes_are_unique() {
+fn all_37_codes_are_unique() {
     let all = [
         code::LOAD_CAPTURE,
         code::LOAD_CONST,
@@ -92,17 +92,20 @@ fn all_34_codes_are_unique() {
         code::EMIT_POSEIDON_HASH,
         code::EMIT_IS_EQ,
         code::EMIT_IS_LT,
+        code::EMIT_IS_LT_BOUNDED,
         code::EMIT_INT_DIV,
         code::EMIT_INT_MOD,
+        code::EMIT_DIV,
         code::STORE_HEAP,
         code::LOAD_HEAP,
         code::EMIT_WITNESS_CALL_HEAP,
+        code::EMIT_ASSERT_EQ_MSG,
     ];
-    assert_eq!(all.len(), 34, " lists 34 opcodes");
+    assert_eq!(all.len(), 37, " lists 37 opcodes");
     let mut sorted = all.to_vec();
     sorted.sort_unstable();
     sorted.dedup();
-    assert_eq!(sorted.len(), 34, "opcode bytes must be unique");
+    assert_eq!(sorted.len(), 37, "opcode bytes must be unique");
 }
 
 #[test]

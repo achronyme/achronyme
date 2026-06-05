@@ -123,10 +123,16 @@ fn roundtrip_emit_rrr_family() {
         lhs: 14,
         rhs: 15,
     });
-    roundtrip_opcode(Opcode::EmitDiv {
+    roundtrip_opcode(Opcode::EmitIsLtBounded {
         dst: 16,
         lhs: 17,
         rhs: 18,
+        max_bits: 64,
+    });
+    roundtrip_opcode(Opcode::EmitDiv {
+        dst: 19,
+        lhs: 20,
+        rhs: 21,
     });
 }
 

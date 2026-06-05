@@ -1,3 +1,4 @@
+use super::counters::record_r1cs_kind_profile;
 use super::*;
 
 impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
@@ -468,10 +469,12 @@ impl<F: FieldBackend> constraints::ConstraintBackend<F> for R1CSCompiler<F> {
             }
         }
 
+        let constraints_after = self.cs.num_constraints();
+        record_r1cs_kind_profile(inst, constraints_after - constraints_before);
+
         // Record which IR instruction generated each new constraint, when
         // the compiler was constructed in tracking mode.
         if self.track_constraint_origins {
-            let constraints_after = self.cs.num_constraints();
             let result_var = inst.result_var();
             for _ in constraints_before..constraints_after {
                 self.constraint_origins.push(ConstraintOrigin {

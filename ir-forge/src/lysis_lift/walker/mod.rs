@@ -17,8 +17,7 @@
 //!     - `Assert(x)`      → `AssertEq(x, one)`
 //!     - `IsNeq(x,y)`     → `Sub(one, IsEq(x, y))`
 //!     - `IsLe(x,y)`      → `Sub(one, IsLt(y, x))`
-//!     - `IsLtBounded`    → `IsLt` (bitwidth hint dropped)
-//!     - `IsLeBounded`    → `Sub(one, IsLt(y, x))`
+//!     - `IsLeBounded`    → `Sub(one, IsLtBounded(y, x))`
 //!     - `WitnessCall`    → `EmitWitnessCall` with Artik blob interning
 //!
 //!   The `one` register is lazily allocated at the top of `lower` only

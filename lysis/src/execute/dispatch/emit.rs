@@ -268,6 +268,23 @@ pub(super) fn dispatch<F: FieldBackend, S: super::super::ir_sink::IrSink<F>>(
             Ok(Step::Next)
         }
 
+        EmitIsLtBounded {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        } => {
+            let (l, r) = read_binary(&ctx.frames[ctx.frame_idx], *lhs, *rhs, ctx.offset)?;
+            let id = ctx.sink.intern_pure(InstructionKind::IsLtBounded {
+                result: PLACEHOLDER_ID,
+                lhs: l,
+                rhs: r,
+                bitwidth: u32::from(*max_bits),
+            });
+            ctx.frames[ctx.frame_idx].write(*dst, id);
+            Ok(Step::Next)
+        }
+
         EmitIntDiv {
             dst,
             lhs,

@@ -77,6 +77,7 @@ fn opcode_registers(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitMul { dst, lhs, rhs }
         | Opcode::EmitIsEq { dst, lhs, rhs }
         | Opcode::EmitIsLt { dst, lhs, rhs }
+        | Opcode::EmitIsLtBounded { dst, lhs, rhs, .. }
         | Opcode::EmitDiv { dst, lhs, rhs } => vec![*dst, *lhs, *rhs],
         Opcode::EmitNeg { dst, operand } => vec![*dst, *operand],
         Opcode::EmitMux {

@@ -90,6 +90,7 @@ pub(super) fn dispatch<F: FieldBackend, S: IrSink<F>>(
         | EmitPoseidonHash { .. }
         | EmitIsEq { .. }
         | EmitIsLt { .. }
+        | EmitIsLtBounded { .. }
         | EmitIntDiv { .. }
         | EmitIntMod { .. } => emit::dispatch(&instr.opcode, &mut ctx),
 

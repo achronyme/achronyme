@@ -327,6 +327,15 @@ impl<F: FieldBackend> ProgramBuilder<F> {
         self.push(Opcode::EmitIsLt { dst, lhs, rhs })
     }
 
+    pub fn emit_is_lt_bounded(&mut self, dst: u8, lhs: u8, rhs: u8, max_bits: u8) -> &mut Self {
+        self.push(Opcode::EmitIsLtBounded {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        })
+    }
+
     pub fn emit_int_div(&mut self, dst: u8, lhs: u8, rhs: u8, max_bits: u8) -> &mut Self {
         self.push(Opcode::EmitIntDiv {
             dst,

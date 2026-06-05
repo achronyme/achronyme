@@ -1,4 +1,7 @@
+use ir::types::Instruction as IrInstruction;
+use memory::FieldBackend;
 use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::{Mutex, OnceLock};
 
 // Per-call-site bool-check emission counters. Each tracks how many
 // `b · (1 − b) = 0` constraints a specific code path has emitted
@@ -54,3 +57,120 @@ pub fn reset_boolcheck_counters() {
     BC_IS_LT_VIA_BITS.store(0, Ordering::Relaxed);
     BC_DECOMPOSE_1BIT.store(0, Ordering::Relaxed);
 }
+
+const R1CS_KIND_PROFILE_LEN: usize = 25;
+
+#[derive(Clone, Copy, Default)]
+pub struct R1csKindProfileEntry {
+    pub instructions: u64,
+    pub constraints: u64,
+}
+
+pub struct R1csKindProfileSnapshot {
+    pub labels: [&'static str; R1CS_KIND_PROFILE_LEN],
+    pub entries: [R1csKindProfileEntry; R1CS_KIND_PROFILE_LEN],
+}
+
+static R1CS_KIND_PROFILE: OnceLock<Mutex<[R1csKindProfileEntry; R1CS_KIND_PROFILE_LEN]>> =
+    OnceLock::new();
+static R1CS_KIND_PROFILE_ENABLED: OnceLock<bool> = OnceLock::new();
+
+pub fn r1cs_kind_profile_enabled() -> bool {
+    *R1CS_KIND_PROFILE_ENABLED.get_or_init(|| {
+        std::env::var("ACH_R1CS_KIND_PROFILE")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false)
+    })
+}
+
+pub fn reset_r1cs_kind_profile() {
+    let mut entries = r1cs_kind_profile()
+        .lock()
+        .expect("R1CS kind profile mutex poisoned");
+    *entries = [R1csKindProfileEntry::default(); R1CS_KIND_PROFILE_LEN];
+}
+
+pub fn snapshot_r1cs_kind_profile() -> R1csKindProfileSnapshot {
+    let entries = *r1cs_kind_profile()
+        .lock()
+        .expect("R1CS kind profile mutex poisoned");
+    R1csKindProfileSnapshot {
+        labels: R1CS_KIND_PROFILE_LABELS,
+        entries,
+    }
+}
+
+pub fn record_r1cs_kind_profile<F: FieldBackend>(inst: &IrInstruction<F>, constraints: usize) {
+    if !r1cs_kind_profile_enabled() {
+        return;
+    }
+    let mut entries = r1cs_kind_profile()
+        .lock()
+        .expect("R1CS kind profile mutex poisoned");
+    let entry = &mut entries[r1cs_kind_profile_index(inst)];
+    entry.instructions += 1;
+    entry.constraints += constraints as u64;
+}
+
+fn r1cs_kind_profile() -> &'static Mutex<[R1csKindProfileEntry; R1CS_KIND_PROFILE_LEN]> {
+    R1CS_KIND_PROFILE
+        .get_or_init(|| Mutex::new([R1csKindProfileEntry::default(); R1CS_KIND_PROFILE_LEN]))
+}
+
+fn r1cs_kind_profile_index<F: FieldBackend>(inst: &IrInstruction<F>) -> usize {
+    match inst {
+        IrInstruction::Const { .. } => 0,
+        IrInstruction::Input { .. } => 1,
+        IrInstruction::Add { .. } => 2,
+        IrInstruction::Sub { .. } => 3,
+        IrInstruction::Mul { .. } => 4,
+        IrInstruction::Div { .. } => 5,
+        IrInstruction::Neg { .. } => 6,
+        IrInstruction::Mux { .. } => 7,
+        IrInstruction::PoseidonHash { .. } => 8,
+        IrInstruction::Not { .. } => 9,
+        IrInstruction::And { .. } => 10,
+        IrInstruction::Or { .. } => 11,
+        IrInstruction::Decompose { .. } => 12,
+        IrInstruction::IsEq { .. } => 13,
+        IrInstruction::IsNeq { .. } => 14,
+        IrInstruction::IsLt { .. } => 15,
+        IrInstruction::IsLe { .. } => 16,
+        IrInstruction::IsLtBounded { .. } => 17,
+        IrInstruction::IsLeBounded { .. } => 18,
+        IrInstruction::IntDiv { .. } => 19,
+        IrInstruction::IntMod { .. } => 20,
+        IrInstruction::AssertEq { .. } => 21,
+        IrInstruction::Assert { .. } => 22,
+        IrInstruction::RangeCheck { .. } => 23,
+        IrInstruction::WitnessCall(_) => 24,
+    }
+}
+
+const R1CS_KIND_PROFILE_LABELS: [&str; R1CS_KIND_PROFILE_LEN] = [
+    "Const",
+    "Input",
+    "Add",
+    "Sub",
+    "Mul",
+    "Div",
+    "Neg",
+    "Mux",
+    "PoseidonHash",
+    "Not",
+    "And",
+    "Or",
+    "Decompose",
+    "IsEq",
+    "IsNeq",
+    "IsLt",
+    "IsLe",
+    "IsLtBounded",
+    "IsLeBounded",
+    "IntDiv",
+    "IntMod",
+    "AssertEq",
+    "Assert",
+    "RangeCheck",
+    "WitnessCall",
+];

@@ -176,6 +176,28 @@ fn ecdsa_verify_boss_fight() {
         );
     }
 
+    fn boss_trace_r1cs_kind_profile() {
+        if !zkc::r1cs_backend::r1cs_kind_profile_enabled() {
+            return;
+        }
+        let snapshot = zkc::r1cs_backend::snapshot_r1cs_kind_profile();
+        for (label, entry) in snapshot.labels.iter().zip(snapshot.entries.iter()) {
+            if entry.instructions == 0 && entry.constraints == 0 {
+                continue;
+            }
+            let per_inst = if entry.instructions == 0 {
+                0.0
+            } else {
+                entry.constraints as f64 / entry.instructions as f64
+            };
+            eprintln!(
+                "[ECDSAVerify] [r1cs-kind] {label:<12} instructions={} constraints={} per_inst={per_inst:.3}",
+                entry.instructions,
+                entry.constraints,
+            );
+        }
+    }
+
     let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
     let path = manifest_dir.join("test/circomlib/ecdsa_verify_test.circom");
     let lib_dirs = vec![manifest_dir.join("test/circomlib")];
@@ -231,6 +253,9 @@ fn ecdsa_verify_boss_fight() {
     let count_only_on = std::env::var("ACH_BOSS_COUNT_ONLY")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
+    if zkc::r1cs_backend::r1cs_kind_profile_enabled() {
+        zkc::r1cs_backend::reset_r1cs_kind_profile();
+    }
     let mut rc = if compile_only_on {
         R1CSCompiler::<Bn254Fr>::new_compile_only_direct_linear_mul()
     } else if direct_mul_on {
@@ -350,6 +375,7 @@ fn ecdsa_verify_boss_fight() {
             ""
         }
     );
+    boss_trace_r1cs_kind_profile();
     if compile_only_on {
         eprintln!("[ECDSAVerify] [total]        {:?}", total.elapsed());
         return;

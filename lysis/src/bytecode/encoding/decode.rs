@@ -265,6 +265,18 @@ pub(super) fn decode_opcode_at(
                 _ => unreachable!("match guard covers only these 6"),
             })
         }
+        code::EMIT_IS_LT_BOUNDED => {
+            let dst = read_u8(bytes, pos)?;
+            let lhs = read_u8(bytes, pos)?;
+            let rhs = read_u8(bytes, pos)?;
+            let max_bits = read_u8(bytes, pos)?;
+            Ok(Opcode::EmitIsLtBounded {
+                dst,
+                lhs,
+                rhs,
+                max_bits,
+            })
+        }
         code::EMIT_NEG => {
             let dst = read_u8(bytes, pos)?;
             let operand = read_u8(bytes, pos)?;

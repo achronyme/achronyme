@@ -232,8 +232,7 @@ fn desugars_is_le_to_is_lt_reversed_plus_sub() {
 }
 
 #[test]
-fn desugars_is_lt_bounded_ignores_bitwidth_hint() {
-    // IsLtBounded lowers to plain IsLt; no extra Const/Sub.
+fn preserves_is_lt_bounded_bitwidth_hint() {
     let body = vec![
         plain(Instruction::Input {
             result: ssa(0),
@@ -255,7 +254,7 @@ fn desugars_is_lt_bounded_ignores_bitwidth_hint() {
     let out = run(&body);
     let lts = out
         .iter()
-        .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+        .filter(|i| matches!(i, lysis::InstructionKind::IsLtBounded { bitwidth: 16, .. }))
         .count();
     let subs = out
         .iter()
@@ -288,7 +287,7 @@ fn desugars_is_le_bounded_like_is_le() {
     let out = run(&body);
     let lts = out
         .iter()
-        .filter(|i| matches!(i, lysis::InstructionKind::IsLt { .. }))
+        .filter(|i| matches!(i, lysis::InstructionKind::IsLtBounded { bitwidth: 8, .. }))
         .count();
     let subs = out
         .iter()

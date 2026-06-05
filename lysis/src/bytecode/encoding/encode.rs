@@ -120,6 +120,17 @@ pub fn encode_opcode(op: &Opcode, buf: &mut Vec<u8>) {
             buf.push(*lhs);
             buf.push(*rhs);
         }
+        Opcode::EmitIsLtBounded {
+            dst,
+            lhs,
+            rhs,
+            max_bits,
+        } => {
+            buf.push(*dst);
+            buf.push(*lhs);
+            buf.push(*rhs);
+            buf.push(*max_bits);
+        }
         Opcode::EmitNeg { dst, operand } => {
             buf.push(*dst);
             buf.push(*operand);

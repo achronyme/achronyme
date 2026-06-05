@@ -243,34 +243,52 @@ impl<F: FieldBackend> Walker<F> {
                 });
                 self.bind(*result, dst);
             }
-            // Desugar: IsLtBounded(x,y,bits) ignores `bits`; the bound
-            // is a soundness-preserving optimization hint (upstream
-            // already range-checked operands to fit in `bits`). Emit
-            // plain IsLt; a bounded opcode is not yet wired through.
+            // Preserve the bitwidth hint so the R1CS backend can emit the
+            // same single `(bits + 1)` comparison decomposition as circom's
+            // `LessThan(bits)`, instead of falling back to full-field ranges.
             Instruction::IsLtBounded {
-                result, lhs, rhs, ..
+                result,
+                lhs,
+                rhs,
+                bitwidth,
             } => {
+                let max_bits =
+                    u8::try_from(*bitwidth).map_err(|_| WalkError::OperandOutOfRange {
+                        kind: "IsLtBounded.bitwidth",
+                        limit: u8::MAX as u32,
+                        got: *bitwidth,
+                    })?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let dst = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsLt {
+                self.push_op(Opcode::EmitIsLtBounded {
                     dst,
                     lhs: l,
                     rhs: r,
+                    max_bits,
                 });
                 self.bind(*result, dst);
             }
-            // Desugar: IsLeBounded(x,y,bits) = 1 - IsLt(y,x); same
-            // rationale as IsLtBounded.
+            // Desugar: IsLeBounded(x,y,bits) = 1 - IsLtBounded(y,x,bits).
             Instruction::IsLeBounded {
-                result, lhs, rhs, ..
+                result,
+                lhs,
+                rhs,
+                bitwidth,
             } => {
+                let max_bits =
+                    u8::try_from(*bitwidth).map_err(|_| WalkError::OperandOutOfRange {
+                        kind: "IsLeBounded.bitwidth",
+                        limit: u8::MAX as u32,
+                        got: *bitwidth,
+                    })?;
                 let one = self.one()?;
                 let (l, r) = self.bin(*lhs, *rhs)?;
                 let lt = self.allocator.alloc()?;
-                self.push_op(Opcode::EmitIsLt {
+                self.push_op(Opcode::EmitIsLtBounded {
                     dst: lt,
                     lhs: r,
                     rhs: l,
+                    max_bits,
                 });
                 let dst = self.allocator.alloc()?;
                 self.push_op(Opcode::EmitSub {

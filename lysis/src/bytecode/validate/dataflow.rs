@@ -90,6 +90,7 @@ fn reads_of(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitMul { lhs, rhs, .. }
         | Opcode::EmitIsEq { lhs, rhs, .. }
         | Opcode::EmitIsLt { lhs, rhs, .. }
+        | Opcode::EmitIsLtBounded { lhs, rhs, .. }
         | Opcode::EmitDiv { lhs, rhs, .. } => vec![*lhs, *rhs],
         Opcode::EmitNeg { operand, .. } => vec![*operand],
         Opcode::EmitMux {
@@ -136,6 +137,7 @@ fn writes_of(op: &Opcode) -> Vec<u8> {
         | Opcode::EmitPoseidonHash { dst, .. }
         | Opcode::EmitIsEq { dst, .. }
         | Opcode::EmitIsLt { dst, .. }
+        | Opcode::EmitIsLtBounded { dst, .. }
         | Opcode::EmitIntDiv { dst, .. }
         | Opcode::EmitIntMod { dst, .. }
         | Opcode::EmitDiv { dst, .. } => vec![*dst],

@@ -40,6 +40,7 @@ struct LysisOpcodeProfile {
     emit_poseidon_hash: usize,
     emit_is_eq: usize,
     emit_is_lt: usize,
+    emit_is_lt_bounded: usize,
     emit_int_div: usize,
     emit_int_mod: usize,
     emit_div: usize,
@@ -116,6 +117,7 @@ pub(super) fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Prog
             Opcode::EmitPoseidonHash { .. } => p.emit_poseidon_hash += 1,
             Opcode::EmitIsEq { .. } => p.emit_is_eq += 1,
             Opcode::EmitIsLt { .. } => p.emit_is_lt += 1,
+            Opcode::EmitIsLtBounded { .. } => p.emit_is_lt_bounded += 1,
             Opcode::EmitIntDiv { .. } => p.emit_int_div += 1,
             Opcode::EmitIntMod { .. } => p.emit_int_mod += 1,
             Opcode::EmitDiv { .. } => p.emit_div += 1,
@@ -175,7 +177,7 @@ pub(super) fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Prog
     let small_target_sites = small_instantiate_target_sites(program, 8, 24).join(",");
     eprintln!("[lysis-profile] small_instantiate_target_sites={small_target_sites}");
     eprintln!(
-        "[lysis-profile] emit const={} add={} sub={} mul={} neg={} mux={} decompose={} decompose_bits={} asserteq={} asserteq_msg={} range={} witness_call={} witness_inputs={} witness_outputs={} witness_call_heap={} witness_heap_inputs={} witness_heap_outputs={} poseidon={} iseq={} islt={} intdiv={} intmod={} div={}",
+        "[lysis-profile] emit const={} add={} sub={} mul={} neg={} mux={} decompose={} decompose_bits={} asserteq={} asserteq_msg={} range={} witness_call={} witness_inputs={} witness_outputs={} witness_call_heap={} witness_heap_inputs={} witness_heap_outputs={} poseidon={} iseq={} islt={} islt_bounded={} intdiv={} intmod={} div={}",
         p.emit_const,
         p.emit_add,
         p.emit_sub,
@@ -196,6 +198,7 @@ pub(super) fn trace_lysis_program_profile<F: FieldBackend>(program: &lysis::Prog
         p.emit_poseidon_hash,
         p.emit_is_eq,
         p.emit_is_lt,
+        p.emit_is_lt_bounded,
         p.emit_int_div,
         p.emit_int_mod,
         p.emit_div,

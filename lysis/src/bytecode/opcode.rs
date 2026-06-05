@@ -1,4 +1,4 @@
-//! `Opcode` — the 35 instructions Lysis understands, exactly matching
+//! `Opcode` — the 37 instructions Lysis understands, exactly matching
 //! the table in
 //!
 //! Each variant carries its operands inline so that after a successful
@@ -26,7 +26,7 @@
 
 use crate::intern::Visibility;
 
-/// All 35 Lysis opcodes, grouped  section.
+/// All 37 Lysis opcodes, grouped  section.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum Opcode {
     // -----------------------------------------------------------------
@@ -187,6 +187,12 @@ pub enum Opcode {
         lhs: u8,
         rhs: u8,
     },
+    EmitIsLtBounded {
+        dst: u8,
+        lhs: u8,
+        rhs: u8,
+        max_bits: u8,
+    },
     EmitIntDiv {
         dst: u8,
         lhs: u8,
@@ -334,6 +340,7 @@ pub mod code {
 
     //  follow-up — message-bearing AssertEq.
     pub const EMIT_ASSERT_EQ_MSG: u8 = 0x53;
+    pub const EMIT_IS_LT_BOUNDED: u8 = 0x54;
 }
 
 impl Opcode {
@@ -371,6 +378,7 @@ impl Opcode {
             Self::EmitPoseidonHash { .. } => EMIT_POSEIDON_HASH,
             Self::EmitIsEq { .. } => EMIT_IS_EQ,
             Self::EmitIsLt { .. } => EMIT_IS_LT,
+            Self::EmitIsLtBounded { .. } => EMIT_IS_LT_BOUNDED,
             Self::EmitIntDiv { .. } => EMIT_INT_DIV,
             Self::EmitIntMod { .. } => EMIT_INT_MOD,
             Self::EmitDiv { .. } => EMIT_DIV,
@@ -414,6 +422,7 @@ impl Opcode {
             Self::EmitPoseidonHash { .. } => "EmitPoseidonHash",
             Self::EmitIsEq { .. } => "EmitIsEq",
             Self::EmitIsLt { .. } => "EmitIsLt",
+            Self::EmitIsLtBounded { .. } => "EmitIsLtBounded",
             Self::EmitIntDiv { .. } => "EmitIntDiv",
             Self::EmitIntMod { .. } => "EmitIntMod",
             Self::EmitDiv { .. } => "EmitDiv",
@@ -441,6 +450,7 @@ impl Opcode {
                 | Self::EmitPoseidonHash { .. }
                 | Self::EmitIsEq { .. }
                 | Self::EmitIsLt { .. }
+                | Self::EmitIsLtBounded { .. }
                 | Self::EmitIntDiv { .. }
                 | Self::EmitIntMod { .. }
                 | Self::EmitDiv { .. }
