@@ -41,6 +41,49 @@ use crate::r1cs::{Constraint, LinearCombination};
 const PARALLEL_DEDUP_THRESHOLD: usize = 512;
 const PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD: usize = 512;
 
+#[derive(Default)]
+struct GreedyScanStats {
+    rows_seen: usize,
+    linear_candidates: usize,
+    solved: usize,
+    combined_terms: usize,
+    max_combined_terms: usize,
+}
+
+impl GreedyScanStats {
+    fn record_round_rows(&mut self, rows: usize) {
+        self.rows_seen += rows;
+    }
+
+    fn record_linear_candidate<F: FieldBackend>(&mut self, combined: &LinearCombination<F>) {
+        let terms = combined.terms().len();
+        self.linear_candidates += 1;
+        self.combined_terms += terms;
+        self.max_combined_terms = self.max_combined_terms.max(terms);
+    }
+
+    fn record_solved(&mut self) {
+        self.solved += 1;
+    }
+
+    fn print(&self) {
+        let avg_combined_terms = if self.linear_candidates == 0 {
+            0.0
+        } else {
+            self.combined_terms as f64 / self.linear_candidates as f64
+        };
+        eprintln!(
+            "[O1-fallback] scan stats rows={} linear={} solved={} combined_terms={} avg_combined_terms={:.2} max_combined_terms={}",
+            self.rows_seen,
+            self.linear_candidates,
+            self.solved,
+            self.combined_terms,
+            avg_combined_terms,
+            self.max_combined_terms,
+        );
+    }
+}
+
 fn linear_constraint_combined<F: FieldBackend>(
     constraint: &Constraint<F>,
 ) -> Option<LinearCombination<F>> {
@@ -141,6 +184,11 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
     let mut timings = O1Timings::from_env();
+    let mut scan_stats = if timings.enabled() {
+        Some(GreedyScanStats::default())
+    } else {
+        None
+    };
     // Memoize pivot inversions across all rounds. With ≥93 % duplicate-rate
     // observed on every workload measured (99.98 % on SHA-256 message-block
     // bit operations), the working set stays in the low hundreds and the
@@ -174,18 +222,39 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // EscalarMulAny(254) where ~3 000 vars are eliminated in a single
         // round, that dominated O1 runtime.
         timings.time(2, || {
-            for (idx, constraint) in constraints.iter().enumerate() {
-                if let Some(combined) = linear_constraint_combined(constraint) {
-                    if let Some((var, expr)) = solve_for_variable_simplified(
-                        &combined,
-                        &round_protected,
-                        &var_freq,
-                        &mut inv_cache,
-                    ) {
-                        round_protected.insert(var.index());
-                        round_subs.insert(var.index(), expr);
-                        remove_mask[idx] = true;
-                        linear_eliminated += 1;
+            if let Some(stats) = scan_stats.as_mut() {
+                stats.record_round_rows(constraints.len());
+                for (idx, constraint) in constraints.iter().enumerate() {
+                    if let Some(combined) = linear_constraint_combined(constraint) {
+                        stats.record_linear_candidate(&combined);
+                        if let Some((var, expr)) = solve_for_variable_simplified(
+                            &combined,
+                            &round_protected,
+                            &var_freq,
+                            &mut inv_cache,
+                        ) {
+                            stats.record_solved();
+                            round_protected.insert(var.index());
+                            round_subs.insert(var.index(), expr);
+                            remove_mask[idx] = true;
+                            linear_eliminated += 1;
+                        }
+                    }
+                }
+            } else {
+                for (idx, constraint) in constraints.iter().enumerate() {
+                    if let Some(combined) = linear_constraint_combined(constraint) {
+                        if let Some((var, expr)) = solve_for_variable_simplified(
+                            &combined,
+                            &round_protected,
+                            &var_freq,
+                            &mut inv_cache,
+                        ) {
+                            round_protected.insert(var.index());
+                            round_subs.insert(var.index(), expr);
+                            remove_mask[idx] = true;
+                            linear_eliminated += 1;
+                        }
                     }
                 }
             }
@@ -281,6 +350,9 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             result.duplicates_removed,
             result.trivial_removed,
         );
+        if let Some(stats) = scan_stats {
+            stats.print();
+        }
     }
     timings.print(
         "O1-fallback",
