@@ -98,7 +98,8 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         let var_freq = compute_variable_frequency(constraints);
 
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
-        let mut to_remove: HashSet<usize> = HashSet::new();
+        let mut remove_mask = vec![false; constraints.len()];
+        let mut linear_eliminated = 0usize;
 
         // Also protect variables already substituted in previous rounds
         let mut round_protected = protected.clone();
@@ -130,7 +131,8 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
                 ) {
                     round_protected.insert(var.index());
                     round_subs.insert(var.index(), expr);
-                    to_remove.insert(idx);
+                    remove_mask[idx] = true;
+                    linear_eliminated += 1;
                 }
             }
         }
@@ -140,13 +142,10 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             break;
         }
 
-        let linear_eliminated = to_remove.len();
-
         // Drop eliminated constraints + apply substitutions in place to
         // the survivors. Two-cursor compaction over the existing Vec so
         // we avoid allocating a fresh Vec<Constraint> per round.
         let n = constraints.len();
-        let remove_mask: Vec<bool> = (0..n).map(|idx| to_remove.contains(&idx)).collect();
         if n >= PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD {
             constraints
                 .par_iter_mut()
