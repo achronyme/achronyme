@@ -24,8 +24,9 @@ use std::collections::HashSet;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
-use memory::{FieldBackend, FieldElement};
+use memory::FieldBackend;
 
+use super::linear_combine::{linear_constraint_combined, linear_constraint_combined_profiled};
 use super::predicates::{
     compute_variable_frequency, count_nonlinear_constraints, lc_fingerprint,
     retain_nontrivial_constraints,
@@ -101,104 +102,6 @@ impl GreedyScanStats {
             self.max_combined_terms,
         );
     }
-}
-
-fn linear_constraint_combined<F: FieldBackend>(
-    constraint: &Constraint<F>,
-) -> Option<LinearCombination<F>> {
-    if let Some(k) = constraint.a.constant_value() {
-        if !k.is_zero() {
-            return Some(combine_linear_parts(&constraint.b, &constraint.c, k));
-        }
-
-        let mut combined = constraint.c.clone();
-        combined.simplify_in_place();
-        return if combined.terms().is_empty() {
-            None
-        } else {
-            Some(combined)
-        };
-    }
-
-    if let Some(k) = constraint.b.constant_value() {
-        if !k.is_zero() {
-            return Some(combine_linear_parts(&constraint.a, &constraint.c, k));
-        }
-
-        let mut combined = constraint.c.clone();
-        combined.simplify_in_place();
-        return if combined.terms().is_empty() {
-            None
-        } else {
-            Some(combined)
-        };
-    }
-
-    None
-}
-
-fn linear_constraint_combined_profiled<F: FieldBackend>(
-    constraint: &Constraint<F>,
-) -> Option<(LinearCombination<F>, usize)> {
-    if let Some(k) = constraint.a.constant_value() {
-        if !k.is_zero() {
-            let raw_terms = constraint.c.terms().len() + constraint.b.terms().len();
-            return Some((
-                combine_linear_parts(&constraint.b, &constraint.c, k),
-                raw_terms,
-            ));
-        }
-
-        let raw_terms = constraint.c.terms().len();
-        let mut combined = constraint.c.clone();
-        combined.simplify_in_place();
-        return if combined.terms().is_empty() {
-            None
-        } else {
-            Some((combined, raw_terms))
-        };
-    }
-
-    if let Some(k) = constraint.b.constant_value() {
-        if !k.is_zero() {
-            let raw_terms = constraint.c.terms().len() + constraint.a.terms().len();
-            return Some((
-                combine_linear_parts(&constraint.a, &constraint.c, k),
-                raw_terms,
-            ));
-        }
-
-        let raw_terms = constraint.c.terms().len();
-        let mut combined = constraint.c.clone();
-        combined.simplify_in_place();
-        return if combined.terms().is_empty() {
-            None
-        } else {
-            Some((combined, raw_terms))
-        };
-    }
-
-    None
-}
-
-fn combine_linear_parts<F: FieldBackend>(
-    other: &LinearCombination<F>,
-    c: &LinearCombination<F>,
-    k: FieldElement<F>,
-) -> LinearCombination<F> {
-    let mut combined = LinearCombination::zero();
-    combined
-        .terms
-        .reserve(c.terms().len() + other.terms().len());
-    for (var, coeff) in c.terms() {
-        combined.add_term(*var, *coeff);
-    }
-    let neg_k = k.neg();
-    for (var, coeff) in other.terms() {
-        combined.add_term(*var, coeff.mul(&neg_k));
-    }
-    combined.simplify_in_place();
-    combined
 }
 
 /// Run greedy iterative linear constraint elimination to fixpoint.
@@ -288,12 +191,10 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             if let Some(stats) = scan_stats.as_mut() {
                 stats.record_round_rows(constraints.len());
                 for (idx, constraint) in constraints.iter().enumerate() {
-                    if let Some((combined, raw_terms)) =
-                        linear_constraint_combined_profiled(constraint)
-                    {
-                        stats.record_linear_candidate(raw_terms, &combined);
+                    if let Some(candidate) = linear_constraint_combined_profiled(constraint) {
+                        stats.record_linear_candidate(candidate.raw_terms, &candidate.combined);
                         if let Some((var, expr)) = solve_for_variable_simplified(
-                            &combined,
+                            &candidate.combined,
                             &round_protected,
                             &var_freq,
                             &mut inv_cache,

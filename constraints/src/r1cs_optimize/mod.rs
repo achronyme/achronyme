@@ -57,6 +57,7 @@ mod deduce_sparse;
 mod incremental;
 mod linear;
 mod linear_cluster;
+mod linear_combine;
 mod predicates;
 mod substitution;
 mod timing;
