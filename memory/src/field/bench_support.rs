@@ -5,6 +5,8 @@ use super::arithmetic::{
 };
 use super::{Bn254Fr, FieldElement};
 
+const LIMB52_MASK: u64 = (1u64 << 52) - 1;
+
 #[inline]
 pub fn bn254_from_u64(value: u64) -> [u64; 4] {
     FieldElement::<Bn254Fr>::from_u64(value).into_repr()
@@ -63,6 +65,69 @@ pub unsafe fn bn254_mul_wide_bmi2_adx_unchecked(a: &[u64; 4], b: &[u64; 4]) -> [
     result
 }
 
+#[cfg(target_arch = "x86_64")]
+#[inline]
+pub fn bn254_ifma52_madd8(a: &[u64; 8], b: &[u64; 8]) -> Option<([u64; 8], [u64; 8])> {
+    if std::arch::is_x86_feature_detected!("avx512f")
+        && std::arch::is_x86_feature_detected!("avx512ifma")
+    {
+        // SAFETY: Runtime detection above proves both target features
+        // before entering the feature-specialized candidate.
+        Some(unsafe { bn254_ifma52_madd8_unchecked(a, b) })
+    } else {
+        None
+    }
+}
+
+#[cfg(target_arch = "x86_64")]
+#[target_feature(enable = "avx512f,avx512ifma")]
+/// Benchmark-only AVX-512 IFMA 52-bit lane multiply-add primitive.
+///
+/// Returns the low and high 52-bit halves of eight independent `a[i] * b[i]`
+/// products, matching the primitive shape needed by a future 5x52 field
+/// kernel. This is not a complete Montgomery multiplication.
+///
+/// # Safety
+///
+/// The caller must ensure the current CPU supports AVX-512F and AVX-512IFMA,
+/// and inputs must be reduced to 52-bit limbs.
+pub unsafe fn bn254_ifma52_madd8_unchecked(a: &[u64; 8], b: &[u64; 8]) -> ([u64; 8], [u64; 8]) {
+    use std::arch::x86_64::{
+        __m512i, _mm512_madd52hi_epu64, _mm512_madd52lo_epu64, _mm512_set_epi64,
+        _mm512_setzero_si512, _mm512_storeu_si512,
+    };
+
+    let lanes_a = _mm512_set_epi64(
+        a[7] as i64,
+        a[6] as i64,
+        a[5] as i64,
+        a[4] as i64,
+        a[3] as i64,
+        a[2] as i64,
+        a[1] as i64,
+        a[0] as i64,
+    );
+    let lanes_b = _mm512_set_epi64(
+        b[7] as i64,
+        b[6] as i64,
+        b[5] as i64,
+        b[4] as i64,
+        b[3] as i64,
+        b[2] as i64,
+        b[1] as i64,
+        b[0] as i64,
+    );
+    let zero = _mm512_setzero_si512();
+    let lo = _mm512_madd52lo_epu64(zero, lanes_a, lanes_b);
+    let hi = _mm512_madd52hi_epu64(zero, lanes_a, lanes_b);
+
+    let mut lo_out = [0u64; 8];
+    let mut hi_out = [0u64; 8];
+    _mm512_storeu_si512(lo_out.as_mut_ptr().cast::<__m512i>(), lo);
+    _mm512_storeu_si512(hi_out.as_mut_ptr().cast::<__m512i>(), hi);
+    (lo_out, hi_out)
+}
+
 #[cfg(not(target_arch = "x86_64"))]
 #[inline]
 pub fn bn254_mul_wide_bmi2_adx(_a: &[u64; 4], _b: &[u64; 4]) -> Option<[u64; 8]> {
@@ -78,6 +143,35 @@ pub fn bn254_mul_wide_bmi2_adx(_a: &[u64; 4], _b: &[u64; 4]) -> Option<[u64; 8]>
 /// This function is unreachable on non-x86_64 targets and must not be called.
 pub unsafe fn bn254_mul_wide_bmi2_adx_unchecked(_a: &[u64; 4], _b: &[u64; 4]) -> [u64; 8] {
     unreachable!("BMI2/ADX wide multiplication requires x86_64")
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline]
+pub fn bn254_ifma52_madd8(_a: &[u64; 8], _b: &[u64; 8]) -> Option<([u64; 8], [u64; 8])> {
+    None
+}
+
+#[cfg(not(target_arch = "x86_64"))]
+#[inline]
+/// Benchmark-only AVX-512 IFMA 52-bit lane multiply-add primitive.
+///
+/// # Safety
+///
+/// This function is unreachable on non-x86_64 targets and must not be called.
+pub unsafe fn bn254_ifma52_madd8_unchecked(_a: &[u64; 8], _b: &[u64; 8]) -> ([u64; 8], [u64; 8]) {
+    unreachable!("AVX-512 IFMA requires x86_64")
+}
+
+#[inline]
+pub fn bn254_scalar52_madd8(a: &[u64; 8], b: &[u64; 8]) -> ([u64; 8], [u64; 8]) {
+    let mut lo = [0u64; 8];
+    let mut hi = [0u64; 8];
+    for idx in 0..8 {
+        let product = (a[idx] as u128) * (b[idx] as u128);
+        lo[idx] = (product as u64) & LIMB52_MASK;
+        hi[idx] = (product >> 52) as u64;
+    }
+    (lo, hi)
 }
 
 #[inline]
@@ -122,7 +216,8 @@ fn mac_bmi2_adx(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
 #[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::{
-        bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_mul_wide, bn254_mul_wide_bmi2_adx,
+        bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_ifma52_madd8, bn254_mul_wide,
+        bn254_mul_wide_bmi2_adx, bn254_scalar52_madd8, LIMB52_MASK,
     };
     use crate::field::arithmetic::MODULUS;
 
@@ -175,6 +270,42 @@ mod tests {
                 bn254_final_reduce_branchy(limbs),
                 bn254_final_reduce_ct(limbs)
             );
+        }
+    }
+
+    #[test]
+    fn ifma52_madd8_matches_scalar_when_available() {
+        let mut x = 0x517c_c1b7_2722_0a95u64;
+        for _ in 0..4096 {
+            let mut next = || {
+                x ^= x >> 12;
+                x ^= x << 25;
+                x ^= x >> 27;
+                x.wrapping_mul(0x2545_f491_4f6c_dd1d) & LIMB52_MASK
+            };
+            let a = [
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+            ];
+            let b = [
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+            ];
+            if let Some(got) = bn254_ifma52_madd8(&a, &b) {
+                assert_eq!(got, bn254_scalar52_madd8(&a, &b));
+            }
         }
     }
 }

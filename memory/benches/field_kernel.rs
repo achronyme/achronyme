@@ -11,8 +11,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use memory::field::bench_support::{
     bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_from_canonical, bn254_from_u64,
-    bn254_modulus, bn254_montgomery_mul, bn254_montgomery_reduce, bn254_mul_wide,
-    bn254_mul_wide_bmi2_adx, bn254_mul_wide_bmi2_adx_unchecked,
+    bn254_ifma52_madd8, bn254_ifma52_madd8_unchecked, bn254_modulus, bn254_montgomery_mul,
+    bn254_montgomery_reduce, bn254_mul_wide, bn254_mul_wide_bmi2_adx,
+    bn254_mul_wide_bmi2_adx_unchecked, bn254_scalar52_madd8,
 };
 use memory::{Bn254Fr, FieldElement};
 
@@ -46,8 +47,46 @@ fn seed_stream() -> Vec<([u64; 4], [u64; 4])> {
         .collect()
 }
 
+fn seed_limb52_stream() -> Vec<([u64; 8], [u64; 8])> {
+    const MASK: u64 = (1u64 << 52) - 1;
+    let mut x = 0x6a09_e667_f3bc_c909u64;
+    let mut next = || {
+        x ^= x >> 12;
+        x ^= x << 25;
+        x ^= x >> 27;
+        x.wrapping_mul(0x2545_f491_4f6c_dd1d) & MASK
+    };
+
+    (0..STREAM_LEN)
+        .map(|_| {
+            let a = [
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+            ];
+            let b = [
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+                next(),
+            ];
+            (a, b)
+        })
+        .collect()
+}
+
 fn bench(c: &mut Criterion) {
     let stream = seed_stream();
+    let limb52_stream = seed_limb52_stream();
     let wide_inputs: Vec<[u64; 8]> = stream.iter().map(|(a, b)| bn254_mul_wide(a, b)).collect();
     let final_reduce_inputs = final_reduce_stream(&stream);
     let fe_stream: Vec<(FieldElement<Bn254Fr>, FieldElement<Bn254Fr>)> = stream
@@ -134,6 +173,48 @@ fn bench(c: &mut Criterion) {
                     }
                 }
                 black_box(acc)
+            });
+        });
+    }
+
+    c.bench_function("bn254_scalar52_madd8_stream", |b| {
+        b.iter(|| {
+            let mut lo_acc = [0u64; 8];
+            let mut hi_acc = [0u64; 8];
+            for (a, rhs) in &limb52_stream {
+                let (lo, hi) = bn254_scalar52_madd8(black_box(a), black_box(rhs));
+                for ((lo_dst, hi_dst), (lo_src, hi_src)) in lo_acc
+                    .iter_mut()
+                    .zip(hi_acc.iter_mut())
+                    .zip(lo.into_iter().zip(hi))
+                {
+                    *lo_dst ^= lo_src;
+                    *hi_dst ^= hi_src;
+                }
+            }
+            black_box((lo_acc, hi_acc))
+        });
+    });
+
+    if bn254_ifma52_madd8(&limb52_stream[0].0, &limb52_stream[0].1).is_some() {
+        c.bench_function("bn254_ifma52_madd8_stream", |b| {
+            b.iter(|| {
+                let mut lo_acc = [0u64; 8];
+                let mut hi_acc = [0u64; 8];
+                for (a, rhs) in &limb52_stream {
+                    // SAFETY: Benchmark registration checks AVX-512 IFMA once before this timed path.
+                    let (lo, hi) =
+                        unsafe { bn254_ifma52_madd8_unchecked(black_box(a), black_box(rhs)) };
+                    for ((lo_dst, hi_dst), (lo_src, hi_src)) in lo_acc
+                        .iter_mut()
+                        .zip(hi_acc.iter_mut())
+                        .zip(lo.into_iter().zip(hi))
+                    {
+                        *lo_dst ^= lo_src;
+                        *hi_dst ^= hi_src;
+                    }
+                }
+                black_box((lo_acc, hi_acc))
             });
         });
     }
