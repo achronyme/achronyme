@@ -11,8 +11,9 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use memory::field::bench_support::{
     bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_from_canonical, bn254_from_u64,
-    bn254_ifma52_madd8, bn254_ifma52_madd8_unchecked, bn254_modulus, bn254_montgomery_mul,
-    bn254_montgomery_reduce, bn254_mul_wide, bn254_mul_wide_bmi2_adx,
+    bn254_ifma52_madd8, bn254_ifma52_madd8_unchecked, bn254_limbs4_to_limbs52,
+    bn254_limbs52_to_limbs4, bn254_modulus, bn254_montgomery_mul, bn254_montgomery_reduce,
+    bn254_mul_wide, bn254_mul_wide_5x52, bn254_mul_wide_bmi2_adx,
     bn254_mul_wide_bmi2_adx_unchecked, bn254_scalar52_madd8,
 };
 use memory::{Bn254Fr, FieldElement};
@@ -87,6 +88,10 @@ fn seed_limb52_stream() -> Vec<([u64; 8], [u64; 8])> {
 fn bench(c: &mut Criterion) {
     let stream = seed_stream();
     let limb52_stream = seed_limb52_stream();
+    let field_limb52_stream: Vec<([u64; 5], [u64; 5])> = stream
+        .iter()
+        .map(|(a, b)| (bn254_limbs4_to_limbs52(a), bn254_limbs4_to_limbs52(b)))
+        .collect();
     let wide_inputs: Vec<[u64; 8]> = stream.iter().map(|(a, b)| bn254_mul_wide(a, b)).collect();
     let final_reduce_inputs = final_reduce_stream(&stream);
     let fe_stream: Vec<(FieldElement<Bn254Fr>, FieldElement<Bn254Fr>)> = stream
@@ -152,6 +157,33 @@ fn bench(c: &mut Criterion) {
             let mut acc = [0u64; 8];
             for (a, rhs) in &stream {
                 let wide = bn254_mul_wide(black_box(a), black_box(rhs));
+                for (dst, src) in acc.iter_mut().zip(wide) {
+                    *dst ^= src;
+                }
+            }
+            black_box(acc)
+        });
+    });
+
+    c.bench_function("bn254_limb52_pack_roundtrip_stream", |b| {
+        b.iter(|| {
+            let mut acc = [0u64; 4];
+            for (a, _) in &stream {
+                let packed = bn254_limbs4_to_limbs52(black_box(a));
+                let unpacked = bn254_limbs52_to_limbs4(black_box(&packed));
+                for (dst, src) in acc.iter_mut().zip(unpacked) {
+                    *dst ^= src;
+                }
+            }
+            black_box(acc)
+        });
+    });
+
+    c.bench_function("bn254_mul_wide_5x52_stream", |b| {
+        b.iter(|| {
+            let mut acc = [0u64; 10];
+            for (a, rhs) in &field_limb52_stream {
+                let wide = bn254_mul_wide_5x52(black_box(a), black_box(rhs));
                 for (dst, src) in acc.iter_mut().zip(wide) {
                     *dst ^= src;
                 }

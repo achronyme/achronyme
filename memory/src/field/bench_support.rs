@@ -175,6 +175,47 @@ pub fn bn254_scalar52_madd8(a: &[u64; 8], b: &[u64; 8]) -> ([u64; 8], [u64; 8]) 
 }
 
 #[inline]
+pub fn bn254_limbs4_to_limbs52(limbs: &[u64; 4]) -> [u64; 5] {
+    [
+        limbs[0] & LIMB52_MASK,
+        (limbs[0] >> 52) | ((limbs[1] & ((1u64 << 40) - 1)) << 12),
+        (limbs[1] >> 40) | ((limbs[2] & ((1u64 << 28) - 1)) << 24),
+        (limbs[2] >> 28) | ((limbs[3] & ((1u64 << 16) - 1)) << 36),
+        limbs[3] >> 16,
+    ]
+}
+
+#[inline]
+pub fn bn254_limbs52_to_limbs4(limbs: &[u64; 5]) -> [u64; 4] {
+    [
+        (limbs[0] & LIMB52_MASK) | ((limbs[1] & ((1u64 << 12) - 1)) << 52),
+        (limbs[1] >> 12) | ((limbs[2] & ((1u64 << 24) - 1)) << 40),
+        (limbs[2] >> 24) | ((limbs[3] & ((1u64 << 36) - 1)) << 28),
+        (limbs[3] >> 36) | (limbs[4] << 16),
+    ]
+}
+
+#[inline]
+pub fn bn254_mul_wide_5x52(a: &[u64; 5], b: &[u64; 5]) -> [u64; 10] {
+    let mut acc = [0u128; 10];
+    for i in 0..5 {
+        for j in 0..5 {
+            acc[i + j] += (a[i] as u128) * (b[j] as u128);
+        }
+    }
+
+    let mut out = [0u64; 10];
+    let mut carry = 0u128;
+    for idx in 0..10 {
+        let value = acc[idx] + carry;
+        out[idx] = (value as u64) & LIMB52_MASK;
+        carry = value >> 52;
+    }
+    debug_assert_eq!(carry, 0);
+    out
+}
+
+#[inline]
 pub fn bn254_montgomery_reduce(t: &[u64; 8]) -> [u64; 4] {
     montgomery_reduce(t)
 }
@@ -216,7 +257,8 @@ fn mac_bmi2_adx(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
 #[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
     use super::{
-        bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_ifma52_madd8, bn254_mul_wide,
+        bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_ifma52_madd8,
+        bn254_limbs4_to_limbs52, bn254_limbs52_to_limbs4, bn254_mul_wide, bn254_mul_wide_5x52,
         bn254_mul_wide_bmi2_adx, bn254_scalar52_madd8, LIMB52_MASK,
     };
     use crate::field::arithmetic::MODULUS;
@@ -307,5 +349,83 @@ mod tests {
                 assert_eq!(got, bn254_scalar52_madd8(&a, &b));
             }
         }
+    }
+
+    #[test]
+    fn limb52_roundtrip_matches_limbs4() {
+        let cases = [
+            [0, 0, 0, 0],
+            [1, 0, 0, 0],
+            [u64::MAX, 0, 0, 0],
+            [0, u64::MAX, 0, 0],
+            [0, 0, u64::MAX, 0],
+            [0, 0, 0, u64::MAX],
+            [u64::MAX, u64::MAX, u64::MAX, u64::MAX],
+            [
+                0x0123_4567_89ab_cdef,
+                0xfedc_ba98_7654_3210,
+                0x0bad_f00d_cafe_beef,
+                0x1357_9bdf_2468_ace0,
+            ],
+        ];
+
+        for limbs in cases {
+            let limbs52 = bn254_limbs4_to_limbs52(&limbs);
+            assert!(limbs52.iter().all(|limb| *limb <= LIMB52_MASK));
+            assert_eq!(bn254_limbs52_to_limbs4(&limbs52), limbs);
+        }
+    }
+
+    #[test]
+    fn mul_wide_5x52_matches_limbs4_product() {
+        let mut x = 0xa409_3822_299f_31d0u64;
+        let mut next = || {
+            x ^= x >> 12;
+            x ^= x << 25;
+            x ^= x >> 27;
+            x.wrapping_mul(0x2545_f491_4f6c_dd1d)
+        };
+
+        for _ in 0..4096 {
+            let a = [next(), next(), next(), next()];
+            let b = [next(), next(), next(), next()];
+            let product52 =
+                bn254_mul_wide_5x52(&bn254_limbs4_to_limbs52(&a), &bn254_limbs4_to_limbs52(&b));
+            assert_eq!(limbs52_wide_to_limbs64(&product52), bn254_mul_wide(&a, &b));
+            assert_eq!(high_bits_after_512(&product52), 0);
+        }
+    }
+
+    fn limbs52_wide_to_limbs64(limbs: &[u64; 10]) -> [u64; 8] {
+        let mut out = [0u64; 8];
+        for (out_idx, slot) in out.iter_mut().enumerate() {
+            *slot = read_bits_52(limbs, out_idx * 64, 64);
+        }
+        out
+    }
+
+    fn high_bits_after_512(limbs: &[u64; 10]) -> u64 {
+        read_bits_52(limbs, 512, 8)
+    }
+
+    fn read_bits_52(limbs: &[u64; 10], start: usize, len: usize) -> u64 {
+        let mut out = 0u64;
+        let mut written = 0usize;
+        let mut bit = start;
+        while written < len {
+            let limb_idx = bit / 52;
+            let offset = bit % 52;
+            let take = (len - written).min(52 - offset);
+            let mask = if take == 64 {
+                u64::MAX
+            } else {
+                (1u64 << take) - 1
+            };
+            let part = (limbs[limb_idx] >> offset) & mask;
+            out |= part << written;
+            written += take;
+            bit += take;
+        }
+        out
     }
 }
