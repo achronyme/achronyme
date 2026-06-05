@@ -5,29 +5,26 @@
 
 use std::path::Path;
 
-use akron::ProveResult;
 use halo2_proofs::circuit::{Layouter, SimpleFloorPlanner, Value};
-use halo2_proofs::halo2curves::bn256::{Bn256, Fr, G1Affine};
+use halo2_proofs::halo2curves::bn256::{Bn256, Fr};
 use halo2_proofs::halo2curves::ff::PrimeField;
 use halo2_proofs::plonk::{
-    self, create_proof, keygen_pk, keygen_vk, verify_proof, Advice, Circuit, Column as H2Column,
-    ConstraintSystem, Fixed, Instance, Selector,
+    self, Advice, Circuit, Column as H2Column, ConstraintSystem, Fixed, Instance, Selector,
 };
 use halo2_proofs::poly::commitment::Params;
-use halo2_proofs::poly::kzg::commitment::{KZGCommitmentScheme, ParamsKZG};
-use halo2_proofs::poly::kzg::multiopen::{ProverSHPLONK, VerifierSHPLONK};
-use halo2_proofs::poly::kzg::strategy::SingleStrategy;
+use halo2_proofs::poly::kzg::commitment::ParamsKZG;
 use halo2_proofs::poly::Rotation;
-use halo2_proofs::transcript::{
-    Blake2bRead, Blake2bWrite, Challenge255, TranscriptReadBuffer, TranscriptWriterBuffer,
-};
 use memory::FieldElement;
 use rand::rngs::OsRng;
 use zkc::plonkish_backend::PlonkishCompiler;
 
 mod serialization;
+mod timing;
 
 use serialization::{serialize_proof_json, serialize_public_json, serialize_vkey_json};
+pub use timing::{
+    generate_plonkish_proof, generate_plonkish_proof_timed, PlonkishProofTiming, TimedPlonkishProof,
+};
 
 // ============================================================================
 // Field conversion
@@ -347,115 +344,6 @@ fn resolve_cell(
 
     // Instance column — not directly handled in copy constraints
     None
-}
-
-// ============================================================================
-// Proof generation entry point
-// ============================================================================
-
-/// Generate a native Plonkish proof using halo2 KZG, taking ownership of the compiler.
-pub fn generate_plonkish_proof(
-    compiler: PlonkishCompiler,
-    cache_dir: &Path,
-) -> Result<ProveResult, String> {
-    let num_rows = compiler.num_circuit_rows();
-
-    // 2^k must be >= num_rows + blinding rows (~5-10)
-    let min_rows = num_rows + 10;
-    let k = ((min_rows as f64).log2().ceil() as u32).max(4);
-
-    let range_table_bits = compiler.range_tables_bits();
-    let params = CircuitParams {
-        range_table_bits: range_table_bits.clone(),
-    };
-
-    // Collect instance values (public inputs)
-    let instance_values: Vec<Fr> = compiler
-        .public_inputs
-        .iter()
-        .enumerate()
-        .map(|(i, _)| {
-            let val = compiler.system.assignments.get(compiler.col_instance, i);
-            fe_to_halo2(&val)
-        })
-        .collect::<Result<Vec<Fr>, String>>()?;
-
-    // KZG params (cached by k)
-    let params_path = cache_dir.join("plonkish").join(format!("params_k{k}.bin"));
-    let kzg_params = load_or_create_kzg_params(k, &params_path)?;
-
-    // Keygen with empty circuit (same structure, no witness)
-    let keygen_circuit = AchronymePlonkishCircuit {
-        params: params.clone(),
-        compiler: PlonkishCompiler::new(),
-        num_circuit_rows: num_rows,
-    };
-
-    let vk = keygen_vk(&kzg_params, &keygen_circuit)
-        .map_err(|e| format!("halo2 keygen_vk failed: {e:?}"))?;
-    let pk = keygen_pk(&kzg_params, vk.clone(), &keygen_circuit)
-        .map_err(|e| format!("halo2 keygen_pk failed: {e:?}"))?;
-
-    // Prove circuit with real witness
-    let prove_circuit = AchronymePlonkishCircuit {
-        params: params.clone(),
-        compiler,
-        num_circuit_rows: num_rows,
-    };
-
-    let mut transcript = Blake2bWrite::<Vec<u8>, G1Affine, Challenge255<G1Affine>>::init(vec![]);
-    let instance_slice: &[Fr] = &instance_values;
-    let instances: &[&[Fr]] = &[instance_slice];
-
-    create_proof::<
-        KZGCommitmentScheme<Bn256>,
-        ProverSHPLONK<'_, Bn256>,
-        Challenge255<G1Affine>,
-        OsRng,
-        Blake2bWrite<Vec<u8>, G1Affine, Challenge255<G1Affine>>,
-        AchronymePlonkishCircuit,
-    >(
-        &kzg_params,
-        &pk,
-        &[prove_circuit],
-        &[instances],
-        OsRng,
-        &mut transcript,
-    )
-    .map_err(|e| format!("halo2 proof creation failed: {e:?}"))?;
-
-    let proof_bytes = transcript.finalize();
-
-    // Verify (sanity check)
-    let mut verifier_transcript =
-        Blake2bRead::<&[u8], G1Affine, Challenge255<G1Affine>>::init(proof_bytes.as_slice());
-    let strategy = SingleStrategy::new(&kzg_params);
-
-    verify_proof::<
-        KZGCommitmentScheme<Bn256>,
-        VerifierSHPLONK<'_, Bn256>,
-        Challenge255<G1Affine>,
-        Blake2bRead<&[u8], G1Affine, Challenge255<G1Affine>>,
-        SingleStrategy<'_, Bn256>,
-    >(
-        &kzg_params,
-        &vk,
-        strategy,
-        &[instances],
-        &mut verifier_transcript,
-    )
-    .map_err(|e| format!("halo2 proof verification failed: {e:?}"))?;
-
-    // Serialize to JSON
-    let proof_json = serialize_proof_json(&proof_bytes, &instance_values, k)?;
-    let public_json = serialize_public_json(&instance_values)?;
-    let vkey_json = serialize_vkey_json(&vk, k)?;
-
-    Ok(ProveResult::Proof {
-        proof_json,
-        public_json,
-        vkey_json,
-    })
 }
 
 // ============================================================================

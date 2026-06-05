@@ -1701,6 +1701,7 @@ dependencies = [
  "ark-std",
  "constraints",
  "halo2_proofs",
+ "ir",
  "memory",
  "rand 0.8.5",
  "serde_json",

@@ -40,7 +40,7 @@ groth16-asm = ["groth16-core"]
 plonk-bn254 = ["dep:halo2_proofs", "dep:rand"]
 
 # Local benchmark harnesses.
-prover-bench = ["groth16-bn254"]
+prover-bench = ["groth16-bn254", "plonk-bn254"]
 
 [dependencies]
 # Achronyme crates
@@ -49,6 +49,7 @@ constraints = { path = "../constraints" }
 akronc = { path = "../akronc" }
 zkc = { path = "../zkc" }
 akron = { path = "../akron" }
+ir = { path = "../ir" }
 
 # Serialization
 serde_json = "1"
@@ -73,4 +74,8 @@ rand = { version = "0.8", optional = true }
 
 [[example]]
 name = "groth16_synthetic_timing"
+required-features = ["prover-bench"]
+
+[[example]]
+name = "plonkish_synthetic_timing"
 required-features = ["prover-bench"]
