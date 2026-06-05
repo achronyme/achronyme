@@ -33,7 +33,7 @@ use super::predicates::{
 };
 use super::substitution::{
     apply_substitution_in_place, apply_substitution_to_constraint_in_place,
-    solve_for_variable_simplified, InvCache,
+    solve_for_variable_simplified, solve_for_variable_simplified_profiled, InvCache, SolveProfile,
 };
 use super::timing::O1Timings;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
@@ -50,6 +50,12 @@ struct GreedyScanStats {
     raw_combined_terms: usize,
     combined_terms: usize,
     max_combined_terms: usize,
+    solve_candidate_terms: usize,
+    solve_result_terms: usize,
+    max_solve_result_terms: usize,
+    pivot_coeff_one: usize,
+    pivot_coeff_neg_one: usize,
+    pivot_coeff_other: usize,
 }
 
 impl GreedyScanStats {
@@ -73,6 +79,20 @@ impl GreedyScanStats {
         self.solved += 1;
     }
 
+    fn record_solved_profile(&mut self, profile: SolveProfile) {
+        self.record_solved();
+        self.solve_candidate_terms += profile.candidate_terms;
+        self.solve_result_terms += profile.result_terms;
+        self.max_solve_result_terms = self.max_solve_result_terms.max(profile.result_terms);
+        if profile.pivot_coeff_one {
+            self.pivot_coeff_one += 1;
+        } else if profile.pivot_coeff_neg_one {
+            self.pivot_coeff_neg_one += 1;
+        } else {
+            self.pivot_coeff_other += 1;
+        }
+    }
+
     fn print(&self) {
         let avg_combined_terms = if self.linear_candidates == 0 {
             0.0
@@ -89,8 +109,18 @@ impl GreedyScanStats {
         } else {
             self.combined_terms as f64 / self.raw_combined_terms as f64
         };
+        let avg_solve_candidate_terms = if self.solved == 0 {
+            0.0
+        } else {
+            self.solve_candidate_terms as f64 / self.solved as f64
+        };
+        let avg_solve_result_terms = if self.solved == 0 {
+            0.0
+        } else {
+            self.solve_result_terms as f64 / self.solved as f64
+        };
         eprintln!(
-            "[O1-fallback] scan stats rows={} linear={} solved={} raw_combined_terms={} combined_terms={} avg_raw_terms={:.2} avg_combined_terms={:.2} simplified_ratio={:.3} max_combined_terms={}",
+            "[O1-fallback] scan stats rows={} linear={} solved={} raw_combined_terms={} combined_terms={} avg_raw_terms={:.2} avg_combined_terms={:.2} simplified_ratio={:.3} max_combined_terms={} avg_solve_candidate_terms={:.2} avg_solve_result_terms={:.2} max_solve_result_terms={} pivot_coeff_one={} pivot_coeff_neg_one={} pivot_coeff_other={}",
             self.rows_seen,
             self.linear_candidates,
             self.solved,
@@ -100,6 +130,12 @@ impl GreedyScanStats {
             avg_combined_terms,
             simplified_ratio,
             self.max_combined_terms,
+            avg_solve_candidate_terms,
+            avg_solve_result_terms,
+            self.max_solve_result_terms,
+            self.pivot_coeff_one,
+            self.pivot_coeff_neg_one,
+            self.pivot_coeff_other,
         );
     }
 }
@@ -193,13 +229,13 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
                 for (idx, constraint) in constraints.iter().enumerate() {
                     if let Some(candidate) = linear_constraint_combined_profiled(constraint) {
                         stats.record_linear_candidate(candidate.raw_terms, &candidate.combined);
-                        if let Some((var, expr)) = solve_for_variable_simplified(
+                        if let Some((var, expr, profile)) = solve_for_variable_simplified_profiled(
                             &candidate.combined,
                             &round_protected,
                             &var_freq,
                             &mut inv_cache,
                         ) {
-                            stats.record_solved();
+                            stats.record_solved_profile(profile);
                             round_protected.insert(var.index());
                             round_subs.insert(var.index(), expr);
                             remove_mask[idx] = true;

@@ -128,6 +128,14 @@ pub(super) fn apply_substitution_to_constraint_in_place<F: FieldBackend>(
 /// for hits, leaving misses on the first occurrence of each value.
 pub(super) type InvCache<F> = FxHashMap<FieldElement<F>, FieldElement<F>>;
 
+#[derive(Clone, Copy, Debug, Default)]
+pub(super) struct SolveProfile {
+    pub candidate_terms: usize,
+    pub result_terms: usize,
+    pub pivot_coeff_one: bool,
+    pub pivot_coeff_neg_one: bool,
+}
+
 #[inline]
 pub(super) fn cached_inv<F: FieldBackend>(
     cache: &mut InvCache<F>,
@@ -182,8 +190,36 @@ pub(super) fn solve_for_variable_simplified_with_extra<F: FieldBackend>(
     var_freq: &FxHashMap<usize, usize>,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
-    // Find the best candidate: most-frequent non-protected variable,
-    // breaking ties by highest index.
+    let (target_var, target_coeff, _) =
+        select_solve_target(simplified, protected, extra_protected, var_freq)?;
+    let result = build_solve_result(simplified, target_var, target_coeff, inv_cache)?;
+    Some((target_var, result))
+}
+
+pub(super) fn solve_for_variable_simplified_profiled<F: FieldBackend>(
+    simplified: &LinearCombination<F>,
+    protected: &HashSet<usize>,
+    var_freq: &FxHashMap<usize, usize>,
+    inv_cache: &mut InvCache<F>,
+) -> Option<(Variable, LinearCombination<F>, SolveProfile)> {
+    let (target_var, target_coeff, _) = select_solve_target(simplified, protected, None, var_freq)?;
+    let result = build_solve_result(simplified, target_var, target_coeff, inv_cache)?;
+    let one = FieldElement::<F>::one();
+    let profile = SolveProfile {
+        candidate_terms: simplified.terms().len(),
+        result_terms: result.terms().len(),
+        pivot_coeff_one: target_coeff == one,
+        pivot_coeff_neg_one: target_coeff == one.neg(),
+    };
+    Some((target_var, result, profile))
+}
+
+fn select_solve_target<F: FieldBackend>(
+    simplified: &LinearCombination<F>,
+    protected: &HashSet<usize>,
+    extra_protected: Option<&HashSet<usize>>,
+    var_freq: &FxHashMap<usize, usize>,
+) -> Option<(Variable, FieldElement<F>, usize)> {
     let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
     for (var, coeff) in simplified.terms() {
         let var_idx = var.index();
@@ -204,8 +240,15 @@ pub(super) fn solve_for_variable_simplified_with_extra<F: FieldBackend>(
         }
     }
 
-    let (target_var, target_coeff, _) = best?;
+    best
+}
 
+fn build_solve_result<F: FieldBackend>(
+    simplified: &LinearCombination<F>,
+    target_var: Variable,
+    target_coeff: FieldElement<F>,
+    inv_cache: &mut InvCache<F>,
+) -> Option<LinearCombination<F>> {
     // We need to compute: target_var = (-1/target_coeff) * (all other terms)
     let neg_inv = cached_inv(inv_cache, target_coeff.neg())?;
 
@@ -217,7 +260,7 @@ pub(super) fn solve_for_variable_simplified_with_extra<F: FieldBackend>(
         result.add_term(*var, coeff.mul(&neg_inv));
     }
 
-    Some((target_var, result))
+    Some(result)
 }
 
 /// Compose two substitution maps that were applied in sequence: `earlier`
