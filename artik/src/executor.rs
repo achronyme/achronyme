@@ -79,6 +79,7 @@ mod arrays;
 mod canonical;
 mod family;
 mod int_ops;
+mod profile;
 mod state;
 mod step;
 
@@ -109,6 +110,7 @@ pub fn execute_with_budget<F: FieldBackend>(
     check_family_compat::<F>(prog.header.family)?;
 
     let mut state = State::<F>::new(prog)?;
+    let mut profile = profile::ArtikExecProfile::from_env();
 
     let mut ran: u64 = 0;
     loop {
@@ -132,6 +134,9 @@ pub fn execute_with_budget<F: FieldBackend>(
             return Err(ArtikError::InvalidJumpTarget { target: pc });
         }
         let instr = &body[pc as usize];
+        if let Some(profile) = profile.as_mut() {
+            profile.record(instr);
+        }
         match step(instr, &mut state, ctx, prog)? {
             Flow::Next => state.top_mut()?.pc = pc + 1,
             Flow::JumpTo(idx) => state.top_mut()?.pc = idx,
@@ -144,6 +149,9 @@ pub fn execute_with_budget<F: FieldBackend>(
             }
             Flow::Return { srcs } => {
                 if state.do_return(&srcs)? {
+                    if let Some(profile) = profile.as_mut() {
+                        profile.finish(ran);
+                    }
                     return Ok(());
                 }
             }
