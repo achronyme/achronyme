@@ -24,6 +24,7 @@ use memory::{FieldBackend, FieldElement};
 
 mod parallel;
 mod picker;
+mod touch_profile;
 
 use super::linear::deduplicate_constraints;
 use super::predicates::{
@@ -43,6 +44,7 @@ use parallel::{
     solve_clusters_ordered,
 };
 use picker::{solve_for_variable_with_picker, Picker};
+use touch_profile::log_substitution_touch;
 
 /// Clusters above this size fall back to the greedy iterative
 /// eliminator (`optimize_linear_with_protected`) instead of running
@@ -397,6 +399,15 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         let mut linear_index_mask = vec![false; n];
         for idx in linear_indices {
             linear_index_mask[idx] = true;
+        }
+        if timings.enabled() {
+            log_substitution_touch(
+                rounds,
+                constraints,
+                &linear_index_mask,
+                &residuals,
+                &round_subs,
+            );
         }
         timings.time(4, || {
             apply_substitutions_to_unmasked_constraints(

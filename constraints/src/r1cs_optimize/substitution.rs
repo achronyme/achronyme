@@ -43,7 +43,7 @@ pub(super) fn apply_substitution_in_place<F: FieldBackend>(
     lc: &mut LinearCombination<F>,
     subs: &SubstitutionMap<F>,
 ) {
-    if subs.is_empty() {
+    if subs.is_empty() || !lc_references_any_substitution_var(lc, subs) {
         return;
     }
     // Take ownership of the existing terms; we will rebuild into a
@@ -62,6 +62,15 @@ pub(super) fn apply_substitution_in_place<F: FieldBackend>(
         }
     }
     lc.simplify_in_place();
+}
+
+fn lc_references_any_substitution_var<F: FieldBackend>(
+    lc: &LinearCombination<F>,
+    subs: &SubstitutionMap<F>,
+) -> bool {
+    lc.terms()
+        .iter()
+        .any(|(var, _)| subs.contains_key(&var.index()))
 }
 
 /// Apply one `var_idx -> replacement` substitution to an LC.
