@@ -116,6 +116,17 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// shape can disable this log to avoid retaining one witness operation per
     /// intermediate wire. Normal proving paths leave it enabled.
     pub(crate) record_witness_ops: bool,
+    /// Skip the early-validation IR evaluation in `compile_ir_with_witness`.
+    ///
+    /// `compile_ir_with_witness` normally evaluates the whole IR once up front
+    /// purely to reject an invalid witness (assert failures, missing inputs)
+    /// before emitting constraints. On large circuits that full evaluation
+    /// costs as much as building the witness itself. A caller that verifies the
+    /// produced witness downstream (`cs.verify`, or the SNARK verifier) gets the
+    /// same guarantee far more cheaply, so it can set this to skip the
+    /// redundant pass. Default `false` (validate) — leaving it false keeps the
+    /// produced witness and error behavior identical to before.
+    pub(crate) skip_eval_validation: bool,
     /// Variable substitution map from R1CS linear constraint elimination.
     /// Set by `optimize_r1cs()`. Used by witness generation to compute
     /// values for substituted-away wires.

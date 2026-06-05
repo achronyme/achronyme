@@ -14,9 +14,12 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// Compile an SSA IR program and generate a witness in a single pass.
     ///
     /// Three-pass design (intentional):
-    /// 1. **Evaluate**: runs IR with concrete inputs for early validation — catches
-    ///    assertion failures, division by zero, and missing inputs *before* emitting
-    ///    any constraints. This avoids wasting work on invalid witnesses.
+    /// 1. **Evaluate** (skippable): runs IR with concrete inputs for early
+    ///    validation — catches assertion failures and missing inputs *before*
+    ///    emitting constraints, avoiding wasted work on invalid witnesses.
+    ///    Skipped when `skip_eval_validation` is set; callers that do so must
+    ///    verify the produced witness downstream (`cs.verify` / SNARK verify),
+    ///    which gives the same guarantee far more cheaply on large circuits.
     /// 2. **Compile**: lowers IR → R1CS constraints (same as `compile_ir`), populating
     ///    `witness_ops` as a side-effect.
     /// 3. **Witness**: builds the witness vector by replaying `witness_ops` with
@@ -50,9 +53,13 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     where
         F: PoseidonParamsProvider,
     {
-        // 1. Evaluate IR — early validation
-        let _ssa_values = ir::eval::evaluate(program, inputs)
-            .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
+        // 1. Evaluate IR — early validation. Skippable when the caller verifies
+        //    the produced witness downstream: the witness build (pass 3) plus
+        //    `cs.verify` give the same guarantee at a fraction of the cost.
+        if !self.skip_eval_validation {
+            ir::eval::evaluate(program, inputs)
+                .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
+        }
 
         // 2. Compile constraints (populates witness_ops)
         self.compile_ir(program)?;
@@ -61,12 +68,17 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         let mut witness = vec![FieldElement::<F>::zero(); self.cs.num_variables()];
         witness[0] = FieldElement::<F>::one();
 
-        // 3a. Fill inputs
-        for name in &self.public_inputs {
-            witness[self.bindings[name].index()] = inputs[name];
-        }
-        for name in &self.witnesses {
-            witness[self.bindings[name].index()] = inputs[name];
+        // 3a. Fill inputs. With early validation skipped, a missing input or
+        //     unbound signal must surface as an error here, not an index panic.
+        for name in self.public_inputs.iter().chain(self.witnesses.iter()) {
+            let var = self
+                .bindings
+                .get(name)
+                .ok_or_else(|| R1CSError::EvalError(format!("unbound input signal `{name}`")))?;
+            let val = inputs
+                .get(name)
+                .ok_or_else(|| R1CSError::EvalError(format!("missing input `{name}`")))?;
+            witness[var.index()] = *val;
         }
 
         // 3b. Replay witness ops (which may have been filtered by optimize_r1cs)

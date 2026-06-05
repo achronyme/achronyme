@@ -228,6 +228,9 @@ impl DefaultProveHandler {
         r1cs.prime_id = self.prime_id;
         let proven = ir::passes::bool_prop::compute_proven_boolean(program);
         r1cs.set_proven_boolean(proven);
+        // The explicit `cs.verify` below validates the witness, so the costly
+        // up-front IR evaluation inside `compile_ir_with_witness` is redundant.
+        r1cs.set_skip_eval_validation(true);
         let witness = r1cs
             .compile_ir_with_witness(program, inputs)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;

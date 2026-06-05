@@ -25,6 +25,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             forward_assert_eq_collapse: false,
             direct_linear_mul: false,
             record_witness_ops: true,
+            skip_eval_validation: false,
             substitution_map: None,
             lc_map: LcMap::new(),
             lc_cache_term_limit: None,
@@ -33,6 +34,14 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             divmod_cache: HashMap::new(),
             artik_program_intern: Vec::new(),
         }
+    }
+
+    /// Skip the early-validation IR evaluation in `compile_ir_with_witness`.
+    ///
+    /// Only safe for callers that verify the produced witness downstream
+    /// (`cs.verify` or the SNARK verifier). See `skip_eval_validation`.
+    pub fn set_skip_eval_validation(&mut self, skip: bool) {
+        self.skip_eval_validation = skip;
     }
 
     /// Create an R1CS compiler that skips per-constraint origin tracking.

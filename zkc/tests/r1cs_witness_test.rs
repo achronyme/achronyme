@@ -322,3 +322,81 @@ fn test_witness_ops_count() {
     rc.compile_ir(&program).unwrap();
     assert_eq!(rc.witness_ops.len(), 2);
 }
+
+// ====================================================================
+// skip_eval_validation: skipping early validation must not change the
+// produced witness, and a missing input must still error (not panic).
+// ====================================================================
+
+#[test]
+fn skip_eval_validation_produces_identical_witness() {
+    // Exercises a Multiply witness op plus an Inverse via the division.
+    let program =
+        IrLowering::<Bn254Fr>::lower_circuit("assert_eq(a * b, c / d)", &["c", "d"], &["a", "b"])
+            .unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+    inputs.insert("c".to_string(), FieldElement::from_u64(84));
+    inputs.insert("d".to_string(), FieldElement::from_u64(2));
+
+    let mut rc_validated = R1CSCompiler::<Bn254Fr>::new();
+    let w_validated = rc_validated
+        .compile_ir_with_witness(&program, &inputs)
+        .unwrap();
+
+    let mut rc_skipped = R1CSCompiler::<Bn254Fr>::new();
+    rc_skipped.set_skip_eval_validation(true);
+    let w_skipped = rc_skipped
+        .compile_ir_with_witness(&program, &inputs)
+        .unwrap();
+
+    assert_eq!(
+        w_validated, w_skipped,
+        "witness must be identical with and without early validation"
+    );
+    assert!(rc_validated.cs.verify(&w_validated).is_ok());
+    assert!(rc_skipped.cs.verify(&w_skipped).is_ok());
+}
+
+#[test]
+fn skip_eval_validation_missing_input_errors_without_panic() {
+    let program =
+        IrLowering::<Bn254Fr>::lower_circuit("assert_eq(a * b, out)", &["out"], &["a", "b"])
+            .unwrap();
+
+    // `b` is absent — with early validation skipped, the witness fill must
+    // return an error rather than panic on the missing key.
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("out".to_string(), FieldElement::from_u64(42));
+
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.set_skip_eval_validation(true);
+    let result = rc.compile_ir_with_witness(&program, &inputs);
+    assert!(result.is_err(), "missing input must error, not panic");
+}
+
+#[test]
+fn skip_eval_validation_violating_input_caught_by_verify() {
+    // With early validation skipped, a constraint-violating witness is no
+    // longer rejected up front. The downstream `cs.verify` is the safety net
+    // that callers rely on when they set the skip flag (e.g. `prove_r1cs`).
+    let program =
+        IrLowering::<Bn254Fr>::lower_circuit("assert_eq(a * b, c)", &["c"], &["a", "b"]).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+    inputs.insert("c".to_string(), FieldElement::from_u64(99)); // 6 * 7 = 42 != 99
+
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.set_skip_eval_validation(true);
+    // Builds without error — there is no eval pass to reject the bad input.
+    let witness = rc.compile_ir_with_witness(&program, &inputs).unwrap();
+    assert!(
+        rc.cs.verify(&witness).is_err(),
+        "cs.verify must reject the violating witness when eval is skipped"
+    );
+}
