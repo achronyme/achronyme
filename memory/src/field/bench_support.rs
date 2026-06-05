@@ -1,9 +1,18 @@
-use super::arithmetic::{montgomery_mul, montgomery_reduce, mul_wide, R2};
+use crate::limb_ops::sbb;
+
+use super::arithmetic::{
+    gte, montgomery_mul, montgomery_reduce, mul_wide, subtract_modulus_if_needed, MODULUS, R2,
+};
 use super::{Bn254Fr, FieldElement};
 
 #[inline]
 pub fn bn254_from_u64(value: u64) -> [u64; 4] {
     FieldElement::<Bn254Fr>::from_u64(value).into_repr()
+}
+
+#[inline]
+pub fn bn254_modulus() -> [u64; 4] {
+    MODULUS
 }
 
 #[inline]
@@ -76,6 +85,24 @@ pub fn bn254_montgomery_reduce(t: &[u64; 8]) -> [u64; 4] {
     montgomery_reduce(t)
 }
 
+#[inline]
+pub fn bn254_final_reduce_ct(mut limbs: [u64; 4]) -> [u64; 4] {
+    subtract_modulus_if_needed(&mut limbs);
+    limbs
+}
+
+#[inline]
+pub fn bn254_final_reduce_branchy(mut limbs: [u64; 4]) -> [u64; 4] {
+    if gte(&limbs, &MODULUS) {
+        let (r0, borrow) = sbb(limbs[0], MODULUS[0], 0);
+        let (r1, borrow) = sbb(limbs[1], MODULUS[1], borrow);
+        let (r2, borrow) = sbb(limbs[2], MODULUS[2], borrow);
+        let (r3, _) = sbb(limbs[3], MODULUS[3], borrow);
+        limbs = [r0, r1, r2, r3];
+    }
+    limbs
+}
+
 #[cfg(target_arch = "x86_64")]
 #[target_feature(enable = "bmi2,adx")]
 fn mac_bmi2_adx(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
@@ -94,7 +121,10 @@ fn mac_bmi2_adx(a: u64, b: u64, c: u64, carry: u64) -> (u64, u64) {
 
 #[cfg(all(test, target_arch = "x86_64"))]
 mod tests {
-    use super::{bn254_mul_wide, bn254_mul_wide_bmi2_adx};
+    use super::{
+        bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_mul_wide, bn254_mul_wide_bmi2_adx,
+    };
+    use crate::field::arithmetic::MODULUS;
 
     #[test]
     fn bmi2_adx_mul_wide_matches_scalar_when_available() {
@@ -122,6 +152,29 @@ mod tests {
             if let Some(got) = bn254_mul_wide_bmi2_adx(&a, &b) {
                 assert_eq!(got, bn254_mul_wide(&a, &b));
             }
+        }
+    }
+
+    #[test]
+    fn branchy_final_reduce_matches_ct() {
+        let cases = [
+            [0, 0, 0, 0],
+            [1, 0, 0, 0],
+            MODULUS,
+            [
+                MODULUS[0].wrapping_add(1),
+                MODULUS[1],
+                MODULUS[2],
+                MODULUS[3],
+            ],
+            [u64::MAX, u64::MAX, u64::MAX, MODULUS[3]],
+        ];
+
+        for limbs in cases {
+            assert_eq!(
+                bn254_final_reduce_branchy(limbs),
+                bn254_final_reduce_ct(limbs)
+            );
         }
     }
 }

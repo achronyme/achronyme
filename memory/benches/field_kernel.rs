@@ -10,8 +10,9 @@
 use criterion::{black_box, criterion_group, criterion_main, Criterion};
 
 use memory::field::bench_support::{
-    bn254_from_canonical, bn254_from_u64, bn254_montgomery_mul, bn254_montgomery_reduce,
-    bn254_mul_wide, bn254_mul_wide_bmi2_adx, bn254_mul_wide_bmi2_adx_unchecked,
+    bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_from_canonical, bn254_from_u64,
+    bn254_modulus, bn254_montgomery_mul, bn254_montgomery_reduce, bn254_mul_wide,
+    bn254_mul_wide_bmi2_adx, bn254_mul_wide_bmi2_adx_unchecked,
 };
 use memory::{Bn254Fr, FieldElement};
 
@@ -48,6 +49,7 @@ fn seed_stream() -> Vec<([u64; 4], [u64; 4])> {
 fn bench(c: &mut Criterion) {
     let stream = seed_stream();
     let wide_inputs: Vec<[u64; 8]> = stream.iter().map(|(a, b)| bn254_mul_wide(a, b)).collect();
+    let final_reduce_inputs = final_reduce_stream(&stream);
     let fe_stream: Vec<(FieldElement<Bn254Fr>, FieldElement<Bn254Fr>)> = stream
         .iter()
         .map(|(a, b)| (FieldElement::from_repr(*a), FieldElement::from_repr(*b)))
@@ -148,6 +150,68 @@ fn bench(c: &mut Criterion) {
             black_box(acc)
         });
     });
+
+    c.bench_function("bn254_final_reduce_ct_mixed_stream", |b| {
+        b.iter(|| {
+            let mut acc = [0u64; 4];
+            for limbs in &final_reduce_inputs {
+                let reduced = bn254_final_reduce_ct(black_box(*limbs));
+                for (dst, src) in acc.iter_mut().zip(reduced) {
+                    *dst ^= src;
+                }
+            }
+            black_box(acc)
+        });
+    });
+
+    c.bench_function("bn254_final_reduce_branchy_mixed_stream", |b| {
+        b.iter(|| {
+            let mut acc = [0u64; 4];
+            for limbs in &final_reduce_inputs {
+                let reduced = bn254_final_reduce_branchy(black_box(*limbs));
+                for (dst, src) in acc.iter_mut().zip(reduced) {
+                    *dst ^= src;
+                }
+            }
+            black_box(acc)
+        });
+    });
+}
+
+fn final_reduce_stream(stream: &[([u64; 4], [u64; 4])]) -> Vec<[u64; 4]> {
+    stream
+        .iter()
+        .enumerate()
+        .map(|(idx, (a, b))| {
+            let wide = bn254_mul_wide(a, b);
+            let mut limbs = final_reduce_candidate([wide[0], wide[1], wide[2], wide[3]]);
+            if idx % 2 == 1 {
+                limbs = add_modulus_without_overflow(limbs);
+            }
+            limbs
+        })
+        .collect()
+}
+
+fn final_reduce_candidate(mut limbs: [u64; 4]) -> [u64; 4] {
+    limbs[0] &= 0x0000_0000_ffff_ffff;
+    limbs[1] &= 0x0000_0000_ffff_ffff;
+    limbs[2] &= 0x0000_0000_ffff_ffff;
+    limbs[3] &= 0x0000_0000_0000_ffff;
+    limbs
+}
+
+fn add_modulus_without_overflow(limbs: [u64; 4]) -> [u64; 4] {
+    let modulus = bn254_modulus();
+    let (r0, carry) = limbs[0].overflowing_add(modulus[0]);
+    let (r1a, carry1) = limbs[1].overflowing_add(modulus[1]);
+    let (r1, carry2) = r1a.overflowing_add(carry as u64);
+    let (r2a, carry3) = limbs[2].overflowing_add(modulus[2]);
+    let (r2, carry4) = r2a.overflowing_add((carry1 || carry2) as u64);
+    let (r3a, carry5) = limbs[3].overflowing_add(modulus[3]);
+    let (r3, carry6) = r3a.overflowing_add((carry3 || carry4) as u64);
+    debug_assert!(!carry5 && !carry6);
+    [r0, r1, r2, r3]
 }
 
 criterion_group!(benches, bench);
