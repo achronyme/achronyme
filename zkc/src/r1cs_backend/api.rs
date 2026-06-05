@@ -56,6 +56,18 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         c
     }
 
+    /// Create an R1CS compiler for proving paths that need named input
+    /// metadata and witness ops, but do not need inspector provenance.
+    ///
+    /// This preserves the default constraint surface and witness-generation
+    /// behavior while skipping `constraint_origins`, which are unused by
+    /// native proving and expensive on large circuits.
+    pub fn new_prover() -> Self {
+        let mut c = Self::new();
+        c.track_constraint_origins = false;
+        c
+    }
+
     /// Create a compiler that folds linear-constraint elimination into
     /// emission (incremental collapse). The underlying constraint system
     /// never materializes the unoptimized set: each linear constraint is

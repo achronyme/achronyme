@@ -294,6 +294,44 @@ fn lean_compiler_skips_input_metadata_but_preserves_wire_layout() {
 }
 
 #[test]
+fn prover_compiler_keeps_input_metadata_but_skips_origins() {
+    let mut prog: IrProgram = IrProgram::new();
+    let pub_var = prog.fresh_var();
+    prog.push(Instruction::Input {
+        result: pub_var,
+        name: "public_out".into(),
+        visibility: IrVisibility::Public,
+    });
+    let witness_var = prog.fresh_var();
+    prog.push(Instruction::Input {
+        result: witness_var,
+        name: "private_in".into(),
+        visibility: IrVisibility::Witness,
+    });
+    let product = prog.fresh_var();
+    prog.push(Instruction::Mul {
+        result: product,
+        lhs: pub_var,
+        rhs: witness_var,
+    });
+
+    let mut eager = R1CSCompiler::new();
+    eager.compile_ir(&prog).unwrap();
+
+    let mut prover = R1CSCompiler::new_prover();
+    prover.compile_ir(&prog).unwrap();
+
+    assert_eq!(eager.cs.num_variables(), prover.cs.num_variables());
+    assert_eq!(eager.cs.num_pub_inputs(), prover.cs.num_pub_inputs());
+    assert_eq!(eager.cs.num_constraints(), prover.cs.num_constraints());
+    assert_eq!(eager.witness_ops.len(), prover.witness_ops.len());
+    assert_eq!(prover.bindings.len(), 2);
+    assert_eq!(prover.public_inputs, vec!["public_out"]);
+    assert_eq!(prover.witnesses, vec!["private_in"]);
+    assert!(prover.constraint_origins.is_empty());
+}
+
+#[test]
 fn lean_compiler_matches_eager_on_constraint_surface() {
     // Pin: lean and eager R1CS compilers produce byte-identical
     // constraint systems on a representative mixed circuit — same

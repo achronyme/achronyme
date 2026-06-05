@@ -78,7 +78,7 @@ fn main() {
     );
 
     let start = Instant::now();
-    let mut compiler = R1CSCompiler::<Bn254Fr>::new();
+    let mut compiler = R1CSCompiler::<Bn254Fr>::new_prover();
     let mut witness = compiler
         .compile_ir_with_witness(&program, &all_signals)
         .unwrap_or_else(|e| panic!("r1cs compile with witness: {e}"));
