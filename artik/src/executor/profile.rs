@@ -12,6 +12,10 @@ pub(super) struct ArtikExecProfile {
     fmul_runs: u64,
     fmul_run_sum: u64,
     fmul_run_max: u64,
+    finv_run_len: u64,
+    finv_runs: u64,
+    finv_run_sum: u64,
+    finv_run_max: u64,
     batch_len: u64,
     batch_runs: u64,
     batch_sum: u64,
@@ -40,6 +44,10 @@ impl ArtikExecProfile {
             fmul_runs: 0,
             fmul_run_sum: 0,
             fmul_run_max: 0,
+            finv_run_len: 0,
+            finv_runs: 0,
+            finv_run_sum: 0,
+            finv_run_max: 0,
             batch_len: 0,
             batch_runs: 0,
             batch_sum: 0,
@@ -53,14 +61,17 @@ impl ArtikExecProfile {
             Instr::FAdd { .. } => {
                 self.fadd += 1;
                 self.flush_fmul();
+                self.flush_finv();
             }
             Instr::FSub { .. } => {
                 self.fsub += 1;
                 self.flush_fmul();
+                self.flush_finv();
             }
             Instr::FMul { dst, a, b } => {
                 self.fmul += 1;
                 self.fmul_run_len += 1;
+                self.flush_finv();
                 if self
                     .batch_dsts
                     .iter()
@@ -74,26 +85,34 @@ impl ArtikExecProfile {
             Instr::FDiv { .. } => {
                 self.fdiv += 1;
                 self.flush_fmul();
+                self.flush_finv();
             }
             Instr::FInv { .. } => {
                 self.finv += 1;
+                self.finv_run_len += 1;
                 self.flush_fmul();
             }
             Instr::FPow2 { .. } => {
                 self.fpow2 += 1;
                 self.flush_fmul();
+                self.flush_finv();
             }
-            _ => self.flush_fmul(),
+            _ => {
+                self.flush_fmul();
+                self.flush_finv();
+            }
         }
     }
 
     pub(super) fn finish(&mut self, steps: u64) {
         self.flush_fmul();
+        self.flush_finv();
         if steps < self.min_steps {
             return;
         }
         let avg_run = average(self.fmul_run_sum, self.fmul_runs);
         let avg_batch = average(self.batch_sum, self.batch_runs);
+        let avg_finv_run = average(self.finv_run_sum, self.finv_runs);
         eprintln!(
             "[artik-exec-profile] steps={steps} fadd={} fsub={} fmul={} fdiv={} finv={} fpow2={}",
             self.fadd, self.fsub, self.fmul, self.fdiv, self.finv, self.fpow2,
@@ -105,6 +124,10 @@ impl ArtikExecProfile {
             self.batch_runs,
             self.batch_max,
         );
+        eprintln!(
+            "[artik-exec-profile] finv_runs={} avg_run={avg_finv_run:.2} max_run={}",
+            self.finv_runs, self.finv_run_max,
+        );
     }
 
     fn flush_fmul(&mut self) {
@@ -115,6 +138,15 @@ impl ArtikExecProfile {
             self.fmul_run_len = 0;
         }
         self.flush_batch();
+    }
+
+    fn flush_finv(&mut self) {
+        if self.finv_run_len > 0 {
+            self.finv_runs += 1;
+            self.finv_run_sum += self.finv_run_len;
+            self.finv_run_max = self.finv_run_max.max(self.finv_run_len);
+            self.finv_run_len = 0;
+        }
     }
 
     fn flush_batch(&mut self) {
