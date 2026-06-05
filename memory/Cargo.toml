@@ -14,9 +14,15 @@ categories.workspace = true
 serde = { version = "1", features = ["derive"] }
 
 [features]
+field-kernel-bench = []
 field-op-profile = []
 
 [dev-dependencies]
+criterion = "0.5"
 num-bigint = "0.4"
 num-traits = "0.2"
 num-integer = "0.1"
+
+[[bench]]
+name = "field_kernel"
+harness = false

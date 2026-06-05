@@ -6,6 +6,8 @@
 /// compatibility across the workspace.
 pub(crate) mod arithmetic;
 mod backend;
+#[cfg(feature = "field-kernel-bench")]
+pub mod bench_support;
 pub mod bls12_381;
 pub mod bn254;
 mod element;
