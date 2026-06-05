@@ -128,6 +128,7 @@ fn main() {
     eprintln!("witness field-op profile ({circuit})");
     eprintln!("  fixture: {}", path.display());
     eprintln!("  field-op-profile: {}", memory::field::profile::enabled());
+    eprintln!("  witness-profile: {}", circom::witness::profile::enabled());
     print_isa();
 
     let t = Instant::now();
@@ -136,6 +137,7 @@ fn main() {
     eprintln!("compile_file_ms={:.3}", t.elapsed().as_secs_f64() * 1000.0);
 
     memory::field::profile::reset();
+    circom::witness::profile::reset();
     let t = Instant::now();
     let env = circom::witness::compute_witness_hints_with_captures(
         &compile_result.prove_ir,
@@ -145,6 +147,7 @@ fn main() {
     .unwrap_or_else(|e| panic!("witness hints: {e}"));
     let elapsed_ms = t.elapsed().as_secs_f64() * 1000.0;
     let ops = memory::field::profile::snapshot();
+    let witness_ops = circom::witness::profile::snapshot();
 
     eprintln!(
         "witness_hints_ms={elapsed_ms:.3} env_len={} total_ops={} mul={} add={} sub={} neg={} inv={} reduce={} ct_select={}",
@@ -158,4 +161,10 @@ fn main() {
         ops.reduce,
         ops.ct_select,
     );
+    if circom::witness::profile::enabled() {
+        eprintln!(
+            "witness_profile hint_div={} hint_div_zero={} hint_div_invertible={}",
+            witness_ops.hint_div, witness_ops.hint_div_zero, witness_ops.hint_div_invertible,
+        );
+    }
 }

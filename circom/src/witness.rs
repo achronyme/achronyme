@@ -12,6 +12,7 @@ mod compute;
 mod error;
 mod eval;
 mod limbs;
+pub mod profile;
 
 pub use compute::{compute_witness_hints, compute_witness_hints_with_captures};
 pub use error::WitnessError;

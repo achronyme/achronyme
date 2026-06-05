@@ -4,6 +4,7 @@ use ir_forge::types::CircuitExpr;
 use memory::{FieldBackend, FieldElement};
 
 use super::limbs::{bit_mask_limbs, shift_left_limbs, shift_right_limbs};
+use super::profile;
 
 /// Evaluate an expression and extract a u64 index value.
 pub(super) fn eval_hint_u64<F: FieldBackend>(
@@ -49,7 +50,10 @@ pub(super) fn eval_hint<F: FieldBackend>(
                 CircuitBinOp::Mul => Some(l.mul(&r)),
                 // Circom-compatible: division by zero in witness hints
                 // produces 0 (the official witness calculator treats 0/0 = 0).
-                CircuitBinOp::Div => Some(l.div(&r).unwrap_or_else(FieldElement::<F>::zero)),
+                CircuitBinOp::Div => {
+                    profile::record_hint_div(r.is_zero());
+                    Some(l.div(&r).unwrap_or_else(FieldElement::<F>::zero))
+                }
             }
         }
 
