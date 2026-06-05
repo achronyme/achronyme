@@ -12,9 +12,14 @@ use criterion::{black_box, criterion_group, criterion_main, Criterion};
 use memory::field::bench_support::{
     bn254_final_reduce_branchy, bn254_final_reduce_ct, bn254_from_canonical, bn254_from_u64,
     bn254_ifma52_madd8, bn254_ifma52_madd8_unchecked, bn254_limbs4_to_limbs52,
-    bn254_limbs52_to_limbs4, bn254_modulus, bn254_montgomery_mul, bn254_montgomery_reduce,
-    bn254_mul_wide, bn254_mul_wide_5x52, bn254_mul_wide_bmi2_adx,
+    bn254_limbs52_to_limbs4, bn254_modulus, bn254_montgomery_mul, bn254_montgomery_mul_5x52_hybrid,
+    bn254_montgomery_reduce, bn254_mul_wide, bn254_mul_wide_5x52, bn254_mul_wide_bmi2_adx,
     bn254_mul_wide_bmi2_adx_unchecked, bn254_scalar52_madd8,
+};
+#[cfg(target_arch = "x86_64")]
+use memory::field::bench_support::{
+    bn254_montgomery_mul_5x52_ifma_hybrid, bn254_montgomery_mul_5x52_ifma_hybrid_unchecked,
+    bn254_mul_wide_5x52_ifma, bn254_mul_wide_5x52_ifma_unchecked,
 };
 use memory::{Bn254Fr, FieldElement};
 
@@ -191,6 +196,61 @@ fn bench(c: &mut Criterion) {
             black_box(acc)
         });
     });
+
+    #[cfg(target_arch = "x86_64")]
+    if bn254_mul_wide_5x52_ifma(&field_limb52_stream[0].0, &field_limb52_stream[0].1).is_some() {
+        c.bench_function("bn254_mul_wide_5x52_ifma_stream", |b| {
+            b.iter(|| {
+                let mut acc = [0u64; 10];
+                for (a, rhs) in &field_limb52_stream {
+                    // SAFETY: Benchmark registration checks AVX-512 IFMA before this timed path.
+                    let wide =
+                        unsafe { bn254_mul_wide_5x52_ifma_unchecked(black_box(a), black_box(rhs)) };
+                    for (dst, src) in acc.iter_mut().zip(wide) {
+                        *dst ^= src;
+                    }
+                }
+                black_box(acc)
+            });
+        });
+    }
+
+    c.bench_function("bn254_montgomery_mul_5x52_hybrid_stream", |b| {
+        b.iter(|| {
+            let mut acc = [0u64; 4];
+            for (a, rhs) in &field_limb52_stream {
+                let product = bn254_montgomery_mul_5x52_hybrid(black_box(a), black_box(rhs));
+                for (dst, src) in acc.iter_mut().zip(product) {
+                    *dst ^= src;
+                }
+            }
+            black_box(acc)
+        });
+    });
+
+    #[cfg(target_arch = "x86_64")]
+    if bn254_montgomery_mul_5x52_ifma_hybrid(&field_limb52_stream[0].0, &field_limb52_stream[0].1)
+        .is_some()
+    {
+        c.bench_function("bn254_montgomery_mul_5x52_ifma_hybrid_stream", |b| {
+            b.iter(|| {
+                let mut acc = [0u64; 4];
+                for (a, rhs) in &field_limb52_stream {
+                    // SAFETY: Benchmark registration checks AVX-512 IFMA before this timed path.
+                    let product = unsafe {
+                        bn254_montgomery_mul_5x52_ifma_hybrid_unchecked(
+                            black_box(a),
+                            black_box(rhs),
+                        )
+                    };
+                    for (dst, src) in acc.iter_mut().zip(product) {
+                        *dst ^= src;
+                    }
+                }
+                black_box(acc)
+            });
+        });
+    }
 
     if bn254_mul_wide_bmi2_adx(&stream[0].0, &stream[0].1).is_some() {
         c.bench_function("bn254_mul_wide_bmi2_adx_independent_stream", |b| {
