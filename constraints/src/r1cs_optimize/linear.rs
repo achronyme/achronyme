@@ -46,6 +46,7 @@ struct GreedyScanStats {
     rows_seen: usize,
     linear_candidates: usize,
     solved: usize,
+    raw_combined_terms: usize,
     combined_terms: usize,
     max_combined_terms: usize,
 }
@@ -55,9 +56,14 @@ impl GreedyScanStats {
         self.rows_seen += rows;
     }
 
-    fn record_linear_candidate<F: FieldBackend>(&mut self, combined: &LinearCombination<F>) {
+    fn record_linear_candidate<F: FieldBackend>(
+        &mut self,
+        raw_terms: usize,
+        combined: &LinearCombination<F>,
+    ) {
         let terms = combined.terms().len();
         self.linear_candidates += 1;
+        self.raw_combined_terms += raw_terms;
         self.combined_terms += terms;
         self.max_combined_terms = self.max_combined_terms.max(terms);
     }
@@ -72,13 +78,26 @@ impl GreedyScanStats {
         } else {
             self.combined_terms as f64 / self.linear_candidates as f64
         };
+        let avg_raw_terms = if self.linear_candidates == 0 {
+            0.0
+        } else {
+            self.raw_combined_terms as f64 / self.linear_candidates as f64
+        };
+        let simplified_ratio = if self.raw_combined_terms == 0 {
+            0.0
+        } else {
+            self.combined_terms as f64 / self.raw_combined_terms as f64
+        };
         eprintln!(
-            "[O1-fallback] scan stats rows={} linear={} solved={} combined_terms={} avg_combined_terms={:.2} max_combined_terms={}",
+            "[O1-fallback] scan stats rows={} linear={} solved={} raw_combined_terms={} combined_terms={} avg_raw_terms={:.2} avg_combined_terms={:.2} simplified_ratio={:.3} max_combined_terms={}",
             self.rows_seen,
             self.linear_candidates,
             self.solved,
+            self.raw_combined_terms,
             self.combined_terms,
+            avg_raw_terms,
             avg_combined_terms,
+            simplified_ratio,
             self.max_combined_terms,
         );
     }
@@ -112,6 +131,50 @@ fn linear_constraint_combined<F: FieldBackend>(
             None
         } else {
             Some(combined)
+        };
+    }
+
+    None
+}
+
+fn linear_constraint_combined_profiled<F: FieldBackend>(
+    constraint: &Constraint<F>,
+) -> Option<(LinearCombination<F>, usize)> {
+    if let Some(k) = constraint.a.constant_value() {
+        if !k.is_zero() {
+            let raw_terms = constraint.c.terms().len() + constraint.b.terms().len();
+            return Some((
+                combine_linear_parts(&constraint.b, &constraint.c, k),
+                raw_terms,
+            ));
+        }
+
+        let raw_terms = constraint.c.terms().len();
+        let mut combined = constraint.c.clone();
+        combined.simplify_in_place();
+        return if combined.terms().is_empty() {
+            None
+        } else {
+            Some((combined, raw_terms))
+        };
+    }
+
+    if let Some(k) = constraint.b.constant_value() {
+        if !k.is_zero() {
+            let raw_terms = constraint.c.terms().len() + constraint.a.terms().len();
+            return Some((
+                combine_linear_parts(&constraint.a, &constraint.c, k),
+                raw_terms,
+            ));
+        }
+
+        let raw_terms = constraint.c.terms().len();
+        let mut combined = constraint.c.clone();
+        combined.simplify_in_place();
+        return if combined.terms().is_empty() {
+            None
+        } else {
+            Some((combined, raw_terms))
         };
     }
 
@@ -225,8 +288,10 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             if let Some(stats) = scan_stats.as_mut() {
                 stats.record_round_rows(constraints.len());
                 for (idx, constraint) in constraints.iter().enumerate() {
-                    if let Some(combined) = linear_constraint_combined(constraint) {
-                        stats.record_linear_candidate(&combined);
+                    if let Some((combined, raw_terms)) =
+                        linear_constraint_combined_profiled(constraint)
+                    {
+                        stats.record_linear_candidate(raw_terms, &combined);
                         if let Some((var, expr)) = solve_for_variable_simplified(
                             &combined,
                             &round_protected,
