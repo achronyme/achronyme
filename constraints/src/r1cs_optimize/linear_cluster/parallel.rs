@@ -246,4 +246,43 @@ mod tests {
             "unmasked constraint should receive the substitution"
         );
     }
+
+    #[test]
+    fn apply_substitutions_skips_untouched_constraints() {
+        use crate::r1cs::LinearCombination;
+        use memory::FieldElement;
+
+        let mut cs = ConstraintSystem::<Bn254Fr>::new();
+        let x = cs.alloc_witness();
+        let y = cs.alloc_witness();
+        let z = cs.alloc_witness();
+        let untouched = cs.alloc_witness();
+        cs.enforce_equal(make_lc_var(x), make_lc_var(y));
+        cs.enforce_equal(make_lc_var(untouched), make_lc_var(z));
+
+        let mut constraints = cs.constraints().to_vec();
+        let before_untouched = constraints[1].clone();
+        let mut subs = SubstitutionMap::<Bn254Fr>::default();
+        subs.insert(
+            y.index(),
+            LinearCombination::from_constant(FieldElement::from_u64(7)),
+        );
+
+        apply_substitutions_to_unmasked_constraints(&mut constraints, &[false, false], &subs);
+
+        let touched_has_constant = constraints[0]
+            .a
+            .terms()
+            .iter()
+            .chain(constraints[0].b.terms().iter())
+            .chain(constraints[0].c.terms().iter())
+            .any(|(var, _)| *var == Variable::ONE);
+        assert!(
+            touched_has_constant,
+            "touched constraint should receive the substitution"
+        );
+        assert_eq!(constraints[1].a.terms(), before_untouched.a.terms());
+        assert_eq!(constraints[1].b.terms(), before_untouched.b.terms());
+        assert_eq!(constraints[1].c.terms(), before_untouched.c.terms());
+    }
 }

@@ -1,6 +1,7 @@
 use memory::FieldBackend;
 
 use crate::r1cs::Constraint;
+use crate::r1cs_optimize::substitution::constraint_references_any_substitution_var;
 use crate::r1cs_optimize::types::SubstitutionMap;
 
 pub(super) fn log_substitution_touch<F: FieldBackend>(
@@ -33,17 +34,4 @@ pub(super) fn log_substitution_touch<F: FieldBackend>(
         unmasked_touched + residual_touched,
         unmasked_total + residual_total,
     );
-}
-
-fn constraint_references_any_substitution_var<F: FieldBackend>(
-    constraint: &Constraint<F>,
-    subs: &SubstitutionMap<F>,
-) -> bool {
-    constraint
-        .a
-        .terms()
-        .iter()
-        .chain(constraint.b.terms().iter())
-        .chain(constraint.c.terms().iter())
-        .any(|(var, _)| subs.contains_key(&var.index()))
 }

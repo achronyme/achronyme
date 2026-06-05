@@ -73,6 +73,19 @@ fn lc_references_any_substitution_var<F: FieldBackend>(
         .any(|(var, _)| subs.contains_key(&var.index()))
 }
 
+pub(super) fn constraint_references_any_substitution_var<F: FieldBackend>(
+    constraint: &Constraint<F>,
+    subs: &SubstitutionMap<F>,
+) -> bool {
+    constraint
+        .a
+        .terms()
+        .iter()
+        .chain(constraint.b.terms().iter())
+        .chain(constraint.c.terms().iter())
+        .any(|(var, _)| subs.contains_key(&var.index()))
+}
+
 /// Apply one `var_idx -> replacement` substitution to an LC.
 ///
 /// Returns `false` without mutating when `lc` does not reference `var_idx`.
@@ -114,6 +127,9 @@ pub(super) fn apply_substitution_to_constraint_in_place<F: FieldBackend>(
     constraint: &mut Constraint<F>,
     subs: &SubstitutionMap<F>,
 ) {
+    if subs.is_empty() || !constraint_references_any_substitution_var(constraint, subs) {
+        return;
+    }
     apply_substitution_in_place(&mut constraint.a, subs);
     apply_substitution_in_place(&mut constraint.b, subs);
     apply_substitution_in_place(&mut constraint.c, subs);
