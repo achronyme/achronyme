@@ -24,10 +24,10 @@ use std::collections::HashSet;
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
-use memory::FieldBackend;
+use memory::{FieldBackend, FieldElement};
 
 use super::predicates::{
-    compute_variable_frequency, count_nonlinear_constraints, is_linear, lc_fingerprint,
+    compute_variable_frequency, count_nonlinear_constraints, lc_fingerprint,
     retain_nontrivial_constraints,
 };
 use super::substitution::{
@@ -35,10 +35,64 @@ use super::substitution::{
     solve_for_variable_simplified, InvCache,
 };
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
-use crate::r1cs::Constraint;
+use crate::r1cs::{Constraint, LinearCombination};
 
 const PARALLEL_DEDUP_THRESHOLD: usize = 512;
 const PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD: usize = 512;
+
+fn linear_constraint_combined<F: FieldBackend>(
+    constraint: &Constraint<F>,
+) -> Option<LinearCombination<F>> {
+    if let Some(k) = constraint.a.constant_value() {
+        if !k.is_zero() {
+            return Some(combine_linear_parts(&constraint.b, &constraint.c, k));
+        }
+
+        let mut combined = constraint.c.clone();
+        combined.simplify_in_place();
+        return if combined.terms().is_empty() {
+            None
+        } else {
+            Some(combined)
+        };
+    }
+
+    if let Some(k) = constraint.b.constant_value() {
+        if !k.is_zero() {
+            return Some(combine_linear_parts(&constraint.a, &constraint.c, k));
+        }
+
+        let mut combined = constraint.c.clone();
+        combined.simplify_in_place();
+        return if combined.terms().is_empty() {
+            None
+        } else {
+            Some(combined)
+        };
+    }
+
+    None
+}
+
+fn combine_linear_parts<F: FieldBackend>(
+    other: &LinearCombination<F>,
+    c: &LinearCombination<F>,
+    k: FieldElement<F>,
+) -> LinearCombination<F> {
+    let mut combined = LinearCombination::zero();
+    combined
+        .terms
+        .reserve(c.terms().len() + other.terms().len());
+    for (var, coeff) in c.terms() {
+        combined.add_term(*var, *coeff);
+    }
+    let neg_k = k.neg();
+    for (var, coeff) in other.terms() {
+        combined.add_term(*var, coeff.mul(&neg_k));
+    }
+    combined.simplify_in_place();
+    combined
+}
 
 /// Run greedy iterative linear constraint elimination to fixpoint.
 ///
@@ -118,11 +172,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // EscalarMulAny(254) where ~3 000 vars are eliminated in a single
         // round, that dominated O1 runtime.
         for (idx, constraint) in constraints.iter().enumerate() {
-            if let Some((k, other_lc, c_lc)) = is_linear(constraint) {
-                // Constraint encodes: k * other_lc = c_lc
-                // i.e., c_lc - k * other_lc = 0
-                let combined = (c_lc - (other_lc * k)).simplify();
-
+            if let Some(combined) = linear_constraint_combined(constraint) {
                 if let Some((var, expr)) = solve_for_variable_simplified(
                     &combined,
                     &round_protected,
