@@ -34,6 +34,7 @@ use super::substitution::{
     apply_substitution_in_place, apply_substitution_to_constraint_in_place,
     solve_for_variable_simplified, InvCache,
 };
+use super::timing::O1Timings;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
 use crate::r1cs::{Constraint, LinearCombination};
 
@@ -139,6 +140,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
     let mut rounds = 0usize;
     let mut round_details: Vec<(usize, usize)> = Vec::new();
     let mut total_trivial_removed = 0usize;
+    let mut timings = O1Timings::from_env();
     // Memoize pivot inversions across all rounds. With ≥93 % duplicate-rate
     // observed on every workload measured (99.98 % on SHA-256 message-block
     // bit operations), the working set stays in the low hundreds and the
@@ -149,7 +151,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         rounds += 1;
 
         // Compute variable frequency for this round's heuristic
-        let var_freq = compute_variable_frequency(constraints);
+        let var_freq = timings.time(0, || compute_variable_frequency(constraints));
 
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut remove_mask = vec![false; constraints.len()];
@@ -162,7 +164,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         }
 
         // Count non-linear constraints before this round (for instrumentation)
-        let nonlinear_before = count_nonlinear_constraints(constraints);
+        let nonlinear_before = timings.time(1, || count_nonlinear_constraints(constraints));
 
         // `round_protected` is mutated in place as new substitutions are
         // claimed: once a variable is chosen this round, no later constraint
@@ -171,21 +173,23 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // in the number of claimed variables — for circuits like
         // EscalarMulAny(254) where ~3 000 vars are eliminated in a single
         // round, that dominated O1 runtime.
-        for (idx, constraint) in constraints.iter().enumerate() {
-            if let Some(combined) = linear_constraint_combined(constraint) {
-                if let Some((var, expr)) = solve_for_variable_simplified(
-                    &combined,
-                    &round_protected,
-                    &var_freq,
-                    &mut inv_cache,
-                ) {
-                    round_protected.insert(var.index());
-                    round_subs.insert(var.index(), expr);
-                    remove_mask[idx] = true;
-                    linear_eliminated += 1;
+        timings.time(2, || {
+            for (idx, constraint) in constraints.iter().enumerate() {
+                if let Some(combined) = linear_constraint_combined(constraint) {
+                    if let Some((var, expr)) = solve_for_variable_simplified(
+                        &combined,
+                        &round_protected,
+                        &var_freq,
+                        &mut inv_cache,
+                    ) {
+                        round_protected.insert(var.index());
+                        round_subs.insert(var.index(), expr);
+                        remove_mask[idx] = true;
+                        linear_eliminated += 1;
+                    }
                 }
             }
-        }
+        });
 
         if round_subs.is_empty() {
             rounds -= 1; // Don't count empty round
@@ -197,37 +201,41 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // we avoid allocating a fresh Vec<Constraint> per round.
         let n = constraints.len();
         if n >= PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD {
-            constraints
-                .par_iter_mut()
-                .zip(remove_mask.par_iter())
-                .for_each(|(constraint, remove)| {
-                    if !*remove {
-                        apply_substitution_to_constraint_in_place(constraint, &round_subs);
-                    }
-                });
+            timings.time(3, || {
+                constraints
+                    .par_iter_mut()
+                    .zip(remove_mask.par_iter())
+                    .for_each(|(constraint, remove)| {
+                        if !*remove {
+                            apply_substitution_to_constraint_in_place(constraint, &round_subs);
+                        }
+                    });
+            });
         }
 
-        let mut write = 0usize;
-        for (read, remove) in remove_mask.into_iter().enumerate() {
-            if remove {
-                continue;
+        timings.time(4, || {
+            let mut write = 0usize;
+            for (read, remove) in remove_mask.into_iter().enumerate() {
+                if remove {
+                    continue;
+                }
+                if write != read {
+                    constraints.swap(write, read);
+                }
+                if n < PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD {
+                    apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
+                }
+                write += 1;
             }
-            if write != read {
-                constraints.swap(write, read);
-            }
-            if n < PARALLEL_GREEDY_SUBSTITUTION_THRESHOLD {
-                apply_substitution_to_constraint_in_place(&mut constraints[write], &round_subs);
-            }
-            write += 1;
-        }
-        constraints.truncate(write);
+            constraints.truncate(write);
+        });
 
         // Remove trivially-satisfied constraints (0*B=0, k1*k2=k3)
-        let trivial_this_round = retain_nontrivial_constraints(constraints);
+        let trivial_this_round = timings.time(5, || retain_nontrivial_constraints(constraints));
         total_trivial_removed += trivial_this_round;
 
         // Count how many non-linear constraints became linear after substitution
-        let nonlinear_after = count_nonlinear_constraints(constraints);
+        let nonlinear_after = timings.time(6, || count_nonlinear_constraints(constraints));
         let newly_linear = nonlinear_before.saturating_sub(nonlinear_after + linear_eliminated);
 
         round_details.push((linear_eliminated, newly_linear));
@@ -235,21 +243,23 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         // Compose with previous substitutions: apply new subs to old
         // expressions in place. Avoids the prior allocation of a fresh
         // LC per substitution-map entry per round.
-        for expr in all_subs.values_mut() {
-            apply_substitution_in_place(expr, &round_subs);
-        }
-        all_subs.extend(round_subs);
+        timings.time(7, || {
+            for expr in all_subs.values_mut() {
+                apply_substitution_in_place(expr, &round_subs);
+            }
+            all_subs.extend(round_subs);
+        });
     }
 
     // Step 2: Remove duplicate non-linear constraints.
     // After variable substitution, constraints from different template instances
     // (wired via AssertEq) can become identical. Deduplicate by hashing.
     let before_dedup = constraints.len();
-    deduplicate_constraints(constraints);
+    timings.time(8, || deduplicate_constraints(constraints));
     let duplicates_removed = before_dedup - constraints.len();
 
     // Step 3: Final trivial constraint removal (post-dedup may expose more).
-    total_trivial_removed += retain_nontrivial_constraints(constraints);
+    total_trivial_removed += timings.time(9, || retain_nontrivial_constraints(constraints));
 
     let result = R1CSOptimizeResult {
         constraints_before,
@@ -260,6 +270,34 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         rounds,
         round_details,
     };
+
+    if timings.enabled() {
+        eprintln!(
+            "[O1-fallback] constraints={} -> {} rounds={} eliminated={} dedup={} trivial={}",
+            result.constraints_before,
+            result.constraints_after,
+            result.rounds,
+            result.variables_eliminated,
+            result.duplicates_removed,
+            result.trivial_removed,
+        );
+    }
+    timings.print(
+        "O1-fallback",
+        &[
+            "frequency",
+            "count before",
+            "scan solve",
+            "parallel subst",
+            "compact subst",
+            "trivial",
+            "count after",
+            "compose subs",
+            "dedup",
+            "final trivial",
+            "unused",
+        ],
+    );
 
     (all_subs, result)
 }
