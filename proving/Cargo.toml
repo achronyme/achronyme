@@ -20,6 +20,7 @@ groth16-core = [
     "dep:ark-std",
     "dep:ark-serialize",
     "dep:ark-ff",
+    "ark-ff/asm",
     "dep:ark-ec",
     "dep:ark-snark",
     "dep:sha2",
@@ -32,8 +33,14 @@ groth16-bn254 = ["groth16-core", "dep:ark-bn254"]
 # Groth16 on BLS12-381 (Zcash/Filecoin-compatible)
 groth16-bls12-381 = ["groth16-core", "dep:ark-bls12-381"]
 
+# Explicit alias for arkworks finite-field assembly helpers.
+groth16-asm = ["groth16-core"]
+
 # PlonK/KZG on BN254 via halo2
 plonk-bn254 = ["dep:halo2_proofs", "dep:rand"]
+
+# Local benchmark harnesses.
+prover-bench = ["groth16-bn254"]
 
 [dependencies]
 # Achronyme crates
@@ -63,3 +70,7 @@ ark-bls12-381 = { version = "0.5", optional = true }
 # PlonK/halo2 (activated by plonk-bn254)
 halo2_proofs = { git = "https://github.com/privacy-scaling-explorations/halo2", tag = "v2023_04_20", features = ["circuit-params"], optional = true }
 rand = { version = "0.8", optional = true }
+
+[[example]]
+name = "groth16_synthetic_timing"
+required-features = ["prover-bench"]
