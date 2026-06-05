@@ -26,7 +26,9 @@ use rustc_hash::FxHashMap;
 
 use memory::FieldBackend;
 
-use super::linear_combine::{linear_constraint_combined, linear_constraint_combined_profiled};
+use super::linear_combine::{
+    linear_constraint_combined, linear_constraint_combined_profiled, CombineProfile,
+};
 use super::predicates::{
     compute_variable_frequency, count_nonlinear_constraints, lc_fingerprint,
     retain_nontrivial_constraints,
@@ -56,6 +58,13 @@ struct GreedyScanStats {
     pivot_coeff_one: usize,
     pivot_coeff_neg_one: usize,
     pivot_coeff_other: usize,
+    combine_c_only: usize,
+    combine_sorted_inputs: usize,
+    combine_sorted_path_eligible: usize,
+    combine_sorted_disjoint: usize,
+    combine_small_sorted_disjoint: usize,
+    combine_cross_overlaps: usize,
+    combine_max_cross_overlaps: usize,
 }
 
 impl GreedyScanStats {
@@ -65,14 +74,32 @@ impl GreedyScanStats {
 
     fn record_linear_candidate<F: FieldBackend>(
         &mut self,
-        raw_terms: usize,
+        profile: CombineProfile,
         combined: &LinearCombination<F>,
     ) {
         let terms = combined.terms().len();
         self.linear_candidates += 1;
-        self.raw_combined_terms += raw_terms;
+        self.raw_combined_terms += profile.raw_terms;
         self.combined_terms += terms;
         self.max_combined_terms = self.max_combined_terms.max(terms);
+        if profile.c_only {
+            self.combine_c_only += 1;
+        }
+        if profile.sorted_inputs {
+            self.combine_sorted_inputs += 1;
+        }
+        if profile.sorted_path_eligible {
+            self.combine_sorted_path_eligible += 1;
+        }
+        if profile.sorted_disjoint {
+            self.combine_sorted_disjoint += 1;
+        }
+        if profile.small_sorted_disjoint {
+            self.combine_small_sorted_disjoint += 1;
+        }
+        self.combine_cross_overlaps += profile.cross_overlaps;
+        self.combine_max_cross_overlaps =
+            self.combine_max_cross_overlaps.max(profile.cross_overlaps);
     }
 
     fn record_solved(&mut self) {
@@ -120,7 +147,7 @@ impl GreedyScanStats {
             self.solve_result_terms as f64 / self.solved as f64
         };
         eprintln!(
-            "[O1-fallback] scan stats rows={} linear={} solved={} raw_combined_terms={} combined_terms={} avg_raw_terms={:.2} avg_combined_terms={:.2} simplified_ratio={:.3} max_combined_terms={} avg_solve_candidate_terms={:.2} avg_solve_result_terms={:.2} max_solve_result_terms={} pivot_coeff_one={} pivot_coeff_neg_one={} pivot_coeff_other={}",
+            "[O1-fallback] scan stats rows={} linear={} solved={} raw_combined_terms={} combined_terms={} avg_raw_terms={:.2} avg_combined_terms={:.2} simplified_ratio={:.3} max_combined_terms={} avg_solve_candidate_terms={:.2} avg_solve_result_terms={:.2} max_solve_result_terms={} pivot_coeff_one={} pivot_coeff_neg_one={} pivot_coeff_other={} combine_c_only={} combine_sorted_inputs={} combine_sorted_path_eligible={} combine_sorted_disjoint={} combine_small_sorted_disjoint={} combine_cross_overlaps={} combine_max_cross_overlaps={}",
             self.rows_seen,
             self.linear_candidates,
             self.solved,
@@ -136,6 +163,13 @@ impl GreedyScanStats {
             self.pivot_coeff_one,
             self.pivot_coeff_neg_one,
             self.pivot_coeff_other,
+            self.combine_c_only,
+            self.combine_sorted_inputs,
+            self.combine_sorted_path_eligible,
+            self.combine_sorted_disjoint,
+            self.combine_small_sorted_disjoint,
+            self.combine_cross_overlaps,
+            self.combine_max_cross_overlaps,
         );
     }
 }
@@ -228,7 +262,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
                 stats.record_round_rows(constraints.len());
                 for (idx, constraint) in constraints.iter().enumerate() {
                     if let Some(candidate) = linear_constraint_combined_profiled(constraint) {
-                        stats.record_linear_candidate(candidate.raw_terms, &candidate.combined);
+                        stats.record_linear_candidate(candidate.profile, &candidate.combined);
                         if let Some((var, expr, profile)) = solve_for_variable_simplified_profiled(
                             &candidate.combined,
                             &round_protected,
