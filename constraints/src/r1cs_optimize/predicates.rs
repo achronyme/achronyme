@@ -19,7 +19,7 @@
 //! from `tests.rs`.
 
 use rayon::prelude::*;
-use rustc_hash::{FxHashMap, FxHashSet};
+use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
@@ -97,22 +97,27 @@ fn compute_variable_frequency_sequential<F: FieldBackend>(
     constraints: &[Constraint<F>],
 ) -> FxHashMap<usize, usize> {
     let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
+    let mut vars_in_constraint = Vec::new();
     for constraint in constraints {
-        let mut vars_in_constraint: FxHashSet<usize> = FxHashSet::default();
-        for (var, _) in &constraint.a.terms {
-            vars_in_constraint.insert(var.index());
-        }
-        for (var, _) in &constraint.b.terms {
-            vars_in_constraint.insert(var.index());
-        }
-        for (var, _) in &constraint.c.terms {
-            vars_in_constraint.insert(var.index());
-        }
-        for var_idx in vars_in_constraint {
-            *freq.entry(var_idx).or_insert(0) += 1;
-        }
+        record_constraint_variable_frequency(&mut freq, constraint, &mut vars_in_constraint);
     }
     freq
+}
+
+fn record_constraint_variable_frequency<F: FieldBackend>(
+    freq: &mut FxHashMap<usize, usize>,
+    constraint: &Constraint<F>,
+    vars_in_constraint: &mut Vec<usize>,
+) {
+    vars_in_constraint.clear();
+    vars_in_constraint.extend(constraint.a.terms.iter().map(|(var, _)| var.index()));
+    vars_in_constraint.extend(constraint.b.terms.iter().map(|(var, _)| var.index()));
+    vars_in_constraint.extend(constraint.c.terms.iter().map(|(var, _)| var.index()));
+    vars_in_constraint.sort_unstable();
+    vars_in_constraint.dedup();
+    for &var_idx in vars_in_constraint.iter() {
+        *freq.entry(var_idx).or_insert(0) += 1;
+    }
 }
 
 /// Check if a constraint is trivially satisfied regardless of witness values.
@@ -212,4 +217,42 @@ pub(super) fn lc_fingerprint<F: FieldBackend>(lc: &LinearCombination<F>) -> Vec<
         }
     }
     bytes
+}
+
+#[cfg(test)]
+mod tests {
+    use memory::{Bn254Fr, FieldElement};
+
+    use super::*;
+    use crate::r1cs::Variable;
+
+    fn lc(indices: &[usize]) -> LinearCombination<Bn254Fr> {
+        let mut lc = LinearCombination::zero();
+        for &idx in indices {
+            lc.add_term(Variable(idx), FieldElement::one());
+        }
+        lc
+    }
+
+    #[test]
+    fn variable_frequency_counts_each_constraint_once() {
+        let constraints = vec![
+            Constraint {
+                a: lc(&[1, 1]),
+                b: lc(&[1, 2]),
+                c: lc(&[2, 0]),
+            },
+            Constraint {
+                a: lc(&[1]),
+                b: LinearCombination::zero(),
+                c: LinearCombination::zero(),
+            },
+        ];
+
+        let freq = compute_variable_frequency(&constraints);
+
+        assert_eq!(freq.get(&0), Some(&1));
+        assert_eq!(freq.get(&1), Some(&2));
+        assert_eq!(freq.get(&2), Some(&1));
+    }
 }
