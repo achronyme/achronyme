@@ -231,9 +231,24 @@ impl DefaultProveHandler {
         // The explicit `cs.verify` below validates the witness, so the costly
         // up-front IR evaluation inside `compile_ir_with_witness` is redundant.
         r1cs.set_skip_eval_validation(true);
-        let witness = r1cs
+        let mut witness = r1cs
             .compile_ir_with_witness(program, inputs)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;
+
+        // Finalize the R1CS before proving. Linear-constraint elimination
+        // shrinks the system the proof is generated over — a smaller proving
+        // key and faster setup / proof generation — without changing the
+        // statement. Wires eliminated by substitution are re-derived from the
+        // substitution map, then the optimized system is verified. This mirrors
+        // the R1CS serialize path, which already finalizes before emitting.
+        let _ = r1cs.optimize_r1cs();
+        if let Some(subs) = &r1cs.substitution_map {
+            for (var_idx, lc) in subs {
+                witness[*var_idx] = lc
+                    .evaluate(&witness)
+                    .map_err(|e| ProveError::Compilation(format!("witness fixup failed: {e}")))?;
+            }
+        }
 
         r1cs.cs
             .verify(&witness)

@@ -287,6 +287,106 @@ assert_eq(a * b, c)
 }
 
 // ============================================================================
+// Optimized-R1CS proving roundtrip
+// ============================================================================
+
+/// The prove path finalizes the R1CS (linear-constraint elimination) before
+/// generating the proof, so the proof is produced over the *optimized* system,
+/// not the raw emitted one. This circuit exercises both risk surfaces:
+///   - `s` is a **public input in a linear constraint** (`a + b = s`), where
+///     elimination could substitute it away — `optimize_r1cs` must pin it so
+///     the public value survives;
+///   - the multi-term multiply `(a + b) * b` materializes a linear constraint
+///     that `optimize_r1cs` *does* eliminate, re-deriving its witness wire.
+/// Proving over the result must verify AND preserve the public values — a
+/// proof that verifies but with a corrupted public value would still report
+/// `valid`, so the public outputs are asserted explicitly.
+#[test]
+fn e2e_groth16_optimized_r1cs_roundtrip_verifies() {
+    let source = r#"
+witness a
+witness b
+public s
+public out
+assert_eq(a + b, s)
+assert_eq((a + b) * b, out)
+"#;
+    // a=3, b=4 → s=7, out=(3+4)*4=28
+    let input_map: HashMap<String, FieldElement> = [("a", 3u64), ("b", 4), ("s", 7), ("out", 28)]
+        .iter()
+        .map(|(k, v)| (k.to_string(), fe(*v)))
+        .collect();
+
+    let (_, _, mut program) =
+        ir::IrLowering::lower_self_contained(source).expect("lower_self_contained failed");
+    ir::passes::optimize(&mut program);
+    let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
+
+    let mut compiler = R1CSCompiler::new();
+    compiler.set_proven_boolean(proven);
+    let mut witness = compiler
+        .compile_ir_with_witness(&program, &input_map)
+        .expect("compile_ir_with_witness failed");
+    let before = compiler.cs.num_constraints();
+
+    // Finalize exactly as the prove path does: optimize, then re-derive the
+    // substituted-away witness wires before verifying the optimized system.
+    let _ = compiler.optimize_r1cs();
+    if let Some(subs) = &compiler.substitution_map {
+        for (var_idx, lc) in subs {
+            witness[*var_idx] = lc.evaluate(&witness).expect("witness fixup");
+        }
+    }
+    let after = compiler.cs.num_constraints();
+    assert!(
+        after < before,
+        "optimize_r1cs should eliminate linear constraints: {before} -> {after}"
+    );
+    compiler
+        .cs
+        .verify(&witness)
+        .expect("optimized witness must verify");
+
+    let cache_dir = tempfile::tempdir().unwrap();
+    let result = proving::groth16_bn254::generate_proof(&compiler.cs, &witness, cache_dir.path())
+        .expect("generate_proof over optimized system failed");
+    match result {
+        ProveResult::Proof {
+            proof_json,
+            public_json,
+            vkey_json,
+        } => {
+            let valid = proving::groth16_bn254::verify_proof_from_json(
+                &proof_json,
+                &public_json,
+                &vkey_json,
+            )
+            .expect("verify_proof_from_json failed");
+            assert!(valid, "proof over the optimized system must verify");
+
+            // The public inputs must survive optimization with correct values:
+            // `s` (in a linear constraint) must not be eliminated.
+            let public: Vec<String> =
+                serde_json::from_str(&public_json).expect("public_json is not valid JSON");
+            assert_eq!(
+                public.len(),
+                2,
+                "both public inputs must be present: {public:?}"
+            );
+            assert!(
+                public.contains(&"7".to_string()),
+                "public `s` must survive as 7: {public:?}"
+            );
+            assert!(
+                public.contains(&"28".to_string()),
+                "public `out` must survive as 28: {public:?}"
+            );
+        }
+        ProveResult::VerifiedOnly => panic!("expected Proof"),
+    }
+}
+
+// ============================================================================
 // Cache reuse test
 // ============================================================================
 
