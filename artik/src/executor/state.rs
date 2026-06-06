@@ -81,6 +81,12 @@ pub(super) struct State<F: FieldBackend> {
     /// every [`Instr::AllocArray`] and checked against
     /// [`MAX_ARRAY_MEMORY_CELLS`] before the allocation is accepted.
     pub(super) array_cells_used: u64,
+    /// Memoized field-element form of each const-pool entry, indexed by
+    /// `const_id`. `None` until the first `PushConst` for that id
+    /// decodes it. The pool is program-global, so this cache is shared
+    /// across every subprogram frame and a constant reused across loop
+    /// iterations or callees pays the byte→Montgomery decode once.
+    const_cache: Vec<Option<FieldElement<F>>>,
 }
 
 impl<F: FieldBackend> State<F> {
@@ -121,6 +127,7 @@ impl<F: FieldBackend> State<F> {
             arrays: Vec::new(),
             offset_maps,
             array_cells_used: 0,
+            const_cache: vec![None; prog.const_pool.len()],
         })
     }
 
@@ -197,6 +204,37 @@ impl<F: FieldBackend> State<F> {
                 Err(ArtikError::RegisterOutOfRange { reg, frame_size })
             }
         }
+    }
+
+    /// Resolve a const-pool entry to its field element, decoding on
+    /// first use and caching the result for the rest of the run. The
+    /// byte→Montgomery decode (`decode_const_fe`) is the single most
+    /// repeated field operation in a `PushConst`-heavy program, so
+    /// memoizing it removes one Montgomery multiply per repeated push.
+    ///
+    /// Decode stays lazy rather than eager at construction: the
+    /// validator bounds only each entry's byte length, not its field
+    /// range, so an out-of-range entry that no executed `PushConst`
+    /// reaches must remain unseen rather than trapping on a dead value.
+    pub(super) fn const_at(
+        &mut self,
+        prog: &Program,
+        const_id: u32,
+    ) -> Result<FieldElement<F>, ArtikError> {
+        let idx = const_id as usize;
+        if let Some(Some(fe)) = self.const_cache.get(idx) {
+            return Ok(*fe);
+        }
+        let entry = prog
+            .const_pool
+            .get(idx)
+            .ok_or(ArtikError::InvalidConstId { const_id })?;
+        let fe = super::canonical::decode_const_fe::<F>(&entry.bytes)
+            .ok_or(ArtikError::BadConstBytes { const_id })?;
+        if let Some(slot) = self.const_cache.get_mut(idx) {
+            *slot = Some(fe);
+        }
+        Ok(fe)
     }
 
     pub(super) fn resolve_jump(&self, target: u32) -> Result<u32, ArtikError> {

@@ -51,6 +51,37 @@ fn field_add_sub_mul_div() {
 }
 
 #[test]
+fn repeated_push_of_one_const_id_yields_identical_value() {
+    // A const-pool entry is decoded on its first `PushConst` and the
+    // field element is memoized for the rest of the run, so a second
+    // push of the same id must return the same correct value — not a
+    // zeroed or stale cache slot. Push const 7 into two registers, then
+    // assert both carry 7 and their product is 49.
+    let pool = vec![FieldConstEntry { bytes: vec![7] }];
+    let body = vec![
+        Instr::PushConst {
+            dst: 0,
+            const_id: 0,
+        },
+        Instr::PushConst {
+            dst: 1,
+            const_id: 0,
+        },
+        Instr::FMul { dst: 2, a: 0, b: 1 },
+        Instr::WriteWitness { slot_id: 0, src: 0 },
+        Instr::WriteWitness { slot_id: 1, src: 1 },
+        Instr::WriteWitness { slot_id: 2, src: 2 },
+        Instr::Return { srcs: Vec::new() },
+    ];
+    let prog = roundtrip(Program::new(FieldFamily::BnLike256, 3, pool, body));
+    let mut slots = [FE::zero(); 3];
+    run_bn(&prog, &[], &mut slots).unwrap();
+    assert_eq!(slots[0], FE::from_u64(7));
+    assert_eq!(slots[1], FE::from_u64(7));
+    assert_eq!(slots[2], FE::from_u64(49));
+}
+
+#[test]
 fn field_div_by_zero_traps() {
     let pool = vec![FieldConstEntry { bytes: vec![0] }];
     let body = vec![

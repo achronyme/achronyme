@@ -2,7 +2,7 @@ use super::{
     arrays::{load_array, store_array},
     canonical::{
         canonical_rep_and, canonical_rep_div, canonical_rep_from_bytes, canonical_rep_rem,
-        canonical_rep_shr, decode_const_fe,
+        canonical_rep_shr,
     },
     int_ops::apply_bin,
     state::{ArrayBuf, Cell, Flow, State},
@@ -42,15 +42,7 @@ pub(super) fn step<F: FieldBackend>(
 
         // ── Constants & signals ────────────────────────────────────
         Instr::PushConst { dst, const_id } => {
-            let entry =
-                prog.const_pool
-                    .get(*const_id as usize)
-                    .ok_or(ArtikError::InvalidConstId {
-                        const_id: *const_id,
-                    })?;
-            let fe = decode_const_fe::<F>(&entry.bytes).ok_or(ArtikError::BadConstBytes {
-                const_id: *const_id,
-            })?;
+            let fe = state.const_at(prog, *const_id)?;
             state.write(*dst, Cell::Field(fe))?;
             Ok(Flow::Next)
         }
