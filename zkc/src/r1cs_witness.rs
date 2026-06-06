@@ -81,7 +81,11 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             witness[var.index()] = *val;
         }
 
-        // 3b. Replay witness ops (which may have been filtered by optimize_r1cs)
+        // 3b. Replay witness ops (which may have been filtered by optimize_r1cs).
+        // Take the Artik cache out for the duration of the replay so each
+        // `ArtikCall` can borrow it mutably without conflicting with the
+        // immutable borrow of `witness_ops`; it is restored afterward.
+        let mut artik_memo = self.artik_memo.take();
         for op in &self.witness_ops {
             match op {
                 WitnessOp::AssignLC { target, lc } => {
@@ -177,11 +181,13 @@ impl<F: FieldBackend> R1CSCompiler<F> {
                         inputs,
                         program_bytes,
                         &mut witness,
+                        artik_memo.as_mut(),
                     )
                     .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
                 }
             }
         }
+        self.artik_memo = artik_memo;
 
         // 3c. Post-fixup: fill substituted-away wires from substitution map.
         // After optimize_r1cs(), some wires are defined by LCs of other wires.

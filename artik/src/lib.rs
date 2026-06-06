@@ -47,6 +47,7 @@ pub mod error;
 pub mod executor;
 pub mod header;
 pub mod ir;
+pub mod memo;
 pub mod program;
 pub mod validate;
 
@@ -55,6 +56,7 @@ pub use error::ArtikError;
 pub use executor::{execute, execute_with_budget, ArtikContext, DEFAULT_BUDGET};
 pub use header::ArtikHeader;
 pub use ir::{ElemT, Instr, IntBinOp, IntW, OpTag, Reg, RegType};
+pub use memo::{execute_into, ArtikMemo};
 pub use program::{FieldConstEntry, Program, Subprogram};
 
 /// Disambiguating aliases. `Program` and `ProgramBuilder` collide

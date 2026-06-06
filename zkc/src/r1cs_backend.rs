@@ -169,4 +169,16 @@ pub struct R1CSCompiler<F: FieldBackend = Bn254Fr> {
     /// alias distinct programs to the same `Arc` and corrupt witness
     /// execution.
     artik_program_intern: Vec<(u64, Arc<[u8]>)>,
+    /// Optional cache of Artik witness-program executions, shared with the
+    /// off-circuit hint walk of the same proof.
+    ///
+    /// A circom big-integer `<--` hint is lifted into an Artik program that
+    /// is executed twice per proof: once by the hint walk (which produces
+    /// the named advice values) and once by the witness fill here. When a
+    /// caller pre-populates this cache during the hint walk and installs it
+    /// before `compile_ir_with_witness`, the fill's identical executions
+    /// become cache hits. Content-addressed, so the produced witness is
+    /// byte-identical regardless of hit rate. Default `None` — leaving it
+    /// unset reproduces the un-cached witness exactly.
+    pub(crate) artik_memo: Option<artik::ArtikMemo<F>>,
 }

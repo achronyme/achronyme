@@ -33,6 +33,7 @@ proving = { path = "../proving" }
 memory = { path = "../memory" }
 akron = { path = "../akron" }
 akronc = { path = "../akronc" }
+artik = { path = "../artik" }
 zkc = { path = "../zkc" }
 constraints = { path = "../constraints" }
 diagnostics = { path = "../diagnostics" }

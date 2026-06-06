@@ -680,6 +680,7 @@ dependencies = [
  "akron",
  "akronc",
  "anyhow",
+ "artik",
  "byteorder",
  "circom",
  "clap",

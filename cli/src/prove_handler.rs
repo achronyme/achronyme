@@ -157,7 +157,18 @@ impl ProveHandler for DefaultProveHandler {
         //     caller-supplied values. The returned map supersets `inputs`; we merge it
         //     back, keeping existing keys authoritative so explicit public / witness
         //     values always win over hint-computed ones.
-        match circom::witness::compute_witness_hints::<memory::Bn254Fr>(&prove_ir, &inputs) {
+        //     The same big-integer `<--` hints are lifted into Artik programs
+        //     that the R1CS witness fill re-executes. Routing this hint walk
+        //     through a shared `ArtikMemo` lets the fill reuse these results
+        //     instead of recomputing them; the cache is content-addressed, so
+        //     the witness is byte-identical with or without it.
+        let mut artik_memo = artik::ArtikMemo::<memory::Bn254Fr>::new();
+        match circom::witness::compute_witness_hints_with_captures_memo::<memory::Bn254Fr>(
+            &prove_ir,
+            &inputs,
+            &HashMap::new(),
+            &mut artik_memo,
+        ) {
             Ok(hint_env) => {
                 for (name, fe) in hint_env {
                     inputs.entry(name).or_insert(fe);
@@ -171,7 +182,7 @@ impl ProveHandler for DefaultProveHandler {
         }
 
         match self.backend {
-            ProveBackend::R1cs => self.prove_r1cs(&program, &inputs),
+            ProveBackend::R1cs => self.prove_r1cs(&program, &inputs, artik_memo),
             ProveBackend::Plonkish => self.prove_plonkish(&program, &inputs),
         }
     }
@@ -223,6 +234,7 @@ impl DefaultProveHandler {
         &self,
         program: &ir::IrProgram,
         inputs: &HashMap<String, FieldElement>,
+        artik_memo: artik::ArtikMemo<memory::Bn254Fr>,
     ) -> Result<ProveResult, ProveError> {
         let mut r1cs = R1CSCompiler::new();
         r1cs.prime_id = self.prime_id;
@@ -231,6 +243,10 @@ impl DefaultProveHandler {
         // The explicit `cs.verify` below validates the witness, so the costly
         // up-front IR evaluation inside `compile_ir_with_witness` is redundant.
         r1cs.set_skip_eval_validation(true);
+        // Reuse the Artik executions the hint walk already performed: the
+        // witness fill below re-runs the same big-integer programs, and the
+        // shared cache turns those into hits.
+        r1cs.set_artik_memo(artik_memo);
         let mut witness = r1cs
             .compile_ir_with_witness(program, inputs)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;

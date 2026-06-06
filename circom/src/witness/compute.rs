@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use ir_forge::types::mangle::mangle_nodes;
 use ir_forge::types::{CircuitExpr, CircuitNode, ForRange, ProveIR};
-use memory::{FieldBackend, FieldElement, FieldFamily, PrimeId};
+use memory::{FieldBackend, FieldElement};
 
 use super::error::WitnessError;
 use super::eval::{eval_const_expr_u64, eval_hint, eval_hint_u64};
@@ -18,7 +18,7 @@ pub fn compute_witness_hints<F: FieldBackend>(
     prove_ir: &ProveIR,
     inputs: &HashMap<String, FieldElement<F>>,
 ) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
-    compute_witness_hints_with_captures(prove_ir, inputs, &HashMap::new())
+    compute_witness_hints_inner(prove_ir, inputs, &HashMap::new(), None)
 }
 
 /// Compute witness hints with capture values (template parameters).
@@ -32,6 +32,32 @@ pub fn compute_witness_hints_with_captures<F: FieldBackend>(
     inputs: &HashMap<String, FieldElement<F>>,
     captures: &HashMap<String, u64>,
 ) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
+    compute_witness_hints_inner(prove_ir, inputs, captures, None)
+}
+
+/// Same as [`compute_witness_hints_with_captures`], but routes every Artik
+/// `WitnessCall` through `memo`.
+///
+/// A circom big-integer `<--` hint is lifted into an Artik program that is
+/// also re-executed by the R1CS witness fill of the same proof. Running
+/// this hint walk first with a shared `memo` turns each of the fill's
+/// identical executions into a cache hit. The returned env — and every
+/// hint value in it — is identical to the non-memoized path.
+pub fn compute_witness_hints_with_captures_memo<F: FieldBackend>(
+    prove_ir: &ProveIR,
+    inputs: &HashMap<String, FieldElement<F>>,
+    captures: &HashMap<String, u64>,
+    memo: &mut artik::ArtikMemo<F>,
+) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
+    compute_witness_hints_inner(prove_ir, inputs, captures, Some(memo))
+}
+
+fn compute_witness_hints_inner<F: FieldBackend>(
+    prove_ir: &ProveIR,
+    inputs: &HashMap<String, FieldElement<F>>,
+    captures: &HashMap<String, u64>,
+    memo: Option<&mut artik::ArtikMemo<F>>,
+) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
     let mut env: HashMap<String, FieldElement<F>> = inputs.clone();
     // Seed env with capture values so expressions like `1 << n` can
     // evaluate when `n` is a template parameter / capture.
@@ -44,6 +70,7 @@ pub fn compute_witness_hints_with_captures<F: FieldBackend>(
         &mut env,
         captures,
         &prove_ir.component_bodies,
+        memo,
     )?;
     Ok(env)
 }
@@ -53,6 +80,7 @@ fn collect_hints_recursive<F: FieldBackend>(
     env: &mut HashMap<String, FieldElement<F>>,
     captures: &HashMap<String, u64>,
     comp_bodies: &HashMap<String, Vec<CircuitNode>>,
+    mut memo: Option<&mut artik::ArtikMemo<F>>,
 ) -> Result<(), WitnessError> {
     for node in nodes {
         match node {
@@ -102,10 +130,16 @@ fn collect_hints_recursive<F: FieldBackend>(
                 if let (Some(start), Some(end)) = (start, end) {
                     for i in start..end {
                         env.insert(var.clone(), FieldElement::<F>::from_u64(i));
-                        collect_hints_recursive(body, env, captures, comp_bodies)?;
+                        collect_hints_recursive(
+                            body,
+                            env,
+                            captures,
+                            comp_bodies,
+                            memo.as_deref_mut(),
+                        )?;
                     }
                 } else {
-                    collect_hints_recursive(body, env, captures, comp_bodies)?;
+                    collect_hints_recursive(body, env, captures, comp_bodies, memo.as_deref_mut())?;
                 }
             }
             CircuitNode::If {
@@ -116,13 +150,37 @@ fn collect_hints_recursive<F: FieldBackend>(
             } => {
                 if let Some(val) = eval_hint(cond, env) {
                     if val != FieldElement::<F>::zero() {
-                        collect_hints_recursive(then_body, env, captures, comp_bodies)?;
+                        collect_hints_recursive(
+                            then_body,
+                            env,
+                            captures,
+                            comp_bodies,
+                            memo.as_deref_mut(),
+                        )?;
                     } else {
-                        collect_hints_recursive(else_body, env, captures, comp_bodies)?;
+                        collect_hints_recursive(
+                            else_body,
+                            env,
+                            captures,
+                            comp_bodies,
+                            memo.as_deref_mut(),
+                        )?;
                     }
                 } else {
-                    collect_hints_recursive(then_body, env, captures, comp_bodies)?;
-                    collect_hints_recursive(else_body, env, captures, comp_bodies)?;
+                    collect_hints_recursive(
+                        then_body,
+                        env,
+                        captures,
+                        comp_bodies,
+                        memo.as_deref_mut(),
+                    )?;
+                    collect_hints_recursive(
+                        else_body,
+                        env,
+                        captures,
+                        comp_bodies,
+                        memo.as_deref_mut(),
+                    )?;
                 }
             }
             CircuitNode::Assert { expr, message, .. } => {
@@ -163,24 +221,14 @@ fn collect_hints_recursive<F: FieldBackend>(
                     continue;
                 }
 
-                let family = artik_family_for::<F>().ok_or_else(|| WitnessError {
-                    message: format!(
-                        "no Artik field-family binding for backend {:?}",
-                        F::PRIME_ID
-                    ),
-                })?;
-                let program =
-                    artik::bytecode::decode(program_bytes, Some(family)).map_err(|e| {
-                        WitnessError {
-                            message: format!("Artik decode failed: {e:?}"),
-                        }
-                    })?;
-
                 let mut slot_vec: Vec<FieldElement<F>> =
                     vec![FieldElement::<F>::zero(); output_bindings.len()];
-                let mut ctx = artik::ArtikContext::<F>::new(&signal_vec, &mut slot_vec);
-                artik::execute(&program, &mut ctx).map_err(|e| WitnessError {
-                    message: format!("Artik execute failed: {e:?}"),
+                match memo.as_deref_mut() {
+                    Some(m) => m.run(program_bytes, &signal_vec, &mut slot_vec),
+                    None => artik::execute_into(program_bytes, &signal_vec, &mut slot_vec),
+                }
+                .map_err(|e| WitnessError {
+                    message: format!("Artik witness call failed: {e:?}"),
                 })?;
 
                 for (name, val) in output_bindings.iter().zip(slot_vec.iter()) {
@@ -217,7 +265,7 @@ fn collect_hints_recursive<F: FieldBackend>(
                 })?;
                 let subs: HashMap<String, CircuitExpr> = param_subs.iter().cloned().collect();
                 let mangled = mangle_nodes(body, comp_name, &subs);
-                collect_hints_recursive(&mangled, env, captures, comp_bodies)?;
+                collect_hints_recursive(&mangled, env, captures, comp_bodies, memo.as_deref_mut())?;
             }
             // No witness hints to collect — these emit constraints
             // only, declare slots, or are evaluated structurally.
@@ -228,14 +276,4 @@ fn collect_hints_recursive<F: FieldBackend>(
         }
     }
     Ok(())
-}
-
-/// Map the field backend to its Artik header family. Mirrors
-/// `ir::eval::witness_family` (kept local to avoid a `circom → ir`
-/// dependency).
-fn artik_family_for<F: FieldBackend>() -> Option<FieldFamily> {
-    match F::PRIME_ID {
-        PrimeId::Bn254 | PrimeId::Bls12_381 => Some(FieldFamily::BnLike256),
-        _ => None,
-    }
 }

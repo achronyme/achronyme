@@ -61,11 +61,17 @@ fn main() {
 
     let inputs = build_ecdsa_inputs();
 
+    // Share an Artik execution cache between the hint walk and the witness
+    // fill: the lifted big-integer programs run in both passes, so the fill
+    // reuses the hint walk's results instead of re-executing them.
+    let mut artik_memo = artik::ArtikMemo::<Bn254Fr>::new();
+
     let start = Instant::now();
-    let mut all_signals = circom::witness::compute_witness_hints_with_captures(
+    let mut all_signals = circom::witness::compute_witness_hints_with_captures_memo(
         &compile_result.prove_ir,
         &inputs,
         &compile_result.capture_values,
+        &mut artik_memo,
     )
     .unwrap_or_else(|e| panic!("witness hints: {e}"));
     for (name, value) in &fe_captures {
@@ -74,11 +80,12 @@ fn main() {
     eprintln!(
         "witness_hints_ms={:.3} env_len={}",
         elapsed_ms(start),
-        all_signals.len()
+        all_signals.len(),
     );
 
     let start = Instant::now();
     let mut compiler = R1CSCompiler::<Bn254Fr>::new_prover();
+    compiler.set_artik_memo(artik_memo);
     let mut witness = compiler
         .compile_ir_with_witness(&program, &all_signals)
         .unwrap_or_else(|e| panic!("r1cs compile with witness: {e}"));

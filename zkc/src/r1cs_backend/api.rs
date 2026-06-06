@@ -33,7 +33,24 @@ impl<F: FieldBackend> R1CSCompiler<F> {
             range_bounds: HashMap::new(),
             divmod_cache: HashMap::new(),
             artik_program_intern: Vec::new(),
+            artik_memo: None,
         }
+    }
+
+    /// Install an Artik execution cache (typically pre-populated by the
+    /// off-circuit hint walk of the same proof) for the witness fill to
+    /// consult. The fill re-runs the same Artik programs the hint walk
+    /// already ran, so a shared cache turns those re-executions into hits.
+    /// Content-addressed: the produced witness is byte-identical with or
+    /// without it.
+    pub fn set_artik_memo(&mut self, memo: artik::ArtikMemo<F>) {
+        self.artik_memo = Some(memo);
+    }
+
+    /// Take back the Artik execution cache after a witness fill — exposes
+    /// hit/miss counters for diagnostics.
+    pub fn take_artik_memo(&mut self) -> Option<artik::ArtikMemo<F>> {
+        self.artik_memo.take()
     }
 
     /// Skip the early-validation IR evaluation in `compile_ir_with_witness`.

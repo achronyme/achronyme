@@ -202,7 +202,7 @@ impl<F: FieldBackend> WitnessGenerator<F> {
                 inputs,
                 program_bytes,
             } => {
-                dispatch_artik_call::<F>(outputs, inputs, &program_bytes[..], witness)?;
+                dispatch_artik_call::<F>(outputs, inputs, &program_bytes[..], witness, None)?;
             }
         }
         Ok(())

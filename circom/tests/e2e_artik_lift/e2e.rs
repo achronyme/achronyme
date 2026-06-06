@@ -309,6 +309,108 @@ fn fn_witness_lift_e2e_r1cs_artik_dispatch() {
         .expect("R1CS should verify after Artik dispatch");
 }
 
+/// Sharing an [`artik::ArtikMemo`] between the off-circuit hint walk and
+/// the R1CS witness fill must not change the witness — it only avoids
+/// re-running the lifted Artik program the hint walk already executed.
+///
+/// This mirrors the prove path: the hint walk runs first with a shared
+/// cache (populating it), then the witness fill runs with that same cache
+/// installed (consuming it). The fixture's `out <--` value comes from an
+/// Artik `WitnessCall`, so both passes execute the identical program on
+/// identical inputs. The assertions are the wiring guard the boss-fight
+/// (`#[ignore]`'d, ~16 min) cannot provide in the normal gate: the fill
+/// must actually *hit* the shared cache (proving both passes agree on the
+/// content-addressed key), and the resulting witness must be byte-for-byte
+/// identical to the un-cached build.
+#[test]
+fn fn_witness_lift_artik_memo_witness_byte_identical() {
+    use std::collections::{HashMap, HashSet};
+
+    let manifest_dir = Path::new(env!("CARGO_MANIFEST_DIR")).parent().unwrap();
+    let path = manifest_dir.join("test/circomlib/fn_witness_lift_loop_test.circom");
+    let lib_dirs = vec![manifest_dir.join("test/circomlib")];
+
+    let compile_result = circom::compile_file(&path, &lib_dirs)
+        .unwrap_or_else(|e| panic!("memo parity fixture failed to compile: {e}"));
+
+    let captures: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+    let output_names: HashSet<String> = compile_result.output_names.iter().cloned().collect();
+
+    let mut program = compile_result
+        .prove_ir
+        .instantiate_lysis_with_outputs(&captures, &output_names)
+        .expect("instantiate");
+    ir::passes::optimize(&mut program);
+
+    // triangle_sum(n) = 6*n; template enforces `out === 6 * in`.
+    let n = 7u64;
+    let expected_out = 6 * n;
+    let base_inputs = || {
+        let mut m: HashMap<String, FieldElement<Bn254Fr>> = HashMap::new();
+        m.insert("in".to_string(), FieldElement::<Bn254Fr>::from_u64(n));
+        m.insert(
+            "out".to_string(),
+            FieldElement::<Bn254Fr>::from_u64(expected_out),
+        );
+        m
+    };
+
+    // Baseline: no shared cache anywhere.
+    let mut inputs_plain = base_inputs();
+    let hints_plain = circom::witness::compute_witness_hints_with_captures(
+        &compile_result.prove_ir,
+        &inputs_plain,
+        &compile_result.capture_values,
+    )
+    .expect("hint walk (no memo)");
+    for (name, value) in hints_plain {
+        inputs_plain.entry(name).or_insert(value);
+    }
+    let mut rc_plain = R1CSCompiler::<Bn254Fr>::new();
+    let witness_plain = rc_plain
+        .compile_ir_with_witness(&program, &inputs_plain)
+        .expect("witness fill (no memo)");
+
+    // Cached: the hint walk populates a memo, the fill consumes it.
+    let mut memo = artik::ArtikMemo::<Bn254Fr>::new();
+    let mut inputs_memo = base_inputs();
+    let hints_memo = circom::witness::compute_witness_hints_with_captures_memo(
+        &compile_result.prove_ir,
+        &inputs_memo,
+        &compile_result.capture_values,
+        &mut memo,
+    )
+    .expect("hint walk (memo)");
+    for (name, value) in hints_memo {
+        inputs_memo.entry(name).or_insert(value);
+    }
+    assert!(
+        memo.misses > 0,
+        "the hint walk must have executed at least one Artik program"
+    );
+
+    let mut rc_memo = R1CSCompiler::<Bn254Fr>::new();
+    rc_memo.set_artik_memo(memo);
+    let witness_memo = rc_memo
+        .compile_ir_with_witness(&program, &inputs_memo)
+        .expect("witness fill (memo)");
+    let memo = rc_memo.take_artik_memo().expect("memo restored after fill");
+
+    assert!(
+        memo.hits > 0,
+        "the witness fill must reuse the hint walk's Artik executions \
+         (cache hit count was zero — the two passes disagree on the key)"
+    );
+    assert_eq!(
+        witness_plain, witness_memo,
+        "the shared-cache witness must be byte-identical to the un-cached witness"
+    );
+    rc_memo
+        .cs
+        .verify(&witness_memo)
+        .expect("R1CS must verify the cached-fill witness");
+}
+
 /// Fase 2.4 mux extension: nested function calls on the RHS of
 /// assignments inside either arm of a runtime if/else are admissible.
 /// Each call inlines at nested_depth > 0 (return captured via
