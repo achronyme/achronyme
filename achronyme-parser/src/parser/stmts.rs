@@ -53,18 +53,14 @@ impl Parser {
                 })
             }
             TokenKind::Circuit => self.parse_circuit_decl(),
-            TokenKind::Prove => {
+            TokenKind::Prove
                 // prove name(...) { ... } -> desugar to let name = prove name(...) { ... }
                 // prove(...) { ... } or prove { ... } -> expression statement
                 if matches!(self.lookahead(1), TokenKind::Ident)
                     && matches!(self.lookahead(2), TokenKind::LParen | TokenKind::LBrace)
-                {
+                => {
                     self.parse_prove_decl()
-                } else {
-                    let expr = self.parse_expr()?;
-                    self.try_parse_assignment(expr)
                 }
-            }
             _ => {
                 let expr = self.parse_expr()?;
                 self.try_parse_assignment(expr)

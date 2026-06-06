@@ -280,13 +280,7 @@ pub(super) fn eval_const_expr_u64(
                 CircuitBinOp::Add => Some(l.wrapping_add(r)),
                 CircuitBinOp::Sub => Some(l.wrapping_sub(r)),
                 CircuitBinOp::Mul => Some(l.wrapping_mul(r)),
-                CircuitBinOp::Div => {
-                    if r != 0 {
-                        Some(l / r)
-                    } else {
-                        None
-                    }
-                }
+                CircuitBinOp::Div => l.checked_div(r),
             }
         }
         _ => None,

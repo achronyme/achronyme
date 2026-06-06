@@ -274,10 +274,8 @@ impl<F: FieldBackend> ProveIrCompiler<F> {
                         outer_functions.push(stmt.clone());
                     }
                 }
-                Stmt::Export { .. } if circuit_decl.is_none() => {
-                    if !has_resolver_state {
-                        preamble_stmts.push(stmt.clone());
-                    }
+                Stmt::Export { .. } if circuit_decl.is_none() && !has_resolver_state => {
+                    preamble_stmts.push(stmt.clone());
                 }
                 _ => {}
             }

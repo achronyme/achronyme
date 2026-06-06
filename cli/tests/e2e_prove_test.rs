@@ -298,6 +298,7 @@ assert_eq(a * b, c)
 ///     the public value survives;
 ///   - the multi-term multiply `(a + b) * b` materializes a linear constraint
 ///     that `optimize_r1cs` *does* eliminate, re-deriving its witness wire.
+///
 /// Proving over the result must verify AND preserve the public values — a
 /// proof that verifies but with a corrupted public value would still report
 /// `valid`, so the public outputs are asserted explicitly.

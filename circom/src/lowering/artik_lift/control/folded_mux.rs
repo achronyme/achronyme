@@ -66,18 +66,13 @@ impl<'f> LiftState<'f> {
         if !stmts_are_mux_compatible(&then_body.stmts) {
             return None;
         }
-        match else_body {
-            Some(ast::ElseBranch::Block(b)) => {
-                if !stmts_are_mux_compatible(&b.stmts) {
-                    return None;
-                }
-            }
-            Some(ast::ElseBranch::IfElse(boxed)) => {
-                if !stmt_is_mux_compatible(boxed) {
-                    return None;
-                }
-            }
-            None => {}
+        let else_compatible = match else_body {
+            Some(ast::ElseBranch::Block(b)) => stmts_are_mux_compatible(&b.stmts),
+            Some(ast::ElseBranch::IfElse(boxed)) => stmt_is_mux_compatible(boxed),
+            None => true,
+        };
+        if !else_compatible {
+            return None;
         }
 
         // Normalize the condition to a {0, 1} field element. We

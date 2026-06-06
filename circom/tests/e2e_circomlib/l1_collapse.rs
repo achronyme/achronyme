@@ -327,8 +327,8 @@ fn l1_compose_map_canonical_on_real_fixtures() {
         assert!(!subs.is_empty(), "{fx}: composed substitution map is empty");
 
         let dangling = subs
-            .iter()
-            .flat_map(|(_, lc)| lc.terms())
+            .values()
+            .flat_map(|lc| lc.terms())
             .filter(|(v, _)| subs.contains_key(&v.index()))
             .count();
         assert_eq!(

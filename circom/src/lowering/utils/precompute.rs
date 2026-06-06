@@ -82,12 +82,10 @@ pub fn precompute_all(
                 op: AssignOp::Assign,
                 value,
                 ..
-            } => {
-                if pending_vars.contains(name)
-                    && try_bind_precomputed(name, value, &mut scalars, &mut arrays, functions)
-                {
-                    pending_vars.remove(name);
-                }
+            } if pending_vars.contains(name)
+                && try_bind_precomputed(name, value, &mut scalars, &mut arrays, functions) =>
+            {
+                pending_vars.remove(name);
             }
             _ => {}
         }

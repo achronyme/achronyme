@@ -155,14 +155,14 @@ pub fn print_constraint_histogram<F: memory::FieldBackend>(
 
     eprintln!("  by category:");
     let mut items: Vec<_> = by_category.into_iter().collect();
-    items.sort_by(|x, y| y.1.cmp(&x.1));
+    items.sort_by_key(|x| std::cmp::Reverse(x.1));
     for (label, n) in items {
         eprintln!("    {label:38} = {n}");
     }
 
     eprintln!("\n  by (|A|,|B|,|C|), top 15 buckets:");
     let mut items: Vec<_> = by_size.into_iter().collect();
-    items.sort_by(|x, y| y.1.cmp(&x.1));
+    items.sort_by_key(|x| std::cmp::Reverse(x.1));
     for ((an, bn, cn), n) in items.into_iter().take(15) {
         eprintln!("    ({an:3},{bn:3},{cn:3}) = {n}");
     }

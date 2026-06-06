@@ -26,13 +26,7 @@ pub(super) fn resolve_const_index_ctx(
                     crate::ast::BinOp::Add => lhs_val.checked_add(rhs_val),
                     crate::ast::BinOp::Sub => lhs_val.checked_sub(rhs_val),
                     crate::ast::BinOp::Mul => lhs_val.checked_mul(rhs_val),
-                    crate::ast::BinOp::IntDiv => {
-                        if rhs_val != 0 {
-                            Some(lhs_val / rhs_val)
-                        } else {
-                            None
-                        }
-                    }
+                    crate::ast::BinOp::IntDiv => lhs_val.checked_div(rhs_val),
                     _ => None,
                 };
             }
@@ -79,13 +73,7 @@ fn try_const_index_fold_ctx(expr: &Expr, ctx: &LoweringContext, env: &LoweringEn
                 crate::ast::BinOp::Add => l.checked_add(r),
                 crate::ast::BinOp::Sub => l.checked_sub(r),
                 crate::ast::BinOp::Mul => l.checked_mul(r),
-                crate::ast::BinOp::IntDiv => {
-                    if r != 0 {
-                        Some(l / r)
-                    } else {
-                        None
-                    }
-                }
+                crate::ast::BinOp::IntDiv => l.checked_div(r),
                 _ => None,
             }
         }
@@ -117,13 +105,7 @@ pub(super) fn resolve_const_index(
                     crate::ast::BinOp::Add => lhs_val.checked_add(rhs_val),
                     crate::ast::BinOp::Sub => lhs_val.checked_sub(rhs_val),
                     crate::ast::BinOp::Mul => lhs_val.checked_mul(rhs_val),
-                    crate::ast::BinOp::IntDiv => {
-                        if rhs_val != 0 {
-                            Some(lhs_val / rhs_val)
-                        } else {
-                            None
-                        }
-                    }
+                    crate::ast::BinOp::IntDiv => lhs_val.checked_div(rhs_val),
                     _ => None,
                 };
             }

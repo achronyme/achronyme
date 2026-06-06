@@ -295,10 +295,8 @@ fn probe_embedded_sha256_8_const_track_low_ssa() {
                     collect_uses(nested, &format!("{path}.TemplateBody[{j}]"), target, out);
                 }
             }
-            ExtendedInstruction::TemplateCall { captures, .. } => {
-                if captures.contains(&target) {
-                    out.push(format!("{path}: TemplateCall captures={:?}", captures));
-                }
+            ExtendedInstruction::TemplateCall { captures, .. } if captures.contains(&target) => {
+                out.push(format!("{path}: TemplateCall captures={:?}", captures));
             }
             _ => {}
         }

@@ -42,14 +42,12 @@ pub(super) fn check_const_bounds<F: FieldBackend>(program: &Program<F>) -> Resul
             }
             Opcode::EmitWitnessCall {
                 bytecode_const_idx, ..
-            } => {
-                if *bytecode_const_idx >= pool_len {
-                    return Err(LysisError::ConstIdxOutOfRange {
-                        at_offset: instr.offset,
-                        idx: *bytecode_const_idx,
-                        len: pool_len,
-                    });
-                }
+            } if *bytecode_const_idx >= pool_len => {
+                return Err(LysisError::ConstIdxOutOfRange {
+                    at_offset: instr.offset,
+                    idx: *bytecode_const_idx,
+                    len: pool_len,
+                });
             }
             _ => {}
         }

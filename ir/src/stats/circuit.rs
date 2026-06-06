@@ -209,7 +209,7 @@ impl CircuitStats {
                 constraints,
             })
             .collect();
-        categories.sort_by(|a, b| b.constraints.cmp(&a.constraints));
+        categories.sort_by_key(|b| std::cmp::Reverse(b.constraints));
 
         CircuitStats {
             name: name.unwrap_or("<anonymous>").to_string(),

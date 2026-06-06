@@ -75,10 +75,8 @@ fn fn_local_shadowing_lifts_through_artik() {
             } => {
                 witness_call_outputs = Some(output_bindings.clone());
             }
-            CircuitNode::LetArray { elements, .. } => {
-                if let_array_len.is_none() {
-                    let_array_len = Some(elements.len());
-                }
+            CircuitNode::LetArray { elements, .. } if let_array_len.is_none() => {
+                let_array_len = Some(elements.len());
             }
             _ => {}
         }
