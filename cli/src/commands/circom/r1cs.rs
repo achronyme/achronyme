@@ -7,8 +7,127 @@ use constraints::{write_r1cs, write_wtns};
 use memory::field::PrimeId;
 use memory::{FieldBackend, FieldElement};
 use zkc::r1cs_backend::R1CSCompiler;
+use zkc::witness::WitnessGenerator;
 
 use crate::style::{format_number, Styler};
+
+/// Compiled-circuit artifact for proving the same circuit repeatedly:
+/// the optimized constraint system (inside the compiler) plus the
+/// pristine witness-op trace captured as a [`WitnessGenerator`]. Each
+/// extra input set replays the trace and skips every compile phase —
+/// instantiation, IR optimization, constraint emission, and R1CS
+/// optimization all happen once.
+pub(super) struct ReusableProver<F: FieldBackend = memory::Bn254Fr> {
+    compiler: R1CSCompiler<F>,
+    generator: WitnessGenerator<F>,
+}
+
+/// Produce a witness (and optionally a Groth16 proof) for one more
+/// input set over an already-compiled circuit. Output files are
+/// suffixed with `label` so repeated runs do not clobber each other.
+#[allow(clippy::too_many_arguments)]
+pub(super) fn run_r1cs_repeat<F: FieldBackend + PoseidonParamsProvider>(
+    prover: &ReusableProver<F>,
+    all_inputs: &HashMap<String, FieldElement<F>>,
+    memo: &mut artik::ArtikMemo<F>,
+    label: &str,
+    r1cs_path: &str,
+    wtns_path: &str,
+    prove: bool,
+    style: &Styler,
+    verbose: bool,
+) -> Result<()> {
+    let witness_vec = prover
+        .generator
+        .generate_with_memo(all_inputs, memo)
+        .map_err(|e| anyhow::anyhow!("witness generation failed for `{label}`: {e}"))?;
+    prover
+        .compiler
+        .cs
+        .verify(&witness_vec)
+        .map_err(|e| anyhow::anyhow!("witness verification failed for `{label}`: {e}"))?;
+
+    let out_wtns = suffixed_path(wtns_path, label);
+    let wtns_data = write_wtns(&witness_vec, prover.compiler.prime_id);
+    fs::write(&out_wtns, &wtns_data).with_context(|| format!("cannot write {out_wtns}"))?;
+    if verbose {
+        eprintln!(
+            "{} `{}` — wrote {} ({} values) {} {}",
+            style.success("Reused circuit for"),
+            label,
+            style.bold(&out_wtns),
+            format_number(witness_vec.len()),
+            style.dim("—"),
+            style.green("verified OK")
+        );
+    } else {
+        eprintln!(
+            "wrote {} ({} values) — verified OK",
+            out_wtns,
+            witness_vec.len()
+        );
+    }
+
+    if prove {
+        if F::PRIME_ID != PrimeId::Bn254 {
+            return Err(anyhow::anyhow!(
+                "--prove is only supported with BN254 (default prime)"
+            ));
+        }
+        let cache_dir = crate::cache_dir();
+        // The proving API takes the default type parameter (Bn254Fr).
+        // Since we validated F == Bn254Fr above, this cast is safe.
+        let cs_bn254 = unsafe {
+            &*(&prover.compiler.cs as *const constraints::r1cs::ConstraintSystem<F>
+                as *const constraints::r1cs::ConstraintSystem<memory::Bn254Fr>)
+        };
+        let wit_bn254 = unsafe {
+            std::slice::from_raw_parts(
+                witness_vec.as_ptr() as *const FieldElement<memory::Bn254Fr>,
+                witness_vec.len(),
+            )
+        };
+        let result = proving::groth16_bn254::generate_proof(cs_bn254, wit_bn254, &cache_dir)
+            .map_err(|e| anyhow::anyhow!("proof generation failed for `{label}`: {e}"))?;
+
+        if let akron::ProveResult::Proof {
+            proof_json,
+            public_json,
+            ..
+        } = result
+        {
+            let out_dir = path_stem(r1cs_path);
+            let proof_path = out_dir.join(format!("proof.{label}.json"));
+            let public_path = out_dir.join(format!("public.{label}.json"));
+            fs::write(&proof_path, &proof_json)?;
+            fs::write(&public_path, &public_json)?;
+            if verbose {
+                eprintln!(
+                    "    Wrote {} and {}",
+                    style.bold(&proof_path.display().to_string()),
+                    style.bold(&public_path.display().to_string())
+                );
+            } else {
+                eprintln!("wrote {}, {}", proof_path.display(), public_path.display());
+            }
+        }
+    }
+
+    Ok(())
+}
+
+/// `out.wtns` + `sig2` → `out.sig2.wtns` (next to the original path).
+fn suffixed_path(base: &str, label: &str) -> String {
+    let p = std::path::Path::new(base);
+    let stem = p.file_stem().and_then(|s| s.to_str()).unwrap_or("out");
+    let ext = p.extension().and_then(|s| s.to_str()).unwrap_or("");
+    let name = if ext.is_empty() {
+        format!("{stem}.{label}")
+    } else {
+        format!("{stem}.{label}.{ext}")
+    };
+    p.with_file_name(name).to_string_lossy().into_owned()
+}
 
 #[allow(clippy::too_many_arguments)]
 pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
@@ -23,10 +142,18 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
     verbose: bool,
     no_optimize: bool,
     proven: &std::collections::HashSet<ir::SsaVar>,
-) -> Result<()> {
+    want_reusable: bool,
+    artik_memo: artik::ArtikMemo<F>,
+) -> Result<Option<ReusableProver<F>>> {
     let mut compiler = R1CSCompiler::<F>::new();
     compiler.prime_id = prime_id;
     compiler.set_proven_boolean(proven.clone());
+    // The explicit `cs.verify` below validates the witness (with
+    // constraint-origin diagnostics), so the costly up-front IR
+    // evaluation inside `compile_ir_with_witness` is redundant.
+    compiler.set_skip_eval_validation(true);
+    // Reuse the Artik executions the hint walk already performed.
+    compiler.set_artik_memo(artik_memo);
 
     // Count public/witness inputs from IR
     let n_public = program
@@ -290,7 +417,16 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
         }
     }
 
-    Ok(())
+    // The witness-op trace stays pristine through optimize_r1cs, so the
+    // generator captured here replays correctly for any further input set.
+    Ok(if want_reusable && inputs.is_some() {
+        Some(ReusableProver {
+            generator: WitnessGenerator::from_compiler(&compiler),
+            compiler,
+        })
+    } else {
+        None
+    })
 }
 
 fn path_stem(path: &str) -> &std::path::Path {

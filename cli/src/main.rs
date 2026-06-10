@@ -150,7 +150,7 @@ fn main() -> Result<()> {
                 &cfg.r1cs_path,
                 &cfg.wtns_path,
                 inputs.as_deref(),
-                input_file.as_deref(),
+                input_file,
                 !cfg.optimize,
                 &cfg.backend,
                 prime_id,

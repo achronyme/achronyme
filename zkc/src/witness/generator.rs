@@ -19,6 +19,15 @@ use super::{
 /// After `R1CSCompiler::compile_ir()`, call `WitnessGenerator::from_compiler()`
 /// to capture the compilation trace. Then call `generate()` with concrete input
 /// values to produce a witness that satisfies `cs.verify()`.
+///
+/// The capture may equally be taken AFTER `optimize_r1cs()` — this is the
+/// compile-once / prove-many flow: `witness_ops` stays the pristine
+/// emission trace through optimization, so the replay computes every
+/// recorded wire (including ones eliminated as R1CS variables, which ops
+/// like `ArtikCall` read directly by index) and then applies the captured
+/// substitution map as a final fixup. That is exactly the order the fused
+/// `compile_ir_with_witness` + refill path uses, so the replayed witness
+/// is bit-identical to the fused one.
 pub struct WitnessGenerator<F: FieldBackend = Bn254Fr> {
     ops: crate::segmented_vec::SegmentedVec<WitnessOp<F>>,
     num_variables: usize,
@@ -69,6 +78,34 @@ impl<F: FieldBackend> WitnessGenerator<F> {
     where
         F: PoseidonParamsProvider,
     {
+        self.generate_inner(inputs, None)
+    }
+
+    /// Like [`Self::generate`], but serves `ArtikCall` executions from a
+    /// content-addressed cache. A proof's off-circuit hint walk runs the
+    /// same big-integer programs on the same inputs first; sharing its
+    /// memo turns the replay's executions into hits. The produced
+    /// witness is byte-identical either way — a hit only occurs on a
+    /// bit-identical `(program, inputs)` pair.
+    pub fn generate_with_memo(
+        &self,
+        inputs: &HashMap<String, FieldElement<F>>,
+        memo: &mut artik::ArtikMemo<F>,
+    ) -> Result<Vec<FieldElement<F>>, WitnessError>
+    where
+        F: PoseidonParamsProvider,
+    {
+        self.generate_inner(inputs, Some(memo))
+    }
+
+    fn generate_inner(
+        &self,
+        inputs: &HashMap<String, FieldElement<F>>,
+        mut memo: Option<&mut artik::ArtikMemo<F>>,
+    ) -> Result<Vec<FieldElement<F>>, WitnessError>
+    where
+        F: PoseidonParamsProvider,
+    {
         let mut witness = vec![FieldElement::<F>::zero(); self.num_variables];
         witness[0] = FieldElement::<F>::one();
 
@@ -90,7 +127,7 @@ impl<F: FieldBackend> WitnessGenerator<F> {
 
         // Replay ops to compute all intermediate wires
         for op in &self.ops {
-            self.execute_op(op, &mut witness)?;
+            self.execute_op(op, &mut witness, memo.as_deref_mut())?;
         }
 
         // Post-fixup: fill substituted-away wires from substitution map
@@ -110,6 +147,7 @@ impl<F: FieldBackend> WitnessGenerator<F> {
         &self,
         op: &WitnessOp<F>,
         witness: &mut [FieldElement<F>],
+        memo: Option<&mut artik::ArtikMemo<F>>,
     ) -> Result<(), WitnessError>
     where
         F: PoseidonParamsProvider,
@@ -202,7 +240,7 @@ impl<F: FieldBackend> WitnessGenerator<F> {
                 inputs,
                 program_bytes,
             } => {
-                dispatch_artik_call::<F>(outputs, inputs, &program_bytes[..], witness, None)?;
+                dispatch_artik_call::<F>(outputs, inputs, &program_bytes[..], witness, memo)?;
             }
         }
         Ok(())

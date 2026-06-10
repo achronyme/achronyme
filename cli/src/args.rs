@@ -98,9 +98,11 @@ pub enum Commands {
         /// Input values as name=value pairs (comma-separated, decimal or 0x hex)
         #[arg(long)]
         inputs: Option<String>,
-        /// Input values from a TOML file
+        /// Input values from a TOML file. May be repeated with the r1cs
+        /// backend: the circuit is compiled once and each extra file
+        /// produces its own witness/proof, outputs suffixed by file stem
         #[arg(long)]
-        input_file: Option<String>,
+        input_file: Vec<String>,
         /// Disable IR optimization passes
         #[arg(long)]
         no_optimize: Option<bool>,

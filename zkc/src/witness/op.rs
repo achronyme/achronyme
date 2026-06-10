@@ -1,7 +1,6 @@
 use std::sync::Arc;
 
 use constraints::r1cs::{LinearCombination, Variable};
-use constraints::r1cs_optimize::SubstitutionMap;
 use memory::{Bn254Fr, FieldBackend};
 
 // ============================================================================
@@ -78,90 +77,4 @@ pub enum WitnessOp<F: FieldBackend = Bn254Fr> {
         inputs: Vec<Variable>,
         program_bytes: Arc<[u8]>,
     },
-}
-
-impl<F: FieldBackend> WitnessOp<F> {
-    /// Return all target variables produced by this operation.
-    ///
-    /// Used to identify ops whose targets have been substituted away
-    /// by the R1CS linear constraint elimination pass.
-    pub fn target_variables(&self) -> Vec<Variable> {
-        match self {
-            WitnessOp::AssignLC { target, .. }
-            | WitnessOp::Multiply { target, .. }
-            | WitnessOp::Inverse { target, .. }
-            | WitnessOp::BitExtract { target, .. } => vec![*target],
-            WitnessOp::IsZero {
-                target_inv,
-                target_result,
-                ..
-            } => vec![*target_inv, *target_result],
-            WitnessOp::IntDivMod { q, r, .. } => vec![*q, *r],
-            WitnessOp::PoseidonHash { .. } => {
-                // Poseidon fills a range of internal wires — never substituted
-                vec![]
-            }
-            WitnessOp::ArtikCall { outputs, .. } => outputs.clone(),
-        }
-    }
-
-    /// Apply variable substitutions to all LinearCombination fields in this op.
-    ///
-    /// Does NOT change target variables — only updates source LCs that reference
-    /// substituted wires.
-    pub fn apply_substitutions(&mut self, subs: &SubstitutionMap<F>) {
-        fn apply_sub<F2: FieldBackend>(lc: &mut LinearCombination<F2>, subs: &SubstitutionMap<F2>) {
-            if lc
-                .terms()
-                .iter()
-                .any(|(v, _)| subs.contains_key(&v.index()))
-            {
-                let mut result = LinearCombination::<F2>::zero();
-                for (var, coeff) in lc.terms() {
-                    if let Some(replacement) = subs.get(&var.index()) {
-                        result = result + replacement.clone() * *coeff;
-                    } else {
-                        result.add_term(*var, *coeff);
-                    }
-                }
-                *lc = result.simplify();
-            }
-        }
-
-        match self {
-            WitnessOp::AssignLC { lc, .. } => apply_sub(lc, subs),
-            WitnessOp::Multiply { a, b, .. } => {
-                apply_sub(a, subs);
-                apply_sub(b, subs);
-            }
-            WitnessOp::Inverse { operand, .. } => apply_sub(operand, subs),
-            WitnessOp::BitExtract { source, .. } => apply_sub(source, subs),
-            WitnessOp::IsZero { diff, .. } => apply_sub(diff, subs),
-            WitnessOp::IntDivMod { .. }
-            | WitnessOp::PoseidonHash { .. }
-            | WitnessOp::ArtikCall { .. } => {
-                // These reference Variables directly, not LCs — substitution
-                // doesn't apply (and witness-side wires are not eliminated).
-            }
-        }
-    }
-}
-
-/// Remove witness ops whose targets have been substituted away, and apply
-/// substitutions to LCs in the remaining ops.
-pub fn apply_substitutions_to_witness_ops<F: FieldBackend>(
-    ops: &mut crate::segmented_vec::SegmentedVec<WitnessOp<F>>,
-    subs: &SubstitutionMap<F>,
-) {
-    // Remove ops that produce only substituted variables
-    ops.retain(|op| {
-        let targets = op.target_variables();
-        // Keep if: no targets (Poseidon), or at least one target is NOT substituted
-        targets.is_empty() || targets.iter().any(|t| !subs.contains_key(&t.index()))
-    });
-
-    // Apply substitutions to source LCs in remaining ops
-    for op in ops.iter_mut() {
-        op.apply_substitutions(subs);
-    }
 }

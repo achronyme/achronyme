@@ -277,8 +277,14 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// multiplication) and substitutes one wire with the LC, eliminating
     /// the constraint. Runs to fixpoint.
     ///
-    /// Also updates `witness_ops` (removes ops for substituted targets,
-    /// applies substitutions to source LCs) and `constraint_origins`.
+    /// `witness_ops` is left untouched: it stays the pristine emission
+    /// trace, so a `WitnessGenerator` captured after this call replays
+    /// every recorded wire (ops like `ArtikCall` read input wires
+    /// directly by index, including wires eliminated here as R1CS
+    /// variables) and applies the stored substitution map as a final
+    /// fixup — the same order the fused `compile_ir_with_witness` +
+    /// refill path uses. `constraint_origins` is cleared (its indices
+    /// no longer map to the optimized constraint vec).
     ///
     /// The substitution map is stored for witness post-fixup.
     pub fn optimize_r1cs(&mut self) -> R1CSOptimizeResult {
@@ -289,8 +295,7 @@ impl<F: FieldBackend> R1CSCompiler<F> {
 
     /// Install a finalize pass's substitution map: compose it with the
     /// incremental-collapse map (when collapse was enabled during
-    /// emission), apply the result to `witness_ops`, and store it for
-    /// witness reconstruction.
+    /// emission) and store the result for witness reconstruction.
     ///
     /// When collapse is disabled (`take_collapse_substitution_map` →
     /// `None`) this is exactly the legacy path: store `finalize_subs`
@@ -301,6 +306,12 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// reconstructs every eliminated wire. Routing every finalize entry
     /// through here closes the trap where collapse + an O2 finalize would
     /// otherwise silently drop the collapse map.
+    ///
+    /// `witness_ops` is deliberately NOT pruned or rewritten against the
+    /// map: ops such as `ArtikCall`, `IntDivMod`, and `PoseidonHash` read
+    /// input wires directly by index, so a replay needs every producing
+    /// op present — eliminated or not — with the substitution fixup
+    /// applied only after the full replay.
     fn install_finalize_substitutions(&mut self, finalize_subs: SubstitutionMap<F>) {
         let subs = match self.cs.take_collapse_substitution_map() {
             Some(collapse_subs) => {
@@ -310,12 +321,6 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         };
 
         if !subs.is_empty() {
-            // Drop ops that produce only eliminated wires and rewrite the
-            // source LCs of the survivors. The composed map is canonical,
-            // so this single pass is equivalent to applying collapse then
-            // finalize in sequence.
-            crate::witness::apply_substitutions_to_witness_ops(&mut self.witness_ops, &subs);
-
             // optimize_linear replaces the constraint vec wholesale, so the
             // old per-constraint origin indices no longer map to anything;
             // clear them (the inspector degrades gracefully without origins).

@@ -26,7 +26,7 @@ mod r1cs;
 
 use input::{parse_inputs, parse_inputs_toml};
 use plonkish::run_plonkish_pipeline;
-use r1cs::run_r1cs_pipeline;
+use r1cs::{run_r1cs_pipeline, run_r1cs_repeat};
 
 // ---------------------------------------------------------------------------
 // Command entry point
@@ -38,7 +38,7 @@ pub fn circom_command(
     r1cs_path: &str,
     wtns_path: &str,
     inputs: Option<&str>,
-    input_file: Option<&str>,
+    input_files: &[String],
     no_optimize: bool,
     backend: &str,
     prime_id: PrimeId,
@@ -75,10 +75,23 @@ pub fn circom_command(
         ));
     }
 
-    if inputs.is_some() && input_file.is_some() {
+    if inputs.is_some() && !input_files.is_empty() {
         return Err(anyhow::anyhow!(
             "--inputs and --input-file are mutually exclusive"
         ));
+    }
+
+    if input_files.len() > 1 {
+        if backend != "r1cs" {
+            return Err(anyhow::anyhow!(
+                "multiple --input-file values are only supported with the r1cs backend"
+            ));
+        }
+        if dump_ir {
+            return Err(anyhow::anyhow!(
+                "--dump-ir cannot be combined with multiple --input-file values"
+            ));
+        }
     }
 
     match prime_id {
@@ -87,7 +100,7 @@ pub fn circom_command(
             r1cs_path,
             wtns_path,
             inputs,
-            input_file,
+            input_files,
             no_optimize,
             backend,
             prime_id,
@@ -104,7 +117,7 @@ pub fn circom_command(
             r1cs_path,
             wtns_path,
             inputs,
-            input_file,
+            input_files,
             no_optimize,
             backend,
             prime_id,
@@ -129,7 +142,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
     r1cs_path: &str,
     wtns_path: &str,
     inputs: Option<&str>,
-    input_file: Option<&str>,
+    input_files: &[String],
     no_optimize: bool,
     backend: &str,
     prime_id: PrimeId,
@@ -143,7 +156,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
 ) -> Result<()> {
     let mut resolved_inputs: Option<HashMap<String, FieldElement<F>>> = if let Some(raw) = inputs {
         Some(parse_inputs::<F>(raw)?)
-    } else if let Some(toml_path) = input_file {
+    } else if let Some(toml_path) = input_files.first() {
         Some(parse_inputs_toml::<F>(toml_path)?)
     } else {
         None
@@ -202,12 +215,17 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         );
     }
 
-    // 2. Compute witness hints (off-circuit evaluation of `<--` expressions)
+    // 2. Compute witness hints (off-circuit evaluation of `<--` expressions).
+    // The Artik cache is handed to the R1CS fill below, which re-runs the
+    // same big-integer programs: identical (program, inputs) pairs become
+    // content-addressed hits.
     let user_inputs: HashMap<String, FieldElement<F>> = resolved_inputs.clone().unwrap_or_default();
-    let witness_values = circom::witness::compute_witness_hints_with_captures::<F>(
+    let mut artik_memo = artik::ArtikMemo::<F>::new();
+    let witness_values = circom::witness::compute_witness_hints_with_captures_memo::<F>(
         &prove_ir,
         &user_inputs,
         &capture_values,
+        &mut artik_memo,
     )
     .map_err(|e| anyhow::anyhow!("witness computation failed: {e}"))?;
 
@@ -353,19 +371,62 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         .to_path_buf();
 
     match backend {
-        "r1cs" => run_r1cs_pipeline(
-            &program,
-            r1cs_path,
-            wtns_path,
-            resolved_inputs.as_ref(),
-            prime_id,
-            prove,
-            solidity_path,
-            &style,
-            verbose,
-            no_optimize,
-            &proven,
-        ),
+        "r1cs" => {
+            let want_reusable = input_files.len() > 1;
+            let prover = run_r1cs_pipeline(
+                &program,
+                r1cs_path,
+                wtns_path,
+                resolved_inputs.as_ref(),
+                prime_id,
+                prove,
+                solidity_path,
+                &style,
+                verbose,
+                no_optimize,
+                &proven,
+                want_reusable,
+                artik_memo,
+            )?;
+
+            // Extra input files reuse the compiled circuit: only the
+            // per-input work runs (hint walk, witness replay, verify,
+            // proof) — no recompilation.
+            if let Some(prover) = prover {
+                for toml_path in &input_files[1..] {
+                    let label = std::path::Path::new(toml_path)
+                        .file_stem()
+                        .and_then(|s| s.to_str())
+                        .unwrap_or("input")
+                        .to_string();
+                    let user_inputs = parse_inputs_toml::<F>(toml_path)?;
+                    let mut memo = artik::ArtikMemo::<F>::new();
+                    let witness_values = circom::witness::compute_witness_hints_with_captures_memo(
+                        &prove_ir,
+                        &user_inputs,
+                        &capture_values,
+                        &mut memo,
+                    )
+                    .map_err(|e| {
+                        anyhow::anyhow!("witness computation failed for `{label}`: {e}")
+                    })?;
+                    let mut all_inputs = user_inputs;
+                    all_inputs.extend(witness_values);
+                    run_r1cs_repeat(
+                        &prover,
+                        &all_inputs,
+                        &mut memo,
+                        &label,
+                        r1cs_path,
+                        wtns_path,
+                        prove,
+                        &style,
+                        verbose,
+                    )?;
+                }
+            }
+            Ok(())
+        }
         "plonkish" => run_plonkish_pipeline(
             &program,
             resolved_inputs.as_ref(),

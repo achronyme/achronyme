@@ -18,13 +18,15 @@
 //!   The requirement is that the incremental-collapse path verifies here.
 //!
 //! - **Flow B (regenerate-after-optimize).** Build the witness *after*
-//!   `optimize_r1cs` by replaying the pruned ops from scratch
-//!   (`WitnessGenerator::generate`). `IntDivMod`/`PoseidonHash`/`ArtikCall`
-//!   read some inputs as raw `Variable`s and never consult the map, so if
-//!   a materialized op-input wire was eliminated its op is gone and replay
-//!   reads zero. No current code path regenerates after optimize, but the
-//!   `l1_flow_b_*` probes document the latent hazard (it affects the batch
-//!   optimizer identically — it is not collapse-specific).
+//!   `optimize_r1cs` by replaying the recorded ops from scratch
+//!   (`WitnessGenerator::generate`). This is the compile-once /
+//!   prove-many flow. It is sound because `optimize_r1cs` leaves
+//!   `witness_ops` pristine: ops whose inputs are raw `Variable`s
+//!   (`IntDivMod`/`PoseidonHash`/`ArtikCall`) still find their producing
+//!   ops present even when those wires were eliminated as R1CS
+//!   variables, and the substitution fixup runs only after the full
+//!   replay — the same order Flow A uses. The `l1_flow_b_*` probes pin
+//!   that equivalence on both the batch and incremental compilers.
 
 use std::collections::HashMap;
 
@@ -86,8 +88,9 @@ fn flow_a_verifies(
     )
 }
 
-/// Regenerate-after-optimize flow: optimize first, then replay the pruned
-/// ops from scratch via `WitnessGenerator`.
+/// Regenerate-after-optimize flow: optimize first, then replay the
+/// pristine op trace from scratch via `WitnessGenerator` (the captured
+/// substitution map is applied as a final fixup inside `generate`).
 fn flow_b_verifies(
     incremental: bool,
     source: &str,
@@ -260,12 +263,8 @@ fn l1_streaming_collapse_multibatch_verifies() {
     );
 }
 
-/// Latent regenerate-after-optimize hazard (Flow B). Pure-arithmetic
-/// circuits have no direct-Variable op inputs, so they survive Flow B on
-/// both compilers; the poseidon probes are expected to break under Flow B
-/// on *both* batch and incremental until op-input wires are protected
-/// from elimination. Asserted here as the current (documented) reality so
-/// a future fix that makes Flow B sound flips this test loudly.
+/// Flow B on a pure-arithmetic circuit: no direct-Variable op inputs,
+/// the easy shape. Must verify on both compilers.
 #[test]
 fn l1_flow_b_arithmetic_control_holds() {
     let (src, inputs) = arithmetic_control();
@@ -279,20 +278,21 @@ fn l1_flow_b_arithmetic_control_holds() {
     );
 }
 
+/// Flow B on the hard shape: `a + b` materializes into a fresh wire fed
+/// to PoseidonHash as a direct `Variable` input, and both the batch
+/// (max-frequency) and incremental (highest-index) pivot rules eliminate
+/// that wire as an R1CS variable. Replay must still compute it — the op
+/// trace is pristine and the substitution fixup runs after the replay —
+/// so regenerate-after-optimize verifies on both compilers.
 #[test]
-fn l1_flow_b_poseidon_hazard_is_present_on_both_compilers() {
+fn l1_flow_b_poseidon_verifies_on_both_compilers() {
     let (src, inputs) = poseidon_materialized();
-    // The materialized direct-Variable op input is eliminated by both the
-    // batch (max-frequency) and incremental (highest-index) pivot rules,
-    // so neither survives a from-scratch replay of the pruned ops. This is
-    // a latent, non-production hazard; pinning it documents the boundary.
     assert!(
-        !flow_b_verifies(false, &src, &inputs).0,
-        "batch Flow-B unexpectedly verified — the op-input hazard may have been fixed; \
-         update this pin and the Flow-A story"
+        flow_b_verifies(false, &src, &inputs).0,
+        "batch Flow-B must verify with a materialized direct-Variable op input"
     );
     assert!(
-        !flow_b_verifies(true, &src, &inputs).0,
-        "incremental Flow-B unexpectedly verified — update this pin"
+        flow_b_verifies(true, &src, &inputs).0,
+        "incremental Flow-B must verify with a materialized direct-Variable op input"
     );
 }
