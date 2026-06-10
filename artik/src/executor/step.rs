@@ -104,22 +104,28 @@ pub(super) fn step<F: FieldBackend>(
         Instr::FPow2 { dst, amount } => {
             // `2 ^ amount` in the active field — the field-precision
             // lowering of circom's `1 << amount`. Square-and-multiply
-            // over the canonical representative of `amount` keeps the
-            // result a correct residue for whatever backend prime is
-            // in effect (no modulus constant here) and bounds the work
-            // to the representative's bit width regardless of how large
-            // `amount` is.
+            // over the canonical representative of `amount`, bounded
+            // by its bit length: the loop stops at the highest set
+            // bit, so the cost tracks the exponent's magnitude (a
+            // handful of squarings for the limb-radix amounts circom
+            // hint code produces) instead of a fixed full-width walk.
+            // The result is a correct residue for whatever backend
+            // prime is in effect (no modulus constant here).
             let exp = (*state.read_field(*amount)?).to_canonical();
+            let mut bit_len = 0usize;
+            for (i, &limb) in exp.iter().enumerate() {
+                if limb != 0 {
+                    bit_len = i * 64 + (64 - limb.leading_zeros() as usize);
+                }
+            }
             let mut result = FieldElement::<F>::from_u64(1);
             let mut base = FieldElement::<F>::from_u64(2);
-            for limb in exp {
-                let mut bits = limb;
-                for _ in 0..64 {
-                    if bits & 1 == 1 {
-                        result = result.mul(&base);
-                    }
+            for i in 0..bit_len {
+                if (exp[i / 64] >> (i % 64)) & 1 == 1 {
+                    result = result.mul(&base);
+                }
+                if i + 1 < bit_len {
                     base = base.mul(&base);
-                    bits >>= 1;
                 }
             }
             state.write(*dst, Cell::Field(result))?;

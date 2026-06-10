@@ -10,7 +10,7 @@ use super::*;
 /// the boundary cases.
 #[test]
 fn fpow2_is_field_correct_two_to_the_n() {
-    for n in [0u64, 31, 32, 63, 64, 65] {
+    for n in [0u64, 1, 31, 32, 63, 64, 65, 127, 128, 129, 191, 192, 253] {
         let body = vec![
             Instr::ReadSignal {
                 dst: 0,
