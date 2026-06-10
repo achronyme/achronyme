@@ -26,3 +26,4 @@ num-integer = "0.1"
 [[bench]]
 name = "field_kernel"
 harness = false
+required-features = ["field-kernel-bench"]
