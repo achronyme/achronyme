@@ -289,6 +289,15 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         let result =
             crate::r1cs_optimize::optimize_linear(&mut self.constraints, self.num_pub_inputs);
         self.constraint_count = self.constraints.len();
+        // Substitution grows surviving term vectors past their final length;
+        // trim them so the retained system (held through proving) matches its
+        // live term count instead of the peak substitution shape.
+        for c in &mut self.constraints {
+            c.a.shrink_to_fit();
+            c.b.shrink_to_fit();
+            c.c.shrink_to_fit();
+        }
+        self.constraints.shrink_to_fit();
         result
     }
 

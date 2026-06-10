@@ -23,10 +23,12 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     /// 2. **Compile**: lowers IR → R1CS constraints (same as `compile_ir`), populating
     ///    `witness_ops` as a side-effect.
     /// 3. **Witness**: builds the witness vector by replaying `witness_ops` with
-    ///    concrete input values. This is separate from compilation because constraint
-    ///    generation must complete before the full witness layout is known.
+    ///    concrete input values (see [`fill_witness`](Self::fill_witness)).
     ///
-    /// Evaluate the IR, compile to R1CS, and build a witness vector in one pass.
+    /// Memory-constrained callers can run the same passes separately —
+    /// `compile_ir` then [`fill_witness`](Self::fill_witness) — and drop the
+    /// (often multi-GB) IR program in between: the witness fill replays the
+    /// recorded ops and never reads the program.
     ///
     /// ```
     /// use std::collections::HashMap;
@@ -53,18 +55,35 @@ impl<F: FieldBackend> R1CSCompiler<F> {
     where
         F: PoseidonParamsProvider,
     {
-        // 1. Evaluate IR — early validation. Skippable when the caller verifies
-        //    the produced witness downstream: the witness build (pass 3) plus
-        //    `cs.verify` give the same guarantee at a fraction of the cost.
+        // 1. Evaluate IR — early validation (skippable).
         if !self.skip_eval_validation {
             ir::eval::evaluate(program, inputs)
                 .map_err(|e| R1CSError::EvalError(format!("{e}")))?;
         }
 
-        // 2. Compile constraints (populates witness_ops)
+        // 2. Compile constraints (populates witness_ops).
         self.compile_ir(program)?;
 
-        // 3. Build witness vector
+        // 3. Build the witness from the recorded op trace.
+        self.fill_witness(inputs)
+    }
+
+    /// Build the witness vector for an already-compiled circuit by replaying
+    /// the recorded `witness_ops` with concrete input values.
+    ///
+    /// This is the witness pass of `compile_ir_with_witness`, exposed
+    /// separately so callers can drop the IR program (which the replay never
+    /// reads) between constraint emission and witness generation. Must be
+    /// called after `compile_ir` / `compile_instructions` on the same
+    /// instance.
+    pub fn fill_witness(
+        &mut self,
+        inputs: &HashMap<String, FieldElement<F>>,
+    ) -> Result<Vec<FieldElement<F>>, R1CSError>
+    where
+        F: PoseidonParamsProvider,
+    {
+        // 3. Allocate the witness vector.
         let mut witness = vec![FieldElement::<F>::zero(); self.cs.num_variables()];
         witness[0] = FieldElement::<F>::one();
 
@@ -190,9 +209,6 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         self.artik_memo = artik_memo;
 
         // 3c. Post-fixup: fill substituted-away wires from substitution map.
-        // After optimize_r1cs(), some wires are defined by LCs of other wires.
-        // Since substitutions are fully composed (fixpoint), each LC only
-        // references non-substituted wires that are already computed.
         if let Some(subs) = &self.substitution_map {
             for (var_idx, lc) in subs {
                 witness[*var_idx] = lc

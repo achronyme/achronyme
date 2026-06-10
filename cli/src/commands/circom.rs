@@ -374,10 +374,10 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         "r1cs" => {
             let want_reusable = input_files.len() > 1;
             let prover = run_r1cs_pipeline(
-                &program,
+                program,
                 r1cs_path,
                 wtns_path,
-                resolved_inputs.as_ref(),
+                resolved_inputs,
                 prime_id,
                 prove,
                 solidity_path,

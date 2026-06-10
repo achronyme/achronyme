@@ -182,7 +182,7 @@ impl ProveHandler for DefaultProveHandler {
         }
 
         match self.backend {
-            ProveBackend::R1cs => self.prove_r1cs(&program, &inputs, artik_memo),
+            ProveBackend::R1cs => self.prove_r1cs(program, inputs, artik_memo),
             ProveBackend::Plonkish => self.prove_plonkish(&program, &inputs),
         }
     }
@@ -232,24 +232,33 @@ impl VerifyHandler for SharedProveHandler {
 impl DefaultProveHandler {
     fn prove_r1cs(
         &self,
-        program: &ir::IrProgram,
-        inputs: &HashMap<String, FieldElement>,
+        program: ir::IrProgram,
+        inputs: HashMap<String, FieldElement>,
         artik_memo: artik::ArtikMemo<memory::Bn254Fr>,
     ) -> Result<ProveResult, ProveError> {
         let mut r1cs = R1CSCompiler::new();
         r1cs.prime_id = self.prime_id;
-        let proven = ir::passes::bool_prop::compute_proven_boolean(program);
+        let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
         r1cs.set_proven_boolean(proven);
         // The explicit `cs.verify` below validates the witness, so the costly
-        // up-front IR evaluation inside `compile_ir_with_witness` is redundant.
+        // up-front IR evaluation of the fused compile-and-fill entry point is
+        // redundant.
         r1cs.set_skip_eval_validation(true);
         // Reuse the Artik executions the hint walk already performed: the
         // witness fill below re-runs the same big-integer programs, and the
         // shared cache turns those into hits.
         r1cs.set_artik_memo(artik_memo);
-        let mut witness = r1cs
-            .compile_ir_with_witness(program, inputs)
+        r1cs.compile_ir(&program)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;
+        // The IR program and the emission lookup state are dead once
+        // constraints are emitted; shed them before the witness fill and the
+        // memory-heavy proof setup.
+        drop(program);
+        r1cs.release_emission_state();
+        let mut witness = r1cs
+            .fill_witness(&inputs)
+            .map_err(|e| ProveError::Compilation(format!("{e}")))?;
+        drop(inputs);
 
         // Finalize the R1CS before proving. Linear-constraint elimination
         // shrinks the system the proof is generated over — a smaller proving
@@ -271,15 +280,18 @@ impl DefaultProveHandler {
             .map_err(|e| ProveError::Verification(format!("{e}")))?;
 
         let n_constraints = r1cs.cs.num_constraints();
+        // Proof generation needs only the constraint system and the witness;
+        // drop the rest of the compile working set before the SNARK setup.
+        let cs = r1cs.into_constraint_system();
 
         // Dispatch to the correct Groth16 prover based on prime
         let result = match self.prime_id {
             PrimeId::Bn254 => {
-                proving::groth16_bn254::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
+                proving::groth16_bn254::generate_proof(&cs, &witness, &self.cache_dir)
                     .map_err(ProveError::ProofGeneration)?
             }
             PrimeId::Bls12_381 => {
-                proving::groth16_bls12_381::generate_proof(&r1cs.cs, &witness, &self.cache_dir)
+                proving::groth16_bls12_381::generate_proof(&cs, &witness, &self.cache_dir)
                     .map_err(ProveError::ProofGeneration)?
             }
             other => {

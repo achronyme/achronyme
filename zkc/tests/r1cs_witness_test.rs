@@ -400,3 +400,67 @@ fn skip_eval_validation_violating_input_caught_by_verify() {
         "cs.verify must reject the violating witness when eval is skipped"
     );
 }
+
+#[test]
+fn split_fill_matches_fused_compile_and_witness() {
+    // The prove flow runs emission and the witness fill as separate calls so
+    // it can drop the IR program in between. The split path must produce a
+    // witness bit-identical to the fused entry point.
+    let source = "assert_eq(a * b + a, c)";
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["c"], &["a", "b"]).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(6));
+    inputs.insert("b".to_string(), FieldElement::from_u64(7));
+    inputs.insert("c".to_string(), FieldElement::from_u64(48));
+
+    let mut fused = R1CSCompiler::<Bn254Fr>::new();
+    let fused_witness = fused.compile_ir_with_witness(&program, &inputs).unwrap();
+
+    let mut split = R1CSCompiler::<Bn254Fr>::new();
+    split.compile_ir(&program).unwrap();
+    // Dropping the emission lookup state must not affect the fill: the
+    // replay reads only the recorded witness ops.
+    split.release_emission_state();
+    let split_witness = split.fill_witness(&inputs).unwrap();
+
+    assert_eq!(fused_witness, split_witness);
+    fused.cs.verify(&fused_witness).unwrap();
+    split.cs.verify(&split_witness).unwrap();
+}
+
+#[test]
+fn split_flow_survives_optimize_and_substitution_fixup() {
+    // Production prove order: emit, shed emission state, fill, optimize,
+    // re-derive substituted wires, verify.
+    let source = "assert_eq(a * b + a, c)";
+    let program = IrLowering::<Bn254Fr>::lower_circuit(source, &["c"], &["a", "b"]).unwrap();
+
+    let mut inputs = HashMap::new();
+    inputs.insert("a".to_string(), FieldElement::from_u64(3));
+    inputs.insert("b".to_string(), FieldElement::from_u64(5));
+    inputs.insert("c".to_string(), FieldElement::from_u64(18));
+
+    let mut rc = R1CSCompiler::<Bn254Fr>::new();
+    rc.compile_ir(&program).unwrap();
+    rc.release_emission_state();
+    let mut witness = rc.fill_witness(&inputs).unwrap();
+
+    let pre = rc.cs.num_constraints();
+    rc.optimize_r1cs();
+    assert!(
+        rc.cs.num_constraints() < pre,
+        "linear elimination is expected to make progress on this circuit"
+    );
+    if let Some(subs) = &rc.substitution_map {
+        for (var_idx, lc) in subs {
+            witness[*var_idx] = lc.evaluate(&witness).unwrap();
+        }
+    }
+    rc.cs.verify(&witness).unwrap();
+
+    // Proof generation runs on the constraint system alone; consuming the
+    // compiler must hand back a system the witness still satisfies.
+    let cs = rc.into_constraint_system();
+    cs.verify(&witness).unwrap();
+}

@@ -20,6 +20,7 @@ mod counters;
 mod dispatch;
 mod int_divmod;
 mod lc_map;
+mod proving_parts;
 
 pub use counters::{
     r1cs_kind_profile_enabled, reset_boolcheck_counters, reset_r1cs_kind_profile,
