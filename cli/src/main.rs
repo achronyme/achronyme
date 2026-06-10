@@ -4,6 +4,18 @@ use cli::commands::ErrorFormat;
 use cli::config::{self, CliOverrides};
 use memory::field::PrimeId;
 
+/// The compile pipeline allocates and frees millions of small IR nodes
+/// and env strings; the system allocator's heap is left fragmented, and
+/// every allocation-heavy phase that follows (witness hint walk, R1CS
+/// linear elimination, witness replay) runs about 2x slower than on a
+/// fresh heap. jemalloc's arena design keeps those phases at fresh-heap
+/// speed for the lifetime of the process. MSVC is excluded because
+/// tikv-jemallocator does not build there; those builds keep the system
+/// allocator.
+#[cfg(not(target_env = "msvc"))]
+#[global_allocator]
+static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;
+
 mod args;
 
 use args::{Cli, Commands};

@@ -50,3 +50,6 @@ tempfile = "3"
 # no production callers). Activates the same feature for cli's own
 # integration tests.
 zkc = { path = "../zkc", features = ["test-support"] }
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+tikv-jemallocator = "0.6"
