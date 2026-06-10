@@ -215,33 +215,46 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         );
     }
 
-    // 2. Compute witness hints (off-circuit evaluation of `<--` expressions).
-    // The Artik cache is handed to the R1CS fill below, which re-runs the
-    // same big-integer programs: identical (program, inputs) pairs become
+    // 2. Witness-hint walk (off-circuit evaluation of `<--` expressions),
+    // packaged as a deferred closure. The R1CS pipeline runs it after
+    // constraint emission so the multi-million-entry hint env never
+    // coexists with the materialized IR plus the emission working set;
+    // the Plonkish backend runs it eagerly. The Artik cache populated by
+    // the walk is handed to the witness fill, which re-runs the same
+    // big-integer programs: identical (program, inputs) pairs become
     // content-addressed hits.
-    let user_inputs: HashMap<String, FieldElement<F>> = resolved_inputs.clone().unwrap_or_default();
-    let mut artik_memo = artik::ArtikMemo::<F>::new();
-    let witness_values = circom::witness::compute_witness_hints_with_captures_memo::<F>(
-        &prove_ir,
-        &user_inputs,
-        &capture_values,
-        &mut artik_memo,
-    )
-    .map_err(|e| anyhow::anyhow!("witness computation failed: {e}"))?;
+    let user_inputs: HashMap<String, FieldElement<F>> = resolved_inputs.take().unwrap_or_default();
+    let walk_hints = |memo: &mut artik::ArtikMemo<F>| -> Result<HashMap<String, FieldElement<F>>> {
+        let witness_values = circom::witness::compute_witness_hints_with_captures_memo::<F>(
+            &prove_ir,
+            &user_inputs,
+            &capture_values,
+            memo,
+        )
+        .map_err(|e| anyhow::anyhow!("witness computation failed: {e}"))?;
+        let mut all_inputs = user_inputs.clone();
+        all_inputs.extend(witness_values);
+        Ok(all_inputs)
+    };
 
-    // Merge user inputs + computed witness hints for R1CS
-    let mut all_inputs = resolved_inputs.clone().unwrap_or_default();
-    all_inputs.extend(witness_values);
-    resolved_inputs = Some(all_inputs);
-
-    // Instantiate ProveIR → SSA IR with captures from main component args (Lysis path).
+    // Instantiate ProveIR → SSA IR with captures from main component args
+    // (Lysis path). Prove-bound runs drop the program right after
+    // constraint emission and read none of its metadata maps, so they
+    // take the lean instantiate — on large circuits the maps are the
+    // dominant share of the materialized program's heap. Flows that keep
+    // the program for diagnostics (dump, stats, verify-failure spans)
+    // stay on the full instantiate.
     let fe_captures: HashMap<String, FieldElement<F>> = capture_values
         .iter()
         .map(|(k, v)| (k.clone(), FieldElement::<F>::from_u64(*v)))
         .collect();
-    let mut program = prove_ir
-        .instantiate_lysis_with_outputs(&fe_captures, &output_names)
-        .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
+    let lean_prove = backend == "r1cs" && prove && !no_optimize && !dump_ir && !circuit_stats;
+    let mut program = if lean_prove {
+        prove_ir.instantiate_lysis_lean_with_outputs(&fe_captures, &output_names)
+    } else {
+        prove_ir.instantiate_lysis_with_outputs(&fe_captures, &output_names)
+    }
+    .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
 
     if verbose {
         eprintln!("    {}: {} instructions", style.cyan("IR"), program.len());
@@ -377,7 +390,7 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
                 program,
                 r1cs_path,
                 wtns_path,
-                resolved_inputs,
+                walk_hints,
                 prime_id,
                 prove,
                 solidity_path,
@@ -386,7 +399,6 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
                 no_optimize,
                 &proven,
                 want_reusable,
-                artik_memo,
             )?;
 
             // Extra input files reuse the compiled circuit: only the
@@ -427,16 +439,20 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
             }
             Ok(())
         }
-        "plonkish" => run_plonkish_pipeline(
-            &program,
-            resolved_inputs.as_ref(),
-            prove,
-            plonkish_json_path,
-            &source_dir,
-            &style,
-            verbose,
-            &proven,
-        ),
+        "plonkish" => {
+            let mut memo = artik::ArtikMemo::<F>::new();
+            let all_inputs = walk_hints(&mut memo)?;
+            run_plonkish_pipeline(
+                &program,
+                Some(&all_inputs),
+                prove,
+                plonkish_json_path,
+                &source_dir,
+                &style,
+                verbose,
+                &proven,
+            )
+        }
         _ => unreachable!(),
     }
 }

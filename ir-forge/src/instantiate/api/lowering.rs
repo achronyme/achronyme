@@ -139,7 +139,25 @@ pub(crate) fn lower_extended_to_sink<F: FieldBackend>(
 pub(super) fn lower_extended_through_lysis<F: FieldBackend>(
     extended: ExtendedIrProgram<F>,
 ) -> Result<IrProgram<F>, LysisInstantiateError> {
-    let bundle = lower_extended_to_sink(extended, true)?;
+    lower_extended_through_lysis_with(extended, true)
+}
+
+/// Lean variant of [`lower_extended_through_lysis`]: the extended
+/// program's metadata maps are dropped on entry instead of being
+/// carried onto the output program, which comes back with empty
+/// `var_names` / `var_types` / `var_spans` / `input_spans`. The
+/// instruction stream is identical to the full variant's.
+pub(super) fn lower_extended_through_lysis_lean<F: FieldBackend>(
+    extended: ExtendedIrProgram<F>,
+) -> Result<IrProgram<F>, LysisInstantiateError> {
+    lower_extended_through_lysis_with(extended, false)
+}
+
+fn lower_extended_through_lysis_with<F: FieldBackend>(
+    extended: ExtendedIrProgram<F>,
+    keep_metadata: bool,
+) -> Result<IrProgram<F>, LysisInstantiateError> {
+    let bundle = lower_extended_to_sink(extended, keep_metadata)?;
     let instructions = materialize_interning_sink(bundle.sink);
 
     // Reassemble: the materialised stream replaces the body, but

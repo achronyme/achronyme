@@ -85,10 +85,20 @@ impl ProveHandler for DefaultProveHandler {
             .map_err(|e| ProveError::IrLowering(format!("ProveIR deserialization: {e}")))?;
 
         // 2. Instantiate with scope values (captures resolved here)
-        //    via Lysis (Walker → InterningSink → materialise).
-        let mut program = prove_ir
-            .instantiate_lysis(scope_values)
-            .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
+        //    via Lysis (Walker → InterningSink → materialise). The R1CS
+        //    backend drops the program right after constraint emission
+        //    and reads none of its metadata maps, so it takes the lean
+        //    instantiate — on large circuits the maps are the dominant
+        //    share of the materialized program's heap. Flows that keep
+        //    the program (Plonkish compile, circuit stats) stay on the
+        //    full instantiate.
+        let lean = matches!(self.backend, ProveBackend::R1cs) && !self.circuit_stats;
+        let mut program = if lean {
+            prove_ir.instantiate_lysis_lean(scope_values)
+        } else {
+            prove_ir.instantiate_lysis(scope_values)
+        }
+        .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
 
         // 3. Optimize
         ir::passes::optimize(&mut program);
@@ -162,29 +172,46 @@ impl ProveHandler for DefaultProveHandler {
         //     through a shared `ArtikMemo` lets the fill reuse these results
         //     instead of recomputing them; the cache is content-addressed, so
         //     the witness is byte-identical with or without it.
-        let mut artik_memo = artik::ArtikMemo::<memory::Bn254Fr>::new();
-        match circom::witness::compute_witness_hints_with_captures_memo::<memory::Bn254Fr>(
-            &prove_ir,
-            &inputs,
-            &HashMap::new(),
-            &mut artik_memo,
-        ) {
-            Ok(hint_env) => {
-                for (name, fe) in hint_env {
-                    inputs.entry(name).or_insert(fe);
-                }
-            }
-            Err(e) => {
-                return Err(ProveError::IrLowering(format!(
-                    "circom witness hint computation failed: {e}"
-                )));
-            }
-        }
-
+        //
+        //     The R1CS path runs the walk after constraint emission (the
+        //     hint env then never coexists with the program); the Plonkish
+        //     compiler reads the full input map up front, so its walk stays
+        //     here.
         match self.backend {
-            ProveBackend::R1cs => self.prove_r1cs(program, inputs, artik_memo),
-            ProveBackend::Plonkish => self.prove_plonkish(&program, &inputs),
+            ProveBackend::R1cs => self.prove_r1cs(program, &prove_ir, inputs),
+            ProveBackend::Plonkish => {
+                let mut artik_memo = artik::ArtikMemo::<memory::Bn254Fr>::new();
+                walk_circom_hints(&prove_ir, &mut inputs, &mut artik_memo)?;
+                self.prove_plonkish(&program, &inputs)
+            }
         }
+    }
+}
+
+/// Evaluate the circom `<--` witness hints for `prove_ir` and merge the
+/// results into `inputs` (existing keys stay authoritative). The Artik
+/// executions performed by the walk land in `artik_memo` for the witness
+/// fill to reuse.
+fn walk_circom_hints(
+    prove_ir: &ir_forge::ProveIR,
+    inputs: &mut HashMap<String, FieldElement>,
+    artik_memo: &mut artik::ArtikMemo<memory::Bn254Fr>,
+) -> Result<(), ProveError> {
+    match circom::witness::compute_witness_hints_with_captures_memo::<memory::Bn254Fr>(
+        prove_ir,
+        inputs,
+        &HashMap::new(),
+        artik_memo,
+    ) {
+        Ok(hint_env) => {
+            for (name, fe) in hint_env {
+                inputs.entry(name).or_insert(fe);
+            }
+            Ok(())
+        }
+        Err(e) => Err(ProveError::IrLowering(format!(
+            "circom witness hint computation failed: {e}"
+        ))),
     }
 }
 
@@ -233,8 +260,8 @@ impl DefaultProveHandler {
     fn prove_r1cs(
         &self,
         program: ir::IrProgram,
-        inputs: HashMap<String, FieldElement>,
-        artik_memo: artik::ArtikMemo<memory::Bn254Fr>,
+        prove_ir: &ir_forge::ProveIR,
+        mut inputs: HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
         let mut r1cs = R1CSCompiler::new();
         r1cs.prime_id = self.prime_id;
@@ -244,10 +271,6 @@ impl DefaultProveHandler {
         // up-front IR evaluation of the fused compile-and-fill entry point is
         // redundant.
         r1cs.set_skip_eval_validation(true);
-        // Reuse the Artik executions the hint walk already performed: the
-        // witness fill below re-runs the same big-integer programs, and the
-        // shared cache turns those into hits.
-        r1cs.set_artik_memo(artik_memo);
         r1cs.compile_ir(&program)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;
         // The IR program and the emission lookup state are dead once
@@ -255,10 +278,25 @@ impl DefaultProveHandler {
         // memory-heavy proof setup.
         drop(program);
         r1cs.release_emission_state();
+
+        // Hint walk after emission: the multi-million-entry hint env never
+        // coexists with the program plus the emission working set. The
+        // witness fill below re-runs the same big-integer programs the walk
+        // executes, and the shared cache turns those into hits.
+        let mut artik_memo = artik::ArtikMemo::<memory::Bn254Fr>::new();
+        walk_circom_hints(prove_ir, &mut inputs, &mut artik_memo)?;
+        r1cs.set_artik_memo(artik_memo);
+
         let mut witness = r1cs
             .fill_witness(&inputs)
             .map_err(|e| ProveError::Compilation(format!("{e}")))?;
         drop(inputs);
+
+        // This path proves exactly once: the witness-op trace is never
+        // replayed after the fill. Shed it (and the Artik cache) before the
+        // optimizer's transient peak.
+        r1cs.witness_ops = Default::default();
+        let _ = r1cs.take_artik_memo();
 
         // Finalize the R1CS before proving. Linear-constraint elimination
         // shrinks the system the proof is generated over — a smaller proving

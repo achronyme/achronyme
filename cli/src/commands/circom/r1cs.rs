@@ -138,11 +138,11 @@ fn generate_bn254_proof<F: FieldBackend>(
 }
 
 #[allow(clippy::too_many_arguments)]
-pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
+pub(super) fn run_r1cs_pipeline<F, H>(
     program: ir::IrProgram<F>,
     r1cs_path: &str,
     wtns_path: &str,
-    inputs: Option<HashMap<String, FieldElement<F>>>,
+    walk_hints: H,
     prime_id: PrimeId,
     prove: bool,
     solidity_path: Option<&str>,
@@ -151,8 +151,11 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
     no_optimize: bool,
     proven: &std::collections::HashSet<ir::SsaVar>,
     want_reusable: bool,
-    artik_memo: artik::ArtikMemo<F>,
-) -> Result<Option<ReusableProver<F>>> {
+) -> Result<Option<ReusableProver<F>>>
+where
+    F: FieldBackend + PoseidonParamsProvider,
+    H: FnOnce(&mut artik::ArtikMemo<F>) -> Result<HashMap<String, FieldElement<F>>>,
+{
     let mut compiler = R1CSCompiler::<F>::new();
     compiler.prime_id = prime_id;
     compiler.set_proven_boolean(proven.clone());
@@ -160,8 +163,6 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
     // constraint-origin diagnostics), so the costly up-front IR
     // evaluation inside the witness fill is redundant.
     compiler.set_skip_eval_validation(true);
-    // Reuse the Artik executions the hint walk already performed.
-    compiler.set_artik_memo(artik_memo);
 
     // Count public/witness inputs from IR
     let n_public = program
@@ -203,12 +204,29 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
         program = None;
     }
 
-    let (witness_vec, generator) = if let Some(input_map) = inputs {
+    // The hint walk runs after emission, so the multi-million-entry
+    // input/hint env never coexists with the materialized IR and the
+    // emission working set. The Artik executions it performs are handed
+    // to the fill, which re-runs the same big-integer programs.
+    let mut artik_memo = artik::ArtikMemo::<F>::new();
+    let input_map = walk_hints(&mut artik_memo)?;
+    compiler.set_artik_memo(artik_memo);
+
+    let (witness_vec, generator) = {
         let mut witness_vec = compiler
             .fill_witness(&input_map)
             .map_err(|e| anyhow::anyhow!("R1CS compilation error: {e}"))?;
         // The merged input/hint env is read only by the fill above.
         drop(input_map);
+
+        // A single-shot run never replays the witness-op trace after the
+        // fill; shed it (and the Artik cache) before the optimizer's
+        // transient peak. Multi-input runs keep both for the
+        // `WitnessGenerator` captured below.
+        if !want_reusable {
+            compiler.witness_ops = Default::default();
+            let _ = compiler.take_artik_memo();
+        }
 
         // R1CS linear constraint elimination
         if !no_optimize {
@@ -273,22 +291,7 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
         // The witness-op trace stays pristine through optimize_r1cs, so the
         // generator captured here replays correctly for any further input set.
         let generator = want_reusable.then(|| WitnessGenerator::from_compiler(&compiler));
-        (Some(witness_vec), generator)
-    } else {
-        // R1CS linear constraint elimination
-        if !no_optimize {
-            let r1cs_stats = compiler.optimize_r1cs();
-            if verbose && r1cs_stats.variables_eliminated > 0 {
-                eprintln!(
-                    "    {}: {} → {} constraints ({} linear eliminated)",
-                    style.cyan("R1CS opt"),
-                    r1cs_stats.constraints_before,
-                    r1cs_stats.constraints_after,
-                    r1cs_stats.variables_eliminated,
-                );
-            }
-        }
-        (None, None)
+        (witness_vec, generator)
     };
 
     // Proof generation and file output need only the constraint system and
@@ -301,7 +304,8 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
     let r1cs_data = write_r1cs(&cs, prime_id);
     fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
 
-    if let Some(witness_vec) = &witness_vec {
+    {
+        let witness_vec = &witness_vec;
         let wtns_data = write_wtns(witness_vec, prime_id);
         fs::write(wtns_path, &wtns_data).with_context(|| format!("cannot write {wtns_path}"))?;
 
@@ -390,28 +394,6 @@ pub(super) fn run_r1cs_pipeline<F: FieldBackend + PoseidonParamsProvider>(
                 }
             }
         }
-    } else if verbose {
-        eprintln!();
-        eprintln!("{}:", style.success("R1CS generated"));
-        eprintln!(
-            "    Constraints:    {}",
-            style.bold(&format_number(cs.num_constraints()))
-        );
-        eprintln!("    Public inputs:  {}", n_public);
-        eprintln!("    Private inputs: {}", n_witness);
-        eprintln!(
-            "    Wrote {} ({} bytes)",
-            style.bold(r1cs_path),
-            format_number(r1cs_data.len())
-        );
-    } else {
-        eprintln!(
-            "wrote {} ({} constraints, {} wires, {} bytes)",
-            r1cs_path,
-            cs.num_constraints(),
-            cs.num_variables(),
-            r1cs_data.len(),
-        );
     }
 
     // Solidity verifier (BN254-only, same cast pattern as proof generation)

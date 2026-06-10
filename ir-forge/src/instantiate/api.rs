@@ -53,7 +53,9 @@ pub use bundles::{LysisDrainBundle, LysisSinkBundle};
 pub use errors::LysisInstantiateError;
 
 use drain::lower_extended_with_chunk_drain;
-use lowering::{lower_extended_through_lysis, lower_extended_to_sink};
+use lowering::{
+    lower_extended_through_lysis, lower_extended_through_lysis_lean, lower_extended_to_sink,
+};
 use trace::{lysis_drain_trace, lysis_drain_trace_enabled};
 use walk::{assemble_extended, run_walk};
 
@@ -177,6 +179,36 @@ impl ProveIR {
     ) -> Result<IrProgram<F>, LysisInstantiateError> {
         let extended = self.instantiate_with_outputs_extended::<F>(captures, output_names)?;
         lower_extended_through_lysis(extended)
+    }
+
+    /// Lean materializing variant of [`Self::instantiate_lysis`]: same
+    /// instruction stream, but the program's metadata maps
+    /// (`var_names`, `var_types`, `var_spans`, `input_spans`) are never
+    /// built — they come back empty. Intended for prove-bound callers
+    /// that emit constraints and drop the program without reading any
+    /// metadata; on large circuits the maps are the dominant share of
+    /// the materialized program's heap. Note that the maps on the full
+    /// path are keyed by pre-interner variable ids (the interner
+    /// renumbers), so consumers already tolerate missing entries.
+    pub fn instantiate_lysis_lean<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+    ) -> Result<IrProgram<F>, LysisInstantiateError> {
+        let extended = self.instantiate_extended_lean::<F>(captures)?;
+        lower_extended_through_lysis_lean(extended)
+    }
+
+    /// Lean materializing variant of
+    /// [`Self::instantiate_lysis_with_outputs`]. See
+    /// [`Self::instantiate_lysis_lean`] for the metadata contract; the
+    /// only difference is the public-output projection.
+    pub fn instantiate_lysis_lean_with_outputs<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+        output_names: &HashSet<String>,
+    ) -> Result<IrProgram<F>, LysisInstantiateError> {
+        let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
+        lower_extended_through_lysis_lean(extended)
     }
 
     /// Streaming counterpart of [`Self::instantiate_lysis_with_outputs`]:

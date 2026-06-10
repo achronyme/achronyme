@@ -261,3 +261,55 @@ fn streaming_sink_path_leaves_metadata_empty() {
         "streaming sink path must leave input_spans empty"
     );
 }
+
+#[test]
+fn lean_lysis_materialize_matches_full_instruction_stream() {
+    // Contract pin for the lean materializing entry points: identical
+    // instruction stream and watermark, empty metadata maps. Prove-bound
+    // callers rely on the stream identity for bit-identical constraint
+    // output across the lean and full instantiates.
+    let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+    let prove_ir = compile_circuit(source).expect("compile_circuit");
+
+    let full = prove_ir
+        .instantiate_lysis::<F>(&HashMap::new())
+        .expect("instantiate_lysis");
+    let lean = prove_ir
+        .instantiate_lysis_lean::<F>(&HashMap::new())
+        .expect("instantiate_lysis_lean");
+
+    assert_eq!(lean.instructions.len(), full.instructions.len());
+    for (l, f) in lean.instructions.iter().zip(full.instructions.iter()) {
+        assert_eq!(format!("{l:?}"), format!("{f:?}"));
+    }
+    assert_eq!(lean.next_var, full.next_var);
+    assert!(lean.var_names.is_empty(), "lean must skip var_names");
+    assert!(lean.var_types.is_empty(), "lean must skip var_types");
+    assert!(lean.var_spans.is_empty(), "lean must skip var_spans");
+    assert!(lean.input_spans.is_empty(), "lean must skip input_spans");
+}
+
+#[test]
+fn lean_lysis_materialize_with_outputs_matches_full_instruction_stream() {
+    // Sibling pin for the public-output variant.
+    let source = "public out\nwitness x\nlet s = x + x;\nassert(s == out)";
+    let prove_ir = compile_circuit(source).expect("compile_circuit");
+    let outputs: std::collections::HashSet<String> = std::iter::once("out".to_string()).collect();
+
+    let full = prove_ir
+        .instantiate_lysis_with_outputs::<F>(&HashMap::new(), &outputs)
+        .expect("instantiate_lysis_with_outputs");
+    let lean = prove_ir
+        .instantiate_lysis_lean_with_outputs::<F>(&HashMap::new(), &outputs)
+        .expect("instantiate_lysis_lean_with_outputs");
+
+    assert_eq!(lean.instructions.len(), full.instructions.len());
+    for (l, f) in lean.instructions.iter().zip(full.instructions.iter()) {
+        assert_eq!(format!("{l:?}"), format!("{f:?}"));
+    }
+    assert_eq!(lean.next_var, full.next_var);
+    assert!(lean.var_names.is_empty(), "lean must skip var_names");
+    assert!(lean.var_types.is_empty(), "lean must skip var_types");
+    assert!(lean.var_spans.is_empty(), "lean must skip var_spans");
+    assert!(lean.input_spans.is_empty(), "lean must skip input_spans");
+}
