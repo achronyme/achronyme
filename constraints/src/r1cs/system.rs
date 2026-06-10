@@ -102,6 +102,25 @@ impl<F: FieldBackend> ConstraintSystem<F> {
         }
     }
 
+    /// Assemble a system directly from wire-compaction output (see
+    /// `compact_referenced`). The caller guarantees every term index is
+    /// below `num_variables` and that public inputs occupy
+    /// `1..=num_pub_inputs`.
+    pub(crate) fn from_compacted_parts(
+        num_variables: usize,
+        num_pub_inputs: usize,
+        constraints: Vec<Constraint<F>>,
+    ) -> Self {
+        Self {
+            num_variables,
+            num_pub_inputs,
+            constraint_count: constraints.len(),
+            constraints,
+            retain_constraints: true,
+            collapse: None,
+        }
+    }
+
     /// Enable incremental linear collapse: subsequent [`enforce`] calls fold
     /// linear constraints into a substitution map at emission time instead of
     /// storing them, so `constraints` only ever holds post-elimination

@@ -8,6 +8,7 @@
 ///   Index 0     = ONE (constant wire, always 1)
 ///   1..=n_pub   = public inputs (instance)
 ///   n_pub+1..   = private inputs + intermediate (witness)
+mod compact;
 mod error;
 mod linear_combination;
 mod system;

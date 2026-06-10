@@ -301,13 +301,20 @@ where
     drop(program);
     let cs = compiler.into_constraint_system();
 
+    // The serialized artifact buffers are dropped as soon as they hit
+    // disk; only their byte counts survive for reporting. Keeping them
+    // alive would add two witness-scale buffers to the proving peak.
     let r1cs_data = write_r1cs(&cs, prime_id);
     fs::write(r1cs_path, &r1cs_data).with_context(|| format!("cannot write {r1cs_path}"))?;
+    let r1cs_bytes = r1cs_data.len();
+    drop(r1cs_data);
 
     {
         let witness_vec = &witness_vec;
         let wtns_data = write_wtns(witness_vec, prime_id);
         fs::write(wtns_path, &wtns_data).with_context(|| format!("cannot write {wtns_path}"))?;
+        let wtns_bytes = wtns_data.len();
+        drop(wtns_data);
 
         if verbose {
             let nc = cs.num_constraints();
@@ -319,12 +326,12 @@ where
             eprintln!(
                 "    Wrote {} ({} bytes)",
                 style.bold(r1cs_path),
-                format_number(r1cs_data.len())
+                format_number(r1cs_bytes)
             );
             eprintln!(
                 "    Wrote {} ({} bytes) {} {}",
                 style.bold(wtns_path),
-                format_number(wtns_data.len()),
+                format_number(wtns_bytes),
                 style.dim("—"),
                 style.green("verified OK")
             );
@@ -334,13 +341,13 @@ where
                 r1cs_path,
                 cs.num_constraints(),
                 cs.num_variables(),
-                r1cs_data.len(),
+                r1cs_bytes,
             );
             eprintln!(
                 "wrote {} ({} values, {} bytes) — verified OK",
                 wtns_path,
                 witness_vec.len(),
-                wtns_data.len(),
+                wtns_bytes,
             );
         }
 

@@ -12,13 +12,15 @@ use ark_groth16::Groth16;
 use ark_relations::r1cs::{
     ConstraintSynthesizer, ConstraintSystemRef, SynthesisError, Variable as ArkVariable,
 };
-use ark_serialize::{CanonicalDeserialize, CanonicalSerialize};
 use ark_snark::SNARK;
 use rand::rngs::OsRng;
-use sha2::{Digest, Sha256};
 
 use constraints::r1cs::ConstraintSystem;
 use memory::{Bn254Fr, FieldBackend, FieldElement};
+
+mod cache;
+pub use cache::cache_key;
+use cache::{load_cached_keys, load_cached_vk, save_cached_keys, save_cached_vk};
 
 // ============================================================================
 // Field conversion
@@ -177,21 +179,35 @@ fn convert_lc<B: FieldBackend, AF: PrimeField>(
 ///
 /// `curve_tag` is included in the cache key to prevent collisions between
 /// the same circuit compiled for different curves.
+///
+/// The circuit handed to ark is the wire-compacted system (see
+/// `ConstraintSystem::compact_referenced`): every proving-key query
+/// vector is sized by the variable count, so each unreferenced wire
+/// would cost several identity group elements and a zero QAP column.
+/// The cache key is computed over the compacted system; callers that
+/// later prove via [`generate_proof_raw`] hit the same entry.
 pub fn setup_keys<B: FieldBackend, E: Pairing>(
     cs: &ConstraintSystem<B>,
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>), String> {
-    let key = cache_key(cs, curve_tag);
+    let (compacted, _gather) = cs.compact_referenced();
+    setup_keys_compacted(compacted, cache_dir, curve_tag)
+}
+
+/// [`setup_keys`] body operating on an already-compacted system.
+fn setup_keys_compacted<B: FieldBackend, E: Pairing>(
+    cs: ConstraintSystem<B>,
+    cache_dir: &Path,
+    curve_tag: &str,
+) -> Result<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>), String> {
+    let key = cache_key(&cs, curve_tag);
     let cache_subdir = cache_dir.join(&key);
 
     if let Some(keys) = load_cached_keys::<E>(&cache_subdir) {
         Ok(keys)
     } else {
-        let setup_circuit = AchronymeCircuit {
-            cs: cs.clone(),
-            witness: None,
-        };
+        let setup_circuit = AchronymeCircuit { cs, witness: None };
         let (pk, vk) = Groth16::<E>::circuit_specific_setup(setup_circuit, &mut OsRng)
             .map_err(|e| format!("Groth16 setup failed: {e}"))?;
         save_cached_keys(&cache_subdir, &pk, &vk)?;
@@ -200,12 +216,17 @@ pub fn setup_keys<B: FieldBackend, E: Pairing>(
 }
 
 /// Run trusted setup and return only the verifying key.
+///
+/// Compacts the system exactly like [`setup_keys`] and
+/// [`generate_proof_raw`], so the verifying key matches the proofs
+/// those produce.
 pub fn setup_vk_only<B: FieldBackend, E: Pairing>(
     cs: &ConstraintSystem<B>,
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<ark_groth16::VerifyingKey<E>, String> {
-    let key = cache_key(cs, curve_tag);
+    let (compacted, _gather) = cs.compact_referenced();
+    let key = cache_key(&compacted, curve_tag);
     let cache_subdir = cache_dir.join(&key);
 
     if let Some(vk) = load_cached_vk::<E>(&cache_subdir) {
@@ -213,7 +234,7 @@ pub fn setup_vk_only<B: FieldBackend, E: Pairing>(
     }
 
     let setup_circuit = AchronymeCircuit {
-        cs: cs.clone(),
+        cs: compacted,
         witness: None,
     };
     let (_pk, vk) = Groth16::<E>::circuit_specific_setup(setup_circuit, &mut OsRng)
@@ -226,6 +247,11 @@ pub fn setup_vk_only<B: FieldBackend, E: Pairing>(
 ///
 /// Curve-specific modules (e.g., `groth16_bn254`) wrap this to add
 /// JSON serialization and return `ProveResult`.
+///
+/// The system is wire-compacted once; the same compacted circuit feeds
+/// both setup and prove, and the witness is gathered down to the
+/// surviving wires. Public-input extraction is unaffected (compaction
+/// keeps `ONE` and the public inputs at their indices).
 #[allow(clippy::type_complexity)]
 pub fn generate_proof_raw<B: FieldBackend, E: Pairing>(
     cs: &ConstraintSystem<B>,
@@ -240,11 +266,15 @@ pub fn generate_proof_raw<B: FieldBackend, E: Pairing>(
     ),
     String,
 > {
-    let (pk, vk) = setup_keys::<B, E>(cs, cache_dir, curve_tag)?;
+    let (compacted, gather) = cs.compact_referenced();
+    let gathered_witness: Vec<FieldElement<B>> = gather.iter().map(|&old| witness[old]).collect();
+    drop(gather);
+
+    let (pk, vk) = setup_keys_compacted::<B, E>(compacted.clone(), cache_dir, curve_tag)?;
 
     let prove_circuit = AchronymeCircuit {
-        cs: cs.clone(),
-        witness: Some(witness.to_vec()),
+        cs: compacted,
+        witness: Some(gathered_witness),
     };
     let proof = Groth16::<E>::prove(&pk, prove_circuit, &mut OsRng)
         .map_err(|e| format!("Groth16 prove failed: {e}"))?;
@@ -262,94 +292,6 @@ pub fn generate_proof_raw<B: FieldBackend, E: Pairing>(
     }
 
     Ok((proof, vk, public_inputs))
-}
-
-// ============================================================================
-// Cache helpers (generic)
-// ============================================================================
-
-/// Compute a SHA256 cache key from the constraint system structure and curve.
-///
-/// The `curve_tag` prevents cache collisions between different curves —
-/// the same circuit compiled for BN254 and BLS12-381 must use separate
-/// cached proving/verifying keys.
-pub fn cache_key<B: FieldBackend>(cs: &ConstraintSystem<B>, curve_tag: &str) -> String {
-    let mut hasher = Sha256::new();
-    hasher.update(b"achronyme-groth16-cache-v2");
-    hasher.update(curve_tag.as_bytes());
-    hasher.update(cs.num_variables().to_le_bytes());
-    hasher.update(cs.num_pub_inputs().to_le_bytes());
-    hasher.update(cs.num_constraints().to_le_bytes());
-    for c in cs.constraints() {
-        hash_lc(&mut hasher, &c.a);
-        hash_lc(&mut hasher, &c.b);
-        hash_lc(&mut hasher, &c.c);
-    }
-    let hash = hasher.finalize();
-    hash.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-fn hash_lc<B: FieldBackend>(hasher: &mut Sha256, lc: &constraints::r1cs::LinearCombination<B>) {
-    let mut terms: Vec<_> = lc.terms().iter().collect();
-    terms.sort_by_key(|(var, _)| var.index());
-    hasher.update((terms.len() as u64).to_le_bytes());
-    for (var, coeff) in &terms {
-        hasher.update((var.index() as u64).to_le_bytes());
-        hasher.update(coeff.to_le_bytes());
-    }
-}
-
-fn load_cached_vk<E: Pairing>(dir: &Path) -> Option<ark_groth16::VerifyingKey<E>> {
-    let vk_path = dir.join("verifying_key.bin");
-    let vk_bytes = std::fs::read(&vk_path).ok()?;
-    ark_groth16::VerifyingKey::<E>::deserialize_compressed(&vk_bytes[..]).ok()
-}
-
-fn save_cached_vk<E: Pairing>(dir: &Path, vk: &ark_groth16::VerifyingKey<E>) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
-    let mut vk_buf = Vec::new();
-    vk.serialize_compressed(&mut vk_buf)
-        .map_err(|e| format!("failed to serialize verifying key: {e}"))?;
-    std::fs::write(dir.join("verifying_key.bin"), &vk_buf)
-        .map_err(|e| format!("failed to write verifying key: {e}"))?;
-    Ok(())
-}
-
-fn load_cached_keys<E: Pairing>(
-    dir: &Path,
-) -> Option<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>)> {
-    let pk_path = dir.join("proving_key.bin");
-    let vk_path = dir.join("verifying_key.bin");
-    if !pk_path.exists() || !vk_path.exists() {
-        return None;
-    }
-    let pk_bytes = std::fs::read(&pk_path).ok()?;
-    let vk_bytes = std::fs::read(&vk_path).ok()?;
-    let pk = ark_groth16::ProvingKey::<E>::deserialize_compressed(&pk_bytes[..]).ok()?;
-    let vk = ark_groth16::VerifyingKey::<E>::deserialize_compressed(&vk_bytes[..]).ok()?;
-    Some((pk, vk))
-}
-
-fn save_cached_keys<E: Pairing>(
-    dir: &Path,
-    pk: &ark_groth16::ProvingKey<E>,
-    vk: &ark_groth16::VerifyingKey<E>,
-) -> Result<(), String> {
-    std::fs::create_dir_all(dir).map_err(|e| format!("failed to create cache dir: {e}"))?;
-
-    let mut pk_buf = Vec::new();
-    pk.serialize_compressed(&mut pk_buf)
-        .map_err(|e| format!("failed to serialize proving key: {e}"))?;
-    std::fs::write(dir.join("proving_key.bin"), &pk_buf)
-        .map_err(|e| format!("failed to write proving key: {e}"))?;
-
-    let mut vk_buf = Vec::new();
-    vk.serialize_compressed(&mut vk_buf)
-        .map_err(|e| format!("failed to serialize verifying key: {e}"))?;
-    std::fs::write(dir.join("verifying_key.bin"), &vk_buf)
-        .map_err(|e| format!("failed to write verifying key: {e}"))?;
-
-    Ok(())
 }
 
 // ============================================================================
@@ -422,5 +364,63 @@ mod tests {
         let neg_small = FieldElement::<Bn254Fr>::from_u64(12345).neg();
         let result: ArkFr = fe_to_ark(&neg_small);
         assert_eq!(result, -ArkFr::from(12345u64));
+    }
+
+    /// End-to-end Groth16 over a system with an unreferenced wire: the
+    /// compaction inside `generate_proof_raw` must drop the dead slot,
+    /// gather the witness, and still produce a verifying proof whose
+    /// public inputs come from the original full-width witness. Also
+    /// checks `setup_vk_only` yields the SAME verifying key class (the
+    /// compacted circuit) by verifying the proof against it.
+    #[test]
+    fn proof_over_compacted_system_verifies() {
+        use ark_bn254::Bn254;
+        use constraints::r1cs::LinearCombination;
+
+        // public = x * x, with a dead wire allocated between x and out.
+        let mut cs = ConstraintSystem::<Bn254Fr>::new();
+        let public = cs.alloc_input();
+        let x = cs.alloc_witness();
+        let _dead = cs.alloc_witness();
+        cs.enforce(
+            LinearCombination::from_variable(x),
+            LinearCombination::from_variable(x),
+            LinearCombination::from_variable(public),
+        );
+
+        let witness = vec![
+            FieldElement::<Bn254Fr>::from_u64(1),
+            FieldElement::<Bn254Fr>::from_u64(49),
+            FieldElement::<Bn254Fr>::from_u64(7),
+            FieldElement::<Bn254Fr>::from_u64(123_456),
+        ];
+        cs.verify(&witness).expect("full-width witness satisfies");
+
+        let cache_dir =
+            std::env::temp_dir().join(format!("ach-groth16-compact-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&cache_dir);
+
+        let (proof, vk, public_inputs) =
+            generate_proof_raw::<Bn254Fr, Bn254>(&cs, &witness, &cache_dir, "bn254-test")
+                .expect("proof over compacted system");
+        assert_eq!(public_inputs.len(), 1);
+
+        // The standalone vk path must agree with the proving path.
+        let vk_only = setup_vk_only::<Bn254Fr, Bn254>(&cs, &cache_dir, "bn254-test")
+            .expect("vk over compacted system");
+        let valid =
+            Groth16::<Bn254>::verify(&vk_only, &public_inputs, &proof).expect("verification ran");
+        assert!(valid, "proof must verify against setup_vk_only's key");
+        assert_eq!(vk.gamma_abc_g1.len(), vk_only.gamma_abc_g1.len());
+
+        // Warm path: a second prove hits the streamed key cache.
+        let (proof2, _, public_inputs2) =
+            generate_proof_raw::<Bn254Fr, Bn254>(&cs, &witness, &cache_dir, "bn254-test")
+                .expect("warm prove over cached compacted keys");
+        let valid2 =
+            Groth16::<Bn254>::verify(&vk_only, &public_inputs2, &proof2).expect("verification ran");
+        assert!(valid2);
+
+        let _ = std::fs::remove_dir_all(&cache_dir);
     }
 }
