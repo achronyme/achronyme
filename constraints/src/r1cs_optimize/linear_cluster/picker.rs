@@ -1,12 +1,11 @@
 use std::collections::HashSet;
 
-use rustc_hash::FxHashMap;
-
 use memory::{FieldBackend, FieldElement};
 
 use super::{MIN_OCCURRENCE_LOWER, MIN_OCCURRENCE_UPPER};
 use crate::r1cs::{LinearCombination, Variable};
 
+use crate::r1cs_optimize::predicates::VarFreq;
 use crate::r1cs_optimize::substitution::{
     cached_inv, solve_for_variable_simplified_with_extra, InvCache,
 };
@@ -52,7 +51,7 @@ pub(super) fn solve_for_variable_with_picker<F: FieldBackend>(
     lc: &LinearCombination<F>,
     protected: &HashSet<usize>,
     local_protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
     picker: Picker,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
@@ -74,7 +73,7 @@ pub(super) fn solve_for_variable_with_picker<F: FieldBackend>(
                 {
                     continue;
                 }
-                let freq = var_freq.get(&var_idx).copied().unwrap_or(0);
+                let freq = var_freq.get(var_idx);
                 match &best {
                     None => best = Some((*var, *coeff, freq)),
                     Some((prev_var, _, prev_freq)) => {

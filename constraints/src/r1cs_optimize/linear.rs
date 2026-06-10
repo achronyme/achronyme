@@ -30,7 +30,7 @@ use super::linear_combine::{
     linear_constraint_combined, linear_constraint_combined_profiled, CombineProfile,
 };
 use super::predicates::{
-    compute_variable_frequency, count_nonlinear_constraints, lc_fingerprint,
+    compute_variable_frequency_sparse, count_nonlinear_constraints, lc_fingerprint,
     retain_nontrivial_constraints,
 };
 use super::substitution::{
@@ -235,7 +235,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         rounds += 1;
 
         // Compute variable frequency for this round's heuristic
-        let var_freq = timings.time(0, || compute_variable_frequency(constraints));
+        let var_freq = timings.time(0, || compute_variable_frequency_sparse(constraints));
 
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut remove_mask = vec![false; constraints.len()];

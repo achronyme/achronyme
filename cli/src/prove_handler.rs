@@ -263,7 +263,10 @@ impl DefaultProveHandler {
         prove_ir: &ir_forge::ProveIR,
         mut inputs: HashMap<String, FieldElement>,
     ) -> Result<ProveResult, ProveError> {
-        let mut r1cs = R1CSCompiler::new();
+        // Prover constructor: identical constraint surface, but skips the
+        // per-constraint origin log — this path never reads origins (they
+        // are cleared by the linear optimizer before the verify below).
+        let mut r1cs = R1CSCompiler::new_prover();
         r1cs.prime_id = self.prime_id;
         let proven = ir::passes::bool_prop::compute_proven_boolean(&program);
         r1cs.set_proven_boolean(proven);

@@ -38,7 +38,7 @@ use rustc_hash::FxHashMap;
 
 use memory::FieldBackend;
 
-use super::predicates::{is_linear, is_trivially_satisfied};
+use super::predicates::{is_linear, is_trivially_satisfied, VarFreq};
 use super::substitution::{
     apply_substitution_to_constraint_in_place, solve_for_variable, InvCache,
 };
@@ -62,7 +62,7 @@ pub struct IncrementalCollapse<F: FieldBackend> {
     /// Always empty: passed to `solve_for_variable` so its max-frequency
     /// pick degenerates to "highest index" (the forward / freshest-wire
     /// pivot). Kept as a field to avoid reallocating per constraint.
-    empty_freq: FxHashMap<usize, usize>,
+    empty_freq: VarFreq,
     inv_cache: InvCache<F>,
 }
 
@@ -75,7 +75,7 @@ impl<F: FieldBackend> IncrementalCollapse<F> {
             barred: (0..=num_pub_inputs).collect(),
             track_barred: true,
             retain_substitutions: true,
-            empty_freq: FxHashMap::default(),
+            empty_freq: VarFreq::empty(),
             inv_cache: FxHashMap::default(),
         }
     }

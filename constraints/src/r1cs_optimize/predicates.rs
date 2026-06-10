@@ -18,6 +18,8 @@
 //! sibling submodule (`linear`, `deduce`, `substitution`) and
 //! from `tests.rs`.
 
+use std::sync::atomic::{AtomicU32, Ordering};
+
 use rayon::prelude::*;
 use rustc_hash::FxHashMap;
 
@@ -26,6 +28,40 @@ use memory::{FieldBackend, FieldElement};
 use crate::r1cs::{Constraint, LinearCombination};
 
 const PARALLEL_ANALYSIS_THRESHOLD: usize = 512;
+
+/// Per-variable constraint-occurrence counts.
+///
+/// Replaces the historical `FxHashMap<usize, usize>`: the counts are
+/// probed per-term inside every pivot selection, and at
+/// multi-million-constraint scale the map's table alone held ~0.1 GB
+/// across the round-1 transient. The full-system scan uses the dense
+/// variant (4 B per allocated wire, probes without hashing); subset
+/// scans (the greedy fallback's per-round recount over one cluster)
+/// use the sparse variant, because a dense array would be sized by the
+/// subset's MAX wire index — the full wire space — per inner round.
+/// Counts are identical across variants (`u32` cannot overflow: a
+/// variable appears in at most `constraints.len()` constraints).
+#[derive(Clone)]
+pub(super) enum VarFreq {
+    Dense(Vec<u32>),
+    Sparse(FxHashMap<usize, u32>),
+}
+
+impl VarFreq {
+    /// Frequency-free instance for callers whose pivot choice must not
+    /// depend on occurrence counts (every probe returns 0).
+    pub(super) fn empty() -> Self {
+        Self::Sparse(FxHashMap::default())
+    }
+
+    #[inline]
+    pub(super) fn get(&self, var_idx: usize) -> usize {
+        match self {
+            Self::Dense(counts) => counts.get(var_idx).map(|c| *c as usize).unwrap_or(0),
+            Self::Sparse(counts) => counts.get(&var_idx).map(|c| *c as usize).unwrap_or(0),
+        }
+    }
+}
 
 /// Check if a constraint is linear (one side is a constant).
 ///
@@ -69,43 +105,79 @@ pub(super) fn is_linear<F: FieldBackend>(
 
 /// Count how many constraints each variable appears in (across A, B, C).
 ///
-/// Returns an `FxHashMap` keyed by `var.index()`. Hot path: probed
-/// per-term in `solve_for_variable`. The default `RandomState`/SipHash
-/// hasher accounted for ~18 % of SMTVerifier(10) pipeline wall before
-/// the switch.
+/// Hot path: probed per-term in `solve_for_variable`. The parallel
+/// path uses one shared dense `AtomicU32` array with relaxed adds —
+/// addition commutes, so the counts are exactly the sequential scan's.
 pub(super) fn compute_variable_frequency<F: FieldBackend>(
     constraints: &[Constraint<F>],
-) -> FxHashMap<usize, usize> {
+) -> VarFreq {
     if constraints.len() >= PARALLEL_ANALYSIS_THRESHOLD {
-        let partials: Vec<FxHashMap<usize, usize>> = constraints
+        let max_idx = constraints
+            .par_iter()
+            .map(max_var_index)
+            .reduce(|| 0, usize::max);
+        let counts: Vec<AtomicU32> = (0..=max_idx).map(|_| AtomicU32::new(0)).collect();
+        constraints
             .par_chunks(PARALLEL_ANALYSIS_THRESHOLD)
-            .map(compute_variable_frequency_sequential)
-            .collect();
-        let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
-        for partial in partials {
-            for (var_idx, count) in partial {
-                *freq.entry(var_idx).or_insert(0) += count;
-            }
-        }
-        return freq;
+            .for_each(|chunk| {
+                let mut vars_in_constraint = Vec::new();
+                for constraint in chunk {
+                    collect_constraint_vars(constraint, &mut vars_in_constraint);
+                    for &var_idx in vars_in_constraint.iter() {
+                        counts[var_idx].fetch_add(1, Ordering::Relaxed);
+                    }
+                }
+            });
+        return VarFreq::Dense(counts.into_iter().map(AtomicU32::into_inner).collect());
     }
 
-    compute_variable_frequency_sequential(constraints)
-}
-
-fn compute_variable_frequency_sequential<F: FieldBackend>(
-    constraints: &[Constraint<F>],
-) -> FxHashMap<usize, usize> {
-    let mut freq: FxHashMap<usize, usize> = FxHashMap::default();
+    let mut counts: Vec<u32> = Vec::new();
     let mut vars_in_constraint = Vec::new();
     for constraint in constraints {
-        record_constraint_variable_frequency(&mut freq, constraint, &mut vars_in_constraint);
+        collect_constraint_vars(constraint, &mut vars_in_constraint);
+        for &var_idx in vars_in_constraint.iter() {
+            if var_idx >= counts.len() {
+                counts.resize(var_idx + 1, 0);
+            }
+            counts[var_idx] += 1;
+        }
     }
-    freq
+    VarFreq::Dense(counts)
 }
 
-fn record_constraint_variable_frequency<F: FieldBackend>(
-    freq: &mut FxHashMap<usize, usize>,
+/// Sparse-table variant of [`compute_variable_frequency`] for SUBSET
+/// scans, where the table should be sized by the subset's distinct
+/// variables rather than the full wire space.
+pub(super) fn compute_variable_frequency_sparse<F: FieldBackend>(
+    constraints: &[Constraint<F>],
+) -> VarFreq {
+    let mut counts: FxHashMap<usize, u32> = FxHashMap::default();
+    let mut vars_in_constraint = Vec::new();
+    for constraint in constraints {
+        collect_constraint_vars(constraint, &mut vars_in_constraint);
+        for &var_idx in vars_in_constraint.iter() {
+            *counts.entry(var_idx).or_insert(0) += 1;
+        }
+    }
+    VarFreq::Sparse(counts)
+}
+
+fn max_var_index<F: FieldBackend>(constraint: &Constraint<F>) -> usize {
+    constraint
+        .a
+        .terms
+        .iter()
+        .chain(constraint.b.terms.iter())
+        .chain(constraint.c.terms.iter())
+        .map(|(var, _)| var.index())
+        .max()
+        .unwrap_or(0)
+}
+
+/// Distinct variable indices of a constraint (each counted once even
+/// when it appears in several arms), collected into the reusable
+/// scratch vec.
+fn collect_constraint_vars<F: FieldBackend>(
     constraint: &Constraint<F>,
     vars_in_constraint: &mut Vec<usize>,
 ) {
@@ -115,9 +187,6 @@ fn record_constraint_variable_frequency<F: FieldBackend>(
     vars_in_constraint.extend(constraint.c.terms.iter().map(|(var, _)| var.index()));
     vars_in_constraint.sort_unstable();
     vars_in_constraint.dedup();
-    for &var_idx in vars_in_constraint.iter() {
-        *freq.entry(var_idx).or_insert(0) += 1;
-    }
 }
 
 /// Check if a constraint is trivially satisfied regardless of witness values.
@@ -251,8 +320,8 @@ mod tests {
 
         let freq = compute_variable_frequency(&constraints);
 
-        assert_eq!(freq.get(&0), Some(&1));
-        assert_eq!(freq.get(&1), Some(&2));
-        assert_eq!(freq.get(&2), Some(&1));
+        assert_eq!(freq.get(0), 1);
+        assert_eq!(freq.get(1), 2);
+        assert_eq!(freq.get(2), 1);
     }
 }

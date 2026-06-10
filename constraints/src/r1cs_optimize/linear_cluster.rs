@@ -20,8 +20,9 @@ use std::collections::HashSet;
 
 use rustc_hash::FxHashMap;
 
-use memory::{FieldBackend, FieldElement};
+use memory::FieldBackend;
 
+mod gauss;
 mod parallel;
 mod picker;
 mod touch_profile;
@@ -31,19 +32,12 @@ use super::predicates::{
     compute_variable_frequency, count_nonlinear_constraints, is_linear,
     retain_nontrivial_constraints,
 };
-use super::substitution::{
-    apply_single_substitution_in_place, apply_substitution_in_place,
-    apply_substitution_to_constraint_in_place, InvCache,
-};
+use super::substitution::{apply_substitution_in_place, apply_substitution_to_constraint_in_place};
 use super::timing::O1Timings;
 use super::types::{R1CSOptimizeResult, SubstitutionMap};
-use super::union_find::UnionFind;
-use crate::r1cs::{Constraint, LinearCombination, Variable};
-use parallel::{
-    apply_substitutions_to_unmasked_constraints, linear_signal_entries_ordered,
-    solve_clusters_ordered,
-};
-use picker::{solve_for_variable_with_picker, Picker};
+use crate::r1cs::{Constraint, LinearCombination};
+pub(super) use gauss::{build_clusters_by_signal, solve_cluster_linear};
+use parallel::{apply_substitutions_to_all_constraints, solve_clusters_ordered};
 use touch_profile::log_substitution_touch;
 
 /// Clusters above this size fall back to the greedy iterative
@@ -90,178 +84,6 @@ const MIN_OCCURRENCE_LOWER: usize = 350;
 /// practice -- by the time a cluster crosses 5000 we have already
 /// fallen back to greedy.
 const MIN_OCCURRENCE_UPPER: usize = 1_000_000;
-
-/// Cluster the linear constraints in `linear_constraints` by shared
-/// variable index. Two constraints land in the same cluster iff they
-/// reference at least one common non-protected, non-`Variable::ONE`
-/// signal.
-///
-/// Returns clusters as a `Vec<Vec<usize>>` of indices into
-/// `linear_constraints`. Each cluster vec is sorted ascending; clusters
-/// as a whole are sorted by their smallest member, so the output is
-/// deterministic across runs.
-///
-/// **Skip rules:**
-/// - `Variable::ONE` (index 0) is always skipped. Sharing the
-///   constant wire would merge every constraint into one giant
-///   cluster regardless of structure.
-/// - Indices in `protected` (public inputs, decompose aux wires) are
-///   also skipped. Clustering on a protected signal cannot enable a
-///   substitution -- the picker will refuse to substitute it -- so
-///   merging through it only inflates clusters without enabling work.
-///
-/// Constraints not classified as linear by `is_linear` produce
-/// singleton clusters (they cannot contribute to or be reduced by
-/// the Gauss step).
-pub(super) fn build_clusters_by_signal<F: FieldBackend>(
-    linear_constraints: &[Constraint<F>],
-    protected: &HashSet<usize>,
-) -> Vec<Vec<usize>> {
-    let n = linear_constraints.len();
-    let mut uf = UnionFind::new(n);
-
-    // For each signal index, remember the first constraint that owns
-    // it; subsequent owners union with that first. Signal extraction
-    // may run in parallel, but this merge stays in original constraint
-    // index order so Union-Find shape and output order are fixed.
-    let mut first_owner: FxHashMap<usize, usize> = FxHashMap::default();
-    for (idx, signals) in linear_signal_entries_ordered(linear_constraints, protected) {
-        for sig in signals {
-            match first_owner.get(&sig) {
-                Some(&owner) => uf.union(idx, owner),
-                None => {
-                    first_owner.insert(sig, idx);
-                }
-            }
-        }
-    }
-
-    // Bucket by root. Pushing in 0..n order keeps each cluster vec
-    // sorted ascending.
-    let mut by_root: std::collections::BTreeMap<usize, Vec<usize>> =
-        std::collections::BTreeMap::new();
-    for idx in 0..n {
-        let root = uf.find(idx);
-        by_root.entry(root).or_default().push(idx);
-    }
-    let mut clusters: Vec<Vec<usize>> = by_root.into_values().collect();
-    clusters.sort_by_key(|c| c[0]);
-    clusters
-}
-
-/// Run reduced row-echelon Gaussian elimination on a single cluster of
-/// linear constraints.
-///
-/// Each linear constraint `k * other = c_lc` is rewritten as the LC
-/// `c_lc - k*other` that must equal zero. We pick a pivot row + a
-/// pivot variable via `solve_for_variable` (max-frequency picker;
-/// the size-conditional swap to min-occurrence happens in
-/// `optimize_linear_clustered`), record the substitution
-/// `var -> expr`, apply it to the remaining rows + previously-
-/// recorded substitutions (composition), and repeat until no row
-/// admits a substitution.
-///
-/// Inputs:
-/// - `cluster_constraints`: linear constraints in this cluster.
-///   Non-linear constraints (those for which `is_linear` returns
-///   `None`) flow straight to the residual list -- they cannot
-///   contribute to or be reduced by the linear Gauss step.
-/// - `protected`: variables the picker must never substitute (public
-///   inputs, `Variable::ONE`, decompose aux wires).
-/// - `var_freq`: per-variable frequency over the full constraint
-///   set, used by the max-frequency picker. The frequency map is
-///   passed in (rather than computed locally over the cluster) so
-///   the Gauss path matches the greedy path's heuristic exactly.
-///
-/// Output:
-/// - `(SubstitutionMap, residual)`: the discovered substitutions
-///   (composed acyclically -- each value LC references only
-///   variables not in the substitution map's keys), plus any
-///   constraints that could not be reduced (all-protected variables,
-///   or non-linear constraints in the cluster). Residual constraints
-///   are emitted in `1 * lc = 0` form mirroring the dense path.
-pub(super) fn solve_cluster_linear<F: FieldBackend>(
-    cluster_constraints: Vec<Constraint<F>>,
-    protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
-    inv_cache: &mut InvCache<F>,
-) -> (SubstitutionMap<F>, Vec<Constraint<F>>) {
-    let cluster_size = cluster_constraints.len();
-    let picker = Picker::for_cluster_size(cluster_size);
-
-    // Linearize: build the per-constraint "must equal zero" LC.
-    let mut zero_lcs: Vec<LinearCombination<F>> = Vec::new();
-    let mut residual: Vec<Constraint<F>> = Vec::new();
-
-    for c in cluster_constraints {
-        match is_linear(&c) {
-            Some((k, other, c_lc)) => {
-                // Constraint encodes k * other = c_lc, i.e.
-                // c_lc - k*other = 0.
-                let combined = (c_lc - (other * k)).simplify();
-                zero_lcs.push(combined);
-            }
-            None => residual.push(c),
-        }
-    }
-
-    let mut subs: SubstitutionMap<F> = FxHashMap::default();
-    let mut local_protected = HashSet::new();
-
-    loop {
-        // Find the first row that admits a substitution.
-        let mut found: Option<(usize, Variable, LinearCombination<F>)> = None;
-        for (i, lc) in zero_lcs.iter().enumerate() {
-            if let Some((var, expr)) = solve_for_variable_with_picker(
-                lc,
-                protected,
-                &local_protected,
-                var_freq,
-                picker,
-                inv_cache,
-            ) {
-                found = Some((i, var, expr));
-                break;
-            }
-        }
-
-        let Some((row_idx, var, expr)) = found else {
-            break;
-        };
-        zero_lcs.swap_remove(row_idx);
-        local_protected.insert(var.index());
-
-        // Apply the new substitution to rows/substitutions that reference
-        // the pivot and compose it into previously-recorded substitutions
-        // so the final map is acyclic.
-        let var_idx = var.index();
-        for lc in zero_lcs.iter_mut() {
-            apply_single_substitution_in_place(lc, var_idx, &expr);
-        }
-        for prev_expr in subs.values_mut() {
-            apply_single_substitution_in_place(prev_expr, var_idx, &expr);
-        }
-        subs.insert(var_idx, expr);
-        if zero_lcs.is_empty() {
-            break;
-        }
-    }
-
-    // Convert any remaining non-empty rows back to constraint form
-    // (`1 * lc = 0`) so the caller can keep them in the system.
-    // Empty rows are tautologies after substitution; skip them.
-    for lc in zero_lcs {
-        if !lc.terms().is_empty() {
-            residual.push(Constraint {
-                a: LinearCombination::from_constant(FieldElement::one()),
-                b: lc,
-                c: LinearCombination::zero(),
-            });
-        }
-    }
-
-    (subs, residual)
-}
 
 /// Run cluster-based linear constraint elimination to fixpoint.
 ///
@@ -316,19 +138,57 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
 
         // Partition constraints into linear (eligible for cluster
         // Gauss) and non-linear (passed through unchanged this round).
+        // Linear rows are MOVED out behind an empty placeholder, not
+        // cloned: the masked slots are never read again — the
+        // substitution pass skips them by mask and the compaction
+        // sweep swaps without inspecting content — so the round avoids
+        // holding a second copy of every linear row's term heap.
         let (linear_indices, linear_constraints) = timings.time(1, || {
             let mut linear_indices: Vec<usize> = Vec::new();
-            let mut linear_constraints: Vec<Constraint<F>> = Vec::new();
             for (idx, c) in constraints.iter().enumerate() {
                 if is_linear(c).is_some() {
                     linear_indices.push(idx);
-                    linear_constraints.push(c.clone());
                 }
+            }
+            let mut linear_constraints: Vec<Constraint<F>> =
+                Vec::with_capacity(linear_indices.len());
+            for &idx in &linear_indices {
+                let placeholder = Constraint {
+                    a: LinearCombination::zero(),
+                    b: LinearCombination::zero(),
+                    c: LinearCombination::zero(),
+                };
+                linear_constraints.push(std::mem::replace(&mut constraints[idx], placeholder));
             }
             (linear_indices, linear_constraints)
         });
 
-        let nonlinear_before = constraints.len() - linear_constraints.len();
+        // Compact the survivors immediately: the moved-out slots are
+        // empty placeholders, and removing them now (instead of after
+        // the solve) releases the spine's pre-optimize capacity tail
+        // before the round's memory peak. Survivors keep their
+        // original relative order — identical to the post-solve mask
+        // sweep this replaces.
+        timings.time(5, || {
+            let mut next_linear = linear_indices.iter().peekable();
+            let mut write = 0usize;
+            for read in 0..constraints.len() {
+                if next_linear.peek() == Some(&&read) {
+                    next_linear.next();
+                    continue;
+                }
+                if write != read {
+                    constraints.swap(write, read);
+                }
+                write += 1;
+            }
+            constraints.truncate(write);
+            if constraints.capacity() > constraints.len().saturating_mul(2) {
+                constraints.shrink_to_fit();
+            }
+        });
+
+        let nonlinear_before = constraints.len();
 
         // Cluster the linear constraints by shared signal.
         let clusters = timings.time(2, || {
@@ -360,8 +220,29 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         // Solve clusters independently, then merge in cluster-index order.
         let mut round_subs: SubstitutionMap<F> = FxHashMap::default();
         let mut residuals: Vec<Constraint<F>> = Vec::new();
+
+        // Distribute the moved rows into per-cluster owned vecs
+        // (clusters partition 0..linear_total exactly). Rows of
+        // clusters that produce substitutions are freed inside the
+        // solve as each cluster completes; rows of no-subs clusters
+        // come back for the all-empty-round restore.
+        let linear_total = linear_constraints.len();
+        let cluster_inputs: Vec<Vec<Constraint<F>>> = {
+            let mut slots: Vec<Option<Constraint<F>>> =
+                linear_constraints.into_iter().map(Some).collect();
+            clusters
+                .iter()
+                .map(|cluster| {
+                    cluster
+                        .iter()
+                        .map(|&i| slots[i].take().expect("clusters partition the linear rows"))
+                        .collect()
+                })
+                .collect()
+        };
+
         let solved_clusters = timings.time(3, || {
-            solve_clusters_ordered(&clusters, &linear_constraints, &round_protected, &var_freq)
+            solve_clusters_ordered(cluster_inputs, &round_protected, &var_freq)
         });
         if timings.enabled() {
             let fallback_rounds: usize = solved_clusters.iter().map(|s| s.fallback_rounds).sum();
@@ -374,61 +255,76 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
                  fallback_cluster_round_scans={fallback_scans}"
             );
         }
-        for solved in solved_clusters {
+        let total_round_subs: usize = solved_clusters.iter().map(|s| s.subs.len()).sum();
+        round_subs.reserve(total_round_subs);
+        let mut unsolved_rows: Vec<(usize, Vec<Constraint<F>>)> = Vec::new();
+        for (cluster_idx, solved) in solved_clusters.into_iter().enumerate() {
             for (k, v) in solved.subs {
                 round_subs.insert(k, v);
             }
             residuals.extend(solved.residual);
+            if let Some(rows) = solved.unsolved_rows {
+                unsolved_rows.push((cluster_idx, rows));
+            }
         }
 
         if round_subs.is_empty() {
+            // Nothing was solved: every cluster returned its pristine
+            // rows. Rebuild the exact pre-round layout — survivors and
+            // restored rows re-interleave by original index
+            // (linear_indices is ascending) — so the probe round
+            // leaves `constraints` unchanged. The cluster residuals
+            // are rewrites of these same rows and are discarded.
+            let mut restored: Vec<Option<Constraint<F>>> =
+                (0..linear_total).map(|_| None).collect();
+            for (cluster_idx, rows) in unsolved_rows {
+                for (j, row) in rows.into_iter().enumerate() {
+                    restored[clusters[cluster_idx][j]] = Some(row);
+                }
+            }
+            let survivors = std::mem::take(constraints);
+            let total = survivors.len() + linear_total;
+            let mut rebuilt: Vec<Constraint<F>> = Vec::with_capacity(total);
+            let mut survivor_iter = survivors.into_iter();
+            let mut linear_iter = linear_indices.iter().zip(restored).peekable();
+            for idx in 0..total {
+                match linear_iter.peek() {
+                    Some((&pos, _)) if pos == idx => {
+                        let (_, row) = linear_iter.next().expect("peeked entry");
+                        rebuilt.push(row.expect("every cluster returns rows on the empty round"));
+                    }
+                    _ => rebuilt.push(survivor_iter.next().expect("survivor count matches layout")),
+                }
+            }
+            *constraints = rebuilt;
             rounds -= 1; // do not count empty round
             break;
         }
 
-        let linear_eliminated = linear_constraints.len() - residuals.len();
+        let linear_eliminated = linear_total - residuals.len();
+        // No-subs clusters' pristine rows, the frequency counts, and
+        // the cluster index lists are dead from here (the surviving
+        // rewrites are in `residuals`); free them before the
+        // substitution pass allocates its fill-in.
+        drop(unsolved_rows);
+        drop(var_freq);
+        drop(clusters);
 
-        // Build the next constraint set: keep non-linear constraints
-        // (with substitutions applied) + new residuals (already had
-        // their own cluster's substitutions applied internally; apply
+        // Build the next constraint set: the survivors (already
+        // compacted at classify time) receive the round's
+        // substitutions, then the new residuals are appended (their
+        // own cluster's substitutions were applied internally; apply
         // round_subs so cross-cluster effects on shared protected
         // signals fold in).
-        // Compact non-linear constraints in place + apply round_subs to
-        // each. Two-cursor sweep avoids allocating a fresh `Vec`.
-        let n = constraints.len();
-        let mut linear_index_mask = vec![false; n];
-        for idx in linear_indices {
-            linear_index_mask[idx] = true;
-        }
         if timings.enabled() {
-            log_substitution_touch(
-                rounds,
-                constraints,
-                &linear_index_mask,
-                &residuals,
-                &round_subs,
-            );
+            let no_mask = vec![false; constraints.len()];
+            log_substitution_touch(rounds, constraints, &no_mask, &residuals, &round_subs);
         }
         timings.time(4, || {
-            apply_substitutions_to_unmasked_constraints(
-                constraints,
-                &linear_index_mask,
-                &round_subs,
-            );
+            apply_substitutions_to_all_constraints(constraints, &round_subs);
         });
 
         timings.time(5, || {
-            let mut write = 0usize;
-            for (read, skip) in linear_index_mask.iter().enumerate().take(n) {
-                if *skip {
-                    continue;
-                }
-                if write != read {
-                    constraints.swap(write, read);
-                }
-                write += 1;
-            }
-            constraints.truncate(write);
             for mut r in residuals {
                 apply_substitution_to_constraint_in_place(&mut r, &round_subs);
                 constraints.push(r);
@@ -438,6 +334,14 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         // Sweep trivially-satisfied constraints (0*B=0, k*LC=k*LC, etc.).
         let trivial_this_round = timings.time(6, || retain_nontrivial_constraints(constraints));
         total_trivial_removed += trivial_this_round;
+
+        // The first round typically eliminates the majority of all
+        // rows; without a shrink the spine's pre-optimize push-doubling
+        // capacity would stay resident through the remaining rounds and
+        // the dedup. Only shrink on real waste.
+        if constraints.capacity() > constraints.len().saturating_mul(2) {
+            constraints.shrink_to_fit();
+        }
 
         // Count newly-linear constraints exposed by the substitutions
         // applied to non-linears.

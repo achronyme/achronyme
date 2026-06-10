@@ -24,7 +24,7 @@ fn cluster_gauss_singleton_no_substitution() {
 
     let mut inv_cache = rustc_hash::FxHashMap::default();
     let (subs, residual) = solve_cluster_linear::<memory::Bn254Fr>(
-        constraints.clone(),
+        &constraints,
         &protected,
         &var_freq,
         &mut inv_cache,
@@ -69,7 +69,7 @@ fn cluster_gauss_chain_match_greedy() {
     for cluster in &clusters {
         let cluster_cons: Vec<_> = cluster.iter().map(|i| constraints[*i].clone()).collect();
         let (subs, residual) = solve_cluster_linear::<memory::Bn254Fr>(
-            cluster_cons,
+            &cluster_cons,
             &protected,
             &var_freq,
             &mut inv_cache,
@@ -447,7 +447,7 @@ fn cluster_gauss_high_degree_variable() {
         .collect();
     let mut inv_cache = rustc_hash::FxHashMap::default();
     let (subs, residual) = solve_cluster_linear::<memory::Bn254Fr>(
-        cluster_cons,
+        &cluster_cons,
         &protected,
         &var_freq,
         &mut inv_cache,

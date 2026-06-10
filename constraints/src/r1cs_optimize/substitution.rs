@@ -19,6 +19,7 @@ use rustc_hash::FxHashMap;
 
 use memory::{FieldBackend, FieldElement};
 
+use super::predicates::VarFreq;
 use super::types::SubstitutionMap;
 use crate::r1cs::{Constraint, LinearCombination, Variable};
 
@@ -62,6 +63,15 @@ pub(super) fn apply_substitution_in_place<F: FieldBackend>(
         }
     }
     lc.simplify_in_place();
+    // Replacement fill-in grows the vec while the merge in
+    // `simplify_in_place` shrinks `len` back down; without a shrink the
+    // post-substitution arms retain their worst-case capacity for the
+    // rest of the optimizer's lifetime (measured ~2.7x slack across the
+    // surviving set). Only shrink on real waste so the common
+    // no-expansion case stays allocation-free.
+    if lc.terms.capacity() > lc.terms.len().saturating_mul(2) {
+        lc.terms.shrink_to_fit();
+    }
 }
 
 fn lc_references_any_substitution_var<F: FieldBackend>(
@@ -182,7 +192,7 @@ pub(super) fn cached_inv<F: FieldBackend>(
 pub(super) fn solve_for_variable<F: FieldBackend>(
     lc: LinearCombination<F>,
     protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     let simplified = lc.simplify();
@@ -193,7 +203,7 @@ pub(super) fn solve_for_variable<F: FieldBackend>(
 pub(super) fn solve_for_variable_simplified<F: FieldBackend>(
     simplified: &LinearCombination<F>,
     protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     solve_for_variable_simplified_with_extra(simplified, protected, None, var_freq, inv_cache)
@@ -203,7 +213,7 @@ pub(super) fn solve_for_variable_simplified_with_extra<F: FieldBackend>(
     simplified: &LinearCombination<F>,
     protected: &HashSet<usize>,
     extra_protected: Option<&HashSet<usize>>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>)> {
     let (target_var, target_coeff, _) =
@@ -215,7 +225,7 @@ pub(super) fn solve_for_variable_simplified_with_extra<F: FieldBackend>(
 pub(super) fn solve_for_variable_simplified_profiled<F: FieldBackend>(
     simplified: &LinearCombination<F>,
     protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
     inv_cache: &mut InvCache<F>,
 ) -> Option<(Variable, LinearCombination<F>, SolveProfile)> {
     let (target_var, target_coeff, _) = select_solve_target(simplified, protected, None, var_freq)?;
@@ -234,7 +244,7 @@ fn select_solve_target<F: FieldBackend>(
     simplified: &LinearCombination<F>,
     protected: &HashSet<usize>,
     extra_protected: Option<&HashSet<usize>>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
 ) -> Option<(Variable, FieldElement<F>, usize)> {
     let mut best: Option<(Variable, FieldElement<F>, usize)> = None;
     for (var, coeff) in simplified.terms() {
@@ -245,7 +255,7 @@ fn select_solve_target<F: FieldBackend>(
         {
             continue; // Never substitute Variable::ONE
         }
-        let freq = var_freq.get(&var_idx).copied().unwrap_or(0);
+        let freq = var_freq.get(var_idx);
         match &best {
             None => best = Some((*var, *coeff, freq)),
             Some((prev_var, _, prev_freq)) => {

@@ -9,7 +9,7 @@ use super::{solve_cluster_linear, CLUSTER_FALLBACK_THRESHOLD};
 use crate::r1cs::Constraint;
 use crate::r1cs::Variable;
 use crate::r1cs_optimize::linear::optimize_linear_with_protected;
-use crate::r1cs_optimize::predicates::is_linear;
+use crate::r1cs_optimize::predicates::{is_linear, VarFreq};
 use crate::r1cs_optimize::substitution::{apply_substitution_to_constraint_in_place, InvCache};
 use crate::r1cs_optimize::types::SubstitutionMap;
 
@@ -19,33 +19,29 @@ const PARALLEL_SUBSTITUTION_THRESHOLD: usize = 512;
 pub(super) struct SolvedCluster<F: FieldBackend> {
     pub(super) subs: SubstitutionMap<F>,
     pub(super) residual: Vec<Constraint<F>>,
+    /// The cluster's pristine input rows, returned ONLY when the
+    /// cluster yielded no substitutions. An all-empty (final) round
+    /// restores them into the constraint set untouched; rounds that
+    /// solved anything free them inside the solve instead.
+    pub(super) unsolved_rows: Option<Vec<Constraint<F>>>,
     pub(super) fallback_len: usize,
     pub(super) fallback_rounds: usize,
 }
 
-pub(super) fn apply_substitutions_to_unmasked_constraints<F: FieldBackend>(
+pub(super) fn apply_substitutions_to_all_constraints<F: FieldBackend>(
     constraints: &mut [Constraint<F>],
-    skip_mask: &[bool],
     subs: &SubstitutionMap<F>,
 ) {
-    debug_assert_eq!(constraints.len(), skip_mask.len());
     if constraints.len() < PARALLEL_SUBSTITUTION_THRESHOLD {
-        for (constraint, skip) in constraints.iter_mut().zip(skip_mask) {
-            if !*skip {
-                apply_substitution_to_constraint_in_place(constraint, subs);
-            }
+        for constraint in constraints.iter_mut() {
+            apply_substitution_to_constraint_in_place(constraint, subs);
         }
         return;
     }
 
-    constraints
-        .par_iter_mut()
-        .zip(skip_mask.par_iter())
-        .for_each(|(constraint, skip)| {
-            if !*skip {
-                apply_substitution_to_constraint_in_place(constraint, subs);
-            }
-        });
+    constraints.par_iter_mut().for_each(|constraint| {
+        apply_substitution_to_constraint_in_place(constraint, subs);
+    });
 }
 
 pub(super) fn linear_signal_entries_ordered<F: FieldBackend>(
@@ -96,55 +92,53 @@ fn signal_entries_sequential<F: FieldBackend>(
 }
 
 pub(super) fn solve_clusters_ordered<F: FieldBackend>(
-    clusters: &[Vec<usize>],
-    linear_constraints: &[Constraint<F>],
+    cluster_inputs: Vec<Vec<Constraint<F>>>,
     round_protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
 ) -> Vec<SolvedCluster<F>> {
-    if clusters.len() <= 1 {
-        return clusters
-            .iter()
-            .map(|cluster| {
-                solve_one_cluster(cluster, linear_constraints, round_protected, var_freq)
-            })
+    if cluster_inputs.len() <= 1 {
+        return cluster_inputs
+            .into_iter()
+            .map(|rows| solve_one_cluster(rows, round_protected, var_freq))
             .collect();
     }
 
-    clusters
-        .par_iter()
-        .map(|cluster| solve_one_cluster(cluster, linear_constraints, round_protected, var_freq))
+    cluster_inputs
+        .into_par_iter()
+        .map(|rows| solve_one_cluster(rows, round_protected, var_freq))
         .collect()
 }
 
 fn solve_one_cluster<F: FieldBackend>(
-    cluster: &[usize],
-    linear_constraints: &[Constraint<F>],
+    rows: Vec<Constraint<F>>,
     round_protected: &HashSet<usize>,
-    var_freq: &FxHashMap<usize, usize>,
+    var_freq: &VarFreq,
 ) -> SolvedCluster<F> {
-    let cluster_cons: Vec<Constraint<F>> = cluster
-        .iter()
-        .map(|&i| linear_constraints[i].clone())
-        .collect();
-
-    if cluster.len() > CLUSTER_FALLBACK_THRESHOLD {
-        let mut subset = cluster_cons;
+    if rows.len() > CLUSTER_FALLBACK_THRESHOLD {
+        // The greedy eliminator mutates its input into residual form,
+        // so it runs on a copy; the pristine rows are kept only when
+        // nothing was solved (the all-empty-round restore needs them)
+        // and freed right here otherwise.
+        let mut subset = rows.clone();
         let input_len = subset.len();
         let (subs, stats) = optimize_linear_with_protected(&mut subset, 0, round_protected);
+        let unsolved_rows = if subs.is_empty() { Some(rows) } else { None };
         return SolvedCluster {
             subs,
             residual: subset,
+            unsolved_rows,
             fallback_len: input_len,
             fallback_rounds: stats.rounds,
         };
     }
 
     let mut inv_cache: InvCache<F> = FxHashMap::default();
-    let (subs, residual) =
-        solve_cluster_linear(cluster_cons, round_protected, var_freq, &mut inv_cache);
+    let (subs, residual) = solve_cluster_linear(&rows, round_protected, var_freq, &mut inv_cache);
+    let unsolved_rows = if subs.is_empty() { Some(rows) } else { None };
     SolvedCluster {
         subs,
         residual,
+        unsolved_rows,
         fallback_len: 0,
         fallback_rounds: 0,
     }
@@ -175,7 +169,11 @@ mod tests {
         let clusters = build_clusters_by_signal(&constraints, &protected);
         let var_freq = compute_variable_frequency(&constraints);
 
-        let solved = solve_clusters_ordered(&clusters, &constraints, &protected, &var_freq);
+        let cluster_inputs: Vec<Vec<_>> = clusters
+            .iter()
+            .map(|cluster| cluster.iter().map(|&i| constraints[i].clone()).collect())
+            .collect();
+        let solved = solve_clusters_ordered(cluster_inputs, &protected, &var_freq);
 
         assert_eq!(clusters.len(), 2);
         assert_eq!(solved.len(), 2);
@@ -211,7 +209,7 @@ mod tests {
     }
 
     #[test]
-    fn apply_substitutions_skips_masked_constraints() {
+    fn apply_substitutions_rewrites_every_constraint() {
         use crate::r1cs::LinearCombination;
         use memory::FieldElement;
 
@@ -223,28 +221,26 @@ mod tests {
         cs.enforce_equal(make_lc_var(y), make_lc_var(z));
 
         let mut constraints = cs.constraints().to_vec();
-        let before_masked = constraints[0].clone();
         let mut subs = SubstitutionMap::<Bn254Fr>::default();
         subs.insert(
             y.index(),
             LinearCombination::from_constant(FieldElement::from_u64(7)),
         );
 
-        apply_substitutions_to_unmasked_constraints(&mut constraints, &[true, false], &subs);
+        apply_substitutions_to_all_constraints(&mut constraints, &subs);
 
-        assert_eq!(
-            constraints[0].b.terms(),
-            before_masked.b.terms(),
-            "masked constraint must stay byte-identical"
-        );
-        assert!(
-            constraints[1]
-                .a
-                .terms()
-                .iter()
-                .any(|(var, _)| *var == Variable::ONE),
-            "unmasked constraint should receive the substitution"
-        );
+        for constraint in &constraints {
+            assert!(
+                constraint
+                    .a
+                    .terms()
+                    .iter()
+                    .chain(constraint.b.terms().iter())
+                    .chain(constraint.c.terms().iter())
+                    .all(|(var, _)| *var != y),
+                "every reference to the substituted wire must be rewritten"
+            );
+        }
     }
 
     #[test]
@@ -268,7 +264,7 @@ mod tests {
             LinearCombination::from_constant(FieldElement::from_u64(7)),
         );
 
-        apply_substitutions_to_unmasked_constraints(&mut constraints, &[false, false], &subs);
+        apply_substitutions_to_all_constraints(&mut constraints, &subs);
 
         let touched_has_constant = constraints[0]
             .a
