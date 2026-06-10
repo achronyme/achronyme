@@ -79,6 +79,7 @@ mod arrays;
 mod canonical;
 mod family;
 mod int_ops;
+mod native;
 mod profile;
 mod state;
 mod step;
@@ -145,7 +146,14 @@ pub fn execute_with_budget<F: FieldBackend>(
                 args,
                 rets,
             } => {
-                state.enter_call(prog, callee, &args, rets, pc)?;
+                // Intrinsic-annotated callees run natively when their
+                // guards accept the inputs; otherwise interpret the
+                // body — identical results either way.
+                if native::try_native(prog, callee, &args, &rets, &mut state)? {
+                    state.top_mut()?.pc = pc + 1;
+                } else {
+                    state.enter_call(prog, callee, &args, rets, pc)?;
+                }
             }
             Flow::Return { srcs } => {
                 if state.do_return(&srcs)? {

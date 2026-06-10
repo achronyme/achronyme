@@ -17,11 +17,13 @@ impl ProgramBuilder {
         for sub in std::mem::take(&mut self.subs) {
             subprograms.push(Self::resolve_sub(sub)?);
         }
-        Ok(Program::from_subprograms(
+        let mut program = Program::from_subprograms(
             self.family,
             std::mem::take(&mut self.const_pool),
             subprograms,
-        ))
+        );
+        program.intrinsics = std::mem::take(&mut self.intrinsics);
+        Ok(program)
     }
 
     /// Resolve one subprogram's pending jumps (instruction index →

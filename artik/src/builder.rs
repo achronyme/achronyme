@@ -129,6 +129,19 @@ pub struct ProgramBuilder {
     next_slot: u32,
     subs: Vec<SubInProgress>,
     active: usize,
+    intrinsics: Vec<crate::intrinsics::IntrinsicAnnotation>,
+}
+
+impl ProgramBuilder {
+    /// Mark a reserved subprogram as natively executable as `intrinsic`.
+    /// The caller asserts semantic equivalence (the circom lift checks
+    /// the function source structurally before annotating); the
+    /// executor still falls back to the interpreted body whenever the
+    /// native guards decline an input.
+    pub fn annotate_intrinsic(&mut self, func_id: u32, intrinsic: crate::intrinsics::Intrinsic) {
+        self.intrinsics
+            .push(crate::intrinsics::IntrinsicAnnotation { func_id, intrinsic });
+    }
 }
 
 #[cfg(test)]

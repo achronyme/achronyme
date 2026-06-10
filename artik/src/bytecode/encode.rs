@@ -56,15 +56,26 @@ pub fn encode(prog: &Program) -> Vec<u8> {
         body_bytes.extend_from_slice(&sub_bytes);
     }
 
+    let mut intrinsic_bytes: Vec<u8> = Vec::new();
+    crate::intrinsics::encode_section(&prog.intrinsics, &mut intrinsic_bytes);
+
     let mut header = prog.header;
     header.const_pool_len = const_pool_bytes.len() as u32;
     header.body_len = body_bytes.len() as u32;
     header.frame_size = prog.frame_size;
+    if intrinsic_bytes.is_empty() {
+        header.flags &= !crate::intrinsics::FLAG_INTRINSICS;
+    } else {
+        header.flags |= crate::intrinsics::FLAG_INTRINSICS;
+    }
 
-    let mut out = Vec::with_capacity(HEADER_SIZE + const_pool_bytes.len() + body_bytes.len());
+    let mut out = Vec::with_capacity(
+        HEADER_SIZE + const_pool_bytes.len() + body_bytes.len() + intrinsic_bytes.len(),
+    );
     out.extend_from_slice(&header.encode_prefix());
     out.extend_from_slice(&const_pool_bytes);
     out.extend_from_slice(&body_bytes);
+    out.extend_from_slice(&intrinsic_bytes);
     out
 }
 

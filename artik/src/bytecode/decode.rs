@@ -95,15 +95,23 @@ pub fn decode(bytes: &[u8], expected_family: Option<FieldFamily>) -> Result<Prog
     let mut header = header;
     header.frame_size = frame_size;
 
+    let intrinsics = if header.flags & crate::intrinsics::FLAG_INTRINSICS != 0 {
+        crate::intrinsics::decode_section(&bytes[body_end..])?
+    } else {
+        Vec::new()
+    };
+
     let program = Program {
         header,
         const_pool,
         frame_size,
         subprograms,
         entry: 0,
+        intrinsics,
     };
 
     validate(&program, &offsets_per_sub)?;
+    crate::intrinsics::validate_annotations(&program)?;
     Ok(program)
 }
 

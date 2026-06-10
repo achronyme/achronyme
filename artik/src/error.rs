@@ -78,6 +78,12 @@ pub enum ArtikError {
     /// recursion; hitting this means either malformed bytecode or a
     /// lift that emitted a cyclic call graph.
     CallDepthExceeded { max: u32 },
+    /// An intrinsic annotation carries a tag byte outside the known set.
+    UnknownIntrinsicTag(u8),
+    /// An intrinsic annotation does not fit its subprogram: bad bounds,
+    /// the entry or an out-of-range subprogram index, or a parameter /
+    /// return signature that does not match the intrinsic's shape.
+    BadIntrinsicAnnotation { func_id: u32 },
 
     // ── Runtime (executor) ──────────────────────────────────────────
     /// A `PushConst` referenced bytes that could not be decoded as a
@@ -231,6 +237,13 @@ impl fmt::Display for ArtikError {
             Self::CallDepthExceeded { max } => {
                 write!(f, "Artik call depth exceeded limit {max}")
             }
+            Self::UnknownIntrinsicTag(t) => {
+                write!(f, "Artik unknown intrinsic tag: {t}")
+            }
+            Self::BadIntrinsicAnnotation { func_id } => write!(
+                f,
+                "Artik intrinsic annotation does not fit subprogram {func_id}"
+            ),
         }
     }
 }

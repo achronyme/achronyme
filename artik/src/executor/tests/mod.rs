@@ -24,6 +24,7 @@ mod crypto;
 mod field;
 mod field_canonical;
 mod int;
+mod intrinsics_exec;
 mod limits;
 mod rotations;
 mod semantic;

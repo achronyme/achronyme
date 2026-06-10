@@ -60,6 +60,7 @@ mod control;
 mod driver;
 mod exprs;
 mod helpers;
+mod intrinsics;
 mod stmts;
 
 /// Result of a successful lift: the serialized Artik program + the
@@ -255,6 +256,17 @@ fn try_lift_via_subprograms(
         state.builder.end_subprogram(prev);
         if !returned {
             return None;
+        }
+        // Recognized big-integer helpers get a native-intrinsic
+        // annotation; the executor runs them natively when its guards
+        // accept the inputs and interprets this body otherwise.
+        if let Some(intrinsic) = intrinsics::recognize_intrinsic(
+            &pending.name,
+            callee,
+            &pending.param_sig,
+            state.functions,
+        ) {
+            state.builder.annotate_intrinsic(pending.func_id, intrinsic);
         }
     }
 

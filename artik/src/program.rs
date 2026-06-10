@@ -55,6 +55,10 @@ pub struct Program {
     /// Index of the entry subprogram. Always 0 in practice; kept
     /// explicit so the executor never hard-codes the assumption.
     pub entry: usize,
+    /// Subprograms the executor may run natively. Produced by the
+    /// circom lift for recognized big-integer helpers; empty for
+    /// everything else. See [`crate::intrinsics`].
+    pub intrinsics: Vec<crate::intrinsics::IntrinsicAnnotation>,
 }
 
 impl Program {
@@ -109,6 +113,7 @@ impl Program {
             frame_size,
             subprograms,
             entry,
+            intrinsics: Vec::new(),
         }
     }
 

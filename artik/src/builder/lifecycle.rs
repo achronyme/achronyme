@@ -18,6 +18,7 @@ impl ProgramBuilder {
             next_slot: 0,
             subs: vec![SubInProgress::new(Vec::new(), Vec::new())],
             active: 0,
+            intrinsics: Vec::new(),
         }
     }
 
