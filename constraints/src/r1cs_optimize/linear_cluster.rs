@@ -360,6 +360,16 @@ pub(super) fn optimize_linear_clustered_with_protected<F: FieldBackend>(
         });
     }
 
+    // A giant cluster falls back to the greedy batch eliminator, whose
+    // map can chain a wire to another eliminated the same round; left
+    // unflattened that wire dangles in a survivor (forgeable). Break those
+    // cycles and rewrite every survivor against the map so none references
+    // an eliminated wire; rank-deficient cycles re-emit the rows their
+    // deficiency exposes. The Gauss path is already eager-canonical, and
+    // clusters partition variables, so the unioned map is acyclic outside
+    // the greedy's contribution -- this only does real work there.
+    super::flatten::canonicalize_against_constraints(&mut all_subs, constraints);
+
     // Post-processing identical to optimize_linear: dedup non-linear
     // constraints (after substitution different template instances can
     // become identical) + final trivial sweep.

@@ -54,6 +54,7 @@
 
 mod deduce;
 mod deduce_sparse;
+mod flatten;
 mod incremental;
 mod linear;
 mod linear_cluster;

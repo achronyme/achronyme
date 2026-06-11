@@ -130,7 +130,11 @@ impl<F: FieldBackend> WitnessGenerator<F> {
             self.execute_op(op, &mut witness, memo.as_deref_mut())?;
         }
 
-        // Post-fixup: fill substituted-away wires from substitution map
+        // Post-fixup: fill substituted-away wires from substitution map.
+        // The op replay above already pre-filled every wire with its honest
+        // value, so this single arbitrary-order pass is correct even where a
+        // value chains through another eliminated wire (the substitution map
+        // is acyclic but not necessarily fully flattened).
         if let Some(subs) = &self.substitution_map {
             for (var_idx, lc) in subs {
                 witness[*var_idx] = lc

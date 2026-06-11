@@ -15,3 +15,4 @@ mod cluster_partition;
 mod edge_cases;
 mod linear_basics;
 mod sparse;
+mod substitution_canonical;

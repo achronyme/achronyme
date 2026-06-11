@@ -307,10 +307,18 @@ fn build_solve_result<F: FieldBackend>(
 ///   cannot re-eliminate a wire `earlier` already removed. Asserted (not
 ///   `debug_assert`): a silent overwrite here would drop a wire's
 ///   reconstruction and yield a witness that satisfies a forged proof.
-/// - **Each input map is canonical** (no replacement references a wire
-///   the same map eliminates). The result is then canonical too — every
-///   replacement references only wires eliminated by neither map — so a
-///   single-pass witness fixup over it is order-independent.
+/// - **Acyclic, with no cross-map back-edge.** Each input map's
+///   key-dependency graph is a DAG (the finalize pass breaks any cycle its
+///   batch eliminator introduces — see `flatten::resolve_cycles`), and no
+///   `later` replacement references an `earlier`-eliminated wire (the same
+///   disjointness), so the composed map is acyclic. Note the finalize map
+///   is not necessarily fully canonical: it leaves a chained (but acyclic)
+///   definition for any wire no surviving constraint references. Forward
+///   reconstruction of such a chained wire is still correct because the
+///   witness fixup runs only after a complete producing-op pre-fill has
+///   already assigned every wire its honest value (see the fixup sites in
+///   the witness generators), so single-pass arbitrary-order evaluation
+///   reads honest values for the references it does not itself rewrite.
 pub fn compose_substitution_maps<F: FieldBackend>(
     mut earlier: SubstitutionMap<F>,
     later: &SubstitutionMap<F>,

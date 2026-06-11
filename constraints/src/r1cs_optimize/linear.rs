@@ -26,6 +26,7 @@ use rustc_hash::FxHashMap;
 
 use memory::FieldBackend;
 
+use super::flatten::resolve_cycles;
 use super::linear_combine::{
     linear_constraint_combined, linear_constraint_combined_profiled, CombineProfile,
 };
@@ -356,6 +357,18 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
         });
     }
 
+    // The batch solves every pivot from the original rows, so the
+    // accumulated map can cycle a wire to another eliminated the same round
+    // (`subs[a]` references `b`, `subs[b]` references `a`). Break those
+    // cycles here, on this pass's own map, before the caller composes it
+    // into a larger map (composition rewrites values one-pass and would
+    // hide a cycle's edges from the resolver). A rank-deficient cycle
+    // re-emits the rows its deficiency exposes. The caller rewrites the
+    // survivors against the now-acyclic map (see
+    // `flatten::canonicalize_against_constraints`).
+    let leftover_rows = timings.time(10, || resolve_cycles(&mut all_subs));
+    constraints.extend(leftover_rows);
+
     // Step 2: Remove duplicate non-linear constraints.
     // After variable substitution, constraints from different template instances
     // (wired via AssertEq) can become identical. Deduplicate by hashing.
@@ -403,7 +416,7 @@ pub(super) fn optimize_linear_with_protected<F: FieldBackend>(
             "compose subs",
             "dedup",
             "final trivial",
-            "unused",
+            "canonicalize",
         ],
     );
 

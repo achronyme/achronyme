@@ -209,6 +209,12 @@ impl<F: FieldBackend> R1CSCompiler<F> {
         self.artik_memo = artik_memo;
 
         // 3c. Post-fixup: fill substituted-away wires from substitution map.
+        // The op replay above already pre-filled every wire (eliminated
+        // ones included) with its honest value, so this single arbitrary-
+        // order pass is correct even where a value chains through another
+        // eliminated wire: that wire already holds its honest value. This
+        // relies on `witness_ops` staying un-pruned (the map is never used
+        // as the sole source of an eliminated wire's value).
         if let Some(subs) = &self.substitution_map {
             for (var_idx, lc) in subs {
                 witness[*var_idx] = lc
