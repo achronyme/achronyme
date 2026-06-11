@@ -1212,6 +1212,7 @@ dependencies = [
  "memory",
  "proptest",
  "resolve",
+ "rustc-hash 2.1.2",
  "serde",
  "smallvec",
 ]

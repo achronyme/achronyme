@@ -1,8 +1,8 @@
-use std::collections::HashMap;
 use std::collections::HashSet;
 
 use memory::{FieldBackend, FieldElement};
 
+use super::dense::{ConstIndex, DefIndex, DenseVarSet};
 use crate::types::{Instruction, IrProgram, IrType, SsaVar};
 
 /// Forward pass that computes the set of SSA variables proven to be boolean
@@ -32,26 +32,22 @@ use crate::types::{Instruction, IrProgram, IrType, SsaVar};
 /// assert!(booleans.contains(&v), "annotated Bool var should be in proven_boolean set");
 /// ```
 pub fn compute_proven_boolean<F: FieldBackend>(program: &IrProgram<F>) -> HashSet<SsaVar> {
-    let mut booleans = HashSet::new();
-
-    // Build definition map for v*(v-1)=0 pattern detection
-    let def_map: HashMap<SsaVar, &Instruction<F>> = program
-        .instructions
+    let def_index = DefIndex::build(program);
+    let const_index = ConstIndex::build(program);
+    proven_boolean_dense(program, &def_index, &const_index)
         .iter()
-        .map(|inst| (inst.result_var(), inst))
-        .collect();
+        .collect()
+}
 
-    let constants: HashMap<SsaVar, &FieldElement<F>> = program
-        .instructions
-        .iter()
-        .filter_map(|inst| {
-            if let Instruction::Const { result, value } = inst {
-                Some((*result, value))
-            } else {
-                None
-            }
-        })
-        .collect();
+/// Dense-set core of [`compute_proven_boolean`]. The defining-instruction
+/// and constant indices are taken as parameters so `optimize()` can share
+/// one build across this pass and bit-pattern detection.
+pub(crate) fn proven_boolean_dense<F: FieldBackend>(
+    program: &IrProgram<F>,
+    def_index: &DefIndex,
+    const_index: &ConstIndex,
+) -> DenseVarSet {
+    let mut booleans = DenseVarSet::with_capacity(program.next_var as usize);
 
     // Seed from type annotations: any variable annotated as Bool is proven boolean
     for (var, ty) in &program.var_types {
@@ -76,17 +72,17 @@ pub fn compute_proven_boolean<F: FieldBackend>(program: &IrProgram<F>) -> HashSe
                 booleans.insert(*result);
             }
             Instruction::Not { result, operand } => {
-                if booleans.contains(operand) {
+                if booleans.contains(*operand) {
                     booleans.insert(*result);
                 }
             }
             Instruction::And { result, lhs, rhs } => {
-                if booleans.contains(lhs) && booleans.contains(rhs) {
+                if booleans.contains(*lhs) && booleans.contains(*rhs) {
                     booleans.insert(*result);
                 }
             }
             Instruction::Or { result, lhs, rhs } => {
-                if booleans.contains(lhs) && booleans.contains(rhs) {
+                if booleans.contains(*lhs) && booleans.contains(*rhs) {
                     booleans.insert(*result);
                 }
             }
@@ -96,7 +92,7 @@ pub fn compute_proven_boolean<F: FieldBackend>(program: &IrProgram<F>) -> HashSe
                 if_false,
                 ..
             } => {
-                if booleans.contains(if_true) && booleans.contains(if_false) {
+                if booleans.contains(*if_true) && booleans.contains(*if_false) {
                     booleans.insert(*result);
                 }
             }
@@ -119,11 +115,13 @@ pub fn compute_proven_boolean<F: FieldBackend>(program: &IrProgram<F>) -> HashSe
             }
             // Detect Circom-style boolean enforcement: AssertEq(Mul(v, Sub(v, 1)), 0)
             Instruction::AssertEq { lhs, rhs, .. } => {
-                if let Some(var) = try_detect_boolean_enforcement(*lhs, *rhs, &def_map, &constants)
+                if let Some(var) =
+                    try_detect_boolean_enforcement(*lhs, *rhs, program, def_index, const_index)
                 {
                     booleans.insert(var);
                 }
-                if let Some(var) = try_detect_boolean_enforcement(*rhs, *lhs, &def_map, &constants)
+                if let Some(var) =
+                    try_detect_boolean_enforcement(*rhs, *lhs, program, def_index, const_index)
                 {
                     booleans.insert(var);
                 }
@@ -142,27 +140,28 @@ pub fn compute_proven_boolean<F: FieldBackend>(program: &IrProgram<F>) -> HashSe
 fn try_detect_boolean_enforcement<F: FieldBackend>(
     mul_side: SsaVar,
     zero_side: SsaVar,
-    def_map: &HashMap<SsaVar, &Instruction<F>>,
-    constants: &HashMap<SsaVar, &FieldElement<F>>,
+    program: &IrProgram<F>,
+    def_index: &DefIndex,
+    const_index: &ConstIndex,
 ) -> Option<SsaVar> {
     // zero_side must be Const(0)
-    let zero_val = constants.get(&zero_side)?;
+    let zero_val = const_index.get(program, zero_side)?;
     if !zero_val.is_zero() {
         return None;
     }
 
     // mul_side must be Mul(a, b)
-    let mul_inst = def_map.get(&mul_side)?;
+    let mul_inst = def_index.get(program, mul_side)?;
     let (a, b) = match mul_inst {
         Instruction::Mul { lhs, rhs, .. } => (*lhs, *rhs),
         _ => return None,
     };
 
     // One of (a, b) must be Sub(c, Const(1)) where c == the other operand.
-    if is_sub_one(b, a, def_map, constants) {
+    if is_sub_one(b, a, program, def_index, const_index) {
         return Some(a);
     }
-    if is_sub_one(a, b, def_map, constants) {
+    if is_sub_one(a, b, program, def_index, const_index) {
         return Some(b);
     }
 
@@ -173,10 +172,11 @@ fn try_detect_boolean_enforcement<F: FieldBackend>(
 fn is_sub_one<F: FieldBackend>(
     var: SsaVar,
     expected_base: SsaVar,
-    def_map: &HashMap<SsaVar, &Instruction<F>>,
-    constants: &HashMap<SsaVar, &FieldElement<F>>,
+    program: &IrProgram<F>,
+    def_index: &DefIndex,
+    const_index: &ConstIndex,
 ) -> bool {
-    let Some(inst) = def_map.get(&var) else {
+    let Some(inst) = def_index.get(program, var) else {
         return false;
     };
     match inst {
@@ -184,10 +184,10 @@ fn is_sub_one<F: FieldBackend>(
             if *lhs != expected_base {
                 return false;
             }
-            let Some(val) = constants.get(rhs) else {
+            let Some(val) = const_index.get(program, *rhs) else {
                 return false;
             };
-            **val == FieldElement::<F>::one()
+            *val == FieldElement::<F>::one()
         }
         _ => false,
     }

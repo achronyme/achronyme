@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::passes::dense::DenseVarSet;
 
 use memory::FieldElement;
 
@@ -10,7 +10,7 @@ use super::builders::make_num2bits_program;
 #[test]
 fn num2bits_3_detects_3bit_bound() {
     let (program, input) = make_num2bits_program(3);
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&program, &booleans);
 
     assert_eq!(result.booleans_detected, 3);
@@ -20,7 +20,7 @@ fn num2bits_3_detects_3bit_bound() {
 #[test]
 fn num2bits_8_detects_8bit_bound() {
     let (program, input) = make_num2bits_program(8);
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&program, &booleans);
 
     assert_eq!(result.booleans_detected, 8);
@@ -101,7 +101,7 @@ fn commuted_mul_operands() {
         message: None,
     });
 
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&p, &booleans);
     assert_eq!(result.booleans_detected, 1);
     assert_eq!(result.bounds.get(&input), Some(&1));
@@ -178,7 +178,7 @@ fn symmetric_assert_eq() {
         message: None,
     });
 
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&p, &booleans);
     assert_eq!(result.booleans_detected, 1);
     assert_eq!(result.bounds.get(&input), Some(&1));
@@ -188,7 +188,7 @@ fn symmetric_assert_eq() {
 fn single_bit_pattern() {
     // Num2Bits(1): single boolean with coefficient 2^0 = 1
     let (program, input) = make_num2bits_program(1);
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&program, &booleans);
 
     assert_eq!(result.booleans_detected, 1);
@@ -274,7 +274,7 @@ fn integration_with_bool_prop_booleans() {
     });
 
     // Pre-proven booleans from bool_prop
-    let mut proven = HashSet::new();
+    let mut proven = DenseVarSet::new();
     proven.insert(bit0);
     proven.insert(bit1);
 

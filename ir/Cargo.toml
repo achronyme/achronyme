@@ -24,6 +24,7 @@ ir-forge = { path = "../ir-forge" }
 serde = { version = "1", features = ["derive"] }
 bincode = "1"
 smallvec = "1"
+rustc-hash = "2"
 
 [dev-dependencies]
 ir-forge = { path = "../ir-forge", features = ["test-support"] }

@@ -5,6 +5,7 @@ pub mod canonicalize;
 pub mod const_fold;
 pub mod cse;
 pub mod dce;
+pub mod dense;
 pub mod taint;
 pub mod validate;
 
@@ -78,8 +79,16 @@ pub fn optimize<F: FieldBackend>(program: &mut IrProgram<F>) -> OptimizeStats {
     let before = snapshot(program);
     const_fold::constant_fold(program);
     validate::assert_no_dangling_ssa_vars_with_before(program, before.as_deref(), "const_fold");
-    let proven_booleans = bool_prop::compute_proven_boolean(program);
-    let bp_result = bit_pattern::detect_bit_patterns(program, &proven_booleans);
+    // Boolean propagation and bit-pattern detection both resolve
+    // defining instructions and constants; build the dense indices once
+    // and share them. Both passes only read the program, so the indices
+    // stay valid until bound_inference mutates it below.
+    let bp_result = {
+        let def_index = dense::DefIndex::build(program);
+        let const_index = dense::ConstIndex::build(program);
+        let proven_booleans = bool_prop::proven_boolean_dense(program, &def_index, &const_index);
+        bit_pattern::detect_bit_patterns_with(program, &def_index, &const_index, &proven_booleans)
+    };
     let before = snapshot(program);
     let bi_result = bound_inference::bound_inference(program, &bp_result.bounds);
     validate::assert_no_dangling_ssa_vars_with_before(

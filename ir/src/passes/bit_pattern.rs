@@ -21,6 +21,7 @@ mod boolean;
 mod detector;
 mod sum;
 
+pub(crate) use detector::detect_bit_patterns_with;
 pub use detector::{detect_bit_patterns, BitPatternResult};
 
 #[cfg(test)]

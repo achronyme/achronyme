@@ -1,7 +1,8 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 
-use memory::{FieldBackend, FieldElement};
+use memory::FieldBackend;
 
+use crate::passes::dense::{ConstIndex, DefIndex, DenseVarSet};
 use crate::types::{Instruction, IrProgram, SsaVar};
 
 use super::boolean::try_detect_boolean_enforcement;
@@ -21,41 +22,39 @@ pub struct BitPatternResult {
 /// Returns bounds that can be fed into `bound_inference` as `extra_bounds`.
 pub fn detect_bit_patterns<F: FieldBackend>(
     program: &IrProgram<F>,
-    proven_booleans: &HashSet<SsaVar>,
+    proven_booleans: &DenseVarSet,
 ) -> BitPatternResult {
-    // Build definition map: SsaVar → &Instruction
-    let def_map: HashMap<SsaVar, &Instruction<F>> = program
-        .instructions
-        .iter()
-        .map(|inst| (inst.result_var(), inst))
-        .collect();
+    let def_index = DefIndex::build(program);
+    let const_index = ConstIndex::build(program);
+    detect_bit_patterns_with(program, &def_index, &const_index, proven_booleans)
+}
 
-    // Build constants map: SsaVar → FieldElement value (for Const instructions)
-    let constants: HashMap<SsaVar, &FieldElement<F>> = program
-        .instructions
-        .iter()
-        .filter_map(|inst| {
-            if let Instruction::Const { result, value } = inst {
-                Some((*result, value))
-            } else {
-                None
-            }
-        })
-        .collect();
-
+/// Core of [`detect_bit_patterns`] over caller-supplied indices, so
+/// `optimize()` can share one defining-instruction/constant index build
+/// with the boolean-propagation pass.
+pub(crate) fn detect_bit_patterns_with<F: FieldBackend>(
+    program: &IrProgram<F>,
+    def_index: &DefIndex,
+    const_index: &ConstIndex,
+    proven_booleans: &DenseVarSet,
+) -> BitPatternResult {
     // Step 1: Detect boolean-enforced variables via v*(v-1)=0 pattern
-    let mut booleans: HashSet<SsaVar> = proven_booleans.clone();
+    let mut booleans = proven_booleans.clone();
     let mut new_booleans = 0usize;
 
     for inst in &program.instructions {
         if let Instruction::AssertEq { lhs, rhs, .. } = inst {
             // Pattern: AssertEq(Mul(v, Sub(v, 1)), 0)  — or symmetric
-            if let Some(var) = try_detect_boolean_enforcement(*lhs, *rhs, &def_map, &constants) {
+            if let Some(var) =
+                try_detect_boolean_enforcement(*lhs, *rhs, program, def_index, const_index)
+            {
                 if booleans.insert(var) {
                     new_booleans += 1;
                 }
             }
-            if let Some(var) = try_detect_boolean_enforcement(*rhs, *lhs, &def_map, &constants) {
+            if let Some(var) =
+                try_detect_boolean_enforcement(*rhs, *lhs, program, def_index, const_index)
+            {
                 if booleans.insert(var) {
                     new_booleans += 1;
                 }
@@ -69,11 +68,15 @@ pub fn detect_bit_patterns<F: FieldBackend>(
     for inst in &program.instructions {
         if let Instruction::AssertEq { lhs, rhs, .. } = inst {
             // Try lhs as sum, rhs as target
-            if let Some(n) = try_extract_weighted_sum(*lhs, &def_map, &constants, &booleans) {
+            if let Some(n) =
+                try_extract_weighted_sum(*lhs, program, def_index, const_index, &booleans)
+            {
                 merge_bound(&mut bounds, *rhs, n);
             }
             // Try rhs as sum, lhs as target
-            if let Some(n) = try_extract_weighted_sum(*rhs, &def_map, &constants, &booleans) {
+            if let Some(n) =
+                try_extract_weighted_sum(*rhs, program, def_index, const_index, &booleans)
+            {
                 merge_bound(&mut bounds, *lhs, n);
             }
         }

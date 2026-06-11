@@ -1,19 +1,21 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::HashSet;
 
 use memory::{FieldBackend, FieldElement};
 
-use crate::types::{Instruction, SsaVar};
+use crate::passes::dense::{ConstIndex, DefIndex, DenseVarSet};
+use crate::types::{Instruction, IrProgram, SsaVar};
 
 /// Try to decompose a variable as a weighted sum of booleans with power-of-2 coefficients.
 ///
 /// Returns `Some(n)` where n is the number of contiguous bits {0, 1, ..., n-1}.
 pub(super) fn try_extract_weighted_sum<F: FieldBackend>(
     var: SsaVar,
-    def_map: &HashMap<SsaVar, &Instruction<F>>,
-    constants: &HashMap<SsaVar, &FieldElement<F>>,
-    booleans: &HashSet<SsaVar>,
+    program: &IrProgram<F>,
+    def_index: &DefIndex,
+    const_index: &ConstIndex,
+    booleans: &DenseVarSet,
 ) -> Option<u32> {
-    let terms = decompose_sum(var, def_map, constants, booleans)?;
+    let terms = decompose_sum(var, program, def_index, const_index, booleans)?;
 
     if terms.is_empty() {
         return None;
@@ -49,13 +51,14 @@ pub(super) fn try_extract_weighted_sum<F: FieldBackend>(
 /// - boolean variable directly → `[(var, 0)]` (implicit coefficient 1 = 2^0)
 fn decompose_sum<F: FieldBackend>(
     var: SsaVar,
-    def_map: &HashMap<SsaVar, &Instruction<F>>,
-    constants: &HashMap<SsaVar, &FieldElement<F>>,
-    booleans: &HashSet<SsaVar>,
+    program: &IrProgram<F>,
+    def_index: &DefIndex,
+    const_index: &ConstIndex,
+    booleans: &DenseVarSet,
 ) -> Option<Vec<(SsaVar, u32)>> {
-    let Some(inst) = def_map.get(&var) else {
+    let Some(inst) = def_index.get(program, var) else {
         // Not defined in this program — if it's boolean, treat as bit 0
-        if booleans.contains(&var) {
+        if booleans.contains(var) {
             return Some(vec![(var, 0)]);
         }
         return None;
@@ -63,23 +66,23 @@ fn decompose_sum<F: FieldBackend>(
 
     match inst {
         Instruction::Add { lhs, rhs, .. } => {
-            let mut left = decompose_sum(*lhs, def_map, constants, booleans)?;
-            let right = decompose_sum(*rhs, def_map, constants, booleans)?;
+            let mut left = decompose_sum(*lhs, program, def_index, const_index, booleans)?;
+            let right = decompose_sum(*rhs, program, def_index, const_index, booleans)?;
             left.extend(right);
             Some(left)
         }
         Instruction::Mul { lhs, rhs, .. } => {
             // Case 1: lhs is boolean, rhs is const power-of-2
-            if booleans.contains(lhs) {
-                if let Some(val) = constants.get(rhs) {
+            if booleans.contains(*lhs) {
+                if let Some(val) = const_index.get(program, *rhs) {
                     if let Some(exp) = is_power_of_two(val) {
                         return Some(vec![(*lhs, exp)]);
                     }
                 }
             }
             // Case 2: rhs is boolean, lhs is const power-of-2
-            if booleans.contains(rhs) {
-                if let Some(val) = constants.get(lhs) {
+            if booleans.contains(*rhs) {
+                if let Some(val) = const_index.get(program, *lhs) {
                     if let Some(exp) = is_power_of_two(val) {
                         return Some(vec![(*rhs, exp)]);
                     }
@@ -97,7 +100,7 @@ fn decompose_sum<F: FieldBackend>(
         }
         _ => {
             // Leaf: if the variable itself is boolean, it contributes bit 0 (coeff = 1 = 2^0)
-            if booleans.contains(&var) {
+            if booleans.contains(var) {
                 Some(vec![(var, 0)])
             } else {
                 None

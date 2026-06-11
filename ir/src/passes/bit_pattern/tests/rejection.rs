@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use crate::passes::dense::DenseVarSet;
 
 use memory::FieldElement;
 
@@ -67,7 +67,7 @@ fn no_false_positive_without_boolean_enforcement() {
         message: None,
     });
 
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&p, &booleans);
     assert!(result.bounds.is_empty());
 }
@@ -141,7 +141,7 @@ fn no_false_positive_non_power_of_2_coefficients() {
         message: None,
     });
 
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&p, &booleans);
     // Should not infer a bound (coeff 3 is not power of 2 → decomposition fails)
     assert!(result.bounds.is_empty());
@@ -237,7 +237,7 @@ fn non_contiguous_bits_rejected() {
         message: None,
     });
 
-    let booleans = HashSet::new();
+    let booleans = DenseVarSet::new();
     let result = detect_bit_patterns(&p, &booleans);
     assert!(
         result.bounds.is_empty(),

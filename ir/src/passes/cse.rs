@@ -7,9 +7,8 @@
 //! Side-effecting instructions (AssertEq, Assert, Input, RangeCheck) are
 //! never deduplicated even if they have identical operands.
 
-use std::collections::HashMap;
-
 use memory::FieldBackend;
+use rustc_hash::FxHashMap;
 
 use crate::types::{Instruction, IrProgram, SsaVar};
 
@@ -89,9 +88,9 @@ fn cse_key<F: FieldBackend>(inst: &Instruction<F>) -> Option<CseKey> {
 /// (unreferenced) and will be removed by a subsequent DCE pass.
 pub fn common_subexpression_elimination<F: FieldBackend>(program: &mut IrProgram<F>) -> usize {
     // Map: CseKey → first result variable that computed this expression.
-    let mut seen: HashMap<CseKey, SsaVar> = HashMap::new();
+    let mut seen: FxHashMap<CseKey, SsaVar> = FxHashMap::default();
     // Map: old result var → replacement var (from first occurrence).
-    let mut replacements: HashMap<SsaVar, SsaVar> = HashMap::new();
+    let mut replacements: FxHashMap<SsaVar, SsaVar> = FxHashMap::default();
     let mut eliminated = 0;
 
     // Pass 1: identify duplicates
@@ -123,7 +122,7 @@ pub fn common_subexpression_elimination<F: FieldBackend>(program: &mut IrProgram
 }
 
 /// Canonicalize a CseKey by applying replacements to its operands.
-fn canonicalize_key(key: &CseKey, replacements: &HashMap<SsaVar, SsaVar>) -> CseKey {
+fn canonicalize_key(key: &CseKey, replacements: &FxHashMap<SsaVar, SsaVar>) -> CseKey {
     let r = |v: &SsaVar| -> SsaVar { *replacements.get(v).unwrap_or(v) };
     match key {
         CseKey::Add(a, b) => CseKey::Add(r(a), r(b)),
@@ -150,7 +149,7 @@ fn canonicalize_key(key: &CseKey, replacements: &HashMap<SsaVar, SsaVar>) -> Cse
 /// Rewrite operand references in an instruction using the replacement map.
 fn rewrite_operands<F: FieldBackend>(
     inst: &mut Instruction<F>,
-    replacements: &HashMap<SsaVar, SsaVar>,
+    replacements: &FxHashMap<SsaVar, SsaVar>,
 ) {
     let r = |v: &mut SsaVar| {
         if let Some(&repl) = replacements.get(v) {
