@@ -10,6 +10,12 @@ mod helpers;
 /// of `R1CSCompiler::cs::num_constraints()`. Re-measure these literals
 /// whenever the upstream `circom` baseline shifts; stale values silently
 /// distort the achronyme-vs-circom narrative.
+///
+/// The sparse DEDUCE comparison (second table) is informational and
+/// re-runs the linear optimizer on pre-O1 snapshots, which takes tens
+/// of minutes on the large circuits. It only runs with
+/// `ACH_BENCH_SPARSE=1`; the default run keeps the per-circuit
+/// compile + O1 + witness-verify coverage.
 #[test]
 fn r1cs_optimization_benchmark() {
     eprintln!("\n╔════════════════════════════════════════════════════════════════════════════╗");
@@ -44,5 +50,7 @@ fn r1cs_optimization_benchmark() {
     eprintln!("╚════════════════════════════════════════════════════════════════════════════╝");
     eprintln!();
 
-    cases::print_sparse_summary(&sparse_summary);
+    if helpers::sparse_enabled() {
+        cases::print_sparse_summary(&sparse_summary);
+    }
 }

@@ -4,6 +4,15 @@ use std::path::Path;
 use memory::{Bn254Fr, FieldElement};
 use zkc::r1cs_backend::R1CSCompiler;
 
+/// The sparse DEDUCE comparison re-runs the linear optimizer on a
+/// pre-O1 snapshot of every circuit; on the large circuits that adds
+/// tens of minutes of wall time and asserts nothing (it feeds the
+/// informational comparison table only). The default run skips it --
+/// set `ACH_BENCH_SPARSE=1` to measure the full table.
+pub(super) fn sparse_enabled() -> bool {
+    std::env::var("ACH_BENCH_SPARSE").as_deref() == Ok("1")
+}
+
 /// Compile a circom circuit and return constraint counts at three
 /// optimisation levels:
 /// - `before_opt`  -- raw R1CS output, no optimization.
@@ -64,8 +73,8 @@ pub(super) fn compile_and_measure(
 
     // Snapshot the unoptimised constraint set for the sparse path so
     // we can measure it independently of the live R1CSCompiler.
-    let pre_opt_constraints: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
-        compiler.cs.constraints().to_vec();
+    let pre_opt_constraints: Option<Vec<constraints::r1cs::Constraint<Bn254Fr>>> =
+        sparse_enabled().then(|| compiler.cs.constraints().to_vec());
     let num_pub_inputs = compiler.cs.num_pub_inputs();
 
     let tp = std::time::Instant::now();
@@ -75,12 +84,20 @@ pub(super) fn compile_and_measure(
 
     // Run sparse O2 on the snapshot. Bypasses R1CSCompiler entirely
     // -- the result feeds the constraint-count comparison only;
-    // witness fixup keeps using the O1 substitution map below.
+    // witness fixup keeps using the O1 substitution map below. With
+    // the sweep disabled the O1 count stands in and the summary table
+    // is suppressed by the caller.
     let tp = std::time::Instant::now();
-    let mut sparse_constraints = pre_opt_constraints;
-    let (_subs, sparse_stats) =
-        constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
-    let after_o2_s = sparse_stats.constraints_after;
+    let after_o2_s = match pre_opt_constraints {
+        Some(mut sparse_constraints) => {
+            let (_subs, sparse_stats) = constraints::r1cs_optimize::optimize_o2_sparse(
+                &mut sparse_constraints,
+                num_pub_inputs,
+            );
+            sparse_stats.constraints_after
+        }
+        None => after_o1,
+    };
     let t_r1cs_o2_sparse = tp.elapsed();
 
     // Re-fill substituted wires
@@ -159,8 +176,8 @@ pub(super) fn compile_and_measure_witnessless(
 
     let before = compiler.cs.num_constraints();
 
-    let pre_opt_constraints: Vec<constraints::r1cs::Constraint<Bn254Fr>> =
-        compiler.cs.constraints().to_vec();
+    let pre_opt_constraints: Option<Vec<constraints::r1cs::Constraint<Bn254Fr>>> =
+        sparse_enabled().then(|| compiler.cs.constraints().to_vec());
     let num_pub_inputs = compiler.cs.num_pub_inputs();
 
     let tp = std::time::Instant::now();
@@ -169,10 +186,16 @@ pub(super) fn compile_and_measure_witnessless(
     let t_r1cs_opt = tp.elapsed();
 
     let tp = std::time::Instant::now();
-    let mut sparse_constraints = pre_opt_constraints;
-    let (_subs, sparse_stats) =
-        constraints::r1cs_optimize::optimize_o2_sparse(&mut sparse_constraints, num_pub_inputs);
-    let after_o2_s = sparse_stats.constraints_after;
+    let after_o2_s = match pre_opt_constraints {
+        Some(mut sparse_constraints) => {
+            let (_subs, sparse_stats) = constraints::r1cs_optimize::optimize_o2_sparse(
+                &mut sparse_constraints,
+                num_pub_inputs,
+            );
+            sparse_stats.constraints_after
+        }
+        None => after_o1,
+    };
     let t_r1cs_o2_sparse = tp.elapsed();
 
     eprintln!(
