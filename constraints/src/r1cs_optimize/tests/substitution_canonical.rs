@@ -308,3 +308,61 @@ fn full_run_satisfies_original_witness() {
     }
     assert!(map_is_acyclic(&subs));
 }
+
+/// A pivot whose flattened form would be copied into many survivors is
+/// reverted by the density budget: its defining row is re-emitted once
+/// and the wire becomes an ordinary survivor, leaving the map. Sized to
+/// cross both the activation mass (uses * size) and the per-key score
+/// ((uses - 1) * size); the other tests in this file sit far below the
+/// floor and pin the expand-in-place behavior.
+#[test]
+fn wide_pivot_reverts_to_survivor_row() {
+    use crate::r1cs::{LinearCombination, Variable};
+
+    let one = FieldElement::<Bn254Fr>::one();
+
+    // Eliminated wire with a 2,000-term survivor-only value.
+    let k = 5usize;
+    let mut value = LinearCombination::<Bn254Fr>::zero();
+    for i in 0..2_000usize {
+        value.add_term(Variable(10_000 + i), one);
+    }
+    let mut subs: SubstitutionMap<Bn254Fr> = SubstitutionMap::default();
+    subs.insert(k, value);
+
+    // 1,000 surviving rows reference the wire: the flatten would copy the
+    // 2,000-term form into each of them.
+    let mut constraints: Vec<Constraint<Bn254Fr>> = (0..1_000usize)
+        .map(|i| Constraint {
+            a: LinearCombination::from_constant(one),
+            b: make_lc_var(Variable(k)) + make_lc_var(Variable(100_000 + i)),
+            c: LinearCombination::zero(),
+        })
+        .collect();
+
+    canonicalize_against_constraints(&mut subs, &mut constraints);
+
+    assert!(
+        subs.is_empty(),
+        "wide pivot must leave the substitution map"
+    );
+    assert_eq!(
+        constraints.len(),
+        1_001,
+        "exactly one re-emitted defining row joins the survivors"
+    );
+    let wide_rows = constraints
+        .iter()
+        .filter(|c| c.b.terms().len() == 2_001)
+        .count();
+    assert_eq!(wide_rows, 1, "the wide form appears once, not per use");
+    let keep_term = constraints
+        .iter()
+        .filter(|c| c.b.terms().iter().any(|(v, _)| v.index() == k))
+        .count();
+    assert_eq!(
+        keep_term, 1_001,
+        "every referencing row keeps the wire as a plain survivor term"
+    );
+    assert!(no_dangling_reference(&constraints, &subs));
+}

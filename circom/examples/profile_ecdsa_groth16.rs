@@ -121,8 +121,20 @@ fn main() {
 
     if !verify_only {
         let cache_dir = cache_dir(manifest_dir);
+        // Mirror the production prove path: proof generation needs only the
+        // constraint system and the witness, so shed the compile working set
+        // before the SNARK setup. Without these drops the keygen peak rides
+        // on top of the whole build-phase state and the run no longer fits
+        // the memory envelope the production CLI fits.
+        drop(program);
+        drop(all_signals);
+        drop(compile_result);
+        compiler.witness_ops = Default::default();
+        let _ = compiler.take_artik_memo();
+        compiler.substitution_map = None;
+        let cs = compiler.into_constraint_system();
         let start = Instant::now();
-        let result = proving::groth16_bn254::generate_proof(&compiler.cs, &witness, &cache_dir)
+        let result = proving::groth16_bn254::generate_proof(&cs, &witness, &cache_dir)
             .unwrap_or_else(|e| panic!("groth16 proof: {e}"));
         eprintln!("groth16_generate_proof_ms={:.3}", elapsed_ms(start));
         if let akron::machine::prove::ProveResult::Proof {
