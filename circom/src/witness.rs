@@ -7,6 +7,20 @@
 //!
 //! Bitwise operations (`>>`, `<<`, `&`, `|`, `^`, `~`) are evaluated
 //! using integer arithmetic on the canonical field representation.
+//!
+//! # Two implementations, one semantics
+//!
+//! The production entry points run the slot-addressed template replay
+//! (`replay` module); the recursive interpreter behind
+//! [`compute_witness_hints_reference`] is the SPEC, and the
+//! differential tests in `tests_replay` assert map equality. That
+//! guarantee is only as strong as the corpus: **any change to hint
+//! semantics — a new `CircuitNode` or `CircuitExpr` form, a new range
+//! shape, a change to skip/overwrite/scoping rules — must land in BOTH
+//! interpreters and add a differential case that exercises it.** A
+//! semantics change made only in the reference (or only in the replay)
+//! that the corpus does not exercise will keep the gate green while
+//! production diverges.
 
 mod compute;
 mod error;
