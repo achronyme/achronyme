@@ -181,7 +181,7 @@ fn lower_extended_through_lysis_with<F: FieldBackend>(
 /// Highest result-var index across `insts` plus 1. Mirrors the
 /// helper in `lysis_roundtrip.rs`; copied to avoid making the
 /// internal helper public.
-fn ssa_watermark<F: FieldBackend>(insts: &[ir_core::Instruction<F>]) -> u64 {
+pub(super) fn ssa_watermark<F: FieldBackend>(insts: &[ir_core::Instruction<F>]) -> u64 {
     let mut max: Option<u64> = None;
     let mut bump = |v: u64| match max {
         Some(m) if v <= m => {}

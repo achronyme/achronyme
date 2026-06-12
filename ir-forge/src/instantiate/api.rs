@@ -6,9 +6,10 @@
 //! [`ProveIR::instantiate_with_outputs_extended`] return an
 //! [`ExtendedIrProgram<F>`] whose body is `Vec<ExtendedInstruction<F>>`.
 //! Built on top of [`ExtendedSink`]. Primarily an internal stepping-
-//! stone: every `Lysis` entry point invokes one of these first, then
-//! runs the result through the Walker → InterningSink → materialize
-//! cable.
+//! stone for the Walker → InterningSink → materialize cable. The
+//! lean entries try the direct interning path first (see
+//! [`direct_sink`]) and only build an extended body when the walk
+//! emits symbolic nodes.
 //!
 //! **Lysis (production)**: [`ProveIR::instantiate_lysis`] +
 //! [`ProveIR::instantiate_lysis_with_outputs`] return a flat
@@ -25,7 +26,9 @@
 //! public R1CS boundary.
 
 mod bundles;
+mod direct_core;
 mod direct_plain;
+mod direct_sink;
 mod drain;
 mod errors;
 mod lowering;
@@ -35,6 +38,8 @@ mod walk;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_direct;
 
 use std::collections::{HashMap, HashSet};
 use std::time::Instant;
@@ -52,6 +57,7 @@ use ir_core::IrProgram;
 pub use bundles::{LysisDrainBundle, LysisSinkBundle};
 pub use errors::LysisInstantiateError;
 
+use direct_sink::instantiate_direct_lean;
 use drain::lower_extended_with_chunk_drain;
 use lowering::{
     lower_extended_through_lysis, lower_extended_through_lysis_lean, lower_extended_to_sink,
@@ -194,6 +200,13 @@ impl ProveIR {
         &self,
         captures: &HashMap<String, FieldElement<F>>,
     ) -> Result<IrProgram<F>, LysisInstantiateError> {
+        // All-Plain walks (every circom-frontend body) intern directly,
+        // skipping the extended-body Vec and the Walker -> bytecode ->
+        // executor cable; the stream is byte-identical. A walk that
+        // emits symbolic nodes returns None and re-runs via the cable.
+        if let Some(program) = instantiate_direct_lean::<F>(self, captures, None)? {
+            return Ok(program);
+        }
         let extended = self.instantiate_extended_lean::<F>(captures)?;
         lower_extended_through_lysis_lean(extended)
     }
@@ -207,6 +220,13 @@ impl ProveIR {
         captures: &HashMap<String, FieldElement<F>>,
         output_names: &HashSet<String>,
     ) -> Result<IrProgram<F>, LysisInstantiateError> {
+        // See `instantiate_lysis_lean` — same direct path, plus the
+        // public-output projection (None for an empty set mirrors the
+        // extended entry's dispatch).
+        let names = (!output_names.is_empty()).then_some(output_names);
+        if let Some(program) = instantiate_direct_lean::<F>(self, captures, names)? {
+            return Ok(program);
+        }
         let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
         lower_extended_through_lysis_lean(extended)
     }
