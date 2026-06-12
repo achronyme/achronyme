@@ -624,6 +624,7 @@ dependencies = [
  "num-traits",
  "pprof",
  "proving",
+ "rustc-hash 2.1.2",
  "serde_json",
  "sha2",
  "tempfile",

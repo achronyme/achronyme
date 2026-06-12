@@ -13,12 +13,18 @@ mod error;
 mod eval;
 mod limbs;
 pub mod profile;
+mod replay;
+mod replay_eval;
+mod slot_env;
+mod template;
 
 pub use compute::{
-    compute_witness_hints, compute_witness_hints_with_captures,
+    compute_witness_hints, compute_witness_hints_reference, compute_witness_hints_with_captures,
     compute_witness_hints_with_captures_memo,
 };
 pub use error::WitnessError;
 
 #[cfg(test)]
 mod tests;
+#[cfg(test)]
+mod tests_replay;

@@ -6,6 +6,7 @@ use memory::{FieldBackend, FieldElement};
 
 use super::error::WitnessError;
 use super::eval::{eval_const_expr_u64, eval_hint, eval_hint_u64};
+use super::replay::compute_via_templates;
 
 /// Compute all witness hint values from a ProveIR body.
 ///
@@ -13,12 +14,16 @@ use super::eval::{eval_const_expr_u64, eval_hint, eval_hint_u64};
 /// in order, building up a map of signal_name → FieldElement.
 /// Later hints can reference earlier-computed values.
 ///
+/// Runs the slot-addressed template replay (see [`super::replay`]);
+/// [`compute_witness_hints_reference`] is the equivalent reference
+/// interpreter the replay is pinned against.
+///
 /// Returns `Err` if a Circom `assert()` fails during witness computation.
 pub fn compute_witness_hints<F: FieldBackend>(
     prove_ir: &ProveIR,
     inputs: &HashMap<String, FieldElement<F>>,
 ) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
-    compute_witness_hints_inner(prove_ir, inputs, &HashMap::new(), None)
+    compute_via_templates(prove_ir, inputs, &HashMap::new(), None)
 }
 
 /// Compute witness hints with capture values (template parameters).
@@ -32,7 +37,7 @@ pub fn compute_witness_hints_with_captures<F: FieldBackend>(
     inputs: &HashMap<String, FieldElement<F>>,
     captures: &HashMap<String, u64>,
 ) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
-    compute_witness_hints_inner(prove_ir, inputs, captures, None)
+    compute_via_templates(prove_ir, inputs, captures, None)
 }
 
 /// Same as [`compute_witness_hints_with_captures`], but routes every Artik
@@ -49,7 +54,23 @@ pub fn compute_witness_hints_with_captures_memo<F: FieldBackend>(
     captures: &HashMap<String, u64>,
     memo: &mut artik::ArtikMemo<F>,
 ) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
-    compute_witness_hints_inner(prove_ir, inputs, captures, Some(memo))
+    compute_via_templates(prove_ir, inputs, captures, Some(memo))
+}
+
+/// Reference interpreter for the hints walk: the recursive,
+/// mangle-and-clone evaluator over `CircuitNode` bodies that defines
+/// the walk's semantics (skip-on-unevaluable, both-branch `If` on an
+/// unknown condition, flat textual namespace, overwrite-on-rewrite).
+///
+/// The production entry points run the slot-addressed template replay
+/// instead; differential tests assert both produce equal maps. Public
+/// so external test suites and probes can compare against it.
+pub fn compute_witness_hints_reference<F: FieldBackend>(
+    prove_ir: &ProveIR,
+    inputs: &HashMap<String, FieldElement<F>>,
+    captures: &HashMap<String, u64>,
+) -> Result<HashMap<String, FieldElement<F>>, WitnessError> {
+    compute_witness_hints_inner(prove_ir, inputs, captures, None)
 }
 
 fn compute_witness_hints_inner<F: FieldBackend>(

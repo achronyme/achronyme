@@ -66,6 +66,13 @@ pub struct ArtikMemo<F: FieldBackend> {
     /// proof). `Box<[u8]>` keys compare by contents, so equal program
     /// bytes map to the same id regardless of which pass interned them.
     prog_ids: HashMap<Box<[u8]>, u32>,
+    /// Decoded (and validated) programs by id. `bytecode::decode` is a
+    /// pure function of the program bytes, so decoding once per distinct
+    /// program and re-executing the cached `Program` is byte-identical
+    /// to decoding per execution — only the wall-clock changes. A
+    /// program whose decode fails is never cached, so a bad program
+    /// re-errors on every attempt exactly as an uncached one would.
+    programs: HashMap<u32, crate::program::Program>,
     /// `(program id, inputs) -> outputs`.
     table: HashMap<MemoKey<F>, Vec<FieldElement<F>>>,
     /// Cache hits — diagnostics only.
@@ -85,6 +92,7 @@ impl<F: FieldBackend> ArtikMemo<F> {
     pub fn new() -> Self {
         Self {
             prog_ids: HashMap::new(),
+            programs: HashMap::new(),
             table: HashMap::new(),
             hits: 0,
             misses: 0,
@@ -94,6 +102,11 @@ impl<F: FieldBackend> ArtikMemo<F> {
     /// Number of distinct program byte-strings interned — diagnostics.
     pub fn distinct_programs(&self) -> usize {
         self.prog_ids.len()
+    }
+
+    /// Number of programs decoded into the program cache — diagnostics.
+    pub fn decoded_programs(&self) -> usize {
+        self.programs.len()
     }
 
     /// Number of cached `(program, inputs) -> outputs` entries — diagnostics.
@@ -123,7 +136,8 @@ impl<F: FieldBackend> ArtikMemo<F> {
         inputs: &[FieldElement<F>],
         slots: &mut [FieldElement<F>],
     ) -> Result<(), ArtikError> {
-        let key = (self.prog_id(program_bytes), inputs.to_vec());
+        let id = self.prog_id(program_bytes);
+        let key = (id, inputs.to_vec());
         if let Some(cached) = self.table.get(&key) {
             if cached.len() == slots.len() {
                 slots.copy_from_slice(cached);
@@ -131,9 +145,77 @@ impl<F: FieldBackend> ArtikMemo<F> {
                 return Ok(());
             }
         }
-        execute_into(program_bytes, inputs, slots)?;
+        let program = match self.programs.entry(id) {
+            std::collections::hash_map::Entry::Occupied(e) => e.into_mut(),
+            std::collections::hash_map::Entry::Vacant(v) => {
+                let family = family_for::<F>()
+                    .ok_or(ArtikError::BadHeader("unsupported field family for Artik"))?;
+                v.insert(bytecode::decode(program_bytes, Some(family))?)
+            }
+        };
+        let mut ctx = ArtikContext::<F>::new(inputs, slots);
+        execute(program, &mut ctx)?;
         self.table.insert(key, slots.to_vec());
         self.misses += 1;
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::ir::Instr;
+    use crate::program::Program;
+    use memory::Bn254Fr;
+
+    /// Read signal 0, square it, write witness slot 0.
+    fn square_program_bytes() -> Vec<u8> {
+        let body = vec![
+            Instr::ReadSignal {
+                dst: 0,
+                signal_id: 0,
+            },
+            Instr::FMul { dst: 1, a: 0, b: 0 },
+            Instr::WriteWitness { slot_id: 0, src: 1 },
+            Instr::Return { srcs: Vec::new() },
+        ];
+        bytecode::encode(&Program::new(FieldFamily::BnLike256, 2, Vec::new(), body))
+    }
+
+    #[test]
+    fn misses_share_one_decoded_program() {
+        type Fe = FieldElement<Bn254Fr>;
+        let bytes = square_program_bytes();
+        let mut memo = ArtikMemo::<Bn254Fr>::new();
+
+        let mut out = [Fe::zero()];
+        memo.run(&bytes, &[Fe::from_u64(3)], &mut out).expect("run");
+        assert_eq!(out[0], Fe::from_u64(9));
+        memo.run(&bytes, &[Fe::from_u64(5)], &mut out).expect("run");
+        assert_eq!(out[0], Fe::from_u64(25));
+
+        // Two distinct-input misses, one decode.
+        assert_eq!(memo.misses, 2);
+        assert_eq!(memo.hits, 0);
+        assert_eq!(memo.distinct_programs(), 1);
+        assert_eq!(memo.decoded_programs(), 1);
+
+        // Identical (program, inputs) is a hit and reproduces the value.
+        memo.run(&bytes, &[Fe::from_u64(3)], &mut out).expect("run");
+        assert_eq!(out[0], Fe::from_u64(9));
+        assert_eq!(memo.hits, 1);
+        assert_eq!(memo.decoded_programs(), 1);
+    }
+
+    #[test]
+    fn bad_program_is_never_cached() {
+        type Fe = FieldElement<Bn254Fr>;
+        let mut memo = ArtikMemo::<Bn254Fr>::new();
+        let garbage = [0u8; 4];
+        let mut out = [Fe::zero()];
+        assert!(memo.run(&garbage, &[], &mut out).is_err());
+        assert!(memo.run(&garbage, &[], &mut out).is_err());
+        assert_eq!(memo.decoded_programs(), 0);
+        assert_eq!(memo.misses, 0);
     }
 }

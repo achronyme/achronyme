@@ -18,6 +18,7 @@ memory = { path = "../memory" }
 artik = { path = "../artik" }
 num-bigint = "0.4"
 num-traits = "0.2"
+rustc-hash = "2"
 dhat = { version = "0.3", optional = true }
 pprof = { version = "0.14", features = ["flamegraph"], optional = true }
 
