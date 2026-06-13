@@ -1,3 +1,8 @@
+//! MIRROR CONTRACT: this pass is mirrored by the fused optimizer
+//! (`crate::passes::fused`); any semantic change here must land in
+//! the mirror too, plus a differential case in the fused parity
+//! tests.
+
 use memory::FieldBackend;
 
 use crate::types::{Instruction, IrProgram, SsaVar};

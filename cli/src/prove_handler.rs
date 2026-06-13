@@ -93,15 +93,22 @@ impl ProveHandler for DefaultProveHandler {
         //    the program (Plonkish compile, circuit stats) stay on the
         //    full instantiate.
         let lean = matches!(self.backend, ProveBackend::R1cs) && !self.circuit_stats;
-        let mut program = if lean {
-            prove_ir.instantiate_lysis_lean(scope_values)
+        let program = if lean {
+            // Fused pipeline: the pass pipeline runs against the
+            // interner's emission events and the program materializes
+            // once, already optimized — the unoptimized instruction
+            // Vec never exists.
+            let bundle = prove_ir
+                .instantiate_lysis_lean_sink(scope_values)
+                .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
+            ir::passes::fused::optimize_lean_sink(bundle).program
         } else {
-            prove_ir.instantiate_lysis(scope_values)
-        }
-        .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
-
-        // 3. Optimize
-        ir::passes::optimize(&mut program);
+            let mut program = prove_ir
+                .instantiate_lysis(scope_values)
+                .map_err(|e| ProveError::IrLowering(format!("{e}")))?;
+            ir::passes::optimize(&mut program);
+            program
+        };
 
         // 3b. Collect circuit stats if enabled
         if self.circuit_stats {

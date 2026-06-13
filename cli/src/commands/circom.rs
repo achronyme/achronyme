@@ -249,20 +249,37 @@ fn circom_command_inner<F: FieldBackend + PoseidonParamsProvider>(
         .map(|(k, v)| (k.clone(), FieldElement::<F>::from_u64(*v)))
         .collect();
     let lean_prove = backend == "r1cs" && prove && !no_optimize && !dump_ir && !circuit_stats;
-    let mut program = if lean_prove {
-        prove_ir.instantiate_lysis_lean_with_outputs(&fe_captures, &output_names)
+    let (mut program, fused_stats) = if lean_prove {
+        // Fused pipeline: the pass pipeline runs against the
+        // interner's emission events and the program materializes
+        // once, already optimized — the unoptimized instruction Vec
+        // never exists. The stats feed the same verbose / W003
+        // reporting the materialized pipeline produces.
+        let bundle = prove_ir
+            .instantiate_lysis_lean_sink_with_outputs(&fe_captures, &output_names)
+            .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
+        let outcome = ir::passes::fused::optimize_lean_sink(bundle);
+        (outcome.program, Some(outcome.stats))
     } else {
-        prove_ir.instantiate_lysis_with_outputs(&fe_captures, &output_names)
-    }
-    .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
+        let program = prove_ir
+            .instantiate_lysis_with_outputs(&fe_captures, &output_names)
+            .map_err(|e| anyhow::anyhow!("ProveIR Lysis instantiation error: {e}"))?;
+        (program, None)
+    };
 
     if verbose {
-        eprintln!("    {}: {} instructions", style.cyan("IR"), program.len());
+        let ir_len = fused_stats
+            .as_ref()
+            .map_or(program.len(), |s| s.total_before);
+        eprintln!("    {}: {} instructions", style.cyan("IR"), ir_len);
     }
 
     // 3. Optimize
     if !no_optimize {
-        let stats = ir::passes::optimize(&mut program);
+        let stats = match fused_stats {
+            Some(stats) => stats,
+            None => ir::passes::optimize(&mut program),
+        };
         let eliminated = stats.const_fold_converted
             + stats.dce_eliminated
             + stats.tautological_asserts_eliminated;

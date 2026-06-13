@@ -57,7 +57,7 @@ use ir_core::IrProgram;
 pub use bundles::{LysisDrainBundle, LysisSinkBundle};
 pub use errors::LysisInstantiateError;
 
-use direct_sink::instantiate_direct_lean;
+use direct_sink::{instantiate_direct_lean, instantiate_direct_lean_sink};
 use drain::lower_extended_with_chunk_drain;
 use lowering::{
     lower_extended_through_lysis, lower_extended_through_lysis_lean, lower_extended_to_sink,
@@ -229,6 +229,56 @@ impl ProveIR {
         }
         let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
         lower_extended_through_lysis_lean(extended)
+    }
+
+    /// Lean sink counterpart of
+    /// [`Self::instantiate_lysis_lean_with_outputs`]: return the
+    /// populated [`InterningSink<F>`] without materializing an
+    /// `IrProgram`, taking the direct interning fast path on all-Plain
+    /// walks and the extended-body cable otherwise. The bundle's
+    /// metadata maps are empty (lean contract) and its `next_var` is
+    /// the walk counter — materializing consumers must still apply
+    /// the `ssa_watermark(..).max(next_var)` reassembly formula.
+    pub fn instantiate_lysis_lean_sink_with_outputs<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+        output_names: &HashSet<String>,
+    ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
+        let names = (!output_names.is_empty()).then_some(output_names);
+        if let Some((sink, next_var)) = instantiate_direct_lean_sink::<F>(self, captures, names)? {
+            return Ok(LysisSinkBundle {
+                sink,
+                next_var,
+                var_names: HashMap::new(),
+                var_types: HashMap::new(),
+                var_spans: HashMap::new(),
+                input_spans: HashMap::new(),
+            });
+        }
+        let extended = self.instantiate_with_outputs_extended_lean::<F>(captures, output_names)?;
+        lower_extended_to_sink(extended, false)
+    }
+
+    /// Lean sink counterpart of [`Self::instantiate_lysis_lean`]. See
+    /// [`Self::instantiate_lysis_lean_sink_with_outputs`] for the
+    /// bundle contract; the only difference is the public-output
+    /// projection.
+    pub fn instantiate_lysis_lean_sink<F: FieldBackend>(
+        &self,
+        captures: &HashMap<String, FieldElement<F>>,
+    ) -> Result<LysisSinkBundle<F>, LysisInstantiateError> {
+        if let Some((sink, next_var)) = instantiate_direct_lean_sink::<F>(self, captures, None)? {
+            return Ok(LysisSinkBundle {
+                sink,
+                next_var,
+                var_names: HashMap::new(),
+                var_types: HashMap::new(),
+                var_spans: HashMap::new(),
+                input_spans: HashMap::new(),
+            });
+        }
+        let extended = self.instantiate_extended_lean::<F>(captures)?;
+        lower_extended_to_sink(extended, false)
     }
 
     /// Streaming counterpart of [`Self::instantiate_lysis_with_outputs`]:

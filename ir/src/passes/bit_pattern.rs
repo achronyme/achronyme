@@ -16,6 +16,11 @@
 //! Safe-by-default: if detection fails, no bound is inferred and comparisons
 //! remain unbounded (correct but more constraints). Boolean detection is sound
 //! over prime fields: `v*(v-1) = 0` has exactly two solutions {0, 1}.
+//!
+//! MIRROR CONTRACT: this pass is mirrored by the fused optimizer
+//! (`crate::passes::fused`); any semantic change here must land in
+//! the mirror too, plus a differential case in the fused parity
+//! tests.
 
 mod boolean;
 mod detector;

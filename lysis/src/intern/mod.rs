@@ -16,6 +16,7 @@
 //! `lysis::intern::*` paths keep working for existing callers.
 
 pub mod effect;
+pub mod events;
 pub mod hash;
 pub mod interner;
 pub mod key;
@@ -23,6 +24,7 @@ pub mod materialize;
 pub mod span;
 
 pub use effect::{EffectId, SideEffect};
+pub use events::{EmissionEvent, EmissionEventRef, IntoEmissionEvents};
 pub use hash::{deterministic_hash, DeterministicBuildHasher};
 pub use interner::{NodeInterner, NodeMeta};
 pub use key::NodeKey;

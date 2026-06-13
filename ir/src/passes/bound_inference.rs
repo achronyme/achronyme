@@ -8,6 +8,11 @@
 //! Security model: safe-by-default. If either operand lacks a proven bound, the
 //! instruction remains as unbounded IsLt/IsLe (252-bit fallback). No under-constrained
 //! circuits can result from this optimization.
+//!
+//! MIRROR CONTRACT: this pass is mirrored by the fused optimizer
+//! (`crate::passes::fused`); any semantic change here must land in
+//! the mirror too, plus a differential case in the fused parity
+//! tests.
 
 use std::collections::HashMap;
 

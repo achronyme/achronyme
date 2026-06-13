@@ -143,16 +143,22 @@ impl<'a, F: FieldBackend> InstrSink<F> for InterningDirectSink<'a, F> {
     }
 }
 
-/// Run the instantiate walk straight into an eager interner and
-/// materialize once. Returns `Ok(None)` when the walk emitted a
-/// symbolic node (rolled loop / dynamic shift / indexed effect) —
-/// the caller falls back to the extended-body cable by re-running
-/// the walk; the partial interner state is discarded.
-pub(super) fn instantiate_direct_lean<F: FieldBackend>(
+/// Run the instantiate walk straight into an eager interner and hand
+/// back the still-populated sink plus the walk's SSA counter. Returns
+/// `Ok(None)` when the walk emitted a symbolic node (rolled loop /
+/// dynamic shift / indexed effect) — the caller falls back to the
+/// extended-body cable by re-running the walk; the partial interner
+/// state is discarded.
+///
+/// The returned counter is the *walk* watermark, not the final
+/// `next_var`: consumers that materialize must still take
+/// `ssa_watermark(instructions).max(counter)`, exactly like the
+/// extended cable's reassembly does with its bundle counter.
+pub(super) fn instantiate_direct_lean_sink<F: FieldBackend>(
     prove_ir: &ProveIR,
     captures: &HashMap<String, FieldElement<F>>,
     output_names: Option<&HashSet<String>>,
-) -> Result<Option<IrProgram<F>>, LysisInstantiateError> {
+) -> Result<Option<(InterningSink<F>, u64)>, LysisInstantiateError> {
     let mut interner = InterningSink::<F>::without_span_tracking();
     let mut state = DirectInternState::new();
     let mut next_var = 0u64;
@@ -168,6 +174,21 @@ pub(super) fn instantiate_direct_lean<F: FieldBackend>(
     if let Some(err) = state.take_error() {
         return Err(LysisInstantiateError::from(RoundTripError::Walk(err)));
     }
+    Ok(Some((interner, next_var)))
+}
+
+/// Materializing wrapper over [`instantiate_direct_lean_sink`]: the
+/// historical direct-path entry that returns a flat [`IrProgram<F>`].
+pub(super) fn instantiate_direct_lean<F: FieldBackend>(
+    prove_ir: &ProveIR,
+    captures: &HashMap<String, FieldElement<F>>,
+    output_names: Option<&HashSet<String>>,
+) -> Result<Option<IrProgram<F>>, LysisInstantiateError> {
+    let Some((interner, next_var)) =
+        instantiate_direct_lean_sink::<F>(prove_ir, captures, output_names)?
+    else {
+        return Ok(None);
+    };
     let instructions = materialize_interning_sink(interner);
     let final_next_var = ssa_watermark(&instructions).max(next_var);
     let mut out = IrProgram::<F>::new();

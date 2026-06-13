@@ -6,6 +6,7 @@ pub mod const_fold;
 pub mod cse;
 pub mod dce;
 pub mod dense;
+pub mod fused;
 pub mod taint;
 pub mod validate;
 
