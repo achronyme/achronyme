@@ -4,7 +4,7 @@ version = 4
 
 [[package]]
 name = "ach-macros"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "proc-macro2",
  "quote",
@@ -13,14 +13,14 @@ dependencies = [
 
 [[package]]
 name = "achronyme-parser"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "diagnostics",
 ]
 
 [[package]]
 name = "achronyme-std"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "ach-macros",
  "akron",
@@ -68,7 +68,7 @@ dependencies = [
 
 [[package]]
 name = "akron"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "ach-macros",
  "akronc",
@@ -83,7 +83,7 @@ dependencies = [
 
 [[package]]
 name = "akronc"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "achronyme-parser",
  "akron",
@@ -406,7 +406,7 @@ checksum = "7c02d123df017efcdfbd739ef81735b36c5ba83ec3c59c80a9d7ecc718f92e50"
 
 [[package]]
 name = "artik"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "memory",
  "num-bigint",
@@ -607,7 +607,7 @@ dependencies = [
 
 [[package]]
 name = "circom"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "akron",
  "akronc",
@@ -674,7 +674,7 @@ checksum = "3a822ea5bc7590f9d40f1ba12c0dc3c2760f3482c6984db1573ad11031420831"
 
 [[package]]
 name = "cli"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "achronyme-parser",
  "achronyme-std",
@@ -718,7 +718,7 @@ checksum = "3d52eff69cd5e647efe296129160853a42795992097e8af39800e1060caeea9b"
 
 [[package]]
 name = "constraints"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "akronc",
  "ir",
@@ -864,7 +864,7 @@ dependencies = [
 
 [[package]]
 name = "diagnostics"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 
 [[package]]
 name = "digest"
@@ -1199,7 +1199,7 @@ dependencies = [
 
 [[package]]
 name = "ir"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "achronyme-parser",
  "artik",
@@ -1220,7 +1220,7 @@ dependencies = [
 
 [[package]]
 name = "ir-core"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "diagnostics",
  "memory",
@@ -1229,7 +1229,7 @@ dependencies = [
 
 [[package]]
 name = "ir-forge"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "achronyme-parser",
  "bincode",
@@ -1370,7 +1370,7 @@ checksum = "5e5032e24019045c762d3c0f28f5b6b8bbf38563a65908389bf7978758920897"
 
 [[package]]
 name = "lysis"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "artik",
  "criterion",
@@ -1384,7 +1384,7 @@ dependencies = [
 
 [[package]]
 name = "lysis-types"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "memory",
 ]
@@ -1406,7 +1406,7 @@ dependencies = [
 
 [[package]]
 name = "memory"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "criterion",
  "num-bigint",
@@ -1690,7 +1690,7 @@ dependencies = [
 
 [[package]]
 name = "proving"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "akron",
  "akronc",
@@ -1883,7 +1883,7 @@ checksum = "dc897dd8d9e8bd1ed8cdad82b5966c3e0ecae09fb1907d58efaa013543185d0a"
 
 [[package]]
 name = "resolve"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "achronyme-parser",
 ]
@@ -2697,7 +2697,7 @@ dependencies = [
 
 [[package]]
 name = "zkc"
-version = "0.1.0-beta.21"
+version = "0.1.0-beta.22"
 dependencies = [
  "achronyme-parser",
  "akronc",
