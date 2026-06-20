@@ -11,10 +11,7 @@ use crate::lysis_lift::Walker;
 use crate::lysis_roundtrip::RoundTripError;
 
 use super::bundles::LysisDrainBundle;
-use super::direct_plain::{
-    direct_plain_drain_enabled, direct_plain_validate_enabled,
-    drain_plain_extended_chunks_interned, trace_first_plain_forward_ref,
-};
+use super::direct_plain::{direct_plain_drain_enabled, drain_plain_extended_chunks_interned};
 use super::errors::LysisInstantiateError;
 use super::profile::trace_lysis_program_profile;
 use super::trace::{
@@ -90,11 +87,8 @@ pub(crate) fn lower_extended_with_chunk_drain<F: FieldBackend>(
             .iter()
             .all(|inst| matches!(inst, ExtendedInstruction::Plain(_)))
         {
-            if direct_plain_validate_enabled() {
-                trace_first_plain_forward_ref(&body);
-            }
             let total_plain =
-                drain_plain_extended_chunks_interned(body, window, chunk_capacity, chunk_consumer);
+                drain_plain_extended_chunks_interned(body, window, chunk_capacity, chunk_consumer)?;
             if trace {
                 lysis_drain_trace(
                     "direct_plain_drain",

@@ -1,12 +1,14 @@
 use std::collections::HashMap;
 
-use ir_core::{Instruction, SsaVar};
+use ir_core::{Instruction, SsaVar, Visibility};
 use memory::Bn254Fr;
 
 use crate::extended::ExtendedInstruction;
+use crate::extended_program::ExtendedIrProgram;
 use crate::test_utils::compile_circuit;
 
 use super::direct_plain::drain_plain_extended_chunks_interned;
+use super::drain::lower_extended_with_chunk_drain;
 use super::trace::positive_usize_or_default;
 
 type F = Bn254Fr;
@@ -38,7 +40,8 @@ fn direct_plain_drain_chunks_plain_body_without_walker() {
         }),
     ];
     let mut chunks = Vec::new();
-    let total = drain_plain_extended_chunks_interned(body, 8, 2, &mut |chunk| chunks.push(chunk));
+    let total = drain_plain_extended_chunks_interned(body, 8, 2, &mut |chunk| chunks.push(chunk))
+        .expect("all-plain body drains without error");
 
     assert_eq!(total, 3);
     assert_eq!(chunks.len(), 2);
@@ -47,6 +50,120 @@ fn direct_plain_drain_chunks_plain_body_without_walker() {
     assert!(matches!(chunks[0][0], lysis::InstructionKind::Const { .. }));
     assert!(matches!(chunks[0][1], lysis::InstructionKind::Add { .. }));
     assert!(matches!(chunks[1][0], lysis::InstructionKind::Mul { .. }));
+}
+
+#[test]
+fn direct_plain_drain_matches_walker_on_desugared_forms() {
+    // Contract pin for the shared interning core: the direct chunk-
+    // drain path (driving `DirectInternState::feed_plain`) and the
+    // Walker → bytecode → executor cable must materialize the
+    // byte-identical instruction stream. This exercises the desugar
+    // arms (`Not`/`And`/`Or`/`IsNeq`/`IsLe`/`IsLeBounded`/`Assert`),
+    // the u8 bit-width guards, and the non-binding effect arms
+    // (`AssertEq`/`RangeCheck`/`Decompose`) — none of which the
+    // lean/streaming pins cover.
+    fn sugar_body() -> Vec<ExtendedInstruction<F>> {
+        vec![
+            ExtendedInstruction::Plain(Instruction::Input {
+                result: SsaVar(0),
+                name: "a".to_string(),
+                visibility: Visibility::Witness,
+            }),
+            ExtendedInstruction::Plain(Instruction::Input {
+                result: SsaVar(1),
+                name: "b".to_string(),
+                visibility: Visibility::Witness,
+            }),
+            ExtendedInstruction::Plain(Instruction::And {
+                result: SsaVar(2),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            }),
+            ExtendedInstruction::Plain(Instruction::Or {
+                result: SsaVar(3),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            }),
+            ExtendedInstruction::Plain(Instruction::Not {
+                result: SsaVar(4),
+                operand: SsaVar(0),
+            }),
+            ExtendedInstruction::Plain(Instruction::IsNeq {
+                result: SsaVar(5),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            }),
+            ExtendedInstruction::Plain(Instruction::IsLe {
+                result: SsaVar(6),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+            }),
+            ExtendedInstruction::Plain(Instruction::IsLeBounded {
+                result: SsaVar(7),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+                bitwidth: 16,
+            }),
+            ExtendedInstruction::Plain(Instruction::RangeCheck {
+                result: SsaVar(8),
+                operand: SsaVar(0),
+                bits: 16,
+            }),
+            ExtendedInstruction::Plain(Instruction::Decompose {
+                result: SsaVar(9),
+                bit_results: vec![SsaVar(10), SsaVar(11), SsaVar(12), SsaVar(13)],
+                operand: SsaVar(0),
+                num_bits: 4,
+            }),
+            ExtendedInstruction::Plain(Instruction::Assert {
+                result: SsaVar(14),
+                operand: SsaVar(2),
+                message: None,
+            }),
+            ExtendedInstruction::Plain(Instruction::AssertEq {
+                result: SsaVar(15),
+                lhs: SsaVar(0),
+                rhs: SsaVar(1),
+                message: None,
+            }),
+        ]
+    }
+
+    // Same window/capacity the drain entry defaults to, so chunk
+    // boundaries line up; we compare the flattened streams anyway.
+    let window = 131_072;
+    let chunk_capacity = 1_000_000;
+
+    // Subject: the direct interning drain path (always direct,
+    // independent of the `ACH_LYSIS_DIRECT_PLAIN_DRAIN` toggle).
+    let mut direct_stream: Vec<lysis::InstructionKind<F>> = Vec::new();
+    drain_plain_extended_chunks_interned(sugar_body(), window, chunk_capacity, &mut |chunk| {
+        direct_stream.extend(chunk)
+    })
+    .expect("direct drain succeeds");
+
+    // Reference: the same body routed through the Walker cable. With
+    // the toggle unset (the default; no test sets it) the chunk-drain
+    // entry falls through to `Walker → execute`.
+    let mut prog = ExtendedIrProgram::<F>::new();
+    prog.body = sugar_body();
+    prog.next_var = 16;
+    let mut walker_stream: Vec<lysis::InstructionKind<F>> = Vec::new();
+    lower_extended_with_chunk_drain(prog, &mut |chunk| walker_stream.extend(chunk))
+        .expect("walker drain succeeds");
+
+    assert_eq!(
+        direct_stream.len(),
+        walker_stream.len(),
+        "direct drain and walker emit the same number of instructions"
+    );
+    for (i, (d, w)) in direct_stream.iter().zip(walker_stream.iter()).enumerate() {
+        assert_eq!(
+            format!("{d:?}"),
+            format!("{w:?}"),
+            "instruction {i} diverges between direct drain and walker"
+        );
+    }
 }
 
 #[test]
