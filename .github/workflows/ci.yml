@@ -11,31 +11,20 @@ jobs:
     name: Lint
     runs-on: self-hosted
     steps:
-      - name: Ensure a working cargo is on PATH
+      - name: Ensure the rustup toolchain is on PATH
         run: |
-          # A wrapper or stale shim can answer `command -v cargo` yet
-          # fail to exec the real toolchain, so require cargo to actually
-          # run; fall back to the rustup install dirs, putting a working
-          # one ahead of any broken wrapper for subsequent steps.
-          if cargo --version >/dev/null 2>&1; then
-            exit 0
+          # The rustup proxies live in ~/.cargo/bin, but that directory
+          # is dropped from the job PATH after a runner-service restart,
+          # and a wrapper earlier on PATH shadows `cargo` and exits
+          # non-zero. Put the rustup shims first so cargo resolves to the
+          # real toolchain (the pinned channel in rust-toolchain.toml is
+          # selected once the repo is checked out).
+          if [ -x "$HOME/.cargo/bin/cargo" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          elif ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo not found on this self-hosted runner: no ~/.cargo/bin/cargo and none on PATH. Install rustup for the runner user." >&2
+            exit 1
           fi
-          for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin; do
-            if [ -x "$d/cargo" ] && "$d/cargo" --version >/dev/null 2>&1; then
-              echo "$d" >> "$GITHUB_PATH"
-              exit 0
-            fi
-          done
-          echo "::error::No working cargo on this self-hosted runner (a cargo on PATH may resolve but fail to run)."
-          echo "whoami=$(whoami) HOME=$HOME"
-          echo "resolved cargo: $(command -v cargo || echo none)"
-          ls -la "$(command -v cargo)" 2>/dev/null || true
-          echo "PATH=$PATH"
-          for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin /usr/local/bin; do
-            echo "## $d"
-            ls -la "$d" 2>&1 | grep -E 'cargo|rustc|rustup' || echo "  (no rust shims)"
-          done
-          exit 1
 
       - uses: actions/checkout@v4
 
@@ -52,31 +41,20 @@ jobs:
       group: ci-test-self-hosted
       cancel-in-progress: false
     steps:
-      - name: Ensure a working cargo is on PATH
+      - name: Ensure the rustup toolchain is on PATH
         run: |
-          # A wrapper or stale shim can answer `command -v cargo` yet
-          # fail to exec the real toolchain, so require cargo to actually
-          # run; fall back to the rustup install dirs, putting a working
-          # one ahead of any broken wrapper for subsequent steps.
-          if cargo --version >/dev/null 2>&1; then
-            exit 0
+          # The rustup proxies live in ~/.cargo/bin, but that directory
+          # is dropped from the job PATH after a runner-service restart,
+          # and a wrapper earlier on PATH shadows `cargo` and exits
+          # non-zero. Put the rustup shims first so cargo resolves to the
+          # real toolchain (the pinned channel in rust-toolchain.toml is
+          # selected once the repo is checked out).
+          if [ -x "$HOME/.cargo/bin/cargo" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          elif ! command -v cargo >/dev/null 2>&1; then
+            echo "::error::cargo not found on this self-hosted runner: no ~/.cargo/bin/cargo and none on PATH. Install rustup for the runner user." >&2
+            exit 1
           fi
-          for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin; do
-            if [ -x "$d/cargo" ] && "$d/cargo" --version >/dev/null 2>&1; then
-              echo "$d" >> "$GITHUB_PATH"
-              exit 0
-            fi
-          done
-          echo "::error::No working cargo on this self-hosted runner (a cargo on PATH may resolve but fail to run)."
-          echo "whoami=$(whoami) HOME=$HOME"
-          echo "resolved cargo: $(command -v cargo || echo none)"
-          ls -la "$(command -v cargo)" 2>/dev/null || true
-          echo "PATH=$PATH"
-          for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin /usr/local/bin; do
-            echo "## $d"
-            ls -la "$d" 2>&1 | grep -E 'cargo|rustc|rustup' || echo "  (no rust shims)"
-          done
-          exit 1
 
       - uses: actions/checkout@v4
 
