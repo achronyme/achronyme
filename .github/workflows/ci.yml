@@ -11,18 +11,30 @@ jobs:
     name: Lint
     runs-on: self-hosted
     steps:
-      - name: Ensure Rust toolchain on PATH
+      - name: Ensure a working cargo is on PATH
         run: |
-          if command -v cargo >/dev/null 2>&1; then
+          # A wrapper or stale shim can answer `command -v cargo` yet
+          # fail to exec the real toolchain, so require cargo to actually
+          # run; fall back to the rustup install dirs, putting a working
+          # one ahead of any broken wrapper for subsequent steps.
+          if cargo --version >/dev/null 2>&1; then
             exit 0
           fi
           for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin; do
-            if [ -x "$d/cargo" ]; then
+            if [ -x "$d/cargo" ] && "$d/cargo" --version >/dev/null 2>&1; then
               echo "$d" >> "$GITHUB_PATH"
               exit 0
             fi
           done
-          echo "::error::cargo not found on this self-hosted runner (checked PATH, \$HOME/.cargo/bin, /opt/cargo/bin, /usr/local/cargo/bin). Install rustup for the runner user, or symlink the cargo shims into /usr/local/bin." >&2
+          echo "::error::No working cargo on this self-hosted runner (a cargo on PATH may resolve but fail to run)."
+          echo "whoami=$(whoami) HOME=$HOME"
+          echo "resolved cargo: $(command -v cargo || echo none)"
+          ls -la "$(command -v cargo)" 2>/dev/null || true
+          echo "PATH=$PATH"
+          for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin /usr/local/bin; do
+            echo "## $d"
+            ls -la "$d" 2>&1 | grep -E 'cargo|rustc|rustup' || echo "  (no rust shims)"
+          done
           exit 1
 
       - uses: actions/checkout@v4
@@ -40,18 +52,30 @@ jobs:
       group: ci-test-self-hosted
       cancel-in-progress: false
     steps:
-      - name: Ensure Rust toolchain on PATH
+      - name: Ensure a working cargo is on PATH
         run: |
-          if command -v cargo >/dev/null 2>&1; then
+          # A wrapper or stale shim can answer `command -v cargo` yet
+          # fail to exec the real toolchain, so require cargo to actually
+          # run; fall back to the rustup install dirs, putting a working
+          # one ahead of any broken wrapper for subsequent steps.
+          if cargo --version >/dev/null 2>&1; then
             exit 0
           fi
           for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin; do
-            if [ -x "$d/cargo" ]; then
+            if [ -x "$d/cargo" ] && "$d/cargo" --version >/dev/null 2>&1; then
               echo "$d" >> "$GITHUB_PATH"
               exit 0
             fi
           done
-          echo "::error::cargo not found on this self-hosted runner (checked PATH, \$HOME/.cargo/bin, /opt/cargo/bin, /usr/local/cargo/bin). Install rustup for the runner user, or symlink the cargo shims into /usr/local/bin." >&2
+          echo "::error::No working cargo on this self-hosted runner (a cargo on PATH may resolve but fail to run)."
+          echo "whoami=$(whoami) HOME=$HOME"
+          echo "resolved cargo: $(command -v cargo || echo none)"
+          ls -la "$(command -v cargo)" 2>/dev/null || true
+          echo "PATH=$PATH"
+          for d in "$HOME/.cargo/bin" /opt/cargo/bin /usr/local/cargo/bin /usr/local/bin; do
+            echo "## $d"
+            ls -la "$d" 2>&1 | grep -E 'cargo|rustc|rustup' || echo "  (no rust shims)"
+          done
           exit 1
 
       - uses: actions/checkout@v4
