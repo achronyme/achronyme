@@ -11,22 +11,30 @@ jobs:
     name: Lint
     runs-on: self-hosted
     steps:
-      - name: Ensure the rustup toolchain is on PATH
-        run: |
-          # The rustup proxies live in ~/.cargo/bin, but that directory
-          # is dropped from the job PATH after a runner-service restart,
-          # and a wrapper earlier on PATH shadows `cargo` and exits
-          # non-zero. Put the rustup shims first so cargo resolves to the
-          # real toolchain (the pinned channel in rust-toolchain.toml is
-          # selected once the repo is checked out).
-          if [ -x "$HOME/.cargo/bin/cargo" ]; then
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          elif ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo not found on this self-hosted runner: no ~/.cargo/bin/cargo and none on PATH. Install rustup for the runner user." >&2
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
+
+      - name: Ensure a Rust toolchain is on PATH
+        run: |
+          # CI must survive the runner's recurring loss of the rustup
+          # proxy binary (~/.cargo/bin/rustup), which dangles all the
+          # cargo/rustc symlinks and lets a wrapper earlier on PATH fail
+          # with exit 127. Prefer the rustup proxy when it is intact (it
+          # honors rust-toolchain.toml and can install new channels);
+          # otherwise fall back to the installed toolchain's real
+          # binaries, which survive the proxy going missing.
+          if [ -x "$HOME/.cargo/bin/rustup" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
+          channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' rust-toolchain.toml 2>/dev/null)"
+          for tc in "$HOME/.rustup/toolchains/${channel}-"* "$HOME/.rustup/toolchains/"*; do
+            if [ -x "$tc/bin/cargo" ]; then
+              echo "$tc/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+          done
+          echo "::error::No usable Rust toolchain on this self-hosted runner: rustup proxy missing and no ~/.rustup/toolchains/*/bin/cargo. Reinstall rustup for the runner user." >&2
+          exit 1
 
       - name: Format check
         run: cargo fmt --all -- --check
@@ -41,22 +49,30 @@ jobs:
       group: ci-test-self-hosted
       cancel-in-progress: false
     steps:
-      - name: Ensure the rustup toolchain is on PATH
-        run: |
-          # The rustup proxies live in ~/.cargo/bin, but that directory
-          # is dropped from the job PATH after a runner-service restart,
-          # and a wrapper earlier on PATH shadows `cargo` and exits
-          # non-zero. Put the rustup shims first so cargo resolves to the
-          # real toolchain (the pinned channel in rust-toolchain.toml is
-          # selected once the repo is checked out).
-          if [ -x "$HOME/.cargo/bin/cargo" ]; then
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
-          elif ! command -v cargo >/dev/null 2>&1; then
-            echo "::error::cargo not found on this self-hosted runner: no ~/.cargo/bin/cargo and none on PATH. Install rustup for the runner user." >&2
-            exit 1
-          fi
-
       - uses: actions/checkout@v4
+
+      - name: Ensure a Rust toolchain is on PATH
+        run: |
+          # CI must survive the runner's recurring loss of the rustup
+          # proxy binary (~/.cargo/bin/rustup), which dangles all the
+          # cargo/rustc symlinks and lets a wrapper earlier on PATH fail
+          # with exit 127. Prefer the rustup proxy when it is intact (it
+          # honors rust-toolchain.toml and can install new channels);
+          # otherwise fall back to the installed toolchain's real
+          # binaries, which survive the proxy going missing.
+          if [ -x "$HOME/.cargo/bin/rustup" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
+            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+            exit 0
+          fi
+          channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' rust-toolchain.toml 2>/dev/null)"
+          for tc in "$HOME/.rustup/toolchains/${channel}-"* "$HOME/.rustup/toolchains/"*; do
+            if [ -x "$tc/bin/cargo" ]; then
+              echo "$tc/bin" >> "$GITHUB_PATH"
+              exit 0
+            fi
+          done
+          echo "::error::No usable Rust toolchain on this self-hosted runner: rustup proxy missing and no ~/.rustup/toolchains/*/bin/cargo. Reinstall rustup for the runner user." >&2
+          exit 1
 
       - name: Build
         run: cargo build --workspace
