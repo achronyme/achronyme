@@ -15,25 +15,29 @@ jobs:
 
       - name: Ensure a Rust toolchain is on PATH
         run: |
-          # CI must survive the runner's recurring loss of the rustup
-          # proxy binary (~/.cargo/bin/rustup), which dangles all the
-          # cargo/rustc symlinks and lets a wrapper earlier on PATH fail
-          # with exit 127. Prefer the rustup proxy when it is intact (it
-          # honors rust-toolchain.toml and can install new channels);
-          # otherwise fall back to the installed toolchain's real
-          # binaries, which survive the proxy going missing.
-          if [ -x "$HOME/.cargo/bin/rustup" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # This self-hosted runner is isolated: CARGO_HOME/RUSTUP_HOME
+          # point to a private per-runner Rust home so a neighbouring
+          # repo sharing the runner user can never clobber this
+          # toolchain; both fall back to the user default when unset.
+          # Prefer the rustup proxy when intact (it honors
+          # rust-toolchain.toml and can install new channels); otherwise
+          # fall back to the installed toolchain's real binaries, which
+          # survive the proxy binary going missing.
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+          echo "ISO-CHECK cargo_home=$cargo_home rustup_home=$rustup_home"
+          if [ -x "$cargo_home/bin/rustup" ] && [ -x "$cargo_home/bin/cargo" ]; then
+            echo "$cargo_home/bin" >> "$GITHUB_PATH"
             exit 0
           fi
           channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' rust-toolchain.toml 2>/dev/null)"
-          for tc in "$HOME/.rustup/toolchains/${channel}-"* "$HOME/.rustup/toolchains/"*; do
+          for tc in "$rustup_home/toolchains/${channel}-"* "$rustup_home/toolchains/"*; do
             if [ -x "$tc/bin/cargo" ]; then
               echo "$tc/bin" >> "$GITHUB_PATH"
               exit 0
             fi
           done
-          echo "::error::No usable Rust toolchain on this self-hosted runner: rustup proxy missing and no ~/.rustup/toolchains/*/bin/cargo. Reinstall rustup for the runner user." >&2
+          echo "::error::No usable Rust toolchain: no rustup proxy and no toolchains/*/bin/cargo under $cargo_home or $rustup_home." >&2
           exit 1
 
       - name: Format check
@@ -53,25 +57,29 @@ jobs:
 
       - name: Ensure a Rust toolchain is on PATH
         run: |
-          # CI must survive the runner's recurring loss of the rustup
-          # proxy binary (~/.cargo/bin/rustup), which dangles all the
-          # cargo/rustc symlinks and lets a wrapper earlier on PATH fail
-          # with exit 127. Prefer the rustup proxy when it is intact (it
-          # honors rust-toolchain.toml and can install new channels);
-          # otherwise fall back to the installed toolchain's real
-          # binaries, which survive the proxy going missing.
-          if [ -x "$HOME/.cargo/bin/rustup" ] && [ -x "$HOME/.cargo/bin/cargo" ]; then
-            echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          # This self-hosted runner is isolated: CARGO_HOME/RUSTUP_HOME
+          # point to a private per-runner Rust home so a neighbouring
+          # repo sharing the runner user can never clobber this
+          # toolchain; both fall back to the user default when unset.
+          # Prefer the rustup proxy when intact (it honors
+          # rust-toolchain.toml and can install new channels); otherwise
+          # fall back to the installed toolchain's real binaries, which
+          # survive the proxy binary going missing.
+          cargo_home="${CARGO_HOME:-$HOME/.cargo}"
+          rustup_home="${RUSTUP_HOME:-$HOME/.rustup}"
+          echo "ISO-CHECK cargo_home=$cargo_home rustup_home=$rustup_home"
+          if [ -x "$cargo_home/bin/rustup" ] && [ -x "$cargo_home/bin/cargo" ]; then
+            echo "$cargo_home/bin" >> "$GITHUB_PATH"
             exit 0
           fi
           channel="$(sed -n 's/^[[:space:]]*channel[[:space:]]*=[[:space:]]*"\(.*\)".*/\1/p' rust-toolchain.toml 2>/dev/null)"
-          for tc in "$HOME/.rustup/toolchains/${channel}-"* "$HOME/.rustup/toolchains/"*; do
+          for tc in "$rustup_home/toolchains/${channel}-"* "$rustup_home/toolchains/"*; do
             if [ -x "$tc/bin/cargo" ]; then
               echo "$tc/bin" >> "$GITHUB_PATH"
               exit 0
             fi
           done
-          echo "::error::No usable Rust toolchain on this self-hosted runner: rustup proxy missing and no ~/.rustup/toolchains/*/bin/cargo. Reinstall rustup for the runner user." >&2
+          echo "::error::No usable Rust toolchain: no rustup proxy and no toolchains/*/bin/cargo under $cargo_home or $rustup_home." >&2
           exit 1
 
       - name: Build
