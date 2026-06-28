@@ -1,7 +1,7 @@
 # Achronyme: Estrategia Técnica y de Mercado
 
-> Última actualización: Marzo 2026
-> Estado: v0.1.0-beta.8 — 2,000+ tests (cross-validados con snarkjs), 2 backends con provers nativos Rust, 2 auditorías criptográficas limpias, pipeline E2E funcional, interoperabilidad Groth16 verificada.
+> Última actualización: Junio 2026
+> Estado: v0.1.0-beta.22 — 2,000+ tests (cross-validados con snarkjs), 2 backends con provers nativos Rust, 2 auditorías criptográficas limpias, pipeline E2E funcional, interoperabilidad Groth16 verificada. Imports/módulos, multi-curva (`FieldBackend`: BN254 / BLS12-381 / Goldilocks) y comparaciones acotadas a paridad con Circom ya están en `main`; los únicos bloqueadores reales que faltan para un v1.0 estable son la honestidad del trusted-setup y la fachada de SDK pública.
 
 ---
 
@@ -223,38 +223,45 @@ Los 3 niveles de integración están completados:
 | — | Native provers (ark-groth16 + halo2-KZG), Solidity verifier | — |
 | — | Hand-written parser (desacoplado de pest) | — |
 
-### Siguiente: v0.1.0 (First Stable Release)
+### Siguiente: hacia v1.0 (Stable Release)
+
+Ya en `main` (eran items de esta lista): sistema de imports/módulos
+(namespace / selective / `import circuit`, con resolución de rutas,
+detección de imports circulares y un circuito multi-archivo pinned a un
+baseline R1CS exacto), stdlib `map`/`filter`/`reduce` y compañía, y
+mensajes de error con line numbers + nombres de función.
+
+Lo que realmente falta para un release estable:
 
 | Prioridad | Item | Esfuerzo |
 |-----------|------|----------|
-| Alta | Sistema de imports/módulos (`import "path"`) | Medio |
-| Media | Mensajes de error educativos en IrLowering | Bajo |
-| Media | Stdlib: `map`, `filter`, `reduce` para listas | Medio |
-| Media | Export Plonkish binario | Medio |
+| Alta | Honestidad del trusted-setup: dejar de generar la clave con `OsRng` local de forma silenciosa — ponerlo tras un opt-in explícito (`--insecure-dev-setup`) + warning, y documentar la ruta de producción (export `.r1cs` → ceremonia ptau+phase2 en snarkjs → `.zkey` → prove + el verificador Solidity ya existente) | Bajo |
+| Alta | Fachada de SDK pública: crate `achronyme` con un `prove`/`verify` curado (+ el `prove!` que anuncia §9), extraer `DefaultProveHandler` fuera del binario `cli` a una librería embebible, y namespacing/`publish=false`/versiones en los 19 crates antes de publicar en crates.io | Alto |
+| Media | Verify out-of-process del backend Plonkish (los artefactos JSON circuit/proof/public/vkey ya se exportan; falta un `verify_proof_from_json` + subcomando CLI que los consuma) | Medio |
+| Media | Import nativo de `.zkey` para que `ach prove` pruebe sobre claves de una ceremonia externa sin depender de snarkjs en runtime | Medio |
+| Baja | Inferencia de cota más amplia para comparaciones (vars de inducción de bucle, anchos de señal declarados) + anotaciones de bit-width, para que más comparaciones eviten el fallback sin cota de ~760 constraints | Bajo |
 
-### v0.2.0 — LSP + VS Code Extension
+### v0.2.0 — LSP + VS Code Extension — ENTREGADO
 
-| Item | Esfuerzo |
-|------|----------|
-| LSP básico (diagnostics, go-to-definition) | Medio |
-| TextMate grammar para syntax highlighting | Bajo |
-| VS Code extension packaging | Bajo |
+LSP (`ach-lsp-core` + `ach-lsp`), TextMate grammar y la extensión de VS
+Code viven en el repo `achronyme-editor`.
 
-### v0.3.0 — Playground (WASM)
+### v0.3.0 — Playground (WASM) — ENTREGADO
 
-| Item | Esfuerzo |
-|------|----------|
-| Compilar VM + compiler a WASM | Medio |
-| Frontend web (editor + output) | Medio |
-| Tutoriales interactivos | Medio |
+El sitio `achrony.me` (`achronyme-web`) ya hospeda el playground con
+backend Axum (`/api/{run,compile,inspect,prove,format}`). Pendiente
+incremental: más tutoriales interactivos.
 
 ### v1.0.0 — Stable API Freeze
 
+Multi-curva ya está hecho (`FieldBackend`: BN254 / BLS12-381 / Goldilocks,
+seleccionable con `--prime`), así que el freeze gira en torno a la fachada
+pública, no a más curvas.
+
 | Item | Esfuerzo |
 |------|----------|
-| Multi-curva via trait Field (BLS12-381, Pasta) | Alto |
-| API pública estabilizada para crates.io | Medio |
-| Breaking-change freeze | — |
+| API pública estabilizada para crates.io (fachada `achronyme`, no los 19 crates internos) | Alto |
+| Breaking-change freeze (semver solo sobre la superficie de la fachada) | — |
 
 ---
 
@@ -265,15 +272,15 @@ Los 3 niveles de integración están completados:
 | # | Debilidad | Impacto | Esfuerzo |
 |---|-----------|---------|----------|
 | ~~D2~~ | ~~Una sola curva (BN254)~~ | **RESUELTO** — `FieldBackend` trait con BN254, BLS12-381, Goldilocks. CLI `--prime`. | Completado beta.19 |
-| D4 | **Sin imports / sistema de módulos** | Todo es un archivo. Circuitos grandes son inmanejables. | Medio — `import "path"` con resolución de nombres |
+| ~~D4~~ | ~~Sin imports / sistema de módulos~~ | **RESUELTO** — namespace / selective / `import circuit` con resolución de rutas, detección de imports circulares y dedup de diamante; un circuito de 3 archivos compila y prueba pinned a un baseline R1CS exacto. Residual = consolidar las implementaciones duplicadas sobre el crate `resolve` (no bloqueante). | Completado |
 
 ### Degradan DX
 
 | # | Debilidad | Impacto | Esfuerzo |
 |---|-----------|---------|----------|
-| D7 | **Comparaciones caras (~760 constraints)** | `x < y` es prohibitivo en circuitos sensibles al tamaño. Batching o range proofs más eficientes no implementados. | Alto |
-| D8 | **Sin LSP / IDE support** | No hay autocompletado, go-to-definition, ni syntax highlighting oficial. | Medio |
-| D12 | **Sin export Plonkish binario** | El backend Plonkish compila y prueba pero no genera artefactos exportables. | Medio |
+| ~~D7~~ | ~~Comparaciones caras (~760 constraints)~~ | **MAYORMENTE RESUELTO** — la reescritura de comparación acotada (`bit_pattern` + `bound_inference`) corre por defecto a paridad con `LessThan` de Circom (~67 para 64-bit). El ~760 solo aplica al fallback sin cota (coste ZK inherente de comparar elementos de campo no acotados, no un defecto). | Residual Bajo |
+| ~~D8~~ | ~~Sin LSP / IDE support~~ | **RESUELTO** — LSP (`ach-lsp-core` + `ach-lsp`) y extensión de VS Code con TextMate grammar viven en el repo `achronyme-editor`. | Completado |
+| ~~D12~~ | ~~Sin export Plonkish binario~~ | **PARCIALMENTE RESUELTO** — el backend Plonkish exporta circuit/proof/public/vkey a JSON (`--plonkish-json`). Residual = no hay verify out-of-process de esos artefactos (ni subcomando `verify`), ni formato binario compacto, ni verificador Solidity para Plonkish. | Medio |
 
 ### Resueltas (desde la última revisión)
 
