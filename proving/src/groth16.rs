@@ -5,6 +5,7 @@
 //! JSON serialization lives in dedicated modules (e.g., `groth16_bn254`).
 
 use std::path::Path;
+use std::sync::Once;
 
 use ark_ec::pairing::Pairing;
 use ark_ff::PrimeField;
@@ -21,6 +22,62 @@ use memory::{Bn254Fr, FieldBackend, FieldElement};
 mod cache;
 pub use cache::cache_key;
 use cache::{load_cached_keys, load_cached_vk, save_cached_keys, save_cached_vk};
+
+// ============================================================================
+// Trusted-setup honesty
+// ============================================================================
+
+/// True when `ACH_ACK_INSECURE_SETUP` is set to a truthy value.
+///
+/// Lets CI, the test suite, and the playground acknowledge the
+/// local-setup limitation and silence the one-time warning.
+fn ack_insecure_setup() -> bool {
+    std::env::var_os("ACH_ACK_INSECURE_SETUP")
+        .map(|v| {
+            let v = v.to_string_lossy();
+            let v = v.trim();
+            !(v.is_empty() || v == "0" || v.eq_ignore_ascii_case("false"))
+        })
+        .unwrap_or(false)
+}
+
+/// Emit a one-time, process-wide warning that the keys and proofs
+/// produced here rest on a **local single-party trusted setup**.
+///
+/// `ark_groth16`'s `circuit_specific_setup` samples the setup
+/// randomness (the "toxic waste": `tau`, `alpha`, `beta`, `delta`)
+/// from a local `OsRng` and discards it — but a single operator who
+/// runs setup could retain it and forge proofs that still verify, so
+/// this is not a sound setup under the standard trust model. It is
+/// fine for development and testing; it is not fine for production.
+///
+/// Called before the key-cache lookup in [`setup_keys_compacted`] and
+/// [`setup_vk_only`], so it fires whether the keys are freshly
+/// generated or loaded from a cache that an earlier local setup wrote
+/// (a cached prove is just as forgeable). The `Once` keeps it to a
+/// single line per process regardless of how many proofs run.
+/// Silenced by [`ack_insecure_setup`]. Covers the native Groth16 path
+/// only; the halo2-KZG (`plonkish`) backend has the same local setup
+/// and is not gated here.
+fn warn_insecure_local_setup_once() {
+    static WARNED: Once = Once::new();
+    WARNED.call_once(|| {
+        if ack_insecure_setup() {
+            return;
+        }
+        eprintln!(
+            "warning: Groth16 proving keys come from a LOCAL single-party trusted setup.\n\
+             The setup randomness is sampled in-process and discarded, but anyone who runs\n\
+             setup could retain it and forge proofs that still verify. Fine for development\n\
+             and tests; NOT sound for production. For a production ceremony: export the\n\
+             circuit to .r1cs (`ach compile`), run a Powers-of-Tau + phase-2 ceremony\n\
+             (e.g. snarkjs) to produce a .zkey, prove with it, and verify on-chain with the\n\
+             generated Solidity verifier (`--solidity`). This covers the native Groth16 path\n\
+             only; the plonkish (halo2-KZG) backend has the same local setup.\n\
+             Set ACH_ACK_INSECURE_SETUP=1 to silence this warning."
+        );
+    });
+}
 
 // ============================================================================
 // Field conversion
@@ -180,6 +237,13 @@ fn convert_lc<B: FieldBackend, AF: PrimeField>(
 /// `curve_tag` is included in the cache key to prevent collisions between
 /// the same circuit compiled for different curves.
 ///
+/// **Trust model:** the keys come from a local single-party setup
+/// (`circuit_specific_setup` over `OsRng`) and are not sound for
+/// production — see [`warn_insecure_local_setup_once`], which fires the
+/// first time this runs. For a production-grade ceremony, export the
+/// circuit to `.r1cs`, run a Powers-of-Tau + phase-2 ceremony to
+/// produce a `.zkey`, and prove/verify with those artifacts.
+///
 /// The circuit handed to ark is the wire-compacted system (see
 /// `ConstraintSystem::compact_referenced`): every proving-key query
 /// vector is sized by the variable count, so each unreferenced wire
@@ -201,6 +265,7 @@ fn setup_keys_compacted<B: FieldBackend, E: Pairing>(
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<(ark_groth16::ProvingKey<E>, ark_groth16::VerifyingKey<E>), String> {
+    warn_insecure_local_setup_once();
     let key = cache_key(&cs, curve_tag);
     let cache_subdir = cache_dir.join(&key);
 
@@ -225,6 +290,7 @@ pub fn setup_vk_only<B: FieldBackend, E: Pairing>(
     cache_dir: &Path,
     curve_tag: &str,
 ) -> Result<ark_groth16::VerifyingKey<E>, String> {
+    warn_insecure_local_setup_once();
     let (compacted, _gather) = cs.compact_referenced();
     let key = cache_key(&compacted, curve_tag);
     let cache_subdir = cache_dir.join(&key);
