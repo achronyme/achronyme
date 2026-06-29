@@ -692,6 +692,7 @@ dependencies = [
  "ir-forge",
  "memory",
  "open",
+ "prove-engine",
  "proving",
  "rand 0.8.5",
  "serde",
@@ -1686,6 +1687,20 @@ dependencies = [
  "rusty-fork",
  "tempfile",
  "unarray",
+]
+
+[[package]]
+name = "prove-engine"
+version = "0.1.0-beta.22"
+dependencies = [
+ "akron",
+ "artik",
+ "circom",
+ "ir",
+ "ir-forge",
+ "memory",
+ "proving",
+ "zkc",
 ]
 
 [[package]]

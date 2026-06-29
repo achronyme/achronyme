@@ -30,6 +30,9 @@ open = "5"
 # Proving backends (shared crate)
 proving = { path = "../proving" }
 
+# Shared compile→prove→verify engine
+prove-engine = { path = "../prove-engine" }
+
 memory = { path = "../memory" }
 akron = { path = "../akron" }
 akronc = { path = "../akronc" }

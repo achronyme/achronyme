@@ -19,6 +19,7 @@ members = [
     "ir-core",
     "ir-forge",
     "zkc",
+    "prove-engine",
 ]
 exclude = ["wasm"]
 resolver = "2"

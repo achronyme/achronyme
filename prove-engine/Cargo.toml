@@ -1,0 +1,21 @@
+[package]
+name = "prove-engine"
+description = "Reusable compile→prove→verify engine for Achronyme prove blocks (R1CS/Groth16 + Plonkish/halo2), independent of the CLI binary."
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+repository.workspace = true
+homepage.workspace = true
+authors.workspace = true
+keywords.workspace = true
+categories.workspace = true
+
+[dependencies]
+memory = { path = "../memory" }
+akron = { path = "../akron" }
+artik = { path = "../artik" }
+zkc = { path = "../zkc" }
+ir = { path = "../ir" }
+ir-forge = { path = "../ir-forge" }
+circom = { path = "../circom" }
+proving = { path = "../proving" }
